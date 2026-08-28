@@ -65,7 +65,7 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'group',
             groupId: 'main',
@@ -88,7 +88,7 @@ describe('Codex ChatGPT auth-token refresh bridge contract', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'profile',
             profileId: 'legacy-profile',

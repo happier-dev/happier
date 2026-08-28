@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+} from '@happier-dev/plugin-sdk/actions';
 
 import {
   SENTRY_DETAIL_BOUNDS_V1,
-  SENTRY_MAX_ACTIVITY_ITEMS,
   SENTRY_MAX_TAG_VALUE_ROWS,
   SENTRY_MAX_EVENT_ROWS,
   projectSentryActivity,
@@ -12,10 +15,14 @@ import {
   projectSentryTagValueRows,
 } from './detailProjection.js';
 
-const ACTION_BYTE_GATE = 1_024 * 1_024;
+const MAXIMUM_ACTION_ENVELOPE_OVERHEAD =
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1(null)
+  - new TextEncoder().encode(JSON.stringify(null)).byteLength;
 
-function encodedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
+function fitsExternalActionEnvelope(value: unknown): boolean {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength
+    + MAXIMUM_ACTION_ENVELOPE_OVERHEAD
+    <= EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES;
 }
 
 describe('Sentry activity projection', () => {
@@ -93,8 +100,8 @@ describe('Sentry activity projection', () => {
       .toBe('unavailable');
   });
 
-  it('count-bounds an oversized history and says so', () => {
-    const raw = Array.from({ length: SENTRY_MAX_ACTIVITY_ITEMS + 5 }, (_unused, index) => ({
+  it('does not impose the retired 100-item product cap on readable activity', () => {
+    const raw = Array.from({ length: 105 }, (_unused, index) => ({
       id: String(index),
       type: 'note',
       dateCreated: '2026-01-02T03:04:05.000Z',
@@ -102,9 +109,9 @@ describe('Sentry activity projection', () => {
     const projected = projectSentryActivity(raw, SENTRY_DETAIL_BOUNDS_V1);
     expect(projected.status).toBe('available');
     if (projected.status !== 'available') return;
-    expect(projected.items).toHaveLength(SENTRY_MAX_ACTIVITY_ITEMS);
-    expect(projected.omittedItemCount).toBe(5);
-    expect(projected.projectionTruncated).toBe(true);
+    expect(projected.items).toHaveLength(105);
+    expect(projected.omittedItemCount).toBe(0);
+    expect(projected.projectionTruncated).toBe(false);
   });
 });
 
@@ -254,7 +261,7 @@ describe('Sentry detail bounds', () => {
     expect(rows.rows[0]?.truncated).toBeUndefined();
   });
 
-  it('keeps every saturated detail page inside the Action byte gate', () => {
+  it('keeps provider-bounded detail pages inside the Action byte gate', () => {
     const long = 'x'.repeat(8_192);
 
     const events = projectSentryEventRows(
@@ -268,7 +275,7 @@ describe('Sentry detail bounds', () => {
       })),
       SENTRY_DETAIL_BOUNDS_V1,
     );
-    expect(encodedBytes(events)).toBeLessThan(ACTION_BYTE_GATE);
+    expect(fitsExternalActionEnvelope(events)).toBe(true);
 
     const tagValues = projectSentryTagValueRows(
       Array.from({ length: SENTRY_MAX_TAG_VALUE_ROWS }, () => ({
@@ -280,14 +287,14 @@ describe('Sentry detail bounds', () => {
       })),
       SENTRY_DETAIL_BOUNDS_V1,
     );
-    expect(encodedBytes(tagValues)).toBeLessThan(ACTION_BYTE_GATE);
+    expect(fitsExternalActionEnvelope(tagValues)).toBe(true);
 
     const tags = projectSentryIssueTags(
-      Array.from({ length: SENTRY_DETAIL_BOUNDS_V1.maxTagKeys + 8 }, (_unused, index) => ({
+      Array.from({ length: 40 }, (_unused, index) => ({
         key: `k${String(index)}${'e'.repeat(400)}`.slice(0, 200),
         name: long,
         totalValues: Number.MAX_SAFE_INTEGER,
-        topValues: Array.from({ length: SENTRY_DETAIL_BOUNDS_V1.maxTopValuesPerTag + 8 }, () => ({
+        topValues: Array.from({ length: 12 }, () => ({
           value: long,
           name: long,
           count: Number.MAX_SAFE_INTEGER,
@@ -297,10 +304,11 @@ describe('Sentry detail bounds', () => {
       })),
       SENTRY_DETAIL_BOUNDS_V1,
     );
-    expect(encodedBytes(tags)).toBeLessThan(ACTION_BYTE_GATE);
+    expect(tags.tags).toHaveLength(40);
+    expect(tags.tags[0]?.topValues).toHaveLength(12);
 
     const activity = projectSentryActivity(
-      Array.from({ length: SENTRY_MAX_ACTIVITY_ITEMS + 8 }, (_unused, index) => ({
+      Array.from({ length: 108 }, (_unused, index) => ({
         id: `${String(index)}${long}`,
         type: long,
         dateCreated: '2026-01-02T03:04:05.000Z',
@@ -308,6 +316,7 @@ describe('Sentry detail bounds', () => {
       })),
       SENTRY_DETAIL_BOUNDS_V1,
     );
-    expect(encodedBytes(activity)).toBeLessThan(ACTION_BYTE_GATE);
-  });
+    expect(activity.status).toBe('available');
+    if (activity.status === 'available') expect(activity.items).toHaveLength(108);
+  }, 30_000);
 });

@@ -30,10 +30,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS } from '../refresh/refreshEligibility.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1, TRIAGE_LIST_DEFAULT_LENS_V1 } from './listWindow.js';
-import {
-    MAX_TRIAGE_MOUNTED_WINDOWS_V1,
-    createTriageListWindowStore,
-} from './listWindowStore.js';
+import { createTriageListWindowStore } from './listWindowStore.js';
 
 /**
  * The composed PRs & Issues vertical, driven end to end.
@@ -192,6 +189,7 @@ function createHarness(options: Readonly<{
         sourceBFails: false,
         sourceBInvocationRejected: false,
         enumerationRejected: false,
+        enumerationRepeatsCursor: false,
         /** A typed failure source A answers with instead of a page, when set. */
         sourceAFailure: null as TriageSourceFailureV1 | null,
         /**
@@ -372,7 +370,16 @@ function createHarness(options: Readonly<{
         ) {
             throw new Error('The other forge action was refused.');
         }
-        return await readAdmittedEntries(input);
+        const result = await readAdmittedEntries(input);
+        if (
+            state.enumerationRepeatsCursor
+            && input.sources.kind === 'allConfigured'
+            && input.limit === 0
+            && input.sources.cursor !== undefined
+        ) {
+            return { ...result, configuredSourcesStatus: 'truncated' as const, configuredSourcesNextCursor: input.sources.cursor };
+        }
+        return result;
     };
     const readAdmittedEntries = async (input: TriageListEntriesInputV1) => await listTriageEntries(input, {
         sourceInstances: collections.sourceInstances,
@@ -463,6 +470,35 @@ describe('the mounted PRs & Issues window store', () => {
         expect(new Set(batches.flatMap((input) => (
             input.sources.kind === 'selected' ? input.sources.sourceInstanceIds : []
         ))).size).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1 + 1);
+        store.dispose();
+    });
+
+    it('settles a repeated configured-source cursor instead of looping the mounted read', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        for (let index = 0; index < MAX_TRIAGE_LIST_SOURCE_BATCH_V1; index += 1) {
+            const sourceInstanceId = `${String(index + 3).padStart(8, '0')}-1111-4111-8111-111111111111`;
+            harness.control.sourceInstances.seed(toCorpusStoredValue(instanceRow(
+                `r${String(index).padStart(4, '0')}x`,
+                SOURCE_A,
+                sourceInstanceId,
+                index + 3,
+                `account-r${String(index + 3)}`,
+            )));
+        }
+        harness.state.enumerationRepeatsCursor = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+
+        const pages = harness.actionInputs.filter((input) => (
+            input.sources.kind === 'allConfigured' && input.limit === 0
+        ));
+        expect(pages).toHaveLength(2);
+        expect(store.getSnapshot().pending).toBe('idle');
+        expect(store.getSnapshot().error?.message).toContain('repeated continuation cursor');
         store.dispose();
     });
 
@@ -1152,6 +1188,9 @@ describe('the mounted PRs & Issues window store', () => {
         );
         await vi.waitFor(() => {
             expect(providerReads()).toHaveLength(3);
+            const rows = store.getSnapshot().window?.rows ?? [];
+            expect(rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
+            expect(rows.every((row) => row.entryRef.entryId.startsWith('p1-'))).toBe(true);
         });
 
         const reacquisition = providerReads().at(-1);
@@ -1310,6 +1349,29 @@ describe('appending another bounded window to one mount', () => {
             .toEqual(first.window?.rows.map((row) => row.entryRef.entryId));
         expect(ids).toContain('p0-0');
         expect(appended.loadMore).toEqual({ kind: 'available' });
+
+        store.dispose();
+    });
+
+    it('keeps the earlier pages when the resumed page finishes the lane', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId)).toEqual(['1']);
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
+
+        // The continuation is the lane's terminal page. Finishing the walk is
+        // evidence that there is nothing after this page; it is not permission
+        // to replace the pages this same mounted generation already retained.
+        await store.loadMore();
+
+        expect(store.getSnapshot().window?.rows.map((row) => row.entryRef.entryId)).toEqual(['1', '2']);
+        expect(store.getSnapshot().window?.coverage).toBe('complete');
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'exhausted' });
 
         store.dispose();
     });
@@ -1548,22 +1610,24 @@ describe('appending another bounded window to one mount', () => {
         store.dispose();
     });
 
-    it('stops offering a deeper window at the mount ceiling instead of growing without end', async () => {
+    it('keeps every source continuation reachable beyond the former 2,000-row mount wall', async () => {
         const { harness, store } = await mountedAtFirstWindow();
 
-        for (let depth = 1; depth < MAX_TRIAGE_MOUNTED_WINDOWS_V1; depth += 1) {
+        // The retired ceiling was ceil(2,000 / 56) = 36 windows. Walk one page
+        // beyond it: the only authority to stop is provider exhaustion, not an
+        // invented process-local product count.
+        for (let depth = 1; depth <= 36; depth += 1) {
             expect(store.getSnapshot().loadMore, `depth ${depth}`).toEqual({ kind: 'available' });
             await store.loadMore();
         }
 
-        // The source still offers another page, so this is OUR bound and it says
-        // so: `atCeiling`, not `exhausted`.
+        // This fixture deliberately keeps returning a continuation. The next
+        // source page therefore remains reachable.
         expect(store.getSnapshot().window?.coverage).toBe('partial');
-        expect(store.getSnapshot().loadMore).toEqual({ kind: 'atCeiling' });
-
+        expect(store.getSnapshot().loadMore).toEqual({ kind: 'available' });
         const calls = harness.scanCalls.count;
         await store.loadMore();
-        expect(harness.scanCalls.count).toBe(calls);
+        expect(harness.scanCalls.count).toBeGreaterThan(calls);
 
         store.dispose();
     }, 60_000);

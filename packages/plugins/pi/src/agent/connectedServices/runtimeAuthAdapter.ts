@@ -2,8 +2,10 @@ import {
   classifyProviderLimitEvidence,
   type ProviderLimitCategory as RuntimeLimitCategory,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-
-import { summarizePiConnectedServiceActiveProfiles } from './activeProfiles.js';
+import type {
+  AgentConnectedAccountRuntimeAuthAdapterV1,
+  AgentConnectedAccountRuntimeFailureClassificationV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 type RuntimeAuthFailureKind =
   | 'usage_limit'
@@ -217,18 +219,15 @@ function isCompactionDependencyFailure(text: string): boolean {
 
 function activeProfiles(input: Readonly<{ selection?: unknown; target?: unknown }>) {
   const selection = readRecord(input.selection);
-  return summarizePiConnectedServiceActiveProfiles({
-    openaiCodexProfileId: readString(selection?.openaiCodexProfileId),
-    openaiProfileId: readString(selection?.openaiProfileId),
-    claudeSubscriptionProfileId: readString(selection?.claudeSubscriptionProfileId),
-    anthropicProfileId: readString(selection?.anthropicProfileId),
-  });
+  const serviceId = readString(selection?.serviceId);
+  const profileId = readString(selection?.activeProfileId ?? selection?.profileId);
+  return serviceId && profileId ? { [serviceId]: profileId } : {};
 }
 
 function classifyPiRuntimeAuthFailure(input: Readonly<{
   error: unknown;
-  selection: unknown;
-}>): Record<string, unknown> | null {
+  selection?: unknown;
+}>): AgentConnectedAccountRuntimeFailureClassificationV1 | null {
   const evidence = normalizeErrorEvidence(input.error);
   const textParts: string[] = [];
   collectEvidenceText(evidence, textParts);
@@ -255,7 +254,7 @@ function classifyPiRuntimeAuthFailure(input: Readonly<{
 
   return {
     kind,
-    ...(dependencyFailure ? {} : { limitCategory: category }),
+    ...(dependencyFailure ? {} : { limitCategory: category as Exclude<RuntimeLimitCategory, 'unknown'> }),
     serviceId,
     profileId: selection?.activeProfileId ?? selection?.profileId ?? null,
     groupId: selection?.groupId ?? null,
@@ -276,9 +275,9 @@ function classifyPiRuntimeAuthFailure(input: Readonly<{
 
 const unsupportedHotApply = Object.freeze({ supported: false, reason: 'restart_required' });
 
-export function createPiConnectedServiceRuntimeAuthAdapter() {
+export function createPiConnectedServiceRuntimeAuthAdapter(): AgentConnectedAccountRuntimeAuthAdapterV1 {
   return {
-    classifyRuntimeAuthFailure(input: Readonly<{ error: unknown; selection: unknown; target?: unknown }>) {
+    classifyRuntimeAuthFailure(input) {
       return classifyPiRuntimeAuthFailure(input);
     },
     async materializeActiveProfile(input: Readonly<{ selection?: unknown; target?: unknown }>) {
@@ -289,9 +288,6 @@ export function createPiConnectedServiceRuntimeAuthAdapter() {
     },
     async hotApply() {
       return { applied: false, reason: 'restart_required' };
-    },
-    async recoverAfterRuntimeAuthSwitch() {
-      return { recovered: false, reason: 'restart_required' };
     },
     async probeQuota() {
       return { status: 'unknown', reason: 'not_supported' };

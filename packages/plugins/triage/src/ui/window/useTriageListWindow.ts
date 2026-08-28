@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 
 import type { TriageListLensV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
@@ -20,17 +20,15 @@ import {
  * or a separate effect, because React already owns that lifecycle: it
  * subscribes when the consumer commits and unsubscribes when it unmounts, so a
  * render that never commits cannot leak an acquisition and a StrictMode replay
- * cannot double-count one. It is also what makes the scope change safe: the
- * host rebuilds the Host API object when the mount's Account lifetime changes,
- * so React resubscribes, this mount's lease retires the window it was reading,
- * and the new Account starts cold instead of inheriting rows.
+ * cannot double-count one. It is also what makes a host scope change safe:
+ * React resubscribes, releases this artifact's old shared-value lease, and
+ * joins the new Account/plugin/generation scope without inheriting rows.
  *
  * Reading is not demanding. Mounting *the PRs & Issues page* is a named
  * materialization producer (`core/CORPUS.md` §4.1) and mounting the Composer
  * picker is not, so the demand belongs to the page rather than to this shared
- * hook: the picker runs in its own UI artifact and therefore its own module
- * realm, so a demand here would make every open of the control a full walk of
- * every configured source. A consumer that is a producer calls `refresh` from
+ * hook: opening the picker must not turn a cold shared window into a full walk
+ * of every configured source. A consumer that is a producer calls `refresh` from
  * its own mount effect; every demand it makes still passes through the one
  * shared minimum interval, so a cold or stale window starts exactly one pass no
  * matter how much of that surface asked.
@@ -54,28 +52,34 @@ export type TriageMountedListWindowV1 = Readonly<{
 
 export function useTriageListWindow(): TriageMountedListWindowV1 {
   const hostApi = usePluginHostApi();
+  const sharedScope = usePluginUiEphemeralSharedScope();
 
   const subscribe = useCallback((listener: () => void) => {
-    const lease = acquireTriageListWindow(hostApi);
-    const unsubscribe = subscribeToTriageListWindow(hostApi, listener);
+    const lease = acquireTriageListWindow(hostApi, sharedScope);
+    const unsubscribe = subscribeToTriageListWindow(hostApi, listener, sharedScope);
     return () => {
       unsubscribe();
       lease.release();
     };
-  }, [hostApi]);
+  }, [hostApi, sharedScope]);
 
-  // Bound to this mount's own Host API, which is also the window's scope: when
-  // the host rebuilds it for a new Account lifetime, React resubscribes, this
-  // mount's lease retires its window, and the new scope starts cold.
-  const readSnapshot = useCallback(() => readTriageListWindowSnapshot(hostApi), [hostApi]);
-  const refresh = useCallback(
-    (trigger: TriageRefreshTriggerV1) => refreshTriageListWindow(trigger, hostApi),
-    [hostApi],
+  // Host identity addresses this artifact's local lease; Account/plugin/install
+  // isolation and retirement belong to the injected shared scope.
+  const readSnapshot = useCallback(
+    () => readTriageListWindowSnapshot(hostApi, sharedScope),
+    [hostApi, sharedScope],
   );
-  const loadMore = useCallback(() => loadMoreTriageListWindow(hostApi), [hostApi]);
+  const refresh = useCallback(
+    (trigger: TriageRefreshTriggerV1) => refreshTriageListWindow(trigger, hostApi, sharedScope),
+    [hostApi, sharedScope],
+  );
+  const loadMore = useCallback(
+    () => loadMoreTriageListWindow(hostApi, sharedScope),
+    [hostApi, sharedScope],
+  );
   const setLens = useCallback(
-    (lens: TriageListLensV1) => { setTriageListWindowLens(lens, hostApi); },
-    [hostApi],
+    (lens: TriageListLensV1) => { setTriageListWindowLens(lens, hostApi, sharedScope); },
+    [hostApi, sharedScope],
   );
 
   const snapshot = useSyncExternalStore(subscribe, readSnapshot, readSnapshot);

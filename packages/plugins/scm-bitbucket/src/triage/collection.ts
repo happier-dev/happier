@@ -1,5 +1,9 @@
 import { type BitbucketTriageApiClient } from './apiClient.js';
-import { createBitbucketFailure, type BitbucketTriageFailure } from './failures.js';
+import {
+  classifyBitbucketAbortSignal,
+  createBitbucketFailure,
+  type BitbucketTriageFailure,
+} from './failures.js';
 import {
   BITBUCKET_MAX_PAGE_LENGTH,
   decodeBitbucketPageEnvelope,
@@ -29,9 +33,6 @@ export type BitbucketCollectionOutcome<TItem> =
     failure?: BitbucketTriageFailure;
   }>
   | Readonly<{ ok: false; failure: BitbucketTriageFailure }>;
-
-/** Bounded page ceiling for a discovery walk; exceeding it is reported, never silently truncated. */
-export const BITBUCKET_COLLECTION_PAGE_CEILING = 50;
 
 /**
  * The single walker for every Bitbucket discovery collection.
@@ -67,10 +68,11 @@ export async function walkBitbucketCollection<TItem>(
   }>,
 ): Promise<BitbucketCollectionOutcome<TItem>> {
   const pageLength = input.pageLength ?? BITBUCKET_MAX_PAGE_LENGTH;
-  const maxPages = input.maxPages ?? BITBUCKET_COLLECTION_PAGE_CEILING;
   const items: TItem[] = [];
   let skippedItem = false;
   let url: string | null = input.resumeUrl ?? withBitbucketPageLength(input.url, pageLength);
+  let pagesRead = 0;
+  const visitedUrls = new Set<string>();
 
   const finished = (): BitbucketCollectionOutcome<TItem> => skippedItem
     ? {
@@ -82,16 +84,27 @@ export async function walkBitbucketCollection<TItem>(
     }
     : { ok: true, items, complete: true, nextUrl: null };
 
-  for (let page = 0; page < maxPages; page += 1) {
+  while (input.maxPages === undefined || pagesRead < input.maxPages) {
     if (url === null) return finished();
+    if (visitedUrls.has(url)) {
+      return {
+        ok: true,
+        items,
+        complete: false,
+        nextUrl: null,
+        failure: createBitbucketFailure('unsupportedContract', 'collection-next-non-progress'),
+      };
+    }
     if (input.signal?.aborted === true) {
-      return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
+      return { ok: false, failure: classifyBitbucketAbortSignal(input.signal) };
     }
 
+    visitedUrls.add(url);
     const response = await input.client.requestJson({
       url,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
+    pagesRead += 1;
     if (!response.ok) {
       if (response.failure.class === 'cancelled') return { ok: false, failure: response.failure };
       return { ok: true, items, complete: false, nextUrl: null, failure: response.failure };

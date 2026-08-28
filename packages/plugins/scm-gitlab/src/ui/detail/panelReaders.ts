@@ -16,6 +16,7 @@ import {
   GitlabDiscussionsResultV1Schema,
   GitlabNotesResultV1Schema,
   GitlabPipelinesResultV1Schema,
+  GitlabRawDiffResultV1Schema,
 } from '../../triage/detail/contracts.js';
 import type {
   GitlabProjectedActivityEventRowV1,
@@ -462,6 +463,81 @@ export function useGitlabChanges(
 
   const controller = useGitlabPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
   return useMemo(() => ({ ...controller, diffLimitStatus }), [controller, diffLimitStatus]);
+}
+
+/* --------------------------------------------------------------- raw diff */
+
+export type GitlabRawDiffStateV1 =
+  | Readonly<{ kind: 'idle' }>
+  | Readonly<{ kind: 'loading' }>
+  | Readonly<{ kind: 'ready'; text: string; truncated: boolean }>
+  | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
+
+/**
+ * The explicit raw-evidence reader. Unlike the structured `/diffs` walk it does
+ * nothing when the panel activates; `load` is the named user request §4.6a
+ * requires. The active panel signal supplies cancellation on tab leave.
+ */
+export function useGitlabRawDiff(
+  input: TriageDetailSurfaceInputV1,
+): Readonly<{ state: GitlabRawDiffStateV1; load: () => void }> {
+  const action = useMemo(
+    () => ({ pluginId: GITLAB_PLUGIN_ID, localId: GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff }),
+    [],
+  );
+  const { execute } = useExecutePluginAction(action);
+  const localRef = useLocalRef(input);
+  const routingToken = useGitlabRoutingToken(input);
+  const { instance } = input;
+  const { active, activeSignal } = useTabPanelActivity();
+  const [state, setState] = useState<GitlabRawDiffStateV1>({ kind: 'idle' });
+
+  useEffect(() => {
+    if (active) return undefined;
+    setState({ kind: 'idle' });
+    return undefined;
+  }, [active]);
+
+  const load = useCallback(() => {
+    if (!active || state.kind === 'loading') return;
+    if (routingToken === null) {
+      setState({ kind: 'unavailable', failure: ROUTE_UNAVAILABLE });
+      return;
+    }
+    setState({ kind: 'loading' });
+    void (async () => {
+      const execution = await execute({
+        v: 1,
+        instance,
+        localRef,
+        routingToken,
+      }, { signal: activeSignal }) as ExecuteResult;
+      if (activeSignal.aborted) return;
+      if (execution.status !== 'success') {
+        setState({
+          kind: 'unavailable',
+          failure: dispatchFailure(execution.status, execution.code ?? 'gitlab-raw-diff-read-failed'),
+        });
+        return;
+      }
+      const parsed = GitlabRawDiffResultV1Schema.safeParse(execution.result);
+      if (!parsed.success) {
+        setState({ kind: 'unavailable', failure: UNREADABLE_RESULT });
+        return;
+      }
+      if (parsed.data.kind === 'unavailable') {
+        setState({ kind: 'unavailable', failure: parsed.data.failure });
+        return;
+      }
+      setState({
+        kind: 'ready',
+        text: parsed.data.text,
+        truncated: parsed.data.truncated,
+      });
+    })();
+  }, [active, activeSignal, execute, instance, localRef, routingToken, state.kind]);
+
+  return useMemo(() => ({ state, load }), [load, state]);
 }
 
 /* ----------------------------------------------------------------- pipelines */

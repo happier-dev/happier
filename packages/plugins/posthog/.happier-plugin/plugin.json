@@ -104,8 +104,7 @@
                         },
                         "next": {
                           "minLength": 1,
-                          "type": "string",
-                          "x-happier-max-utf8-bytes": 8192
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -215,8 +214,7 @@
                         },
                         "next": {
                           "minLength": 1,
-                          "type": "string",
-                          "x-happier-max-utf8-bytes": 8192
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -256,8 +254,7 @@
                 },
                 "next": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 8192
+                  "type": "string"
                 },
                 "rows": {
                   "items": {
@@ -286,7 +283,7 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 754,
+                  "maxItems": 100,
                   "type": "array"
                 }
               },
@@ -307,8 +304,7 @@
                 },
                 "next": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 8192
+                  "type": "string"
                 },
                 "organizationUuid": {
                   "minLength": 36,
@@ -347,7 +343,7 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 754,
+                  "maxItems": 100,
                   "type": "array"
                 }
               },
@@ -429,261 +425,6 @@
           "plugin"
         ],
         "title": "Configure PostHog error issues"
-      },
-      {
-        "connectedAccountPurposeBindings": [
-          {
-            "path": "draft.binding.account",
-            "purpose": "posthog-api"
-          }
-        ],
-        "dangerLevel": "safe",
-        "description": "Checks whether the selected PostHog account can access Error Tracking.",
-        "execution": {
-          "target": "daemon"
-        },
-        "hostAccess": [
-          "posthog-api",
-          "posthog-network"
-        ],
-        "id": "posthog/capability",
-        "inputSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "additionalProperties": false,
-          "properties": {
-            "draft": {
-              "additionalProperties": false,
-              "properties": {
-                "binding": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "account": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "accountId": {
-                          "maxLength": 256,
-                          "minLength": 1,
-                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
-                          "type": "string"
-                        },
-                        "service": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "localId": {
-                              "maxLength": 256,
-                              "minLength": 1,
-                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
-                              "type": "string"
-                            },
-                            "pluginId": {
-                              "maxLength": 256,
-                              "minLength": 3,
-                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "pluginId",
-                            "localId"
-                          ],
-                          "type": "object"
-                        }
-                      },
-                      "required": [
-                        "service",
-                        "accountId"
-                      ],
-                      "type": "object"
-                    },
-                    "purpose": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 128
-                    }
-                  },
-                  "required": [
-                    "purpose",
-                    "account"
-                  ],
-                  "type": "object"
-                },
-                "configuration": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "token": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 1024
-                    },
-                    "v": {
-                      "const": 1
-                    }
-                  },
-                  "required": [
-                    "v",
-                    "token"
-                  ],
-                  "type": "object"
-                },
-                "keyStability": {
-                  "anyOf": [
-                    {
-                      "const": "stable"
-                    },
-                    {
-                      "const": "locatorDerived"
-                    }
-                  ]
-                },
-                "localInstanceKey": {
-                  "minLength": 1,
-                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 128
-                },
-                "locator": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "displayLabel": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 512
-                    },
-                    "displayPath": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 512
-                    },
-                    "v": {
-                      "const": 1
-                    },
-                    "webUrl": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 384
-                    }
-                  },
-                  "required": [
-                    "v",
-                    "displayLabel"
-                  ],
-                  "type": "object"
-                },
-                "v": {
-                  "const": 1
-                }
-              },
-              "required": [
-                "v",
-                "binding",
-                "localInstanceKey",
-                "keyStability",
-                "configuration",
-                "locator"
-              ],
-              "type": "object"
-            },
-            "v": {
-              "const": 1
-            }
-          },
-          "required": [
-            "v",
-            "draft"
-          ],
-          "type": "object"
-        },
-        "resultSchema": {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "anyOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "kind": {
-                  "const": "available"
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "failure": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "class": {
-                      "anyOf": [
-                        {
-                          "const": "authentication"
-                        },
-                        {
-                          "const": "permission"
-                        },
-                        {
-                          "const": "rateLimit"
-                        },
-                        {
-                          "const": "transient"
-                        },
-                        {
-                          "const": "unsupportedContract"
-                        },
-                        {
-                          "const": "unknown"
-                        }
-                      ]
-                    },
-                    "code": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 128
-                    },
-                    "detail": {
-                      "minLength": 1,
-                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 256
-                    },
-                    "retryNotBeforeMs": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    }
-                  },
-                  "required": [
-                    "class",
-                    "code"
-                  ],
-                  "type": "object"
-                },
-                "kind": {
-                  "const": "unavailable"
-                }
-              },
-              "required": [
-                "kind",
-                "failure"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "scopes": [
-          "global"
-        ],
-        "surfaces": [
-          "plugin"
-        ],
-        "title": "Check PostHog Error Tracking access"
       },
       {
         "dangerLevel": "safe",
@@ -1579,7 +1320,7 @@
                       "const": "initial"
                     },
                     "limit": {
-                      "maximum": 64,
+                      "maximum": 9007199254740991,
                       "minimum": 1,
                       "type": "integer"
                     }
@@ -1778,7 +1519,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 4096
+                          "x-happier-max-utf8-bytes": 40350
                         },
                         "v": {
                           "const": 1
@@ -1826,7 +1567,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 4096
+                      "x-happier-max-utf8-bytes": 40350
                     },
                     "v": {
                       "const": 1
@@ -2576,7 +2317,6 @@
                       }
                     ]
                   },
-                  "maxItems": 64,
                   "type": "array"
                 }
               },
@@ -3329,7 +3069,6 @@
                       }
                     ]
                   },
-                  "maxItems": 64,
                   "type": "array"
                 }
               },
@@ -3435,8 +3174,7 @@
           "properties": {
             "continuation": {
               "minLength": 1,
-              "type": "string",
-              "x-happier-max-utf8-bytes": 512
+              "type": "string"
             },
             "instance": {
               "additionalProperties": false,
@@ -3656,8 +3394,7 @@
               "properties": {
                 "continuation": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 512
+                  "type": "string"
                 },
                 "events": {
                   "items": {
@@ -3678,8 +3415,8 @@
                                   },
                                   "function": {
                                     "minLength": 1,
-                                    "type": "string",
-                                    "x-happier-max-utf8-bytes": 160
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string"
                                   },
                                   "inApp": {
                                     "anyOf": [
@@ -3698,24 +3435,23 @@
                                   },
                                   "source": {
                                     "minLength": 1,
-                                    "type": "string",
-                                    "x-happier-max-utf8-bytes": 240
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string"
                                   }
                                 },
                                 "type": "object"
                               },
-                              "maxItems": 24,
                               "type": "array"
                             },
                             "type": {
                               "minLength": 1,
-                              "type": "string",
-                              "x-happier-max-utf8-bytes": 128
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
                             },
                             "value": {
                               "minLength": 1,
-                              "type": "string",
-                              "x-happier-max-utf8-bytes": 512
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -3723,31 +3459,27 @@
                           ],
                           "type": "object"
                         },
-                        "maxItems": 2,
                         "type": "array"
                       },
                       "sessionId": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       },
                       "timestampMs": {
                         "maximum": 9007199254740991,
                         "minimum": -9007199254740991,
                         "type": "integer"
                       },
-                      "truncated": {
-                        "const": true
-                      },
                       "url": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 512
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       },
                       "uuid": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -3767,8 +3499,8 @@
                     },
                     "from": {
                       "minLength": 1,
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 1024
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
                     },
                     "include": {
                       "items": {
@@ -3793,8 +3525,8 @@
                     },
                     "issueId": {
                       "minLength": 1,
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 128
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
                     },
                     "limit": {
                       "maximum": 20,
@@ -3816,8 +3548,8 @@
                         },
                         {
                           "minLength": 1,
-                          "type": "string",
-                          "x-happier-max-utf8-bytes": 1024
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string"
                         }
                       ]
                     },
@@ -3952,8 +3684,7 @@
           "properties": {
             "continuation": {
               "minLength": 1,
-              "type": "string",
-              "x-happier-max-utf8-bytes": 256
+              "type": "string"
             },
             "instance": {
               "additionalProperties": false,
@@ -4173,8 +3904,7 @@
               "properties": {
                 "continuation": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 256
+                  "type": "string"
                 },
                 "incomplete": {
                   "const": "posthog/activity-next-unverifiable"
@@ -4193,13 +3923,13 @@
                     "properties": {
                       "activity": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 64
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       },
                       "actor": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       },
                       "atMs": {
                         "maximum": 9007199254740991,
@@ -4209,16 +3939,15 @@
                       "changedFields": {
                         "items": {
                           "minLength": 1,
-                          "type": "string",
-                          "x-happier-max-utf8-bytes": 64
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string"
                         },
-                        "maxItems": 8,
                         "type": "array"
                       },
                       "id": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       },
                       "isSystem": {
                         "anyOf": [
@@ -4232,11 +3961,8 @@
                       },
                       "scope": {
                         "minLength": 1,
-                        "type": "string",
-                        "x-happier-max-utf8-bytes": 64
-                      },
-                      "truncated": {
-                        "const": true
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -4334,6 +4060,417 @@
           "plugin"
         ],
         "title": "Read PostHog issue activity"
+      },
+      {
+        "connectedAccountPurposeBindings": [
+          {
+            "path": "instance.binding.account",
+            "purpose": "posthog-api"
+          }
+        ],
+        "dangerLevel": "safe",
+        "description": "Rereads one selected occurrence and returns its captured variables after confirmation.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "posthog-api",
+          "posthog-network"
+        ],
+        "id": "posthog/code-variables",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "frozenRequest": {
+              "additionalProperties": false,
+              "properties": {
+                "filterTestAccounts": {
+                  "const": false
+                },
+                "from": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "include": {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "const": "exception"
+                      },
+                      {
+                        "const": "stacktrace"
+                      },
+                      {
+                        "const": "navigation"
+                      },
+                      {
+                        "const": "correlation"
+                      }
+                    ]
+                  },
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "type": "array"
+                },
+                "issueId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string"
+                },
+                "limit": {
+                  "maximum": 20,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                "offset": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "onlyAppFrames": {
+                  "const": false
+                },
+                "to": {
+                  "anyOf": [
+                    {
+                      "const": null
+                    },
+                    {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "issueId",
+                "from",
+                "to",
+                "filterTestAccounts",
+                "onlyAppFrames",
+                "include",
+                "limit",
+                "offset"
+              ],
+              "type": "object"
+            },
+            "instance": {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "account": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^(?!\\s)[\\s\\S]*\\S$",
+                          "type": "string"
+                        },
+                        "service": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "localId": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "maxLength": 256,
+                              "minLength": 3,
+                              "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "pluginId",
+                            "localId"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "service",
+                        "accountId"
+                      ],
+                      "type": "object"
+                    },
+                    "purpose": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    }
+                  },
+                  "required": [
+                    "purpose",
+                    "account"
+                  ],
+                  "type": "object"
+                },
+                "configuration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "token": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 1024
+                    },
+                    "v": {
+                      "const": 1
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "token"
+                  ],
+                  "type": "object"
+                },
+                "instance": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "localId": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                          "type": "string"
+                        },
+                        "pluginId": {
+                          "maxLength": 256,
+                          "minLength": 3,
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "type": "object"
+                    },
+                    "sourceInstanceId": {
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source",
+                    "sourceInstanceId"
+                  ],
+                  "type": "object"
+                },
+                "localInstanceKey": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "locator": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "displayLabel": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "displayPath": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 512
+                    },
+                    "v": {
+                      "const": 1
+                    },
+                    "webUrl": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 384
+                    }
+                  },
+                  "required": [
+                    "v",
+                    "displayLabel"
+                  ],
+                  "type": "object"
+                },
+                "v": {
+                  "const": 1
+                }
+              },
+              "required": [
+                "v",
+                "instance",
+                "binding",
+                "localInstanceKey",
+                "configuration"
+              ],
+              "type": "object"
+            },
+            "localRef": {
+              "additionalProperties": false,
+              "properties": {
+                "collisionScope": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 192
+                },
+                "entryId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "kindId": {
+                  "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "type": "string",
+                  "x-happier-max-utf8-bytes": 128
+                }
+              },
+              "required": [
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "type": "object"
+            },
+            "selectedOffset": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "selectedUuid": {
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+              "type": "string"
+            },
+            "v": {
+              "const": 1
+            }
+          },
+          "required": [
+            "v",
+            "instance",
+            "localRef",
+            "selectedUuid",
+            "selectedOffset",
+            "frozenRequest"
+          ],
+          "type": "object"
+        },
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "revealed"
+                },
+                "truncated": {
+                  "const": true
+                },
+                "variablesText": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "variablesText"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "failure": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "class": {
+                      "anyOf": [
+                        {
+                          "const": "authentication"
+                        },
+                        {
+                          "const": "permission"
+                        },
+                        {
+                          "const": "rateLimit"
+                        },
+                        {
+                          "const": "transient"
+                        },
+                        {
+                          "const": "unsupportedContract"
+                        },
+                        {
+                          "const": "unknown"
+                        }
+                      ]
+                    },
+                    "code": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "detail": {
+                      "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "type": "string",
+                      "x-happier-max-utf8-bytes": 256
+                    },
+                    "retryNotBeforeMs": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "code"
+                  ],
+                  "type": "object"
+                },
+                "kind": {
+                  "const": "unavailable"
+                }
+              },
+              "required": [
+                "kind",
+                "failure"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "plugin"
+        ],
+        "title": "Reveal captured PostHog code variables"
       },
       {
         "connectedAccountPurposeBindings": [
@@ -5352,8 +5489,7 @@
                     "id": "api-origin",
                     "required": true,
                     "schema": {
-                      "maxLength": 2048,
-                      "minLength": 8,
+                      "minLength": 1,
                       "type": "string"
                     },
                     "secret": false,
@@ -5557,9 +5693,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "{covered} of {total} activity record(s) read.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog recorded more activity than this list could read, so it stops here.",
             "plugins.posthog.ui.activityUnavailable": "Activity is unavailable",
+            "plugins.posthog.ui.addSelectedOccurrence": "Add selected occurrence to message",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Captured local variables can contain credentials, tokens, personal data, and request bodies. They stay in this Stack trace panel and are discarded when you leave it.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Reveal sensitive captured variables?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "These values are visible only in this Stack trace panel and are discarded when you leave it.",
+            "plugins.posthog.ui.codeVariables.loading": "Revealing captured variables",
+            "plugins.posthog.ui.codeVariables.reveal": "Reveal captured variables",
+            "plugins.posthog.ui.codeVariables.title": "Captured variables",
+            "plugins.posthog.ui.codeVariables.truncated": "The provider response exceeded the Action envelope, so the visible value was shortened.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Captured variables are unavailable",
             "plugins.posthog.ui.derivingSessions": "Deriving affected sessions",
             "plugins.posthog.ui.detailOnly": "Read only in the detail plane:",
             "plugins.posthog.ui.differentStatus": "PostHog reports a different status",
+            "plugins.posthog.ui.fact.first-seen": "First seen",
+            "plugins.posthog.ui.fact.function": "Function",
+            "plugins.posthog.ui.fact.last-seen": "Last seen",
+            "plugins.posthog.ui.fact.library": "Library",
+            "plugins.posthog.ui.fact.occurrences": "Occurrences",
+            "plugins.posthog.ui.fact.release": "Release",
+            "plugins.posthog.ui.fact.sessions": "Sessions",
+            "plugins.posthog.ui.fact.severity": "Severity",
+            "plugins.posthog.ui.fact.source": "Source",
+            "plugins.posthog.ui.fact.top-frame": "Top frame",
+            "plugins.posthog.ui.fact.users": "Users",
             "plugins.posthog.ui.facts": "Facts",
             "plugins.posthog.ui.framesLabel": "Frames of the selected sampled occurrence",
             "plugins.posthog.ui.invalidInput": "This issue cannot be shown",
@@ -5568,6 +5724,8 @@
             "plugins.posthog.ui.lastObservation.description": "PostHog could not be read just now, so these facts are the ones this issue was last observed with.",
             "plugins.posthog.ui.loadMoreActivity": "Load more activity",
             "plugins.posthog.ui.loadMoreSamples": "Load more sampled occurrences",
+            "plugins.posthog.ui.metadata.lastSaw": "PostHog last saw",
+            "plugins.posthog.ui.metadata.observed": "Observed",
             "plugins.posthog.ui.noActivity": "No recorded activity",
             "plugins.posthog.ui.noActivity.description": "PostHog has recorded no changes to this issue.",
             "plugins.posthog.ui.noFacts": "No projected facts",
@@ -5590,15 +5748,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog returns a sample of this issue’s exceptions, never all of them. {count} row(s) in this sample could not be read.",
             "plugins.posthog.ui.sampleStackCounts": "This stack belongs to one sampled occurrence, not to the latest one. {application} application frame(s), {other} other frame(s).",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog offered more of this sample than this build could page, so it stops here.",
+            "plugins.posthog.ui.sampledOccurrences": "{count} sampled occurrence(s)",
+            "plugins.posthog.ui.sampledSession": "Sampled session",
             "plugins.posthog.ui.sampledSessions.description": "These are the PostHog sessions the sampled occurrences named. A session here is not a claim that a recording exists.",
             "plugins.posthog.ui.samplesLabel": "Sampled occurrences of this PostHog issue",
             "plugins.posthog.ui.samplesUnavailable": "Sampled occurrences are unavailable",
             "plugins.posthog.ui.selectSampleForStack": "Select a sampled occurrence to read its stack.",
             "plugins.posthog.ui.sessionsLabel": "PostHog sessions this sample named",
+            "plugins.posthog.ui.settings.attention": "Configuration needs attention",
+            "plugins.posthog.ui.settings.cancel": "Cancel",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Choose at least one valid PostHog environment.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Choose a PostHog organization.",
+            "plugins.posthog.ui.settings.description": "Choose an organization, any non-empty subset of its environments, and the scan and detail windows.",
+            "plugins.posthog.ui.settings.detail": "Detail",
+            "plugins.posthog.ui.settings.environments": "Environments",
+            "plugins.posthog.ui.settings.exactWindow": "Exact {name} window",
+            "plugins.posthog.ui.settings.heading": "Choose PostHog environments",
+            "plugins.posthog.ui.settings.invalidWindow": "Use positive whole days or valid ISO 8601 exact window endpoints.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Load more environments",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Load more organizations",
+            "plugins.posthog.ui.settings.organization": "Organization",
+            "plugins.posthog.ui.settings.partial": "Some provider rows or paging information could not be read; the visible choices remain usable.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog could not read this configuration page.",
+            "plugins.posthog.ui.settings.relativeWindow": "Relative {name} window",
+            "plugins.posthog.ui.settings.save": "Save PostHog configuration",
+            "plugins.posthog.ui.settings.scan": "Scan",
+            "plugins.posthog.ui.settings.selectionTooLarge": "This environment selection needs {bytes} UTF-8 bytes and cannot fit one source configuration.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking is unavailable for this selection.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog could not verify Error Tracking access for this selection.",
+            "plugins.posthog.ui.settings.windowDays": "{name} window (days)",
+            "plugins.posthog.ui.settings.windowEnd": "{name} window end (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "{name} window mode",
+            "plugins.posthog.ui.settings.windowStart": "{name} window start (ISO 8601)",
             "plugins.posthog.ui.shortened": "Some details were shortened",
             "plugins.posthog.ui.shortened.description": "Open the issue in PostHog to read the complete text.",
             "plugins.posthog.ui.stackShortened": "This stack was shortened",
-            "plugins.posthog.ui.stackShortened.description": "Open the occurrence in PostHog to read every frame."
+            "plugins.posthog.ui.stackShortened.description": "Open the occurrence in PostHog to read every frame.",
+            "plugins.posthog.ui.tab.activity": "Activity",
+            "plugins.posthog.ui.tab.affectedSessions": "Affected sessions",
+            "plugins.posthog.ui.tab.occurrences": "Occurrences",
+            "plugins.posthog.ui.tab.overview": "Overview",
+            "plugins.posthog.ui.tab.stackTrace": "Stack trace",
+            "plugins.posthog.ui.tabsLabel": "PostHog issue detail"
           }
         },
         {
@@ -5620,9 +5811,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Прочитано записей активности: {covered} из {total}.",
             "plugins.posthog.ui.activityStoppedShort": "В PostHog записано больше активности, чем удалось прочитать в этом списке, поэтому он обрывается здесь.",
             "plugins.posthog.ui.activityUnavailable": "Активность недоступна",
+            "plugins.posthog.ui.addSelectedOccurrence": "Добавить выбранный случай в сообщение",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Захваченные локальные переменные могут содержать учётные данные, токены, персональные данные и тела запросов. Они остаются только на этой вкладке трассировки стека и удаляются при выходе.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Показать конфиденциальные захваченные переменные?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Эти значения видны только на этой вкладке трассировки стека и удаляются при выходе.",
+            "plugins.posthog.ui.codeVariables.loading": "Загрузка захваченных переменных",
+            "plugins.posthog.ui.codeVariables.reveal": "Показать захваченные переменные",
+            "plugins.posthog.ui.codeVariables.title": "Захваченные переменные",
+            "plugins.posthog.ui.codeVariables.truncated": "Ответ провайдера превысил размер конверта действия, поэтому видимое значение было сокращено.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Захваченные переменные недоступны",
             "plugins.posthog.ui.derivingSessions": "Получение затронутых сессий",
             "plugins.posthog.ui.detailOnly": "Только для чтения в области сведений:",
             "plugins.posthog.ui.differentStatus": "PostHog сообщает о другом статусе",
+            "plugins.posthog.ui.fact.first-seen": "Впервые замечено",
+            "plugins.posthog.ui.fact.function": "Функция",
+            "plugins.posthog.ui.fact.last-seen": "Последний раз замечено",
+            "plugins.posthog.ui.fact.library": "Библиотека",
+            "plugins.posthog.ui.fact.occurrences": "Случаи",
+            "plugins.posthog.ui.fact.release": "Релиз",
+            "plugins.posthog.ui.fact.sessions": "Сеансы",
+            "plugins.posthog.ui.fact.severity": "Серьёзность",
+            "plugins.posthog.ui.fact.source": "Источник",
+            "plugins.posthog.ui.fact.top-frame": "Верхний кадр",
+            "plugins.posthog.ui.fact.users": "Пользователи",
             "plugins.posthog.ui.facts": "Факты",
             "plugins.posthog.ui.framesLabel": "Кадры отобранных случаев",
             "plugins.posthog.ui.invalidInput": "Этот вопрос не может быть показан",
@@ -5631,6 +5842,8 @@
             "plugins.posthog.ui.lastObservation.description": "PostHog не может быть прочитан сейчас, поэтому эти факты являются теми, с которыми последний раз был наблюден этот вопрос.",
             "plugins.posthog.ui.loadMoreActivity": "Загрузить больше активности",
             "plugins.posthog.ui.loadMoreSamples": "Загрузить больше отобранных случаев",
+            "plugins.posthog.ui.metadata.lastSaw": "Последний показ в PostHog",
+            "plugins.posthog.ui.metadata.observed": "Наблюдалось",
             "plugins.posthog.ui.noActivity": "Нет записанной активности",
             "plugins.posthog.ui.noActivity.description": "PostHog не записал никаких изменений для этого вопроса.",
             "plugins.posthog.ui.noFacts": "Нет предполагаемых фактов",
@@ -5653,15 +5866,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog возвращает выборку исключений этой ошибки, а не все исключения. Не удалось прочитать строк: {count}.",
             "plugins.posthog.ui.sampleStackCounts": "Этот стек относится к одному событию из выборки, а не к последнему событию. Кадров приложения: {application}, других кадров: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog предложил больше событий этой выборки, чем удалось перелистать, поэтому она обрывается здесь.",
+            "plugins.posthog.ui.sampledOccurrences": "Событий в выборке: {count}",
+            "plugins.posthog.ui.sampledSession": "Сеанс из выборки",
             "plugins.posthog.ui.sampledSessions.description": "Это сеансы PostHog, указанные выборочными событиями. Наличие сеанса здесь не означает, что существует запись.",
             "plugins.posthog.ui.samplesLabel": "Отобранные случаи этого вопроса PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Отобранные случаи недоступны",
             "plugins.posthog.ui.selectSampleForStack": "Выберите событие из выборки, чтобы прочитать его стек.",
             "plugins.posthog.ui.sessionsLabel": "Сессии PostHog, которыми был именован этот образец",
+            "plugins.posthog.ui.settings.attention": "Конфигурация требует внимания",
+            "plugins.posthog.ui.settings.cancel": "Отмена",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Выберите хотя бы одну допустимую среду PostHog.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Выберите организацию PostHog.",
+            "plugins.posthog.ui.settings.description": "Выберите организацию, любое непустое подмножество её сред, а также окна сканирования и сведений.",
+            "plugins.posthog.ui.settings.detail": "Сведения",
+            "plugins.posthog.ui.settings.environments": "Среды",
+            "plugins.posthog.ui.settings.exactWindow": "Точное окно «{name}»",
+            "plugins.posthog.ui.settings.heading": "Выберите среды PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Укажите положительное целое число дней или допустимые точные границы окна ISO 8601.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Загрузить ещё среды",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Загрузить ещё организации",
+            "plugins.posthog.ui.settings.organization": "Организация",
+            "plugins.posthog.ui.settings.partial": "Некоторые строки провайдера или данные пагинации прочитать не удалось; видимые варианты по-прежнему доступны.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog не удалось прочитать эту страницу конфигурации.",
+            "plugins.posthog.ui.settings.relativeWindow": "Относительное окно «{name}»",
+            "plugins.posthog.ui.settings.save": "Сохранить конфигурацию PostHog",
+            "plugins.posthog.ui.settings.scan": "Сканирование",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Для выбранных сред требуется {bytes} байт UTF-8, поэтому они не помещаются в одну конфигурацию источника.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking недоступен для выбранных сред.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog не удалось проверить доступ к Error Tracking для выбранных сред.",
+            "plugins.posthog.ui.settings.windowDays": "Окно «{name}» (дни)",
+            "plugins.posthog.ui.settings.windowEnd": "Конец окна «{name}» (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Режим окна «{name}»",
+            "plugins.posthog.ui.settings.windowStart": "Начало окна «{name}» (ISO 8601)",
             "plugins.posthog.ui.shortened": "Некоторые детали были сокращены",
             "plugins.posthog.ui.shortened.description": "Откройте вопрос в PostHog, чтобы прочитать полный текст.",
             "plugins.posthog.ui.stackShortened": "Эта трасса была сокращена",
-            "plugins.posthog.ui.stackShortened.description": "Откройте случай в PostHog, чтобы прочитать все кадры."
+            "plugins.posthog.ui.stackShortened.description": "Откройте случай в PostHog, чтобы прочитать все кадры.",
+            "plugins.posthog.ui.tab.activity": "Активность",
+            "plugins.posthog.ui.tab.affectedSessions": "Затронутые сеансы",
+            "plugins.posthog.ui.tab.occurrences": "События",
+            "plugins.posthog.ui.tab.overview": "Обзор",
+            "plugins.posthog.ui.tab.stackTrace": "Трассировка стека",
+            "plugins.posthog.ui.tabsLabel": "Сведения о проблеме PostHog"
           }
         },
         {
@@ -5683,9 +5929,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Odczytane rekordy aktywności: {covered} z {total}.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog zarejestrował więcej aktywności, niż ta lista zdołała odczytać, więc kończy się w tym miejscu.",
             "plugins.posthog.ui.activityUnavailable": "Aktywność nie jest dostępna",
+            "plugins.posthog.ui.addSelectedOccurrence": "Dodaj wybrane wystąpienie do wiadomości",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Przechwycone zmienne lokalne mogą zawierać dane logowania, tokeny, dane osobowe i treści żądań. Pozostają tylko na tej karcie stosu i są usuwane po jej opuszczeniu.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Pokazać poufne przechwycone zmienne?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Te wartości są widoczne tylko na tej karcie stosu i są usuwane po jej opuszczeniu.",
+            "plugins.posthog.ui.codeVariables.loading": "Odczytywanie przechwyconych zmiennych",
+            "plugins.posthog.ui.codeVariables.reveal": "Pokaż przechwycone zmienne",
+            "plugins.posthog.ui.codeVariables.title": "Przechwycone zmienne",
+            "plugins.posthog.ui.codeVariables.truncated": "Odpowiedź dostawcy przekroczyła rozmiar koperty akcji, dlatego widoczna wartość została skrócona.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Przechwycone zmienne są niedostępne",
             "plugins.posthog.ui.derivingSessions": "Wyznaczanie afektywnych sesji",
             "plugins.posthog.ui.detailOnly": "Tylko do odczytu w widoku szczegółów:",
             "plugins.posthog.ui.differentStatus": "PostHog zgłasza inny stan",
+            "plugins.posthog.ui.fact.first-seen": "Pierwsze wystąpienie",
+            "plugins.posthog.ui.fact.function": "Funkcja",
+            "plugins.posthog.ui.fact.last-seen": "Ostatnie wystąpienie",
+            "plugins.posthog.ui.fact.library": "Biblioteka",
+            "plugins.posthog.ui.fact.occurrences": "Wystąpienia",
+            "plugins.posthog.ui.fact.release": "Wydanie",
+            "plugins.posthog.ui.fact.sessions": "Sesje",
+            "plugins.posthog.ui.fact.severity": "Ważność",
+            "plugins.posthog.ui.fact.source": "Źródło",
+            "plugins.posthog.ui.fact.top-frame": "Najwyższa ramka",
+            "plugins.posthog.ui.fact.users": "Użytkownicy",
             "plugins.posthog.ui.facts": "Fakty",
             "plugins.posthog.ui.framesLabel": "Ramki wybranego prób",
             "plugins.posthog.ui.invalidInput": "Ta kwestia nie może być wyświetlona",
@@ -5694,6 +5960,8 @@
             "plugins.posthog.ui.lastObservation.description": "PostHog nie mógł być odczytany, więc te fakty są tymi, z którymi ostatnio była obserwowana ta kwestia.",
             "plugins.posthog.ui.loadMoreActivity": "Załaduj więcej aktywności",
             "plugins.posthog.ui.loadMoreSamples": "Załaduj więcej próbek obserwacji",
+            "plugins.posthog.ui.metadata.lastSaw": "Ostatnio widziane przez PostHog",
+            "plugins.posthog.ui.metadata.observed": "Zaobserwowano",
             "plugins.posthog.ui.noActivity": "Brak nagranych aktywności",
             "plugins.posthog.ui.noActivity.description": "PostHog nie wprowadził zmian w tej kwestii.",
             "plugins.posthog.ui.noFacts": "Brak przewidzianych faktów",
@@ -5716,15 +5984,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog zwraca próbkę wyjątków tego zgłoszenia, a nie wszystkie wyjątki. Nie udało się odczytać wierszy: {count}.",
             "plugins.posthog.ui.sampleStackCounts": "Ten stos należy do jednego próbkowanego wystąpienia, a nie do najnowszego. Ramki aplikacji: {application}, pozostałe ramki: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog udostępnił więcej zdarzeń tej próbki, niż ta wersja zdołała przewinąć, więc kończy się w tym miejscu.",
+            "plugins.posthog.ui.sampledOccurrences": "Wystąpienia w próbce: {count}",
+            "plugins.posthog.ui.sampledSession": "Sesja z próbki",
             "plugins.posthog.ui.sampledSessions.description": "To sesje PostHog wskazane przez próbkowane zdarzenia. Obecność sesji tutaj nie oznacza, że istnieje nagranie.",
             "plugins.posthog.ui.samplesLabel": "Próby obserwacji tej kwestii PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Próby obserwacji nie są dostępne",
             "plugins.posthog.ui.selectSampleForStack": "Wybierz próbkowane wystąpienie, aby odczytać jego stos.",
             "plugins.posthog.ui.sessionsLabel": "Sesje PostHog tej proby nazwa",
+            "plugins.posthog.ui.settings.attention": "Konfiguracja wymaga uwagi",
+            "plugins.posthog.ui.settings.cancel": "Anuluj",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Wybierz co najmniej jedno prawidłowe środowisko PostHog.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Wybierz organizację PostHog.",
+            "plugins.posthog.ui.settings.description": "Wybierz organizację, dowolny niepusty podzbiór jej środowisk oraz okna skanowania i szczegółów.",
+            "plugins.posthog.ui.settings.detail": "Szczegóły",
+            "plugins.posthog.ui.settings.environments": "Środowiska",
+            "plugins.posthog.ui.settings.exactWindow": "Dokładne okno: {name}",
+            "plugins.posthog.ui.settings.heading": "Wybierz środowiska PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Użyj dodatniej całkowitej liczby dni lub prawidłowych dokładnych granic okna ISO 8601.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Wczytaj więcej środowisk",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Wczytaj więcej organizacji",
+            "plugins.posthog.ui.settings.organization": "Organizacja",
+            "plugins.posthog.ui.settings.partial": "Nie udało się odczytać części wierszy dostawcy lub informacji stronicowania; widoczne opcje nadal są dostępne.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog nie mógł odczytać tej strony konfiguracji.",
+            "plugins.posthog.ui.settings.relativeWindow": "Względne okno: {name}",
+            "plugins.posthog.ui.settings.save": "Zapisz konfigurację PostHog",
+            "plugins.posthog.ui.settings.scan": "Skanowanie",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Wybór środowisk wymaga {bytes} bajtów UTF-8 i nie mieści się w jednej konfiguracji źródła.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking jest niedostępny dla tego wyboru.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog nie mógł zweryfikować dostępu do Error Tracking dla tego wyboru.",
+            "plugins.posthog.ui.settings.windowDays": "Okno {name} (dni)",
+            "plugins.posthog.ui.settings.windowEnd": "Koniec okna {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Tryb okna: {name}",
+            "plugins.posthog.ui.settings.windowStart": "Początek okna {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Niektóre szczegóły zostały skrócone",
             "plugins.posthog.ui.shortened.description": "Otwórz kwestię w PostHog, aby odczytać pełny tekst.",
             "plugins.posthog.ui.stackShortened": "Ten stos został skrócony",
-            "plugins.posthog.ui.stackShortened.description": "Otwórz obserwację w PostHog, aby odczytać każdy ramkę."
+            "plugins.posthog.ui.stackShortened.description": "Otwórz obserwację w PostHog, aby odczytać każdy ramkę.",
+            "plugins.posthog.ui.tab.activity": "Aktywność",
+            "plugins.posthog.ui.tab.affectedSessions": "Sesje, których dotyczy problem",
+            "plugins.posthog.ui.tab.occurrences": "Wystąpienia",
+            "plugins.posthog.ui.tab.overview": "Przegląd",
+            "plugins.posthog.ui.tab.stackTrace": "Ślad stosu",
+            "plugins.posthog.ui.tabsLabel": "Szczegóły problemu PostHog"
           }
         },
         {
@@ -5746,9 +6047,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Registros de actividad leídos: {covered} de {total}.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog registró más actividad de la que esta lista pudo leer, así que se detiene aquí.",
             "plugins.posthog.ui.activityUnavailable": "La actividad no está disponible",
+            "plugins.posthog.ui.addSelectedOccurrence": "Añadir el caso seleccionado al mensaje",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Las variables locales capturadas pueden contener credenciales, tokens, datos personales y cuerpos de solicitudes. Solo permanecen en esta pestaña de la pila y se descartan al salir.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "¿Mostrar variables capturadas sensibles?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Estos valores solo son visibles en esta pestaña de la pila y se descartan al salir.",
+            "plugins.posthog.ui.codeVariables.loading": "Leyendo variables capturadas",
+            "plugins.posthog.ui.codeVariables.reveal": "Mostrar variables capturadas",
+            "plugins.posthog.ui.codeVariables.title": "Variables capturadas",
+            "plugins.posthog.ui.codeVariables.truncated": "La respuesta del proveedor superó el sobre de la acción, por lo que se acortó el valor visible.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Las variables capturadas no están disponibles",
             "plugins.posthog.ui.derivingSessions": "Derivando sesiones afectadas",
             "plugins.posthog.ui.detailOnly": "Solo lectura en la vista de detalles:",
             "plugins.posthog.ui.differentStatus": "PostHog informa un estado diferente",
+            "plugins.posthog.ui.fact.first-seen": "Visto por primera vez",
+            "plugins.posthog.ui.fact.function": "Función",
+            "plugins.posthog.ui.fact.last-seen": "Visto por última vez",
+            "plugins.posthog.ui.fact.library": "Biblioteca",
+            "plugins.posthog.ui.fact.occurrences": "Casos",
+            "plugins.posthog.ui.fact.release": "Versión",
+            "plugins.posthog.ui.fact.sessions": "Sesiones",
+            "plugins.posthog.ui.fact.severity": "Gravedad",
+            "plugins.posthog.ui.fact.source": "Origen",
+            "plugins.posthog.ui.fact.top-frame": "Marco superior",
+            "plugins.posthog.ui.fact.users": "Usuarios",
             "plugins.posthog.ui.facts": "Hechos",
             "plugins.posthog.ui.framesLabel": "Cuadros de la ocurrencia muestreada seleccionada",
             "plugins.posthog.ui.invalidInput": "Esta incidencia no puede mostrarse",
@@ -5757,6 +6078,8 @@
             "plugins.posthog.ui.lastObservation.description": "PostHog no pudo leerse recientemente, por lo que estas son las mismas hechos con los que se observó esta incidencia por última vez.",
             "plugins.posthog.ui.loadMoreActivity": "Cargar más actividad",
             "plugins.posthog.ui.loadMoreSamples": "Cargar más ocurrencias muestreadas",
+            "plugins.posthog.ui.metadata.lastSaw": "Última vez visto por PostHog",
+            "plugins.posthog.ui.metadata.observed": "Observado",
             "plugins.posthog.ui.noActivity": "No hay actividad registrada",
             "plugins.posthog.ui.noActivity.description": "PostHog no ha registrado cambios en esta incidencia.",
             "plugins.posthog.ui.noFacts": "No hay hechos proyectados",
@@ -5779,15 +6102,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog devuelve una muestra de las excepciones de esta incidencia, no todas. No se pudieron leer {count} fila(s) de la muestra.",
             "plugins.posthog.ui.sampleStackCounts": "Esta pila pertenece a una ocurrencia muestreada, no a la más reciente. Marcos de aplicación: {application}; otros marcos: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog ofreció más elementos de esta muestra de los que esta versión pudo paginar, así que se detiene aquí.",
+            "plugins.posthog.ui.sampledOccurrences": "Eventos de la muestra: {count}",
+            "plugins.posthog.ui.sampledSession": "Sesión de la muestra",
             "plugins.posthog.ui.sampledSessions.description": "Estas son las sesiones de PostHog mencionadas por las ocurrencias muestreadas. Que una sesión aparezca aquí no significa que exista una grabación.",
             "plugins.posthog.ui.samplesLabel": "Ocurrencias muestreadas de esta incidencia de PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Las ocurrencias muestreadas no están disponibles",
             "plugins.posthog.ui.selectSampleForStack": "Seleccione una ocurrencia muestreada para leer su pila.",
             "plugins.posthog.ui.sessionsLabel": "Sesiones de PostHog nombradas en esta muestra",
+            "plugins.posthog.ui.settings.attention": "La configuración requiere atención",
+            "plugins.posthog.ui.settings.cancel": "Cancelar",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Elige al menos un entorno de PostHog válido.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Elige una organización de PostHog.",
+            "plugins.posthog.ui.settings.description": "Elige una organización, cualquier subconjunto no vacío de sus entornos y las ventanas de análisis y detalle.",
+            "plugins.posthog.ui.settings.detail": "Detalle",
+            "plugins.posthog.ui.settings.environments": "Entornos",
+            "plugins.posthog.ui.settings.exactWindow": "Ventana exacta de {name}",
+            "plugins.posthog.ui.settings.heading": "Elegir entornos de PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Usa días enteros positivos o límites de ventana exactos ISO 8601 válidos.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Cargar más entornos",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Cargar más organizaciones",
+            "plugins.posthog.ui.settings.organization": "Organización",
+            "plugins.posthog.ui.settings.partial": "No se pudieron leer algunas filas del proveedor o datos de paginación; las opciones visibles siguen disponibles.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog no pudo leer esta página de configuración.",
+            "plugins.posthog.ui.settings.relativeWindow": "Ventana relativa de {name}",
+            "plugins.posthog.ui.settings.save": "Guardar configuración de PostHog",
+            "plugins.posthog.ui.settings.scan": "Análisis",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Esta selección de entornos necesita {bytes} bytes UTF-8 y no cabe en una configuración de origen.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking no está disponible para esta selección.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog no pudo verificar el acceso a Error Tracking para esta selección.",
+            "plugins.posthog.ui.settings.windowDays": "Ventana de {name} (días)",
+            "plugins.posthog.ui.settings.windowEnd": "Fin de la ventana de {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Modo de ventana de {name}",
+            "plugins.posthog.ui.settings.windowStart": "Inicio de la ventana de {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Algunos detalles fueron abreviados",
             "plugins.posthog.ui.shortened.description": "Abra esta incidencia en PostHog para leer el texto completo.",
             "plugins.posthog.ui.stackShortened": "Esta pila fue abreviada",
-            "plugins.posthog.ui.stackShortened.description": "Abra la ocurrencia en PostHog para leer todos los cuadros."
+            "plugins.posthog.ui.stackShortened.description": "Abra la ocurrencia en PostHog para leer todos los cuadros.",
+            "plugins.posthog.ui.tab.activity": "Actividad",
+            "plugins.posthog.ui.tab.affectedSessions": "Sesiones afectadas",
+            "plugins.posthog.ui.tab.occurrences": "Eventos",
+            "plugins.posthog.ui.tab.overview": "Resumen",
+            "plugins.posthog.ui.tab.stackTrace": "Traza de pila",
+            "plugins.posthog.ui.tabsLabel": "Detalles de la incidencia de PostHog"
           }
         },
         {
@@ -5809,9 +6165,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Enregistrements d’activité lus : {covered} sur {total}.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog a enregistré plus d’activité que cette liste n’a pu en lire ; elle s’arrête donc ici.",
             "plugins.posthog.ui.activityUnavailable": "Les activités ne sont pas disponibles",
+            "plugins.posthog.ui.addSelectedOccurrence": "Ajouter l’occurrence sélectionnée au message",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locales capturées peuvent contenir des identifiants, des jetons, des données personnelles et des corps de requête. Elles restent dans cet onglet de pile et sont supprimées lorsque vous le quittez.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Afficher les variables capturées sensibles ?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Ces valeurs ne sont visibles que dans cet onglet de pile et sont supprimées lorsque vous le quittez.",
+            "plugins.posthog.ui.codeVariables.loading": "Lecture des variables capturées",
+            "plugins.posthog.ui.codeVariables.reveal": "Afficher les variables capturées",
+            "plugins.posthog.ui.codeVariables.title": "Variables capturées",
+            "plugins.posthog.ui.codeVariables.truncated": "La réponse du fournisseur dépassait l’enveloppe de l’action ; la valeur visible a donc été raccourcie.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Les variables capturées sont indisponibles",
             "plugins.posthog.ui.derivingSessions": "Déduit les sessions affectées",
             "plugins.posthog.ui.detailOnly": "Lecture seule dans la vue détaillée :",
             "plugins.posthog.ui.differentStatus": "PostHog signale un statut différent",
+            "plugins.posthog.ui.fact.first-seen": "Première occurrence",
+            "plugins.posthog.ui.fact.function": "Fonction",
+            "plugins.posthog.ui.fact.last-seen": "Dernière occurrence",
+            "plugins.posthog.ui.fact.library": "Bibliothèque",
+            "plugins.posthog.ui.fact.occurrences": "Occurrences",
+            "plugins.posthog.ui.fact.release": "Version",
+            "plugins.posthog.ui.fact.sessions": "Sessions",
+            "plugins.posthog.ui.fact.severity": "Gravité",
+            "plugins.posthog.ui.fact.source": "Source",
+            "plugins.posthog.ui.fact.top-frame": "Cadre supérieur",
+            "plugins.posthog.ui.fact.users": "Utilisateurs",
             "plugins.posthog.ui.facts": "Faits",
             "plugins.posthog.ui.framesLabel": "Trames de l'occurrence échantillonnée sélectionnée",
             "plugins.posthog.ui.invalidInput": "Cette anomalie ne peut pas être affichée",
@@ -5820,6 +6196,8 @@
             "plugins.posthog.ui.lastObservation.description": "PostHog n'a pas pu être lu à ce moment, donc ces faits sont ceux dont cette anomalie a été observée la dernière fois.",
             "plugins.posthog.ui.loadMoreActivity": "Charger plus d'activités",
             "plugins.posthog.ui.loadMoreSamples": "Charger plus d'occurrences échantillonnées",
+            "plugins.posthog.ui.metadata.lastSaw": "Dernière détection par PostHog",
+            "plugins.posthog.ui.metadata.observed": "Observé",
             "plugins.posthog.ui.noActivity": "Aucune activité enregistrée",
             "plugins.posthog.ui.noActivity.description": "PostHog n'a enregistré aucune modification à cette anomalie.",
             "plugins.posthog.ui.noFacts": "Aucun faits projectés",
@@ -5842,15 +6220,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog renvoie un échantillon des exceptions de cette anomalie, jamais leur totalité. {count} ligne(s) de cet échantillon n’ont pas pu être lues.",
             "plugins.posthog.ui.sampleStackCounts": "Cette pile appartient à une occurrence échantillonnée, pas à la plus récente. Cadres d’application : {application} ; autres cadres : {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog a proposé plus d’éléments de cet échantillon que cette version n’a pu en parcourir ; il s’arrête donc ici.",
+            "plugins.posthog.ui.sampledOccurrences": "Occurrences échantillonnées : {count}",
+            "plugins.posthog.ui.sampledSession": "Session de l’échantillon",
             "plugins.posthog.ui.sampledSessions.description": "Voici les sessions PostHog mentionnées par les occurrences échantillonnées. La présence d’une session ici ne signifie pas qu’un enregistrement existe.",
             "plugins.posthog.ui.samplesLabel": "Occurrences échantillonnées de cette anomalie PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Les occurrences échantillonnées ne sont pas disponibles",
             "plugins.posthog.ui.selectSampleForStack": "Sélectionnez une occurrence échantillonnée pour lire sa pile.",
             "plugins.posthog.ui.sessionsLabel": "Sessions PostHog nommées dans cet échantillon",
+            "plugins.posthog.ui.settings.attention": "La configuration nécessite votre attention",
+            "plugins.posthog.ui.settings.cancel": "Annuler",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Choisissez au moins un environnement PostHog valide.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Choisissez une organisation PostHog.",
+            "plugins.posthog.ui.settings.description": "Choisissez une organisation, un sous-ensemble non vide de ses environnements et les fenêtres d’analyse et de détail.",
+            "plugins.posthog.ui.settings.detail": "Détail",
+            "plugins.posthog.ui.settings.environments": "Environnements",
+            "plugins.posthog.ui.settings.exactWindow": "Fenêtre exacte {name}",
+            "plugins.posthog.ui.settings.heading": "Choisir des environnements PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Utilisez un nombre entier positif de jours ou des bornes exactes ISO 8601 valides.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Charger plus d’environnements",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Charger plus d’organisations",
+            "plugins.posthog.ui.settings.organization": "Organisation",
+            "plugins.posthog.ui.settings.partial": "Certaines lignes du fournisseur ou informations de pagination n’ont pas pu être lues ; les choix visibles restent utilisables.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog n’a pas pu lire cette page de configuration.",
+            "plugins.posthog.ui.settings.relativeWindow": "Fenêtre relative {name}",
+            "plugins.posthog.ui.settings.save": "Enregistrer la configuration PostHog",
+            "plugins.posthog.ui.settings.scan": "Analyse",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Cette sélection d’environnements nécessite {bytes} octets UTF-8 et ne tient pas dans une configuration de source.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking est indisponible pour cette sélection.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog n’a pas pu vérifier l’accès à Error Tracking pour cette sélection.",
+            "plugins.posthog.ui.settings.windowDays": "Fenêtre {name} (jours)",
+            "plugins.posthog.ui.settings.windowEnd": "Fin de la fenêtre {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Mode de fenêtre {name}",
+            "plugins.posthog.ui.settings.windowStart": "Début de la fenêtre {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Certains détails ont été raccourcis",
             "plugins.posthog.ui.shortened.description": "Ouvrez cette anomalie dans PostHog pour lire le texte complet.",
             "plugins.posthog.ui.stackShortened": "Cet empilement a été raccourci",
-            "plugins.posthog.ui.stackShortened.description": "Ouvrez cette occurrence dans PostHog pour lire chaque trame."
+            "plugins.posthog.ui.stackShortened.description": "Ouvrez cette occurrence dans PostHog pour lire chaque trame.",
+            "plugins.posthog.ui.tab.activity": "Activité",
+            "plugins.posthog.ui.tab.affectedSessions": "Sessions affectées",
+            "plugins.posthog.ui.tab.occurrences": "Occurrences",
+            "plugins.posthog.ui.tab.overview": "Vue d’ensemble",
+            "plugins.posthog.ui.tab.stackTrace": "Trace de pile",
+            "plugins.posthog.ui.tabsLabel": "Détails du problème PostHog"
           }
         },
         {
@@ -5872,9 +6283,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Record attività letti: {covered} di {total}.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog ha registrato più attività di quanta questo elenco sia riuscito a leggere, quindi si ferma qui.",
             "plugins.posthog.ui.activityUnavailable": "L'attività non è disponibile",
+            "plugins.posthog.ui.addSelectedOccurrence": "Aggiungi l’occorrenza selezionata al messaggio",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Le variabili locali acquisite possono contenere credenziali, token, dati personali e corpi delle richieste. Restano solo in questa scheda dello stack e vengono eliminate quando la lasci.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Mostrare le variabili acquisite sensibili?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Questi valori sono visibili solo in questa scheda dello stack e vengono eliminati quando la lasci.",
+            "plugins.posthog.ui.codeVariables.loading": "Lettura delle variabili acquisite",
+            "plugins.posthog.ui.codeVariables.reveal": "Mostra variabili acquisite",
+            "plugins.posthog.ui.codeVariables.title": "Variabili acquisite",
+            "plugins.posthog.ui.codeVariables.truncated": "La risposta del provider ha superato l’involucro dell’azione, quindi il valore visibile è stato abbreviato.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Le variabili acquisite non sono disponibili",
             "plugins.posthog.ui.derivingSessions": "Derivazione delle sessioni coinvolte",
             "plugins.posthog.ui.detailOnly": "Sola lettura nella vista dei dettagli:",
             "plugins.posthog.ui.differentStatus": "PostHog segnala uno stato diverso",
+            "plugins.posthog.ui.fact.first-seen": "Prima occorrenza",
+            "plugins.posthog.ui.fact.function": "Funzione",
+            "plugins.posthog.ui.fact.last-seen": "Ultima occorrenza",
+            "plugins.posthog.ui.fact.library": "Libreria",
+            "plugins.posthog.ui.fact.occurrences": "Occorrenze",
+            "plugins.posthog.ui.fact.release": "Versione",
+            "plugins.posthog.ui.fact.sessions": "Sessioni",
+            "plugins.posthog.ui.fact.severity": "Gravità",
+            "plugins.posthog.ui.fact.source": "Origine",
+            "plugins.posthog.ui.fact.top-frame": "Frame superiore",
+            "plugins.posthog.ui.fact.users": "Utenti",
             "plugins.posthog.ui.facts": "Fatti",
             "plugins.posthog.ui.framesLabel": "Quadri dell'occorrenza campione selezionata",
             "plugins.posthog.ui.invalidInput": "Questa questione non può essere mostrata",
@@ -5883,6 +6314,8 @@
             "plugins.posthog.ui.lastObservation.description": "Non è stato possibile leggere PostHog ora, quindi questi fatti sono quelli con cui questa questione era stata osservata l'ultima volta.",
             "plugins.posthog.ui.loadMoreActivity": "Carica di più attività",
             "plugins.posthog.ui.loadMoreSamples": "Carica più occorrenze campionate",
+            "plugins.posthog.ui.metadata.lastSaw": "Ultima rilevazione di PostHog",
+            "plugins.posthog.ui.metadata.observed": "Osservato",
             "plugins.posthog.ui.noActivity": "Nessuna attività registrata",
             "plugins.posthog.ui.noActivity.description": "PostHog non ha registrato modifiche a questa questione.",
             "plugins.posthog.ui.noFacts": "Nessun fato proiettato",
@@ -5905,15 +6338,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog restituisce un campione delle eccezioni di questo problema, non tutte. Impossibile leggere {count} riga/righe del campione.",
             "plugins.posthog.ui.sampleStackCounts": "Questo stack appartiene a una singola occorrenza campionata, non alla più recente. Frame dell’applicazione: {application}; altri frame: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog ha offerto più elementi di questo campione di quanti questa versione sia riuscita a sfogliare, quindi si ferma qui.",
+            "plugins.posthog.ui.sampledOccurrences": "Occorrenze campionate: {count}",
+            "plugins.posthog.ui.sampledSession": "Sessione del campione",
             "plugins.posthog.ui.sampledSessions.description": "Queste sono le sessioni PostHog indicate dalle occorrenze campionate. La presenza di una sessione qui non implica che esista una registrazione.",
             "plugins.posthog.ui.samplesLabel": "Occorrenze campionate di questa questione PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Le occorrenze campionate non sono disponibili",
             "plugins.posthog.ui.selectSampleForStack": "Seleziona un’occorrenza campionata per leggerne lo stack.",
             "plugins.posthog.ui.sessionsLabel": "Sessioni PostHog di questa campagna denominate",
+            "plugins.posthog.ui.settings.attention": "La configurazione richiede attenzione",
+            "plugins.posthog.ui.settings.cancel": "Annulla",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Scegli almeno un ambiente PostHog valido.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Scegli un’organizzazione PostHog.",
+            "plugins.posthog.ui.settings.description": "Scegli un’organizzazione, un sottoinsieme non vuoto dei suoi ambienti e le finestre di scansione e dettaglio.",
+            "plugins.posthog.ui.settings.detail": "Dettagli",
+            "plugins.posthog.ui.settings.environments": "Ambienti",
+            "plugins.posthog.ui.settings.exactWindow": "Finestra esatta {name}",
+            "plugins.posthog.ui.settings.heading": "Scegli gli ambienti PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Usa giorni interi positivi o estremi esatti ISO 8601 validi.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Carica altri ambienti",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Carica altre organizzazioni",
+            "plugins.posthog.ui.settings.organization": "Organizzazione",
+            "plugins.posthog.ui.settings.partial": "Non è stato possibile leggere alcune righe del provider o informazioni di paginazione; le opzioni visibili restano utilizzabili.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog non ha potuto leggere questa pagina di configurazione.",
+            "plugins.posthog.ui.settings.relativeWindow": "Finestra relativa {name}",
+            "plugins.posthog.ui.settings.save": "Salva configurazione PostHog",
+            "plugins.posthog.ui.settings.scan": "Scansione",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Questa selezione di ambienti richiede {bytes} byte UTF-8 e non entra in una configurazione di origine.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking non è disponibile per questa selezione.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog non ha potuto verificare l’accesso a Error Tracking per questa selezione.",
+            "plugins.posthog.ui.settings.windowDays": "Finestra {name} (giorni)",
+            "plugins.posthog.ui.settings.windowEnd": "Fine finestra {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Modalità finestra {name}",
+            "plugins.posthog.ui.settings.windowStart": "Inizio finestra {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Alcuni dettagli sono stati abbreviati",
             "plugins.posthog.ui.shortened.description": "Apri la questione in PostHog per leggere il testo completo.",
             "plugins.posthog.ui.stackShortened": "Questo stack è stato abbreviato",
-            "plugins.posthog.ui.stackShortened.description": "Apri l'occorrenza in PostHog per leggere ogni quadro."
+            "plugins.posthog.ui.stackShortened.description": "Apri l'occorrenza in PostHog per leggere ogni quadro.",
+            "plugins.posthog.ui.tab.activity": "Attività",
+            "plugins.posthog.ui.tab.affectedSessions": "Sessioni interessate",
+            "plugins.posthog.ui.tab.occurrences": "Occorrenze",
+            "plugins.posthog.ui.tab.overview": "Panoramica",
+            "plugins.posthog.ui.tab.stackTrace": "Analisi dello stack",
+            "plugins.posthog.ui.tabsLabel": "Dettagli del problema PostHog"
           }
         },
         {
@@ -5935,9 +6401,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Registros de atividade lidos: {covered} de {total}.",
             "plugins.posthog.ui.activityStoppedShort": "O PostHog registou mais atividade do que esta lista conseguiu ler, por isso termina aqui.",
             "plugins.posthog.ui.activityUnavailable": "A atividade não está disponível",
+            "plugins.posthog.ui.addSelectedOccurrence": "Adicionar a ocorrência selecionada à mensagem",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "As variáveis locais capturadas podem conter credenciais, tokens, dados pessoais e corpos de pedidos. Permanecem apenas neste separador da pilha e são descartadas ao sair.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Mostrar variáveis capturadas sensíveis?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Estes valores só ficam visíveis neste separador da pilha e são descartados ao sair.",
+            "plugins.posthog.ui.codeVariables.loading": "A ler variáveis capturadas",
+            "plugins.posthog.ui.codeVariables.reveal": "Mostrar variáveis capturadas",
+            "plugins.posthog.ui.codeVariables.title": "Variáveis capturadas",
+            "plugins.posthog.ui.codeVariables.truncated": "A resposta do fornecedor excedeu o invólucro da ação, por isso o valor visível foi abreviado.",
+            "plugins.posthog.ui.codeVariables.unavailable": "As variáveis capturadas não estão disponíveis",
             "plugins.posthog.ui.derivingSessions": "Derivando sessões afetadas",
             "plugins.posthog.ui.detailOnly": "Somente leitura na vista de detalhes:",
             "plugins.posthog.ui.differentStatus": "O PostHog relata um status diferente",
+            "plugins.posthog.ui.fact.first-seen": "Visto pela primeira vez",
+            "plugins.posthog.ui.fact.function": "Função",
+            "plugins.posthog.ui.fact.last-seen": "Visto pela última vez",
+            "plugins.posthog.ui.fact.library": "Biblioteca",
+            "plugins.posthog.ui.fact.occurrences": "Ocorrências",
+            "plugins.posthog.ui.fact.release": "Versão",
+            "plugins.posthog.ui.fact.sessions": "Sessões",
+            "plugins.posthog.ui.fact.severity": "Gravidade",
+            "plugins.posthog.ui.fact.source": "Origem",
+            "plugins.posthog.ui.fact.top-frame": "Frame superior",
+            "plugins.posthog.ui.fact.users": "Utilizadores",
             "plugins.posthog.ui.facts": "Fatos",
             "plugins.posthog.ui.framesLabel": "Quadros da ocorrência amostrada selecionada",
             "plugins.posthog.ui.invalidInput": "Esta questão não pode ser exibida",
@@ -5946,6 +6432,8 @@
             "plugins.posthog.ui.lastObservation.description": "O PostHog não pôde ser lido recentemente, então essas são as fatos com as quais essa questão foi observada pela última vez.",
             "plugins.posthog.ui.loadMoreActivity": "Carregar mais atividade",
             "plugins.posthog.ui.loadMoreSamples": "Carregar mais ocorrências amostradas",
+            "plugins.posthog.ui.metadata.lastSaw": "Visto pela última vez pelo PostHog",
+            "plugins.posthog.ui.metadata.observed": "Observado",
             "plugins.posthog.ui.noActivity": "Nenhuma atividade registrada",
             "plugins.posthog.ui.noActivity.description": "O PostHog não registrou alterações nesta questão.",
             "plugins.posthog.ui.noFacts": "Nenhum fato projetado",
@@ -5968,15 +6456,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "O PostHog retorna uma amostra das exceções deste problema, não todas. Não foi possível ler {count} linha(s) da amostra.",
             "plugins.posthog.ui.sampleStackCounts": "Esta pilha pertence a uma ocorrência da amostra, não à mais recente. Quadros da aplicação: {application}; outros quadros: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "O PostHog ofereceu mais itens desta amostra do que esta versão conseguiu paginar, por isso termina aqui.",
+            "plugins.posthog.ui.sampledOccurrences": "Ocorrências da amostra: {count}",
+            "plugins.posthog.ui.sampledSession": "Sessão da amostra",
             "plugins.posthog.ui.sampledSessions.description": "Estas são as sessões do PostHog indicadas pelas ocorrências amostradas. A presença de uma sessão aqui não significa que exista uma gravação.",
             "plugins.posthog.ui.samplesLabel": "As ocorrências amostradas desta questão do PostHog",
             "plugins.posthog.ui.samplesUnavailable": "As ocorrências amostradas não estão disponíveis",
             "plugins.posthog.ui.selectSampleForStack": "Selecione uma ocorrência da amostra para ler sua pilha.",
             "plugins.posthog.ui.sessionsLabel": "Sessões do PostHog nesta amostra nomeadas",
+            "plugins.posthog.ui.settings.attention": "A configuração requer atenção",
+            "plugins.posthog.ui.settings.cancel": "Cancelar",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Escolha pelo menos um ambiente PostHog válido.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Escolha uma organização PostHog.",
+            "plugins.posthog.ui.settings.description": "Escolha uma organização, um subconjunto não vazio dos seus ambientes e as janelas de análise e detalhe.",
+            "plugins.posthog.ui.settings.detail": "Detalhe",
+            "plugins.posthog.ui.settings.environments": "Ambientes",
+            "plugins.posthog.ui.settings.exactWindow": "Janela exata de {name}",
+            "plugins.posthog.ui.settings.heading": "Escolher ambientes PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Utilize dias inteiros positivos ou limites exatos ISO 8601 válidos.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Carregar mais ambientes",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Carregar mais organizações",
+            "plugins.posthog.ui.settings.organization": "Organização",
+            "plugins.posthog.ui.settings.partial": "Não foi possível ler algumas linhas do fornecedor ou informações de paginação; as opções visíveis continuam utilizáveis.",
+            "plugins.posthog.ui.settings.readFailed": "O PostHog não conseguiu ler esta página de configuração.",
+            "plugins.posthog.ui.settings.relativeWindow": "Janela relativa de {name}",
+            "plugins.posthog.ui.settings.save": "Guardar configuração do PostHog",
+            "plugins.posthog.ui.settings.scan": "Análise",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Esta seleção de ambientes requer {bytes} bytes UTF-8 e não cabe numa configuração de origem.",
+            "plugins.posthog.ui.settings.unavailable": "O PostHog Error Tracking não está disponível para esta seleção.",
+            "plugins.posthog.ui.settings.verifyFailed": "O PostHog não conseguiu verificar o acesso ao Error Tracking para esta seleção.",
+            "plugins.posthog.ui.settings.windowDays": "Janela de {name} (dias)",
+            "plugins.posthog.ui.settings.windowEnd": "Fim da janela de {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Modo da janela de {name}",
+            "plugins.posthog.ui.settings.windowStart": "Início da janela de {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Alguns detalhes foram abreviados",
             "plugins.posthog.ui.shortened.description": "Abra a questão no PostHog para ler o texto completo.",
             "plugins.posthog.ui.stackShortened": "Esta pilha foi abreviada",
-            "plugins.posthog.ui.stackShortened.description": "Abra a ocorrência no PostHog para ler todos os quadros."
+            "plugins.posthog.ui.stackShortened.description": "Abra a ocorrência no PostHog para ler todos os quadros.",
+            "plugins.posthog.ui.tab.activity": "Atividade",
+            "plugins.posthog.ui.tab.affectedSessions": "Sessões afetadas",
+            "plugins.posthog.ui.tab.occurrences": "Ocorrências",
+            "plugins.posthog.ui.tab.overview": "Visão geral",
+            "plugins.posthog.ui.tab.stackTrace": "Rastreamento de pilha",
+            "plugins.posthog.ui.tabsLabel": "Detalhes do problema do PostHog"
           }
         },
         {
@@ -5998,9 +6519,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "Registres d’activitat llegits: {covered} de {total}.",
             "plugins.posthog.ui.activityStoppedShort": "PostHog ha registrat més activitat de la que aquesta llista ha pogut llegir, així que s’atura aquí.",
             "plugins.posthog.ui.activityUnavailable": "L'activitat no està disponible",
+            "plugins.posthog.ui.addSelectedOccurrence": "Afegeix l’ocurrència seleccionada al missatge",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "Les variables locals capturades poden contenir credencials, testimonis, dades personals i cossos de sol·licitud. Només romanen en aquesta pestanya de la pila i es descarten en sortir-ne.",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "Voleu mostrar variables capturades sensibles?",
+            "plugins.posthog.ui.codeVariables.discardNotice": "Aquests valors només són visibles en aquesta pestanya de la pila i es descarten en sortir-ne.",
+            "plugins.posthog.ui.codeVariables.loading": "S’estan llegint les variables capturades",
+            "plugins.posthog.ui.codeVariables.reveal": "Mostra les variables capturades",
+            "plugins.posthog.ui.codeVariables.title": "Variables capturades",
+            "plugins.posthog.ui.codeVariables.truncated": "La resposta del proveïdor ha superat l’embolcall de l’acció i el valor visible s’ha escurçat.",
+            "plugins.posthog.ui.codeVariables.unavailable": "Les variables capturades no estan disponibles",
             "plugins.posthog.ui.derivingSessions": "Derivant sessions afectades",
             "plugins.posthog.ui.detailOnly": "Només lectura a la vista de detalls:",
             "plugins.posthog.ui.differentStatus": "El PostHog informa d'un estat diferent",
+            "plugins.posthog.ui.fact.first-seen": "Vist per primera vegada",
+            "plugins.posthog.ui.fact.function": "Funció",
+            "plugins.posthog.ui.fact.last-seen": "Vist per última vegada",
+            "plugins.posthog.ui.fact.library": "Biblioteca",
+            "plugins.posthog.ui.fact.occurrences": "Ocurrències",
+            "plugins.posthog.ui.fact.release": "Versió",
+            "plugins.posthog.ui.fact.sessions": "Sessions",
+            "plugins.posthog.ui.fact.severity": "Gravetat",
+            "plugins.posthog.ui.fact.source": "Origen",
+            "plugins.posthog.ui.fact.top-frame": "Marc superior",
+            "plugins.posthog.ui.fact.users": "Usuaris",
             "plugins.posthog.ui.facts": "Fets",
             "plugins.posthog.ui.framesLabel": "Quaderns de la ocurrència amostrada seleccionada",
             "plugins.posthog.ui.invalidInput": "Aquest problema no pot ser mostrat",
@@ -6009,6 +6550,8 @@
             "plugins.posthog.ui.lastObservation.description": "No s'ha pogut llegir el PostHog ara mateix, per tant, aquests fets són els que aquest problema va ser observat per última vegada amb.",
             "plugins.posthog.ui.loadMoreActivity": "Carrega més activitat",
             "plugins.posthog.ui.loadMoreSamples": "Carrega més ocurrències amostrades",
+            "plugins.posthog.ui.metadata.lastSaw": "Vist per última vegada per PostHog",
+            "plugins.posthog.ui.metadata.observed": "Observat",
             "plugins.posthog.ui.noActivity": "No hi ha activitat registrada",
             "plugins.posthog.ui.noActivity.description": "El PostHog no ha registrat cap canvi a aquest problema.",
             "plugins.posthog.ui.noFacts": "No hi ha cap feit proyectat",
@@ -6031,15 +6574,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog retorna una mostra de les excepcions d’aquesta incidència, no totes. No s’han pogut llegir {count} fila(es) de la mostra.",
             "plugins.posthog.ui.sampleStackCounts": "Aquesta pila pertany a una ocurrència de la mostra, no a la més recent. Marcs de l’aplicació: {application}; altres marcs: {other}.",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog ha ofert més elements d’aquesta mostra dels que aquesta versió ha pogut paginar, així que s’atura aquí.",
+            "plugins.posthog.ui.sampledOccurrences": "Ocurrències de la mostra: {count}",
+            "plugins.posthog.ui.sampledSession": "Sessió de la mostra",
             "plugins.posthog.ui.sampledSessions.description": "Aquestes són les sessions de PostHog indicades per les ocurrències mostrejades. Que una sessió aparegui aquí no significa que existeixi cap enregistrament.",
             "plugins.posthog.ui.samplesLabel": "Ocurrències amostrades d'aquest problema del PostHog",
             "plugins.posthog.ui.samplesUnavailable": "Les ocurrències amostrades no estan disponibles",
             "plugins.posthog.ui.selectSampleForStack": "Seleccioneu una ocurrència de la mostra per llegir-ne la pila.",
             "plugins.posthog.ui.sessionsLabel": "Sessions del PostHog aquesta amostra nombrades",
+            "plugins.posthog.ui.settings.attention": "La configuració necessita atenció",
+            "plugins.posthog.ui.settings.cancel": "Cancel·la",
+            "plugins.posthog.ui.settings.chooseEnvironment": "Trieu almenys un entorn PostHog vàlid.",
+            "plugins.posthog.ui.settings.chooseOrganization": "Trieu una organització PostHog.",
+            "plugins.posthog.ui.settings.description": "Trieu una organització, un subconjunt no buit dels seus entorns i les finestres d’anàlisi i detall.",
+            "plugins.posthog.ui.settings.detail": "Detall",
+            "plugins.posthog.ui.settings.environments": "Entorns",
+            "plugins.posthog.ui.settings.exactWindow": "Finestra exacta de {name}",
+            "plugins.posthog.ui.settings.heading": "Trieu entorns PostHog",
+            "plugins.posthog.ui.settings.invalidWindow": "Utilitzeu dies enters positius o límits exactes ISO 8601 vàlids.",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "Carrega més entorns",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "Carrega més organitzacions",
+            "plugins.posthog.ui.settings.organization": "Organització",
+            "plugins.posthog.ui.settings.partial": "No s’han pogut llegir algunes files del proveïdor o dades de paginació; les opcions visibles continuen disponibles.",
+            "plugins.posthog.ui.settings.readFailed": "PostHog no ha pogut llegir aquesta pàgina de configuració.",
+            "plugins.posthog.ui.settings.relativeWindow": "Finestra relativa de {name}",
+            "plugins.posthog.ui.settings.save": "Desa la configuració de PostHog",
+            "plugins.posthog.ui.settings.scan": "Anàlisi",
+            "plugins.posthog.ui.settings.selectionTooLarge": "Aquesta selecció d’entorns necessita {bytes} bytes UTF-8 i no cap en una configuració d’origen.",
+            "plugins.posthog.ui.settings.unavailable": "PostHog Error Tracking no està disponible per a aquesta selecció.",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog no ha pogut verificar l’accés a Error Tracking per a aquesta selecció.",
+            "plugins.posthog.ui.settings.windowDays": "Finestra de {name} (dies)",
+            "plugins.posthog.ui.settings.windowEnd": "Final de la finestra de {name} (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "Mode de finestra de {name}",
+            "plugins.posthog.ui.settings.windowStart": "Inici de la finestra de {name} (ISO 8601)",
             "plugins.posthog.ui.shortened": "Alguns detalls s'han abbreviat",
             "plugins.posthog.ui.shortened.description": "Obri aquest problema en el PostHog per llegir el text complet.",
             "plugins.posthog.ui.stackShortened": "Aquesta pila s'ha abbreviat",
-            "plugins.posthog.ui.stackShortened.description": "Obri aquesta ocurrència en el PostHog per llegir tots els quaderns."
+            "plugins.posthog.ui.stackShortened.description": "Obri aquesta ocurrència en el PostHog per llegir tots els quaderns.",
+            "plugins.posthog.ui.tab.activity": "Activitat",
+            "plugins.posthog.ui.tab.affectedSessions": "Sessions afectades",
+            "plugins.posthog.ui.tab.occurrences": "Ocurrències",
+            "plugins.posthog.ui.tab.overview": "Resum",
+            "plugins.posthog.ui.tab.stackTrace": "Traça de pila",
+            "plugins.posthog.ui.tabsLabel": "Detalls del problema de PostHog"
           }
         },
         {
@@ -6061,9 +6637,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "已读取 {total} 条活动记录中的 {covered} 条。",
             "plugins.posthog.ui.activityStoppedShort": "PostHog 记录的活动多于此列表所能读取的数量，因此列表到此为止。",
             "plugins.posthog.ui.activityUnavailable": "活动不可用",
+            "plugins.posthog.ui.addSelectedOccurrence": "将所选事件添加到消息",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "捕获的局部变量可能包含凭据、令牌、个人数据和请求正文。它们只保留在此堆栈跟踪标签页中，离开时即被丢弃。",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "显示敏感的捕获变量？",
+            "plugins.posthog.ui.codeVariables.discardNotice": "这些值仅在此堆栈跟踪标签页中可见，离开时即被丢弃。",
+            "plugins.posthog.ui.codeVariables.loading": "正在读取捕获的变量",
+            "plugins.posthog.ui.codeVariables.reveal": "显示捕获的变量",
+            "plugins.posthog.ui.codeVariables.title": "捕获的变量",
+            "plugins.posthog.ui.codeVariables.truncated": "提供方响应超出了操作信封，显示的值已缩短。",
+            "plugins.posthog.ui.codeVariables.unavailable": "捕获的变量不可用",
             "plugins.posthog.ui.derivingSessions": "推断受影响的会话",
             "plugins.posthog.ui.detailOnly": "仅在详细信息视图中读取：",
             "plugins.posthog.ui.differentStatus": "PostHog报告了不同的状态",
+            "plugins.posthog.ui.fact.first-seen": "首次出现",
+            "plugins.posthog.ui.fact.function": "函数",
+            "plugins.posthog.ui.fact.last-seen": "最后出现",
+            "plugins.posthog.ui.fact.library": "库",
+            "plugins.posthog.ui.fact.occurrences": "发生次数",
+            "plugins.posthog.ui.fact.release": "版本",
+            "plugins.posthog.ui.fact.sessions": "会话",
+            "plugins.posthog.ui.fact.severity": "严重性",
+            "plugins.posthog.ui.fact.source": "来源",
+            "plugins.posthog.ui.fact.top-frame": "顶部帧",
+            "plugins.posthog.ui.fact.users": "用户",
             "plugins.posthog.ui.facts": "事实",
             "plugins.posthog.ui.framesLabel": "选定采样发生情况的堆栈帧",
             "plugins.posthog.ui.invalidInput": "此问题无法显示",
@@ -6072,6 +6668,8 @@
             "plugins.posthog.ui.lastObservation.description": "刚才无法读取PostHog，因此这些事实是上次观察到的。",
             "plugins.posthog.ui.loadMoreActivity": "加载更多活动",
             "plugins.posthog.ui.loadMoreSamples": "加载更多采样发生情况",
+            "plugins.posthog.ui.metadata.lastSaw": "PostHog 上次发现",
+            "plugins.posthog.ui.metadata.observed": "观察时间",
             "plugins.posthog.ui.noActivity": "没有记录的活动",
             "plugins.posthog.ui.noActivity.description": "PostHog没有记录对此问题的更改。",
             "plugins.posthog.ui.noFacts": "没有预测的事实",
@@ -6094,15 +6692,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog 仅返回此问题异常的样本，而不是全部异常。样本中有 {count} 行无法读取。",
             "plugins.posthog.ui.sampleStackCounts": "此堆栈属于一个抽样事件，而不是最新事件。应用帧：{application}；其他帧：{other}。",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog 提供的此样本条目多于当前版本所能翻页的数量，因此到此为止。",
+            "plugins.posthog.ui.sampledOccurrences": "抽样发生记录：{count}",
+            "plugins.posthog.ui.sampledSession": "抽样会话",
             "plugins.posthog.ui.sampledSessions.description": "这些是抽样事件提及的 PostHog 会话。会话出现在此处并不表示存在录制内容。",
             "plugins.posthog.ui.samplesLabel": "这个PostHog问题的采样发生情况",
             "plugins.posthog.ui.samplesUnavailable": "采样发生情况不可用",
             "plugins.posthog.ui.selectSampleForStack": "请选择一个抽样事件以读取其堆栈。",
             "plugins.posthog.ui.sessionsLabel": "这个样本命名的PostHog会话",
+            "plugins.posthog.ui.settings.attention": "配置需要注意",
+            "plugins.posthog.ui.settings.cancel": "取消",
+            "plugins.posthog.ui.settings.chooseEnvironment": "至少选择一个有效的 PostHog 环境。",
+            "plugins.posthog.ui.settings.chooseOrganization": "选择 PostHog 组织。",
+            "plugins.posthog.ui.settings.description": "选择一个组织、其环境的任意非空子集以及扫描和详细信息窗口。",
+            "plugins.posthog.ui.settings.detail": "详细信息",
+            "plugins.posthog.ui.settings.environments": "环境",
+            "plugins.posthog.ui.settings.exactWindow": "精确{name}窗口",
+            "plugins.posthog.ui.settings.heading": "选择 PostHog 环境",
+            "plugins.posthog.ui.settings.invalidWindow": "请输入正整数天数或有效的 ISO 8601 精确窗口端点。",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "加载更多环境",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "加载更多组织",
+            "plugins.posthog.ui.settings.organization": "组织",
+            "plugins.posthog.ui.settings.partial": "部分提供商行或分页信息无法读取；可见选项仍可使用。",
+            "plugins.posthog.ui.settings.readFailed": "PostHog 无法读取此配置页面。",
+            "plugins.posthog.ui.settings.relativeWindow": "相对{name}窗口",
+            "plugins.posthog.ui.settings.save": "保存 PostHog 配置",
+            "plugins.posthog.ui.settings.scan": "扫描",
+            "plugins.posthog.ui.settings.selectionTooLarge": "此环境选择需要 {bytes} 个 UTF-8 字节，无法放入一个来源配置。",
+            "plugins.posthog.ui.settings.unavailable": "此选择无法使用 PostHog Error Tracking。",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog 无法验证此选择的 Error Tracking 访问权限。",
+            "plugins.posthog.ui.settings.windowDays": "{name}窗口（天）",
+            "plugins.posthog.ui.settings.windowEnd": "{name}窗口结束时间 (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "{name}窗口模式",
+            "plugins.posthog.ui.settings.windowStart": "{name}窗口开始时间 (ISO 8601)",
             "plugins.posthog.ui.shortened": "一些细节被缩短",
             "plugins.posthog.ui.shortened.description": "在PostHog中打开问题以阅读完整文本。",
             "plugins.posthog.ui.stackShortened": "这个堆栈被缩短",
-            "plugins.posthog.ui.stackShortened.description": "在PostHog中打开发生情况以阅读所有帧。"
+            "plugins.posthog.ui.stackShortened.description": "在PostHog中打开发生情况以阅读所有帧。",
+            "plugins.posthog.ui.tab.activity": "活动",
+            "plugins.posthog.ui.tab.affectedSessions": "受影响的会话",
+            "plugins.posthog.ui.tab.occurrences": "发生记录",
+            "plugins.posthog.ui.tab.overview": "概览",
+            "plugins.posthog.ui.tab.stackTrace": "堆栈跟踪",
+            "plugins.posthog.ui.tabsLabel": "PostHog 问题详情"
           }
         },
         {
@@ -6124,9 +6755,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "已讀取 {total} 筆活動記錄中的 {covered} 筆。",
             "plugins.posthog.ui.activityStoppedShort": "PostHog 記錄的活動多於此清單所能讀取的數量，因此清單到此為止。",
             "plugins.posthog.ui.activityUnavailable": "活動不可用",
+            "plugins.posthog.ui.addSelectedOccurrence": "將所選事件加入訊息",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "擷取的區域變數可能包含憑證、權杖、個人資料和請求本文。它們只保留在此堆疊追蹤分頁中，離開時即會捨棄。",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "顯示敏感的擷取變數？",
+            "plugins.posthog.ui.codeVariables.discardNotice": "這些值僅在此堆疊追蹤分頁中可見，離開時即會捨棄。",
+            "plugins.posthog.ui.codeVariables.loading": "正在讀取擷取的變數",
+            "plugins.posthog.ui.codeVariables.reveal": "顯示擷取的變數",
+            "plugins.posthog.ui.codeVariables.title": "擷取的變數",
+            "plugins.posthog.ui.codeVariables.truncated": "供應商回應超出動作信封，因此顯示值已縮短。",
+            "plugins.posthog.ui.codeVariables.unavailable": "擷取的變數無法使用",
             "plugins.posthog.ui.derivingSessions": "推導受影響的會話",
             "plugins.posthog.ui.detailOnly": "僅在詳細資訊視圖中讀取：",
             "plugins.posthog.ui.differentStatus": "PostHog 報告了一個不同的狀態",
+            "plugins.posthog.ui.fact.first-seen": "首次出現",
+            "plugins.posthog.ui.fact.function": "函式",
+            "plugins.posthog.ui.fact.last-seen": "最後出現",
+            "plugins.posthog.ui.fact.library": "程式庫",
+            "plugins.posthog.ui.fact.occurrences": "發生次數",
+            "plugins.posthog.ui.fact.release": "版本",
+            "plugins.posthog.ui.fact.sessions": "工作階段",
+            "plugins.posthog.ui.fact.severity": "嚴重性",
+            "plugins.posthog.ui.fact.source": "來源",
+            "plugins.posthog.ui.fact.top-frame": "頂端框架",
+            "plugins.posthog.ui.fact.users": "使用者",
             "plugins.posthog.ui.facts": "事實",
             "plugins.posthog.ui.framesLabel": "選擇的採樣事件的框架",
             "plugins.posthog.ui.invalidInput": "這個問題無法顯示",
@@ -6135,6 +6786,8 @@
             "plugins.posthog.ui.lastObservation.description": "現在無法讀取 PostHog，因此這些事實是這個問題最近一次觀察到的.",
             "plugins.posthog.ui.loadMoreActivity": "載入更多活動",
             "plugins.posthog.ui.loadMoreSamples": "載入更多採樣事件",
+            "plugins.posthog.ui.metadata.lastSaw": "PostHog 上次發現",
+            "plugins.posthog.ui.metadata.observed": "觀察時間",
             "plugins.posthog.ui.noActivity": "沒有記錄的活動",
             "plugins.posthog.ui.noActivity.description": "PostHog 沒有記錄這個問題的變更",
             "plugins.posthog.ui.noFacts": "沒有預測的事實",
@@ -6157,15 +6810,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog 僅傳回此問題例外的樣本，而不是全部例外。樣本中有 {count} 列無法讀取。",
             "plugins.posthog.ui.sampleStackCounts": "此堆疊屬於一個抽樣事件，而不是最新事件。應用程式框架：{application}；其他框架：{other}。",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog 提供的此樣本項目多於目前版本所能翻頁的數量，因此到此為止。",
+            "plugins.posthog.ui.sampledOccurrences": "取樣發生記錄：{count}",
+            "plugins.posthog.ui.sampledSession": "取樣工作階段",
             "plugins.posthog.ui.sampledSessions.description": "這些是抽樣事件提及的 PostHog 工作階段。工作階段出現在此處並不表示存在錄製內容。",
             "plugins.posthog.ui.samplesLabel": "這個 PostHog 事件的採樣事件",
             "plugins.posthog.ui.samplesUnavailable": "採樣事件不可用",
             "plugins.posthog.ui.selectSampleForStack": "請選取一個抽樣事件以讀取其堆疊。",
             "plugins.posthog.ui.sessionsLabel": "這個樣本命名的 PostHog 會話",
+            "plugins.posthog.ui.settings.attention": "設定需要注意",
+            "plugins.posthog.ui.settings.cancel": "取消",
+            "plugins.posthog.ui.settings.chooseEnvironment": "至少選擇一個有效的 PostHog 環境。",
+            "plugins.posthog.ui.settings.chooseOrganization": "選擇 PostHog 組織。",
+            "plugins.posthog.ui.settings.description": "選擇一個組織、其環境的任意非空子集，以及掃描和詳細資料視窗。",
+            "plugins.posthog.ui.settings.detail": "詳細資料",
+            "plugins.posthog.ui.settings.environments": "環境",
+            "plugins.posthog.ui.settings.exactWindow": "精確{name}視窗",
+            "plugins.posthog.ui.settings.heading": "選擇 PostHog 環境",
+            "plugins.posthog.ui.settings.invalidWindow": "請輸入正整數天數或有效的 ISO 8601 精確視窗端點。",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "載入更多環境",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "載入更多組織",
+            "plugins.posthog.ui.settings.organization": "組織",
+            "plugins.posthog.ui.settings.partial": "部分提供者資料列或分頁資訊無法讀取；可見選項仍可使用。",
+            "plugins.posthog.ui.settings.readFailed": "PostHog 無法讀取此設定頁面。",
+            "plugins.posthog.ui.settings.relativeWindow": "相對{name}視窗",
+            "plugins.posthog.ui.settings.save": "儲存 PostHog 設定",
+            "plugins.posthog.ui.settings.scan": "掃描",
+            "plugins.posthog.ui.settings.selectionTooLarge": "此環境選擇需要 {bytes} 個 UTF-8 位元組，無法放入一個來源設定。",
+            "plugins.posthog.ui.settings.unavailable": "此選擇無法使用 PostHog Error Tracking。",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog 無法驗證此選擇的 Error Tracking 存取權。",
+            "plugins.posthog.ui.settings.windowDays": "{name}視窗（天）",
+            "plugins.posthog.ui.settings.windowEnd": "{name}視窗結束時間 (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "{name}視窗模式",
+            "plugins.posthog.ui.settings.windowStart": "{name}視窗開始時間 (ISO 8601)",
             "plugins.posthog.ui.shortened": "一些細節被簡化了",
             "plugins.posthog.ui.shortened.description": "在 PostHog 中打開這個問題以閱讀完整文本",
             "plugins.posthog.ui.stackShortened": "這個堆疊被簡化了",
-            "plugins.posthog.ui.stackShortened.description": "在 PostHog 中打開這個事件以閱讀每一個框架"
+            "plugins.posthog.ui.stackShortened.description": "在 PostHog 中打開這個事件以閱讀每一個框架",
+            "plugins.posthog.ui.tab.activity": "活動",
+            "plugins.posthog.ui.tab.affectedSessions": "受影響的工作階段",
+            "plugins.posthog.ui.tab.occurrences": "發生記錄",
+            "plugins.posthog.ui.tab.overview": "概觀",
+            "plugins.posthog.ui.tab.stackTrace": "堆疊追蹤",
+            "plugins.posthog.ui.tabsLabel": "PostHog 問題詳細資料"
           }
         },
         {
@@ -6187,9 +6873,29 @@
             "plugins.posthog.ui.activityRecordsReadOfTotal": "{total} 件中 {covered} 件のアクティビティ記録を読み取りました。",
             "plugins.posthog.ui.activityStoppedShort": "PostHog に記録された活動はこの一覧が読み取れた分より多いため、ここで終わります。",
             "plugins.posthog.ui.activityUnavailable": "活動が利用できません",
+            "plugins.posthog.ui.addSelectedOccurrence": "選択した発生をメッセージに追加",
+            "plugins.posthog.ui.codeVariables.confirmDescription": "取得したローカル変数には、認証情報、トークン、個人データ、リクエスト本文が含まれる場合があります。このスタックトレースタブ内だけに保持され、タブを離れると破棄されます。",
+            "plugins.posthog.ui.codeVariables.confirmTitle": "機密性の高い取得変数を表示しますか？",
+            "plugins.posthog.ui.codeVariables.discardNotice": "これらの値はこのスタックトレースタブ内だけに表示され、タブを離れると破棄されます。",
+            "plugins.posthog.ui.codeVariables.loading": "取得した変数を読み込み中",
+            "plugins.posthog.ui.codeVariables.reveal": "取得した変数を表示",
+            "plugins.posthog.ui.codeVariables.title": "取得した変数",
+            "plugins.posthog.ui.codeVariables.truncated": "プロバイダー応答がアクションの上限を超えたため、表示値を短縮しました。",
+            "plugins.posthog.ui.codeVariables.unavailable": "取得した変数を利用できません",
             "plugins.posthog.ui.derivingSessions": "影響しているセッションを推定しています。",
             "plugins.posthog.ui.detailOnly": "詳細ビューでのみ読み取ります：",
             "plugins.posthog.ui.differentStatus": "PostHogは異なるステータスを報告しています。",
+            "plugins.posthog.ui.fact.first-seen": "初回確認",
+            "plugins.posthog.ui.fact.function": "関数",
+            "plugins.posthog.ui.fact.last-seen": "最終確認",
+            "plugins.posthog.ui.fact.library": "ライブラリ",
+            "plugins.posthog.ui.fact.occurrences": "発生回数",
+            "plugins.posthog.ui.fact.release": "リリース",
+            "plugins.posthog.ui.fact.sessions": "セッション",
+            "plugins.posthog.ui.fact.severity": "重大度",
+            "plugins.posthog.ui.fact.source": "ソース",
+            "plugins.posthog.ui.fact.top-frame": "最上位フレーム",
+            "plugins.posthog.ui.fact.users": "ユーザー",
             "plugins.posthog.ui.facts": "事実",
             "plugins.posthog.ui.framesLabel": "選択されたサンプルされた発生のフレーム",
             "plugins.posthog.ui.invalidInput": "この問題を表示できません",
@@ -6198,6 +6904,8 @@
             "plugins.posthog.ui.lastObservation.description": "今度はPostHogを読み込めなかったため、これらの事実はこの問題が最後に観察されたときのものです。",
             "plugins.posthog.ui.loadMoreActivity": "追加読み込み",
             "plugins.posthog.ui.loadMoreSamples": "サンプルされた発生を追加読み込み",
+            "plugins.posthog.ui.metadata.lastSaw": "PostHog での最終確認",
+            "plugins.posthog.ui.metadata.observed": "観測日時",
             "plugins.posthog.ui.noActivity": "記録された活動はありません",
             "plugins.posthog.ui.noActivity.description": "PostHogはこの問題に変更を記録していません。",
             "plugins.posthog.ui.noFacts": "プロジェクトされた事実はありません。",
@@ -6220,15 +6928,48 @@
             "plugins.posthog.ui.sampleDisclosureUnreadable": "PostHog はこの問題の例外の一部のみを返し、すべては返しません。サンプル内の {count} 行を読み取れませんでした。",
             "plugins.posthog.ui.sampleStackCounts": "このスタックは最新の発生ではなく、1 件のサンプル発生に属します。アプリケーションフレーム: {application}、その他のフレーム: {other}。",
             "plugins.posthog.ui.sampleStoppedShort": "PostHog が提示したこのサンプルの件数はこのビルドがたどれた分より多いため、ここで終わります。",
+            "plugins.posthog.ui.sampledOccurrences": "サンプル内の発生件数: {count}",
+            "plugins.posthog.ui.sampledSession": "サンプル内のセッション",
             "plugins.posthog.ui.sampledSessions.description": "これらはサンプルされたイベントが示した PostHog セッションです。ここにセッションがあっても、録画が存在するとは限りません。",
             "plugins.posthog.ui.samplesLabel": "このPostHog問題のサンプルされた発生",
             "plugins.posthog.ui.samplesUnavailable": "サンプルされた発生が利用できません",
             "plugins.posthog.ui.selectSampleForStack": "スタックを読み取るサンプル発生を選択してください。",
             "plugins.posthog.ui.sessionsLabel": "このサンプルが命名したPostHogセッション",
+            "plugins.posthog.ui.settings.attention": "設定を確認してください",
+            "plugins.posthog.ui.settings.cancel": "キャンセル",
+            "plugins.posthog.ui.settings.chooseEnvironment": "有効な PostHog 環境を 1 つ以上選択してください。",
+            "plugins.posthog.ui.settings.chooseOrganization": "PostHog 組織を選択してください。",
+            "plugins.posthog.ui.settings.description": "組織、その環境の空でないサブセット、スキャンおよび詳細ウィンドウを選択します。",
+            "plugins.posthog.ui.settings.detail": "詳細",
+            "plugins.posthog.ui.settings.environments": "環境",
+            "plugins.posthog.ui.settings.exactWindow": "正確な{name}ウィンドウ",
+            "plugins.posthog.ui.settings.heading": "PostHog 環境を選択",
+            "plugins.posthog.ui.settings.invalidWindow": "正の整数日数または有効な ISO 8601 の正確なウィンドウ端点を指定してください。",
+            "plugins.posthog.ui.settings.loadMoreEnvironments": "環境をさらに読み込む",
+            "plugins.posthog.ui.settings.loadMoreOrganizations": "組織をさらに読み込む",
+            "plugins.posthog.ui.settings.organization": "組織",
+            "plugins.posthog.ui.settings.partial": "一部のプロバイダー行またはページ情報を読み取れませんでした。表示中の選択肢は引き続き使用できます。",
+            "plugins.posthog.ui.settings.readFailed": "PostHog はこの設定ページを読み取れませんでした。",
+            "plugins.posthog.ui.settings.relativeWindow": "相対{name}ウィンドウ",
+            "plugins.posthog.ui.settings.save": "PostHog 設定を保存",
+            "plugins.posthog.ui.settings.scan": "スキャン",
+            "plugins.posthog.ui.settings.selectionTooLarge": "この環境選択には {bytes} UTF-8 バイトが必要で、1 つのソース設定に収まりません。",
+            "plugins.posthog.ui.settings.unavailable": "この選択では PostHog Error Tracking を使用できません。",
+            "plugins.posthog.ui.settings.verifyFailed": "PostHog はこの選択の Error Tracking アクセスを確認できませんでした。",
+            "plugins.posthog.ui.settings.windowDays": "{name}ウィンドウ（日）",
+            "plugins.posthog.ui.settings.windowEnd": "{name}ウィンドウの終了 (ISO 8601)",
+            "plugins.posthog.ui.settings.windowMode": "{name}ウィンドウのモード",
+            "plugins.posthog.ui.settings.windowStart": "{name}ウィンドウの開始 (ISO 8601)",
             "plugins.posthog.ui.shortened": "一部の詳細が省略されました。",
             "plugins.posthog.ui.shortened.description": "PostHogでこの問題を開き、全文を読み取ってください。",
             "plugins.posthog.ui.stackShortened": "このスタックが省略されました",
-            "plugins.posthog.ui.stackShortened.description": "PostHogでこの発生を開き、すべてのフレームを読み取ってください。"
+            "plugins.posthog.ui.stackShortened.description": "PostHogでこの発生を開き、すべてのフレームを読み取ってください。",
+            "plugins.posthog.ui.tab.activity": "アクティビティ",
+            "plugins.posthog.ui.tab.affectedSessions": "影響を受けたセッション",
+            "plugins.posthog.ui.tab.occurrences": "発生",
+            "plugins.posthog.ui.tab.overview": "概要",
+            "plugins.posthog.ui.tab.stackTrace": "スタック トレース",
+            "plugins.posthog.ui.tabsLabel": "PostHog 問題の詳細"
           }
         }
       ],

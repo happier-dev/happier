@@ -8,7 +8,7 @@
  * store — because the exact detail instance is the privacy boundary: an event body's
  * lifetime must end when the reader leaves the issue, not when a tab unmounts.
  *
- * The state machine is separated from the hook because that is where the risk is. Four
+ * The state machine is separated from the hook because that is where the risk is. Five
  * silent defects live here, and each is a reducer case with a test rather than a
  * behaviour hidden in an effect:
  *
@@ -18,7 +18,8 @@
  *    projection;
  * 3. a body that survives the selection that justified reading it; and
  * 4. a controller that fetches at all without a consumer demand — the rule that keeps
- *    scan, occurrence paging, inactive tabs and hover from ever costing an event body.
+ *    scan, occurrence paging, inactive tabs and hover from ever costing an event body;
+ * 5. a same-selection refresh that blanks a valid trace before the replacement settles.
  */
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
@@ -45,7 +46,13 @@ export type SentrySelectedOccurrenceV1 =
 export type SentrySelectedEventReadV1 =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'success'; projection: SentryEventProjectionV1 }>
+  | Readonly<{
+      kind: 'success';
+      projection: SentryEventProjectionV1;
+      refresh: null
+        | Readonly<{ kind: 'loading' }>
+        | Readonly<{ kind: 'error'; failure: TriageSourceFailureV1 }>;
+    }>
   | Readonly<{ kind: 'error'; failure: TriageSourceFailureV1 }>;
 
 export type SentrySelectedEventStateV1 = Readonly<{
@@ -110,14 +117,25 @@ export function sentrySelectedEventReducer(
         ? { ...state, read: { kind: 'loading' }, token: state.token + 1 }
         : state;
     case 'refreshRequested':
-      return { ...state, read: { kind: 'loading' }, token: state.token + 1 };
+      return {
+        ...state,
+        read: state.read.kind === 'success'
+          ? { ...state.read, refresh: { kind: 'loading' } }
+          : { kind: 'loading' },
+        token: state.token + 1,
+      };
     case 'settled':
       return event.token === state.token
-        ? { ...state, read: { kind: 'success', projection: event.projection } }
+        ? { ...state, read: { kind: 'success', projection: event.projection, refresh: null } }
         : state;
     case 'failed':
       return event.token === state.token
-        ? { ...state, read: { kind: 'error', failure: event.failure } }
+        ? {
+            ...state,
+            read: state.read.kind === 'success'
+              ? { ...state.read, refresh: { kind: 'error', failure: event.failure } }
+              : { kind: 'error', failure: event.failure },
+          }
         : state;
     default:
       return state;
@@ -199,7 +217,8 @@ export function useSentrySelectedEvent(
     dispatch({ kind: 'identityChanged' });
   }, [identity]);
 
-  const loading = state.read.kind === 'loading';
+  const loading = state.read.kind === 'loading'
+    || (state.read.kind === 'success' && state.read.refresh?.kind === 'loading');
   const { token, selected } = state;
   // `selected` is captured for the request and re-read by the effect only through the
   // token that authorized it, so a selection change cannot retarget a request already

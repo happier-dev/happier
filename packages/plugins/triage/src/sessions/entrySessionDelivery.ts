@@ -25,7 +25,18 @@ import type { TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
  * the canonical Session-input Action admits it. This module is the phase.
  */
 
-type SessionMessageSendInput = PluginActionInputById['session.message.send'];
+type SessionMessageSendInput = Extract<
+    PluginActionInputById['session.message.send'],
+    Readonly<{ message: string }>
+>;
+
+export type TriagePlannedEntrySessionInputV1 =
+    | Readonly<{ kind: 'none' }>
+    | Readonly<{
+        kind: 'input';
+        text: string;
+        attachments: NonNullable<SessionMessageSendInput['attachments']>;
+    }>;
 
 /**
  * What a start was asked to deliver once the Session exists.
@@ -79,16 +90,14 @@ export type TriageEntrySessionDeliveryOutcomeV1 =
     | 'rejected'
     | 'outcomeUnknown';
 
-export async function deliverEntrySessionInput(input: Readonly<{
-    execute: TriageSessionActionInvokerV1;
-    sessionId: SessionId;
-    delivery: TriageEntrySessionDeliveryRequestV1;
-    signal?: AbortSignal;
-}>): Promise<TriageEntrySessionDeliveryOutcomeV1> {
+/** Builds the one structured input shared by creation and existing-Session delivery. */
+export function planEntrySessionInput(
+    delivery: TriageEntrySessionDeliveryRequestV1,
+): TriagePlannedEntrySessionInputV1 {
     const plan = planTriageActionDeliveryV1({
         delivery: 'send',
-        promptText: input.delivery.text ?? null,
-        entries: input.delivery.attachments.map((entry) => ({
+        promptText: delivery.text ?? null,
+        entries: delivery.attachments.map((entry) => ({
             entryRef: entry.entryRef,
             sourceInstance: {
                 source: entry.entryRef.source,
@@ -101,10 +110,24 @@ export async function deliverEntrySessionInput(input: Readonly<{
             lastKnownLocator: entry.display.locator,
         })),
     });
+    if (plan.kind !== 'send') return { kind: 'none' };
+    // The planner exposes an immutable projection. The generated Action input
+    // owns its transport array, so take that ownership at this boundary rather
+    // than weakening either public contract.
+    return { kind: 'input', text: plan.text, attachments: [...plan.attachments] };
+}
+
+export async function deliverEntrySessionInput(input: Readonly<{
+    execute: TriageSessionActionInvokerV1;
+    sessionId: SessionId;
+    delivery: TriageEntrySessionDeliveryRequestV1;
+    signal?: AbortSignal;
+}>): Promise<TriageEntrySessionDeliveryOutcomeV1> {
+    const plan = planEntrySessionInput(input.delivery);
     // Nothing to say. The Session still exists, is linked and will open — that
     // is the press's real outcome, and a blank Message announcing it would be a
     // Message the reader never wrote.
-    if (plan.kind !== 'send') return 'none';
+    if (plan.kind === 'none') return 'none';
 
     try {
         const result = await input.execute(

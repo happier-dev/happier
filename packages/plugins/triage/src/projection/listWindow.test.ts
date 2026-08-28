@@ -316,6 +316,19 @@ describe('the five-facet filter conjunction', () => {
         });
 
         expect(window.rows.map((row) => row.entryRef.entryId)).toEqual(['match']);
+        expect(window.facetCensus).toEqual({
+            types: [
+                { source: TRIAGE_TESTKIT_SOURCE, kindId: 'issue' },
+                { source: TRIAGE_TESTKIT_SOURCE, kindId: 'pull-request' },
+                { source: OTHER_SOURCE, kindId: 'pull-request' },
+            ],
+            scopes: [
+                { source: TRIAGE_TESTKIT_SOURCE, collisionScope: 'example/other' },
+                { source: TRIAGE_TESTKIT_SOURCE, collisionScope: 'example/repository' },
+                { source: OTHER_SOURCE, collisionScope: 'example/repository' },
+            ],
+            coverage: 'complete',
+        });
     });
 
     it('treats values inside one facet as alternatives across sources', () => {

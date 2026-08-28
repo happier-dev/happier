@@ -84,6 +84,7 @@ import {
   PI_REQUEST_AUTH_DECLARED_PURPOSES,
   resolvePiRequestAuthExtensionPath,
 } from './index.js';
+import { PI_REQUEST_AUTH_USES } from './purposes.js';
 import { createPiRuntimeOperations } from '../../../runtime/rpc/operations.js';
 
 const require = createRequire(import.meta.url);
@@ -961,7 +962,7 @@ describe('Pi request-auth strict spawned real-owner composition', () => {
       } satisfies QualifiedConnectedAccountServiceRef;
       const purpose = PI_REQUEST_AUTH_DECLARED_PURPOSES['openai-codex'];
       const declaredRequestAuthUse =
-        PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices.requestAuthUses.find(
+        PI_REQUEST_AUTH_USES.find(
           (candidate) => (
             candidate.purpose === purpose.purpose
           ),

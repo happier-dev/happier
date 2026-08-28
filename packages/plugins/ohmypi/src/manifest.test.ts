@@ -41,7 +41,14 @@ describe('OhMyPi plugin manifest', () => {
         required: false,
         materializationKinds: ['environment'],
       }],
-      capabilities: { surfaces: ['externalSessions'] },
+      capabilities: {
+        surfaces: ['externalSessions'],
+        executionRuns: {
+          open: ['create', 'resume'],
+          checkpoint: true,
+          stop: true,
+        },
+      },
       surfaces: {
         externalSession: {
           sources: [{

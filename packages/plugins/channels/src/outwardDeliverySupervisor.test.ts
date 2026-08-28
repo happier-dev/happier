@@ -118,6 +118,28 @@ const sessionTarget = {
   },
 };
 
+function pendingPermissionRequest(input: Readonly<{
+  requestId: string;
+  turnId: string;
+  createdAtMs: number;
+  allowedScopes: readonly ('request' | 'session')[];
+}>) {
+  return {
+    kind: 'permission' as const,
+    ...input,
+    agentRequestSummary: {
+      kind: 'permission' as const,
+      toolLabel: 'Bash',
+      title: 'Run a command',
+      detail: 'Command: git',
+    },
+  };
+}
+
+function emptyPendingPermissionPage() {
+  return { requests: [], truncated: false, nextCursor: null } as const;
+}
+
 type StoredRow = Readonly<{
   rowId: string;
   revision: number;
@@ -799,7 +821,6 @@ function heldAutomationOutwardObligation(): ConversationOutwardDeliveryObligatio
       automationRunId: 'run-1',
       resultId: 'handoff-1',
       automationId: 'automation-1',
-      templateVersion: 3,
       resultDelivery: 'finalResult',
     },
   };
@@ -1114,6 +1135,7 @@ describe('Channels outward-delivery supervisor', () => {
             },
           }],
           truncated: false,
+          nextCursor: null,
         };
       }
       if (action === 'session.transcript.get') {
@@ -1182,7 +1204,9 @@ describe('Channels outward-delivery supervisor', () => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await state.put(connectionRow(), { expectedRevision: 'absent' });
-    await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
+    // Questions use the canonical user-action owner and remain reachable even
+    // when this binding does not grant remote permission-approval authority.
+    await state.put(bindingRow(), { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
         return {
@@ -1207,8 +1231,21 @@ describe('Channels outward-delivery supervisor', () => {
                 choices: [],
               }],
             },
+          }, {
+            kind: 'permission',
+            requestId: 'permission-request-1',
+            turnId: 'turn-1',
+            createdAtMs: 100,
+            allowedScopes: ['request'],
+            agentRequestSummary: {
+              kind: 'permission',
+              toolLabel: 'Bash',
+              title: 'Run a private command',
+              detail: 'Permission details must not be projected while approvals are off.',
+            },
           }],
           truncated: false,
+          nextCursor: null,
         };
       }
       if (action === 'session.transcript.get') {
@@ -1229,10 +1266,21 @@ describe('Channels outward-delivery supervisor', () => {
       execute,
       executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn(),
     });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal: context.signal,
+      now: () => 0,
+    });
+    const retainedPermission = await store.ensure(permissionWaitOutwardObligation());
+    if (retainedPermission.kind !== 'created') {
+      throw new Error('Expected retained permission custody fixture.');
+    }
 
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
 
-    expect([...deliveries.rows.values()]).toEqual([
+    expect([...deliveries.rows.values()]).toHaveLength(2);
+    expect([...deliveries.rows.values()]).toEqual(expect.arrayContaining([
       expect.objectContaining({
         value: expect.objectContaining({
           payload: expect.objectContaining({
@@ -1252,7 +1300,20 @@ describe('Channels outward-delivery supervisor', () => {
           }),
         }),
       }),
-    ]);
+      expect.objectContaining({
+        value: expect.objectContaining({
+          payload: expect.objectContaining({
+            source: {
+              kind: 'permissionWait',
+              sessionId: 'session-1',
+              turnId: 'turn-1',
+              requestId: 'permission-request-1',
+            },
+            state: 'suppressed',
+          }),
+        }),
+      }),
+    ]));
   });
 
   it('C5 RED suppresses unattempted permission-wait custody when the exact request is no longer pending', async () => {
@@ -1262,7 +1323,7 @@ describe('Channels outward-delivery supervisor', () => {
     await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
-        return { requests: [], truncated: false };
+        return { requests: [], truncated: false, nextCursor: null };
       }
       if (action === 'session.transcript.get') {
         return {
@@ -1330,13 +1391,14 @@ describe('Channels outward-delivery supervisor', () => {
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
         return {
-          requests: [{
+          requests: [pendingPermissionRequest({
             requestId: 'permission-request-1',
             turnId: 'turn-1',
             createdAtMs: 100,
             allowedScopes: ['request', 'session'],
-          }],
+          })],
           truncated: false,
+          nextCursor: null,
         };
       }
       if (action === 'session.transcript.get') {
@@ -1437,23 +1499,23 @@ describe('Channels outward-delivery supervisor', () => {
         cursors.push(typeof cursor === 'string' ? cursor : null);
         if (cursor === undefined) {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'older-request',
               turnId: 'turn-0',
               createdAtMs: 1,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
             nextCursor: 'page-2',
           };
         }
         return {
-          requests: [{
+          requests: [pendingPermissionRequest({
             requestId: 'permission-request-1',
             turnId: 'turn-1',
             createdAtMs: 2,
             allowedScopes: ['request'],
-          }],
+          })],
           truncated: false,
           nextCursor: null,
         };
@@ -1505,7 +1567,7 @@ describe('Channels outward-delivery supervisor', () => {
     await state.put(approvalBindingRow(), { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
-        return { requests: [], truncated: false };
+        return { requests: [], truncated: false, nextCursor: null };
       }
       if (action === 'session.transcript.get') {
         return {
@@ -1620,7 +1682,7 @@ describe('Channels outward-delivery supervisor', () => {
     }, { expectedRevision: 'absent' });
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
-        return { requests: [], truncated: false };
+        return { requests: [], truncated: false, nextCursor: null };
       }
       if (action === 'session.transcript.get') {
         return {
@@ -1667,13 +1729,14 @@ describe('Channels outward-delivery supervisor', () => {
     const execute = vi.fn(async (action: string) => {
       if (action === 'session.permission.remote.pending.list') {
         return {
-          requests: [{
+          requests: [pendingPermissionRequest({
             requestId: 'permission-request-1',
             turnId: 'turn-2',
             createdAtMs: 100,
             allowedScopes: ['request'],
-          }],
+          })],
           truncated: false,
+          nextCursor: null,
         };
       }
       if (action === 'session.transcript.get') {
@@ -2073,6 +2136,25 @@ describe('Channels outward-delivery supervisor', () => {
       { boundary: 'transcript-projection', bindingId: 'binding-1', reason: 'cursorRejected' },
     );
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
+
+    const frontier = state.rows.get('projection-frontier:binding-1');
+    expect(frontier?.value).toMatchObject({
+      payload: {
+        transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100 },
+      },
+    });
+    execute.mockClear();
+    logger.warn.mockClear();
+    await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
+    expect(execute).not.toHaveBeenCalledWith(
+      'session.transcript.get',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      '[Channels] Session projection cannot advance its transcript frontier',
+      expect.anything(),
+    );
   });
 
   it('stays quiet while the transcript frontier advances normally', async () => {
@@ -2081,6 +2163,7 @@ describe('Channels outward-delivery supervisor', () => {
     await seedProjectionState(state);
     const logger = { warn: vi.fn() };
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2110,6 +2193,7 @@ describe('Channels outward-delivery supervisor', () => {
     await seedProjectionState(state);
     const logger = { warn: vi.fn() };
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2193,6 +2277,7 @@ describe('Channels outward-delivery supervisor', () => {
     await seedProjectionState(state);
     const logger = { warn: vi.fn() };
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2286,6 +2371,7 @@ describe('Channels outward-delivery supervisor', () => {
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2347,6 +2433,7 @@ describe('Channels outward-delivery supervisor', () => {
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2412,6 +2499,7 @@ describe('Channels outward-delivery supervisor', () => {
     await seedProjectionState(state);
     const logger = { warn: vi.fn() };
     const execute = vi.fn(async (action: string) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
       if (action !== 'session.transcript.get') throw new Error(`Unexpected Action ${action}`);
       return {
         ok: true,
@@ -2905,7 +2993,6 @@ describe('Channels outward-delivery supervisor', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           policy: { resultDelivery: 'finalResult' },
         },
       },

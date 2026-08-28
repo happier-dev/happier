@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type {
-  AgentRuntimeContext,
   AgentRuntimeFactoryContext,
   AgentSessionRuntime,
+  AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const { openCodexNativeAppServerSession } = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ function createSession(): AgentSessionRuntime {
   };
 }
 
-describe('Codex Provider-bound execution runs', () => {
+describe('Codex Provider-bound Sessions', () => {
   it('carries the bounded configuration and Provider binding into the native session owner', async () => {
     const session = createSession();
     openCodexNativeAppServerSession.mockResolvedValueOnce(session);
@@ -45,23 +45,31 @@ describe('Codex Provider-bound execution runs', () => {
       },
     };
     const runtime = await createCodexAgentRuntime({} as AgentRuntimeFactoryContext);
+    const connectedAccounts = {
+      getBinding: vi.fn(),
+      requestSelection: vi.fn(),
+      materialize: vi.fn(),
+      watch: vi.fn(),
+    };
     const context = {
       signal: new AbortController().signal,
-    } as unknown as AgentRuntimeContext;
-
-    const run = await runtime.executionRuns?.open({
-      kind: 'create',
-      runId: 'run-provider-codex',
-      cwd: '/repo',
-      profile: { pluginId: 'happier.agent.codex', localId: 'default' },
-      input: { text: 'Run it' },
-      modelSelection: {
-        agentTargetKey: 'backend:codex',
-        providerConnectionId,
-        modelId: 'gpt-5.1-codex',
+      services: { connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext;
+    const launchEnvironment = {
+      values: {
+        HAPPIER_CODEX_BACKEND_MODE: 'appServer',
+        CODEX_HOME: '/host/materialized/codex-home',
       },
+      unset: ['OPENAI_API_KEY'],
+    };
+
+    const openedSession = await runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'run-provider-codex',
+      cwd: '/repo',
       configuration,
       providerBinding,
+      launchEnvironment,
     }, context);
 
     expect(openCodexNativeAppServerSession).toHaveBeenCalledWith(
@@ -70,9 +78,13 @@ describe('Codex Provider-bound execution runs', () => {
         sessionId: 'run-provider-codex',
         configuration,
         providerBinding,
+        launchEnvironment,
       }),
       context,
     );
-    await run?.dispose();
+    expect(connectedAccounts.watch).not.toHaveBeenCalled();
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+    await openedSession?.dispose();
   });
 });

@@ -6,6 +6,7 @@ const UPLOAD_PATH = '.happier/uploads/messages/m1/screenshot.png';
 
 const clientState = vi.hoisted(() => {
   const requests: Array<{ method: string; params: unknown }> = [];
+  const notificationHandlers = new Map<string, (params: unknown) => void | Promise<void>>();
   let turnStartCount = 0;
   let rejectStructuredTurnInput = false;
   const readInputLength = (params: unknown): number => {
@@ -16,6 +17,7 @@ const clientState = vi.hoisted(() => {
     requests,
     reset() {
       requests.length = 0;
+      notificationHandlers.clear();
       turnStartCount = 0;
       rejectStructuredTurnInput = false;
     },
@@ -39,6 +41,21 @@ const clientState = vi.hoisted(() => {
         turnStartCount += 1;
         return { turnId: `provider-turn-${turnStartCount}` };
       }
+      if (method === 'turn/steer') {
+        const record = params as Readonly<Record<string, unknown>>;
+        if (typeof record.clientUserMessageId === 'string') {
+          await notificationHandlers.get('item/started')?.({
+            threadId: record.threadId,
+            turnId: record.expectedTurnId,
+            item: {
+              id: `provider-user-message-${record.clientUserMessageId}`,
+              type: 'userMessage',
+              clientId: record.clientUserMessageId,
+            },
+          });
+        }
+        return {};
+      }
       // Every other app-server call in this fixture is session bookkeeping that this contract does
       // not assert on; answering permissively keeps the fixture to the dispatch path under test.
       return {};
@@ -49,8 +66,12 @@ const clientState = vi.hoisted(() => {
     registerRequestHandler(): () => void {
       return () => undefined;
     },
-    registerNotificationHandler(): () => void {
-      return () => undefined;
+    registerNotificationHandler(
+      method: string,
+      handler: (params: unknown) => void | Promise<void>,
+    ): () => void {
+      notificationHandlers.set(method, handler);
+      return () => notificationHandlers.delete(method);
     },
     onExit(): () => void {
       return () => undefined;
@@ -100,6 +121,15 @@ function createRuntime() {
       baseProcessEnv: {},
       logger: {
         debug: vi.fn(),
+      },
+      accountUsage: {
+        resolveSourceContext: async () => null,
+        recordSnapshot: async () => ({ status: 'recorded' }),
+        adoptProvisionalRecord: async () => ({
+          status: 'adopted',
+          fromRecordId: 'paug_v1_from',
+          toRecordId: 'paug_v1_to',
+        }),
       },
       createClient: async (request) => await createCodexAppServerClient({
         exec,

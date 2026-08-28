@@ -34,7 +34,7 @@ vi.mock('../../../runtime/appServer/client.js', async (importOriginal) => {
         const archived = Boolean(request?.archived);
         const cursor = typeof request?.cursor === 'string' ? request.cursor : null;
         appServerProbe.calls.push({ archived, cursor });
-        if (cursor === appServerProbe.failCursor) {
+        if (appServerProbe.failCursor !== null && cursor === appServerProbe.failCursor) {
           throw new Error(`unexpected native cursor request: ${cursor}`);
         }
         const page = appServerProbe.pages.get(`${archived ? 'archived' : 'active'}:${cursor ?? ''}`);

@@ -16,6 +16,7 @@ import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sess
 describe('activate', () => {
     it('reexports the activation compiled by its canonical public plugin definition', async () => {
         expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
+            'actions',
             'agents',
             'connectedAccountDescriptors',
             'hooks',
@@ -42,12 +43,12 @@ describe('activate', () => {
             expect(buildSessionOptions?.({
                 isExplicitCliSubcommand: true,
                 parsed: { agentArgs: [] },
-                settings: { claudeUnifiedTerminalResumeChoice: 'resume_most_recent' },
+                settings: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
                 environment: {},
                 startOrigin: 'terminal',
             })).toEqual({
                 ok: true,
-                options: { claudeUnifiedTerminalResumeChoice: 'resume_most_recent' },
+                options: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
             });
         } finally {
             await activation.dispose();
@@ -225,7 +226,7 @@ describe('activate', () => {
         });
 
         expect(runtime.sessions?.open).toBeTypeOf('function');
-        expect(runtime.executionRuns?.open).toBeTypeOf('function');
+        expect(runtime.executionRuns).toBeUndefined();
         await activation.dispose();
     });
 
@@ -251,7 +252,7 @@ describe('activate', () => {
         try {
             const launch = activation.registration('agents', 'claude')?.connectedAccountLaunch;
 
-            expect(launch).toEqual({
+            expect(launch).toMatchObject({
                 requestAuthUses: [{
                     purpose: 'model_upstream',
                     materialization: {
@@ -260,7 +261,15 @@ describe('activate', () => {
                         headerNames: ['authorization'],
                     },
                 }],
+                environmentUses: [{
+                    purpose: 'model_upstream_api_key',
+                    environmentKey: 'ANTHROPIC_API_KEY',
+                }],
                 stateSharingDescriptor: {
+                    nativeHome: {
+                        environmentKey: 'CLAUDE_CONFIG_DIR',
+                        defaultRelativePath: '.claude',
+                    },
                     providerSupportStatus: 'supported',
                     config: {
                         supported: true,
@@ -292,6 +301,7 @@ describe('activate', () => {
                             'ANTHROPIC_API_KEY',
                             '.claude.json',
                             '.credentials.json',
+                            '.happier-claude-connected-service-home.json',
                             'credentials.json',
                             'auth.json',
                             'accounts',
@@ -299,6 +309,13 @@ describe('activate', () => {
                     },
                 },
             });
+            expect(launch?.continuity?.runtimeAuthAdapter).toEqual(expect.objectContaining({
+                classifyRuntimeAuthFailure: expect.any(Function),
+                materializeActiveProfile: expect.any(Function),
+                canHotApply: expect.any(Function),
+                hotApply: expect.any(Function),
+                probeQuota: expect.any(Function),
+            }));
             expect(launch).not.toHaveProperty('serviceIds');
             expect(launch?.stateSharingDescriptor).not.toHaveProperty('providerId');
         } finally {

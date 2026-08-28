@@ -81,10 +81,6 @@ function readOptionalPositiveInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
-function readOptionalString(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
 /**
  * The envelope itself is strict: a body that is not the documented wrapper is an unsupported
  * contract, not an empty page. Individual `values` entries stay untyped here and are decoded
@@ -98,11 +94,19 @@ export function decodeBitbucketPageEnvelope(body: unknown): BitbucketPageEnvelop
   if (!Array.isArray(record.values)) {
     return { ok: false, failure: createBitbucketFailure('unsupportedContract', 'page-values-missing') };
   }
+  if (record.next !== undefined
+    && record.next !== null
+    && (typeof record.next !== 'string' || record.next.length === 0)) {
+    return {
+      ok: false,
+      failure: createBitbucketFailure('unsupportedContract', 'page-next-invalid'),
+    };
+  }
   return {
     ok: true,
     envelope: {
       values: record.values,
-      next: readOptionalString(record.next),
+      next: typeof record.next === 'string' ? record.next : null,
       page: readOptionalPositiveInteger(record.page),
       pagelen: readOptionalPositiveInteger(record.pagelen),
       size: readOptionalPositiveInteger(record.size),

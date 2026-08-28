@@ -47,6 +47,10 @@ const APPROVED_WRITE_IDS = Object.freeze([
   'gitlab/issue/reopen',
   'gitlab/issue/assign',
   'gitlab/issue/label',
+  'gitlab/merge-request/submit-review',
+  'gitlab/merge-request/review-comment-create',
+  'gitlab/merge-request/thread-reply',
+  'gitlab/issue/comment',
 ] as const);
 
 function declarationOf(id: string) {

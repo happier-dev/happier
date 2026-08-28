@@ -95,7 +95,14 @@ export function createTestkitActionInvoker(script: Readonly<{
 }
 
 export function spawnSuccess(
-    overrides: Readonly<{ sessionId?: string; disposition?: 'created' | 'rejoined' }> = {},
+    overrides: Readonly<{
+        sessionId?: string;
+        disposition?: 'created' | 'rejoined';
+        initialInput?: Extract<
+            PluginActionResultById['session.spawn_new'],
+            Readonly<{ type: 'success' }>
+        >['initialInput'];
+    }> = {},
 ): PluginActionResultById['session.spawn_new'] {
     return {
         type: 'success',
@@ -103,7 +110,7 @@ export function spawnSuccess(
         sessionId: overrides.sessionId ?? 'session-a',
         executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
         organizationPlacement: { folderId: null, tagIds: [] },
-        initialInput: { status: 'notRequested' },
+        initialInput: overrides.initialInput ?? { status: 'notRequested' },
     };
 }
 

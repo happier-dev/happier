@@ -1,8 +1,8 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
-import { unlinkTriageEntryFromSession } from '../../actions/entrySession.js';
 import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
+import { unlinkEntryFromSession } from '../entrySessionLinks.js';
 import {
     TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
     TriageUnlinkEntryFromSessionActionResultV1Schema,
@@ -71,14 +71,15 @@ export function createDirectTriageUnlinkTransport(
     collections: Pick<CorpusCollectionsV1, 'sessionLinks'>,
 ): TriageUnlinkTransportV1 {
     return Object.freeze({
-        unlink: async (target, options) => await unlinkTriageEntryFromSession({
-            v: 1,
-            sessionId: target.sessionId,
-            entryRef: target.entryRef,
-        }, {
-            collections,
-            ...(options?.signal ? { signal: options.signal } : {}),
-        }),
+        unlink: async (target, options) => {
+            const result = await unlinkEntryFromSession({
+                collections,
+                sessionId: target.sessionId,
+                entryRef: target.entryRef,
+                ...(options?.signal ? { signal: options.signal } : {}),
+            });
+            return { v: 1, status: result.status };
+        },
     });
 }
 

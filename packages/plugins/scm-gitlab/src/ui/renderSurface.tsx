@@ -22,14 +22,16 @@
  * Changes · Pipelines · Reviews`; an issue shows `Overview · Activity · Comments · Work Sessions`.
  * An issue has no pipelines at all, and an empty Pipelines tab would state that nothing ran.
  *
- * Diffs are not rendered here. The rich diff body is held at the shared component catalog under
- * `B6`, so the Changes panel presents the changed-file LIST through the approved `List` family
- * with GitLab's own per-file truncation evidence. It neither wraps an app-private diff component
- * nor invents a partial one.
+ * Rich structured diffs are not rendered here. The rich diff body is held at the shared component
+ * catalog under `B6`, so the Changes panel presents the changed-file LIST through the approved
+ * `List` family with GitLab's own per-file truncation evidence. GitLab's separate raw-text evidence
+ * is shown only after an explicit user request; it neither wraps an app-private diff component nor
+ * pretends that raw text is the structured file model.
  */
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Action,
   Badge,
@@ -52,7 +54,9 @@ import {
   defineUiSurface,
   usePluginTranslation,
   useExecutePluginAction,
+  useReviewCommentProposalsForEntry,
   useSurfaceContext,
+  type ReviewCommentProposalReadV1,
   type MetadataEntry,
 } from '@happier-dev/plugin-ui';
 import {
@@ -95,14 +99,23 @@ import {
   useGitlabDiscussions,
   useGitlabNotes,
   useGitlabPipelines,
+  useGitlabRawDiff,
   type GitlabApprovalsViewV1,
   type GitlabPagedControllerV1,
 } from './detail/panelReaders.js';
 import type { GitlabPagedStateV1, GitlabReadStateV1 } from './detail/panelState.js';
 import { GitlabDiscussionResolutionControl, GitlabMutationControls } from './detail/mutationControls.js';
+import {
+  GitlabIssueCommentPublicationControl,
+  GitlabMergeRequestPublicationControls,
+  GitlabThreadReplyPublicationControl,
+} from './detail/reviewPublicationControls.js';
 import { chronologicalGitlabRowsV1, projectGitlabActivityTimelineV1 } from './detail/activityTimeline.js';
-import { projectGitlabDiscussionRepliesV1 } from './detail/discussionReplies.js';
-import { gitlabChangesEvidenceUrlV1, gitlabRawDiffEvidenceUrlV1 } from './detail/changeEvidence.js';
+import {
+  hasEarlierGitlabDiscussionRepliesV1,
+  projectGitlabDiscussionRepliesV1,
+} from './detail/discussionReplies.js';
+import { gitlabChangesEvidenceUrlV1 } from './detail/changeEvidence.js';
 import {
   GITLAB_DEFAULT_DETAIL_TAB_V1,
   gitlabResolveSelectedTab,
@@ -247,6 +260,7 @@ function OverviewPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const statusFields = body.fields.filter(
     (field): field is Extract<GitlabDetailFieldV1, { kind: 'status' }> => field.kind === 'status',
   );
@@ -254,7 +268,10 @@ function OverviewPanel({
   const entries: readonly MetadataEntry[] = body.fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status') return [];
     const value = fieldValueText(field, locale, nowMs);
-    return value === null ? [] : [{ label: field.label, value }];
+    return value === null ? [] : [{
+      label: text(`plugins.gitlab.ui.field.${field.id.replace('gitlab/', '')}`, field.label),
+      value,
+    }];
   });
 
   return (
@@ -263,7 +280,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${field.label}: ${field.value}`} />
+              <Status key={field.id} tone={field.tone} label={`${text(`plugins.gitlab.ui.field.${field.id.replace('gitlab/', '')}`, field.label)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -279,7 +296,7 @@ function OverviewPanel({
               fallback="Answered in the panels beside this one, not on the list row:"
             />
             <Row gap="small">
-              {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
+              {pendingFields.map((field) => <Badge key={field.id} value={text(`plugins.gitlab.ui.field.${field.id.replace('gitlab/', '')}`, field.label)} />)}
             </Row>
           </Stack>
         )}
@@ -296,10 +313,13 @@ function OverviewPanel({
  * its resource-event collections. The reader is told which it is looking at, because a system
  * note rendered as somebody's remark reads as a person saying "added label bug".
  */
-function noteHeadline(row: GitlabProjectedNoteRowV1): string {
-  const author = row.author ?? 'Someone';
-  const base = row.system ? `${author} · activity` : author;
-  return row.editedAtMs === undefined ? base : `${base} · edited`;
+function noteHeadline(
+  text: ReturnType<typeof usePluginTranslation>,
+  row: GitlabProjectedNoteRowV1,
+): string {
+  const author = row.author ?? text('plugins.gitlab.ui.someone', 'Someone');
+  const base = row.system ? `${author} · ${text('plugins.gitlab.ui.activity', 'activity')}` : author;
+  return row.editedAtMs === undefined ? base : `${base} · ${text('plugins.gitlab.ui.edited', 'edited')}`;
 }
 
 const EVENT_SOURCE_TITLES: Readonly<Record<string, string>> = Object.freeze({
@@ -361,10 +381,10 @@ function NotesSection({
       footer={(
         <PagedFooter
           state={state}
-          loadMoreTitle="Show earlier notes"
+          loadMoreTitle={text('plugins.gitlab.ui.showEarlierNotes', 'Show earlier notes')}
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
-          refreshLabel="Re-read these notes from GitLab"
+          refreshLabel={text('plugins.gitlab.ui.rereadNotes', 'Re-read these notes from GitLab')}
           summary={`${String(state.rows.length)} note(s) read.`}
           summaryKey="plugins.gitlab.ui.notesRead"
           summaryValues={{ count: state.rows.length }}
@@ -372,7 +392,7 @@ function NotesSection({
       )}
       renderItem={(row) => (
         <Item
-          title={noteHeadline(row)}
+          title={noteHeadline(text, row)}
           {...(row.body === '' ? {} : { subtitle: row.body })}
           {...(row.atMs === undefined
             ? {}
@@ -400,36 +420,45 @@ function UnifiedActivityPanel({
   nowMs: number;
   notes: GitlabPagedControllerV1<GitlabProjectedNoteRowV1> | null;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const stateEvents = useGitlabActivityEvents(input, 'state');
   const labelEvents = useGitlabActivityEvents(input, 'label');
   const milestoneEvents = useGitlabActivityEvents(input, 'milestone');
   const controllers = [stateEvents, labelEvents, milestoneEvents] as const;
   const allStates = [...(notes === null ? [] : [notes.state]), ...controllers.map((controller) => controller.state)];
   if (allStates.some((state) => state.kind === 'idle' || state.kind === 'loading')) {
-    return <LoadingState title="Reading activity from GitLab" />;
+    return <LoadingState title="Reading activity from GitLab" titleKey="plugins.gitlab.ui.readingActivity" />;
   }
   const rows = projectGitlabActivityTimelineV1({
     kindId: input.observation.entryRef.kindId === 'issue' ? 'issue' : 'merge-request',
     notes: notes?.state.kind === 'ready' ? notes.state.rows : [],
     events: controllers.flatMap((controller) => controller.state.kind === 'ready' ? controller.state.rows : []),
   });
+  // Triage mounts this `content` surface inside its document scroller. Keep
+  // activity rows static so the embedded child never becomes a second
+  // same-axis scroll owner.
   return (
-    <ScrollArea>
+    <Stack gap="small">
+      {allStates.map((state, index) => state.kind === 'unavailable' ? <Banner key={index} tone="warning" title="Part of the activity is unavailable" titleKey="plugins.gitlab.ui.activityUnavailable" description={failureDescription(state.failure, text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'))} /> : null)}
+      {rows.length === 0 ? <EmptyState title="No activity" titleKey="plugins.gitlab.ui.noActivity" description="GitLab has recorded no activity on this entry yet." descriptionKey="plugins.gitlab.ui.noActivity.description" /> : (
       <List
-        accessibilityLabel="Chronological activity GitLab recorded for this entry"
-        items={rows}
-        keyForItem={(row) => `${row.kind}:${row.id}`}
-        empty={<EmptyState title="No activity" description="GitLab has recorded no activity on this entry yet." />}
-        header={<Stack gap="small">{allStates.map((state, index) => state.kind === 'unavailable' ? <Banner key={index} tone="warning" title="Part of the activity is unavailable" description={failureDescription(state.failure, 'GitLab could not complete this read.')} /> : null)}</Stack>}
-        footer={<Stack gap="small">
-          {notes?.state.kind === 'ready' ? <PagedFooter state={notes.state} loadMoreTitle="Show earlier notes" onLoadMore={notes.loadMore} onRefresh={notes.refresh} refreshLabel="Re-read notes from GitLab" summary={`${String(notes.state.rows.length)} note(s) read.`} summaryKey="plugins.gitlab.ui.notesRead" summaryValues={{ count: notes.state.rows.length }} /> : null}
-          {controllers.map((controller, index) => controller.state.kind === 'ready' ? <PagedFooter key={GITLAB_ACTIVITY_EVENT_SOURCES_V1[index]} state={controller.state} loadMoreTitle={`Show more ${EVENT_SOURCE_TITLES[GITLAB_ACTIVITY_EVENT_SOURCES_V1[index] ?? 'state']?.toLowerCase()}`} onLoadMore={controller.loadMore} onRefresh={controller.refresh} refreshLabel="Re-read activity from GitLab" summary={`${String(controller.state.rows.length)} event(s) read.`} summaryKey="plugins.gitlab.ui.eventsRead" summaryValues={{ count: controller.state.rows.length }} /> : null)}
-        </Stack>}
-        renderItem={(timeline) => timeline.kind === 'note'
-          ? <Item title={noteHeadline(timeline.row)} {...(timeline.row.body === '' ? {} : { subtitle: timeline.row.body })} {...(timeline.atMs === undefined ? {} : { detail: formatTimestamp(locale, timeline.atMs, 'relative', nowMs) })} />
-          : <Item title={eventHeadline(timeline.row)} {...(timeline.atMs === undefined ? {} : { detail: formatTimestamp(locale, timeline.atMs, 'relative', nowMs) })} />}
-      />
-    </ScrollArea>
+        accessibilityLabel={text(
+          'plugins.gitlab.ui.activityLabel',
+          'Chronological activity GitLab recorded for this entry',
+        )}
+      >
+        <ItemGroup>
+          {rows.map((timeline) => timeline.kind === 'note'
+            ? <Item key={`${timeline.kind}:${timeline.id}`} title={noteHeadline(text, timeline.row)} {...(timeline.row.body === '' ? {} : { subtitle: timeline.row.body })} {...(timeline.atMs === undefined ? {} : { detail: formatTimestamp(locale, timeline.atMs, 'relative', nowMs) })} />
+            : <Item key={`${timeline.kind}:${timeline.id}`} title={eventHeadline(timeline.row)} {...(timeline.atMs === undefined ? {} : { detail: formatTimestamp(locale, timeline.atMs, 'relative', nowMs) })} />)}
+        </ItemGroup>
+      </List>)}
+      {notes?.state.kind === 'ready' ? <PagedFooter state={notes.state} loadMoreTitle={text('plugins.gitlab.ui.showEarlierNotes', 'Show earlier notes')} onLoadMore={notes.loadMore} onRefresh={notes.refresh} refreshLabel={text('plugins.gitlab.ui.rereadNotes', 'Re-read notes from GitLab')} summary={`${String(notes.state.rows.length)} note(s) read.`} summaryKey="plugins.gitlab.ui.notesRead" summaryValues={{ count: notes.state.rows.length }} /> : null}
+      {controllers.map((controller, index) => {
+        const source = GITLAB_ACTIVITY_EVENT_SOURCES_V1[index] ?? 'state';
+        return controller.state.kind === 'ready' ? <PagedFooter key={source} state={controller.state} loadMoreTitle={text('plugins.gitlab.ui.showMoreEvents', 'Show more {event}', { event: text(`plugins.gitlab.ui.eventSource.${source}`, EVENT_SOURCE_TITLES[source] ?? 'Activity').toLocaleLowerCase(locale) })} onLoadMore={controller.loadMore} onRefresh={controller.refresh} refreshLabel={text('plugins.gitlab.ui.rereadActivity', 'Re-read activity from GitLab')} summary={`${String(controller.state.rows.length)} event(s) read.`} summaryKey="plugins.gitlab.ui.eventsRead" summaryValues={{ count: controller.state.rows.length }} /> : null;
+      })}
+    </Stack>
   );
 }
 
@@ -453,16 +482,26 @@ function CommentsPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const proposals = useReviewCommentProposalsForEntry({
+    linkedSessionIds: input.linkedSessions.map((session) => session.sessionId),
+    entry: {
+      kind: 'issue',
+      id: createReviewCommentLinkedIssueIdV1(input.observation.entryRef),
+    },
+  });
   return (
-    <NotesSection
-      input={input}
-      locale={locale}
-      nowMs={nowMs}
-      accessibilityLabel="Comments on this GitLab issue"
-      accessibilityLabelKey="plugins.gitlab.ui.commentsLabel"
-      emptyTitle="No comments"
-      emptyDescription="Nobody has commented on this issue yet."
-    />
+    <Stack gap="large">
+      <GitlabIssueCommentPublicationControl input={input} proposals={proposals} />
+      <NotesSection
+        input={input}
+        locale={locale}
+        nowMs={nowMs}
+        accessibilityLabel="Comments on this GitLab issue"
+        accessibilityLabelKey="plugins.gitlab.ui.commentsLabel"
+        emptyTitle="No comments"
+        emptyDescription="Nobody has commented on this issue yet."
+      />
+    </Stack>
   );
 }
 
@@ -480,8 +519,8 @@ function changedFileSubtitle(row: GitlabProjectedChangedFileRowV1): string {
 function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useGitlabChanges(input);
+  const rawDiff = useGitlabRawDiff(input);
   const { state } = controller;
-  const rawDiffUrl = gitlabRawDiffEvidenceUrlV1(input.observation.locator.webUrl);
   const changesUrl = gitlabChangesEvidenceUrlV1(input.observation.locator.webUrl);
 
   if (state.kind === 'idle' || state.kind === 'loading') {
@@ -508,8 +547,43 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       header={(
         <Stack gap="small">
           <PageFailureBanner state={state} />
-          {rawDiffUrl === null ? null : (
-            <Action.OpenExternal url={rawDiffUrl} variant="plain" accessibilityLabel="Open raw diff evidence on GitLab" />
+          <Button
+            title="Load raw diff evidence"
+            titleKey="plugins.gitlab.ui.loadRawDiff"
+            variant="secondary"
+            busy={rawDiff.state.kind === 'loading'}
+            onPress={rawDiff.load}
+          />
+          {rawDiff.state.kind !== 'unavailable' ? null : (
+            <Banner
+              tone="warning"
+              title="Raw diff evidence is unavailable"
+              titleKey="plugins.gitlab.ui.rawDiffUnavailable"
+              description={failureDescription(
+                rawDiff.state.failure,
+                text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'),
+              )}
+            />
+          )}
+          {rawDiff.state.kind !== 'ready' ? null : (
+            <Stack gap="small">
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.gitlab.ui.rawDiffLabel"
+                fallback="Raw diff evidence · returned as text by GitLab"
+              />
+              {rawDiff.state.truncated ? (
+                <Banner
+                  tone="neutral"
+                  title="The raw diff was shortened"
+                  titleKey="plugins.gitlab.ui.rawDiffShortened"
+                  description="The returned prefix fits Happier’s Action-result boundary."
+                  descriptionKey="plugins.gitlab.ui.rawDiffShortened.description"
+                />
+              ) : null}
+              <Text variant="code" value={rawDiff.state.text} />
+            </Stack>
           )}
           {controller.diffLimitStatus === 'reported'
             ? null
@@ -537,10 +611,10 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
       footer={(
         <PagedFooter
           state={state}
-          loadMoreTitle="Show more files"
+          loadMoreTitle={text('plugins.gitlab.ui.showMoreFiles', 'Show more files')}
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
-          refreshLabel="Re-read the changed files from GitLab"
+          refreshLabel={text('plugins.gitlab.ui.rereadFiles', 'Re-read the changed files from GitLab')}
           summary={`${String(state.rows.length)} file(s) read.`}
           summaryKey="plugins.gitlab.ui.filesRead"
           summaryValues={{ count: state.rows.length }}
@@ -550,10 +624,15 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
         <Item
           title={row.path}
           subtitle={changedFileSubtitle(row)}
+          accessoryOutsidePressable
           accessory={<Row gap="small">
             <Action.Copy value={row.path} variant="plain" accessibilityLabel={text('plugins.gitlab.ui.copyValue', 'Copy {item}', { item: row.path })} />
             {row.collapsed !== true || changesUrl === null ? null : (
-              <Action.OpenExternal url={changesUrl} variant="plain" accessibilityLabel={`Open collapsed file evidence for ${row.path} on GitLab`} />
+              <Action.OpenExternal url={changesUrl} variant="plain" accessibilityLabel={text(
+                'plugins.gitlab.ui.openCollapsedFile',
+                'Open collapsed file evidence for {file} on GitLab',
+                { file: row.path },
+              )} />
             )}
           </Row>}
         />
@@ -605,9 +684,9 @@ function PipelinesPanel({
   const rollupEntries: readonly MetadataEntry[] = rollup.failingCount === undefined
     ? []
     : [
-      { label: 'Failing', value: String(rollup.failingCount) },
-      { label: 'Running', value: String(rollup.runningCount ?? 0) },
-      { label: 'Passing', value: String(rollup.passingCount ?? 0) },
+      { label: text('plugins.gitlab.ui.status.failing', 'Failing'), value: String(rollup.failingCount) },
+      { label: text('plugins.gitlab.ui.status.running', 'Running'), value: String(rollup.runningCount ?? 0) },
+      { label: text('plugins.gitlab.ui.status.passing', 'Passing'), value: String(rollup.passingCount ?? 0) },
     ];
 
   return (
@@ -647,10 +726,10 @@ function PipelinesPanel({
       footer={(
         <PagedFooter
           state={state}
-          loadMoreTitle="Show older pipelines"
+          loadMoreTitle={text('plugins.gitlab.ui.showOlderPipelines', 'Show older pipelines')}
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
-          refreshLabel="Re-read the pipelines from GitLab"
+          refreshLabel={text('plugins.gitlab.ui.rereadPipelines', 'Re-read the pipelines from GitLab')}
           summary={`${String(state.rows.length)} pipeline(s) read.`}
           summaryKey="plugins.gitlab.ui.pipelinesRead"
           summaryValues={{ count: state.rows.length }}
@@ -719,16 +798,21 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
   const entries: readonly MetadataEntry[] = [
     ...(view.approvalsRequired === undefined
       ? []
-      : [{ label: 'Required', value: String(view.approvalsRequired) }]),
+      : [{ label: text('plugins.gitlab.ui.status.required', 'Required'), value: String(view.approvalsRequired) }]),
     ...(view.approvalsLeft === undefined
       ? []
-      : [{ label: 'Still needed', value: String(view.approvalsLeft) }]),
+      : [{ label: text('plugins.gitlab.ui.status.stillNeeded', 'Still needed'), value: String(view.approvalsLeft) }]),
     ...(view.approvedBy.length === 0
       ? []
-      : [{ label: 'Approved by', value: view.approvedBy.join(', ') }]),
+      : [{ label: text('plugins.gitlab.ui.status.approvedBy', 'Approved by'), value: view.approvedBy.join(', ') }]),
     ...(view.userHasApproved === undefined
       ? []
-      : [{ label: 'You approved', value: view.userHasApproved ? 'Yes' : 'No' }]),
+      : [{
+        label: text('plugins.gitlab.ui.status.youApproved', 'You approved'),
+        value: view.userHasApproved
+          ? text('plugins.gitlab.ui.status.yes', 'Yes')
+          : text('plugins.gitlab.ui.status.no', 'No'),
+      }]),
   ];
 
   return (
@@ -791,9 +875,10 @@ function discussionHeadline(row: GitlabProjectedDiscussionRowV1): string {
  * The window is client-local over the notes the boundary already published: GitLab documents no
  * per-discussion note cursor, so inventing a nested HTTP page would be a request nobody offered.
  */
-const DISCUSSION_REPLY_WINDOW = 4;
-
-function DiscussionsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+function DiscussionsSection({ input, proposals }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  proposals: ReviewCommentProposalReadV1;
+}>): React.ReactElement {
   const text = usePluginTranslation();
   const controller = useGitlabDiscussions(input);
   const { state } = controller;
@@ -834,23 +919,27 @@ function DiscussionsSection({ input }: Readonly<{ input: TriageDetailSurfaceInpu
           // Deliberately not "earlier": the Discussions API documents pagination
           // but no temporal order control, so claiming the next page is older
           // would be a fact this product invented.
-          loadMoreTitle="Show more discussions"
+          loadMoreTitle={text('plugins.gitlab.ui.showMoreDiscussions', 'Show more discussions')}
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
-          refreshLabel="Re-read the discussions from GitLab"
+          refreshLabel={text('plugins.gitlab.ui.rereadDiscussions', 'Re-read the discussions from GitLab')}
           summary={`${String(state.rows.length)} discussion(s) read.`}
           summaryKey="plugins.gitlab.ui.discussionsRead"
           summaryValues={{ count: state.rows.length }}
         />
       )}
-      renderItem={(row) => <DiscussionRow input={input} row={row} />}
+      renderItem={(row) => <DiscussionRow input={input} row={row} proposals={proposals} />}
     />
   );
 }
 
-function DiscussionRow({ input, row }: Readonly<{ input: TriageDetailSurfaceInputV1; row: GitlabProjectedDiscussionRowV1 }>): React.ReactElement {
+function DiscussionRow({ input, row, proposals }: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  row: GitlabProjectedDiscussionRowV1;
+  proposals: ReviewCommentProposalReadV1;
+}>): React.ReactElement {
   const [expanded, setExpanded] = React.useState(false);
-  const hasEarlier = row.notes.length > DISCUSSION_REPLY_WINDOW;
+  const hasEarlier = hasEarlierGitlabDiscussionRepliesV1(row.notes);
   const shown = projectGitlabDiscussionRepliesV1(row.notes, expanded);
   const bodies = shown.map((note) => note.body).filter((body) => body !== '').join(' — ');
   const subtitle = row.omittedNoteCount === 0
@@ -861,18 +950,30 @@ function DiscussionRow({ input, row }: Readonly<{ input: TriageDetailSurfaceInpu
       <Item title={discussionHeadline(row)} subtitle={subtitle} />
       {hasEarlier ? <Button title={expanded ? 'Show latest replies' : 'Show earlier replies'} variant="plain" onPress={() => setExpanded((value) => !value)} /> : null}
       {row.individualNote ? null : <GitlabDiscussionResolutionControl input={input} discussionId={row.id} resolved={row.notes[0]?.resolved === true} />}
+      {row.individualNote ? null : (
+        <GitlabThreadReplyPublicationControl
+          input={input}
+          discussionId={row.id}
+          proposals={proposals}
+        />
+      )}
     </Stack>
   );
 }
 
 function ReviewsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const proposals = useReviewCommentProposalsForEntry({
+    linkedSessionIds: input.linkedSessions.map((session) => session.sessionId),
+    entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
+  });
+  // Triage owns the detail document scroller. Discussions is a virtualized
+  // List, so this panel must not wrap it in a second same-axis ScrollArea.
   return (
-    <ScrollArea>
-      <Stack gap="large">
-        <ApprovalsSection input={input} />
-        <DiscussionsSection input={input} />
-      </Stack>
-    </ScrollArea>
+    <Stack gap="large">
+      <GitlabMergeRequestPublicationControls input={input} proposals={proposals} />
+      <ApprovalsSection input={input} />
+      <DiscussionsSection input={input} proposals={proposals} />
+    </Stack>
   );
 }
 
@@ -885,6 +986,7 @@ function ReviewsPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
 function WorkSessionsPanel({
   sessions,
 }: Readonly<{ sessions: readonly TriageLinkedSessionProjectionV1[] }>): React.ReactElement {
+  const text = usePluginTranslation();
   const { execute } = useExecutePluginAction('session.open');
   const [pendingSessionId, setPendingSessionId] = React.useState<string | null>(null);
   const [failedSessionId, setFailedSessionId] = React.useState<string | null>(null);
@@ -904,12 +1006,27 @@ function WorkSessionsPanel({
         {sessions.map((session) => (
           <Item
             key={session.sessionId}
-            title={session.displayTitle ?? session.sessionId}
+            title={session.displayTitle ?? text(
+              'plugins.gitlab.ui.session.untitled',
+              'Untitled session',
+            )}
             subtitle={session.displayTitle === undefined
-              ? 'Session details are unavailable'
-              : failedSessionId === session.sessionId ? 'This Session could not be opened.' : undefined}
+              ? text(
+                'plugins.gitlab.ui.session.detailsUnavailable',
+                'Session details are unavailable',
+              )
+              : failedSessionId === session.sessionId
+                ? text('plugins.gitlab.ui.session.openFailed', 'This Session could not be opened.')
+                : undefined}
+            accessoryOutsidePressable
             accessory={<Button
-              title={`Open ${session.displayTitle ?? session.sessionId}`}
+              title={session.displayTitle === undefined
+                ? text('plugins.gitlab.ui.session.openUntitled', 'Open session')
+                : text(
+                  'plugins.gitlab.ui.session.open',
+                  'Open {session}',
+                  { session: session.displayTitle },
+                )}
               variant="plain"
               busy={pendingSessionId === session.sessionId}
               disabled={pendingSessionId !== null}
@@ -939,6 +1056,7 @@ function GitlabDetailBody({
   kindId: GitlabKindId;
 }>): React.ReactElement {
   const { locale } = useSurfaceContext();
+  const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<GitlabDetailTabIdV1>(
     GITLAB_DEFAULT_DETAIL_TAB_V1,
   );
@@ -971,13 +1089,13 @@ function GitlabDetailBody({
           const declared = visible.find((candidate) => candidate.id === next);
           if (declared !== undefined) setSelected(declared.id);
         }}
-        ariaLabel="GitLab entry detail"
+        ariaLabel={text('plugins.gitlab.ui.detailLabel', 'GitLab entry detail')}
       >
         {visible.map((declaration) => (
           <Tabs.Item
             key={declaration.id}
             value={declaration.id}
-            title={declaration.title}
+            title={text(declaration.titleKey, declaration.title)}
             // Stated, never inherited: the shared primitive would otherwise discard a panel this
             // source means to keep, or keep one it means to discard.
             retention={declaration.retention}

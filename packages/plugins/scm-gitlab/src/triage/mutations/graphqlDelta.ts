@@ -1,6 +1,3 @@
-import { GITLAB_DETAIL_BOUNDS_V1 } from '../detail/projection.js';
-import { boundGitlabText } from '../mapping/bounded.js';
-
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -21,7 +18,5 @@ export function readGitlabGraphqlMutationErrors(body: unknown, field: string): r
   };
   collect(root.errors);
   collect(record(record(root.data)?.[field])?.errors);
-  return messages.slice(0, 8).map((message) => (
-    boundGitlabText(message, GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes).text
-  ));
+  return messages;
 }

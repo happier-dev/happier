@@ -1,7 +1,7 @@
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { isBoundedInvocationDeadline } from '@happier-dev/triage-sources/runtime';
 
 import { AZURE_DEVOPS_REST_FLOOR } from './apiVersions.js';
-import { truncateUtf8 } from './decode.js';
 import {
   readAzureDevOpsRateLimitEvidence,
   resolveAzureDevOpsRetryNotBeforeMs,
@@ -11,9 +11,6 @@ import type {
   AzureDevOpsFailureClass,
   AzureDevOpsRateLimitEvidence,
 } from './types.js';
-
-/** Bounded, non-secret provider detail. Bodies are never carried through verbatim. */
-export const MAX_AZURE_FAILURE_DETAIL_UTF8_BYTES = 1024;
 
 /**
  * Azure DevOps answers an unusable credential by **intercepting the request with a sign-in
@@ -105,10 +102,7 @@ export function classifyAzureDevOpsResponse(input: Readonly<{
  * propagates from whichever of its inputs fired first.
  */
 export function isAzureDevOpsDeadlineAbort(signal: AbortSignal): boolean {
-  const reason: unknown = signal.reason;
-  return typeof reason === 'object'
-    && reason !== null
-    && (reason as Readonly<{ name?: unknown }>).name === 'TimeoutError';
+  return isBoundedInvocationDeadline(signal.reason);
 }
 
 export function classifyAzureDevOpsTransportFailure(input: Readonly<{
@@ -200,7 +194,7 @@ function looksLikeHtml(
 ): boolean {
   const contentType = readTriageResponseHeaderV1(headers, 'content-type');
   if (contentType !== null && contentType.toLowerCase().includes('text/html')) return true;
-  const prefix = bodyText.trimStart().slice(0, 64).toLowerCase();
+  const prefix = bodyText.trimStart().slice(0, '<!doctype html'.length).toLowerCase();
   return prefix.startsWith('<!doctype html') || prefix.startsWith('<html');
 }
 
@@ -255,7 +249,10 @@ function failure(input: Readonly<{
   return {
     class: input.failureClass,
     status: input.status,
-    detail: truncateUtf8(input.detail, MAX_AZURE_FAILURE_DETAIL_UTF8_BYTES).value,
+    // This provider-internal value is not a result carrier. The one public boundary in
+    // `failureProjection.ts` normalizes and bounds it to the Triage failure schema, avoiding a
+    // second wider ledger that discards evidence before the canonical owner sees it.
+    detail: input.detail,
     typeKey: input.typeKey,
     retryNotBeforeMs: input.retryNotBeforeMs,
     rateLimit: input.rateLimit,

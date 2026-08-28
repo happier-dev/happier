@@ -5,7 +5,6 @@ import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
 import type { GithubRepositoryRouteV1 } from './locator.js';
 import { sendGithubGraphqlRequest } from './mutations/graphql.js';
 import {
-  GITHUB_DETAIL_BOUNDS_V1,
   projectGithubCommentBody,
   projectGithubDetailIdentifierV1,
   projectGithubDetailLabelV1,
@@ -16,15 +15,17 @@ import {
 /**
  * The one GitHub Feedback fetcher.
  *
- * GitHub publishes pull-request issue comments, review threads, reviews, and
- * outstanding review requests as independent GraphQL connections. Each call
- * below advances exactly one of those connections (or one thread's nested
- * replies) and returns only that connection's cursor. It deliberately owns no
- * merged cursor or retained feed: the mounted panel owns its independent
+ * GitHub publishes issue comments, pull-request issue comments, review threads,
+ * reviews, and outstanding review requests as independent GraphQL connections.
+ * Each call below advances exactly one of those connections (or one thread's
+ * nested replies) and returns only that connection's cursor. It deliberately
+ * owns no merged cursor or retained feed: the mounted panel owns its independent
  * windows, and reopening starts from GitHub's newest rows again.
  */
 
-export const GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1 = 40;
+/** PR conversation mounts the newest 24 comments; issue history uses its own wider 40-row window. */
+export const GITHUB_PULL_REQUEST_FEEDBACK_COMMENT_PAGE_SIZE_V1 = 24;
+export const GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1 = 40;
 export const GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1 = 12;
 export const GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1 = 8;
 export const GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1 = 16;
@@ -41,13 +42,15 @@ type GithubFeedbackBaseInputV1 = Readonly<{
   route: GithubRepositoryRouteV1;
   repositoryId: string;
   number: string;
-  kindId: 'pull-request';
   cursor: string | null;
 }>;
 
 export type GithubFeedbackConnectionInputV1 = GithubFeedbackBaseInputV1 & (
-  | Readonly<{ connection: Exclude<GithubFeedbackConnectionV1, 'threadReplies'> }>
-  | Readonly<{ connection: 'threadReplies'; threadId: string }>
+  | Readonly<{ kindId: 'issue'; connection: 'comments' }>
+  | (Readonly<{ kindId: 'pull-request' }> & (
+    | Readonly<{ connection: Exclude<GithubFeedbackConnectionV1, 'threadReplies'> }>
+    | Readonly<{ connection: 'threadReplies'; threadId: string }>
+  ))
 );
 
 export type GithubFeedbackCommentV1 = Readonly<{
@@ -135,6 +138,20 @@ const COMMENTS_QUERY = `query GithubFeedbackComments(
   repository(owner: $owner, name: $name) {
     databaseId
     pullRequest(number: $number) {
+      comments(last: $commentCount, before: $commentCursor) {
+        nodes { id author { login } body createdAt url }
+        pageInfo { hasPreviousPage startCursor }
+      }
+    }
+  }
+}`;
+
+const ISSUE_COMMENTS_QUERY = `query GithubFeedbackComments(
+  $owner: String!, $name: String!, $number: Int!, $commentCount: Int!, $commentCursor: String
+) {
+  repository(owner: $owner, name: $name) {
+    databaseId
+    issue(number: $number) {
       comments(last: $commentCount, before: $commentCursor) {
         nodes { id author { login } body createdAt url }
         pageInfo { hasPreviousPage startCursor }
@@ -243,7 +260,7 @@ function decodeComment(raw: unknown): GithubFeedbackCommentV1 | null {
   const id = projectGithubDetailIdentifierV1(raw.id);
   if (id === null || typeof raw.body !== 'string') return null;
   const author = isRecord(raw.author) ? projectGithubDetailLabelV1(raw.author.login) : null;
-  const body = projectGithubCommentBody(raw.body, GITHUB_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes);
+  const body = projectGithubCommentBody(raw.body);
   const truncated = id.truncated || (author?.truncated ?? false) || body.truncated;
   return Object.freeze({
     id: id.value,
@@ -278,13 +295,15 @@ function commentsFrom(connection: unknown): readonly GithubFeedbackCommentV1[] |
   return chronological(rows);
 }
 
-function readPullRequest(
+function readFeedbackSubject(
   data: Readonly<Record<string, unknown>>,
   repositoryId: string,
+  kindId: 'pull-request' | 'issue',
 ): Readonly<Record<string, unknown>> | null {
   const repository = data.repository;
   if (!isRecord(repository) || String(repository.databaseId) !== repositoryId) return null;
-  return isRecord(repository.pullRequest) ? repository.pullRequest : null;
+  const subject = kindId === 'pull-request' ? repository.pullRequest : repository.issue;
+  return isRecord(subject) ? subject : null;
 }
 
 function unavailable(failure: TriageSourceFailureV1): GithubFeedbackConnectionResultV1 {
@@ -329,7 +348,7 @@ function decodeReviews(connection: unknown): readonly GithubFeedbackReviewV1[] |
     const state = projectGithubDetailLabelV1(raw.state);
     if (id === null || state === null || typeof raw.body !== 'string') continue;
     const author = isRecord(raw.author) ? projectGithubDetailLabelV1(raw.author.login) : null;
-    const body = projectGithubCommentBody(raw.body, GITHUB_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes);
+    const body = projectGithubCommentBody(raw.body);
     const truncated = id.truncated || state.truncated || (author?.truncated ?? false) || body.truncated;
     rows.push(Object.freeze({
       id: id.value,
@@ -410,8 +429,14 @@ export async function readGithubFeedbackConnection(
   const threadId = input.connection === 'threadReplies' ? input.threadId : null;
   const request = input.connection === 'comments'
     ? {
-      query: COMMENTS_QUERY,
-      variables: { ...sharedVariables, commentCount: GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1, commentCursor: input.cursor },
+      query: input.kindId === 'pull-request' ? COMMENTS_QUERY : ISSUE_COMMENTS_QUERY,
+      variables: {
+        ...sharedVariables,
+        commentCount: input.kindId === 'pull-request'
+          ? GITHUB_PULL_REQUEST_FEEDBACK_COMMENT_PAGE_SIZE_V1
+          : GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1,
+        commentCursor: input.cursor,
+      },
     }
     : input.connection === 'threads'
       ? {
@@ -473,11 +498,11 @@ export async function readGithubFeedbackConnection(
       });
   }
 
-  const pullRequest = readPullRequest(answered.data, input.repositoryId);
-  if (pullRequest === null) return unavailable(INVALID_RESPONSE);
+  const subject = readFeedbackSubject(answered.data, input.repositoryId, input.kindId);
+  if (subject === null) return unavailable(INVALID_RESPONSE);
 
   if (input.connection === 'comments') {
-    const connection = pullRequest.comments;
+    const connection = subject.comments;
     const rows = commentsFrom(connection);
     const previousCursor = isRecord(connection)
       ? nullableCursor(connection.pageInfo, 'previous')
@@ -487,7 +512,7 @@ export async function readGithubFeedbackConnection(
       : Object.freeze({ kind: 'comments' as const, rows, previousCursor });
   }
   if (input.connection === 'threads') {
-    const connection = pullRequest.reviewThreads;
+    const connection = subject.reviewThreads;
     const rows = decodeThreads(connection);
     const previousCursor = isRecord(connection)
       ? nullableCursor(connection.pageInfo, 'previous')
@@ -497,18 +522,18 @@ export async function readGithubFeedbackConnection(
       : Object.freeze({ kind: 'threads' as const, rows, previousCursor });
   }
   if (input.connection === 'reviews') {
-    const connection = pullRequest.reviews;
+    const connection = subject.reviews;
     const rows = decodeReviews(connection);
     const previousCursor = isRecord(connection)
       ? nullableCursor(connection.pageInfo, 'previous')
       : undefined;
-    const reviewDecision = decodeReviewDecision(pullRequest.reviewDecision);
+    const reviewDecision = decodeReviewDecision(subject.reviewDecision);
     return rows === null || previousCursor === undefined || reviewDecision === undefined
       ? unavailable(INVALID_RESPONSE)
       : Object.freeze({ kind: 'reviews' as const, rows, previousCursor, reviewDecision });
   }
   if (input.connection === 'requests') {
-    const connection = pullRequest.reviewRequests;
+    const connection = subject.reviewRequests;
     const rows = decodeRequests(connection);
     const nextCursor = isRecord(connection)
       ? nullableCursor(connection.pageInfo, 'next')

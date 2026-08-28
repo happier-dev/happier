@@ -45,4 +45,32 @@ describe('OpenCode attach descriptor', () => {
       'http://127.0.0.1:49196/global/health',
     );
   });
+
+  it('uses the host-owned managed Session endpoint fallback without overriding an explicit URL', () => {
+    const managedMetadata = {
+      ...metadata,
+      runtimeDescriptorV1: {
+        ...metadata.runtimeDescriptorV1,
+        agent: {
+          ...metadata.runtimeDescriptorV1.agent,
+          serverBaseUrl: undefined,
+          serverBaseUrlExplicit: false,
+        },
+      },
+    };
+    expect(resolveOpenCodeAttachTarget({
+      metadata: managedMetadata,
+      fallbackServerBaseUrl: 'http://127.0.0.1:49197',
+    })).toMatchObject({
+      ok: true,
+      value: { baseUrl: 'http://127.0.0.1:49197' },
+    });
+    expect(resolveOpenCodeAttachTarget({
+      metadata,
+      fallbackServerBaseUrl: 'http://127.0.0.1:49197',
+    })).toMatchObject({
+      ok: true,
+      value: { baseUrl: 'http://127.0.0.1:49196/' },
+    });
+  });
 });

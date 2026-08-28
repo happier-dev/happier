@@ -21,6 +21,7 @@ describe('Sentry detail tab declarations', () => {
       expect(['scrollArea', 'list'], tab.id).toContain(tab.scrollOwner);
       expect(tab.retainedState.length, tab.id).toBeGreaterThan(0);
     }
+    expect(sentryDetailTabDeclaration('stack-trace').scrollOwner).toBe('list');
   });
 
   it('names every tab through a catalog key that exists in every locale it ships', () => {

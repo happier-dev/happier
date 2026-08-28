@@ -199,7 +199,10 @@
                     ],
                     "kind": "httpHeaders",
                     "origin": "https://api.openai.com"
-                  }
+                  },
+                  "requiredHeaderNames": [
+                    "authorization"
+                  ]
                 }
               ],
               "service": {
@@ -225,7 +228,10 @@
                     ],
                     "kind": "httpHeaders",
                     "origin": "https://api.openai.com"
-                  }
+                  },
+                  "requiredHeaderNames": [
+                    "authorization"
+                  ]
                 }
               ],
               "service": {

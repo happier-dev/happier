@@ -36,6 +36,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from '../ui/window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderPickerSurface } from './entryPicker.js';
 
 /**
@@ -93,7 +94,10 @@ function observation(entryId: string, title: string): TriageSourceScanObservatio
 type ApplyCall = Readonly<{ ref: unknown; transaction: unknown }>;
 type OpenCall = Readonly<{ view: unknown; input: unknown }>;
 
-function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }> = {}) {
+function createHarness(options: Readonly<{
+    scanFailure?: TriageSourceFailureV1;
+    cancelFirstComposerApply?: boolean;
+}> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
 
@@ -147,6 +151,7 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
     let attachments: ComposerAttachmentViewV1[] = [];
     let revision = 4;
     let nextAttachmentInstanceId = 1;
+    let composerApplyCancelled = false;
 
     const snapshot = (ref: unknown): ComposerSnapshotV1 => ({
         revision,
@@ -188,7 +193,14 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
                     },
                     key: operation.value.key,
                     value: operation.value.value,
-                    presentation: operation.value.presentation,
+                    // The real Composer host stamps the attachment declaration's
+                    // title onto every admitted author presentation. Keep this
+                    // mounted-host fixture faithful to that boundary so emitted
+                    // canonical snapshots satisfy the public view contract.
+                    presentation: {
+                        ...operation.value.presentation,
+                        typeLabel: 'PRs & Issues',
+                    },
                     availability: { status: 'ready' },
                 } as ComposerAttachmentViewV1;
                 attachments = existing === undefined
@@ -205,6 +217,7 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
 
     const watchSignals: AbortSignal[] = [];
     const watchDisposals: number[] = [];
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
 
     return {
         applyCalls,
@@ -220,6 +233,7 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
         },
         watchSignals,
         watchDisposals,
+        ephemeralSharedScope,
         scanCalls,
         listActionCalls,
         handlers: {
@@ -248,6 +262,10 @@ function createHarness(options: Readonly<{ scanFailure?: TriageSourceFailureV1 }
             },
             applyComposer: ({ ref, transaction }: Readonly<{ ref: unknown; transaction: unknown }>) => {
                 applyCalls.push({ ref, transaction });
+                if (options.cancelFirstComposerApply === true && !composerApplyCancelled) {
+                    composerApplyCancelled = true;
+                    throw new DOMException('The host stopped the request.', 'AbortError');
+                }
                 const outcome = applyCanonicalTransaction(transaction as ComposerTransactionV1);
                 return outcome.status === 'conflict'
                     ? { status: 'conflict', currentRevision: revision } as never
@@ -285,7 +303,9 @@ async function openPicker(
             },
             surface: renderPickerSurface,
             surfaceContext: createSurfaceContextFixture(environment),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({
+                ephemeralSharedScope: harness.ephemeralSharedScope,
+            }),
             launchInput: {
                 v: 1,
                 role: 'attachmentPicker',
@@ -309,7 +329,13 @@ async function mountPicker(
     environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
 ): Promise<PluginUiTestkit> {
     const fixture = await openPicker(harness, composer, viewId, environment);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow(
+            'view',
+            fixture.context.hostApi,
+            harness.ephemeralSharedScope,
+        );
+    });
     await act(async () => { await Promise.resolve(); });
     return fixture;
 }
@@ -445,6 +471,28 @@ describe('the mounted Composer entry picker', () => {
         // the same entry into the message through two persisted paths.
         expect(transaction.operations.map((operation) => operation.kind)).toEqual(['attachment.add']);
         expect(transaction.operations[0]?.attachmentLocalId).toBe('entry');
+    });
+
+    it('settles a cancelled attachment mutation and keeps the control retryable', async () => {
+        const harness = createHarness({ cancelFirstComposerApply: true });
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-cancelled-attach');
+
+        const attach = await picker.getByRole('button', {
+            name: 'Attach Replace the duplicated normalizer',
+        });
+        await expect(picker.press(attach)).resolves.toBeUndefined();
+
+        const retry = await picker.getByRole('button', {
+            name: 'Attach Replace the duplicated normalizer',
+        });
+        // Omitted semantic state is the public adapter's default enabled/idle
+        // state; an explicit `false` and an omitted default are equivalent.
+        expect(retry.state?.busy ?? false).toBe(false);
+        expect(retry.state?.disabled ?? false).toBe(false);
+        expect(harness.attachments).toEqual([]);
+
+        await expect(picker.press(retry)).resolves.toBeUndefined();
+        expect(harness.attachments).toHaveLength(1);
     });
 
     it('never writes to another live composer', async () => {

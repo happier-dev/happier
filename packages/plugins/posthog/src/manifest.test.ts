@@ -146,7 +146,7 @@ describe('PostHog plugin manifest', () => {
         }]));
 
         const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
-        expect(actions.has(POSTHOG_ACTION_IDS.capability)).toBe(true);
+        expect(actions.has('posthog/capability')).toBe(false);
         for (const id of Object.values(POSTHOG_ACTION_IDS)) {
             expect(actions.get(id)?.execution).toEqual({ target: 'daemon' });
             expect(actions.get(id)?.hostAccess)
@@ -166,11 +166,6 @@ describe('PostHog plugin manifest', () => {
         expect(actions.get(POSTHOG_ACTION_IDS.configuration)?.connectedAccountPurposeBindings)
             .toEqual([{
                 path: 'binding.account',
-                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-            }]);
-        expect(actions.get(POSTHOG_ACTION_IDS.capability)?.connectedAccountPurposeBindings)
-            .toEqual([{
-                path: 'draft.binding.account',
                 purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
             }]);
         expect(actions.get(POSTHOG_ACTION_IDS.listInstances)?.connectedAccountPurposeBindings)
@@ -257,6 +252,23 @@ describe('PostHog plugin manifest', () => {
             .find((candidate) => candidate.target.pluginId === 'happier.triage');
         expect(Object.values(contribution?.operations ?? {}))
             .not.toContain(POSTHOG_ACTION_IDS.issueEvents);
+    });
+
+    it('declares the explicit sensitive code-variable reread as a source-native Action', () => {
+        const actions = new Map(
+            PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]),
+        );
+        const reveal = actions.get('posthog/code-variables');
+
+        expect(reveal).toMatchObject({
+            execution: { target: 'daemon' },
+            dangerLevel: 'safe',
+            hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, 'posthog-network'],
+            connectedAccountPurposeBindings: [{
+                path: 'instance.binding.account',
+                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
+            }],
+        });
     });
 
     it('declares the source-native activity read without giving it a Triage role', () => {

@@ -1,15 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { SentryReadEventResultV1Schema } from '../detail/detailContracts.js';
 import {
   SENTRY_EVENT_BOUNDS_V1,
   projectSentryEventForDisplay,
 } from './sentryEventProjection.js';
-
-const ACTION_BYTE_GATE = 1_024 * 1_024;
-
-function encodedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
 
 function frame(overrides: Readonly<Record<string, unknown>> = {}) {
   return {
@@ -477,8 +472,8 @@ describe('Sentry event projection — what may leave this source', () => {
     expect(projected.sections[0]?.kind).toBe('stacktrace');
   });
 
-  it('keeps the frames nearest the crash when a stack exceeds the ceiling', () => {
-    const total = SENTRY_EVENT_BOUNDS_V1.maxFramesPerSection + 3;
+  it('does not impose the retired 40-frame product cap on a readable stack', () => {
+    const total = 43;
     const frames = Array.from({ length: total }, (_, index) => frame({
       function: `frame${String(index)}`,
       vars: undefined,
@@ -490,13 +485,24 @@ describe('Sentry event projection — what may leave this source', () => {
     const [section] = projected.sections;
     expect(section?.kind).toBe('stacktrace');
     if (section?.kind !== 'stacktrace') return;
-    expect(section.frames).toHaveLength(SENTRY_EVENT_BOUNDS_V1.maxFramesPerSection);
-    // Sentry returns a stack oldest-first, so the crash site is the last frame.
-    // Dropping the tail would remove the only frame most readers open this for.
+    expect(section.frames).toHaveLength(total);
     expect(section.frames.at(-1)?.function).toBe(`frame${String(total - 1)}`);
-    expect(section.frames[0]?.function).toBe('frame3');
-    expect(projected.omitted.frames).toBe(3);
-    expect(projected.projectionTruncated).toBe(true);
+    expect(section.frames[0]?.function).toBe('frame0');
+    expect(projected.omitted.frames).toBe(0);
+    expect(projected.projectionTruncated).toBe(false);
+  });
+
+  it('does not silently cap redaction evidence at the retired source-local count', () => {
+    const frames = Array.from({ length: 385 }, (_unused, index) => frame({
+      function: `frame${String(index)}`,
+      vars: { secret: String(index) },
+    }));
+    const projected = projectSentryEventForDisplay(exceptionEvent({
+      entries: [{ type: 'stacktrace', data: { frames } }],
+    }));
+
+    expect(projected.redactions).toHaveLength(385);
+    expect(projected.omitted.redactions).toBe(0);
   });
 
   it('shortens an oversized value rather than rejecting the whole event', () => {
@@ -544,70 +550,15 @@ describe('Sentry event projection — what may leave this source', () => {
     expect(projectSentryEventForDisplay(body)).toBeNull();
   });
 
-  it('clears the byte gate with every collection saturated at once', () => {
-    // The gate is the one hard constraint that exists: the Action aggregate
-    // rejects a result over a mebibyte outright, and a rejected result shows the
-    // reader nothing at all. Every ceiling above is derived from this measurement
-    // rather than from a guess about how deep a real stack is.
-    const long = (bytes: number, seed: string): string => seed.repeat(bytes);
-    const frames = Array.from(
-      { length: SENTRY_EVENT_BOUNDS_V1.maxFramesPerSection },
-      () => ({
-        filename: long(SENTRY_EVENT_BOUNDS_V1.locationUtf8Bytes, 'f'),
-        function: long(SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, 'g'),
-        lineNo: 999_999,
-        colNo: 999_999,
-        inApp: true,
-        context: [[999_999, long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'c')]],
-        vars: { a: 1 },
-      }),
-    );
-    const saturated = {
-      eventID: 'a'.repeat(32),
-      dateCreated: '2026-02-03T04:05:06.000Z',
-      title: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 't'),
-      message: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'm'),
-      location: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'l'),
-      culprit: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'p'),
-      platform: long(SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, 'y'),
-      user: {
-        id: long(SENTRY_EVENT_BOUNDS_V1.identifierUtf8Bytes, 'i'),
-        email: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'e'),
-        username: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'u'),
-        ip_address: long(SENTRY_EVENT_BOUNDS_V1.identifierUtf8Bytes, '1'),
-        name: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'n'),
-      },
-      tags: Array.from({ length: SENTRY_EVENT_BOUNDS_V1.maxTags }, () => ({
-        key: 'url',
-        value: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'v'),
-      })),
-      entries: [
-        ...Array.from({ length: SENTRY_EVENT_BOUNDS_V1.maxSections - 1 }, () => ({
-          type: 'exception',
-          data: {
-            values: [{
-              type: long(SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, 'T'),
-              value: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'V'),
-              stacktrace: { frames },
-            }],
-          },
+  it('admits an unbounded structural result schema for runtime envelope fitting', () => {
+    expect(() => SentryReadEventResultV1Schema.parse({
+      kind: 'event',
+      projection: projectSentryEventForDisplay(exceptionEvent({
+        entries: Array.from({ length: 7 }, (_, index) => ({
+          type: 'message',
+          data: { formatted: `message ${String(index)}` },
         })),
-        {
-          type: 'breadcrumbs',
-          data: {
-            values: Array.from({ length: SENTRY_EVENT_BOUNDS_V1.maxBreadcrumbs }, () => ({
-              timestamp: '2026-02-03T04:05:00.000Z',
-              category: long(SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, 'k'),
-              level: long(SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, 'w'),
-              message: long(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, 'b'),
-              data: { a: 1 },
-            })),
-          },
-        },
-      ],
-    };
-
-    expect(encodedBytes(projectSentryEventForDisplay(saturated)))
-      .toBeLessThan(ACTION_BYTE_GATE);
+      })),
+    })).not.toThrow();
   });
 });

@@ -1,11 +1,6 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
-import { writeClaudeCodeCredentialsFile } from '../native/credentials.js';
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '../native/scopes.js';
 
 type ClaudeRuntimeAuthEnvIsolator = (
@@ -94,6 +89,31 @@ function createClaudeSubscriptionSetupTokenRecord(profileId = 'setup') {
   });
 }
 
+type ClaudeNativeAuthCodec = ReturnType<
+  (typeof import('./failure.js'))['createClaudeConnectedAccountNativeAuthCodec']
+>;
+
+function createNativeAuthHarness(params: Readonly<{
+  codec: ClaudeNativeAuthCodec;
+  credential: Parameters<ClaudeNativeAuthCodec['materialize']>[0]['credential'];
+  selection: Parameters<ClaudeNativeAuthCodec['materialize']>[0]['selection'];
+}>) {
+  const files: Record<string, Uint8Array> = Object.create(null);
+  const inspectNativeAuth = async () => params.codec.inspect({
+    credential: params.credential,
+    selection: params.selection,
+    files,
+  });
+  const materializeNativeAuth = async () => {
+    Object.assign(files, params.codec.materialize({
+      credential: params.credential,
+      selection: params.selection,
+    }).files);
+    return await inspectNativeAuth();
+  };
+  return { files, inspectNativeAuth, materializeNativeAuth };
+}
+
 describe('Claude runtime auth service classification', () => {
   it('attaches source provider account identity and group generation to runtime usage-limit classifications', async () => {
     const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
@@ -109,7 +129,6 @@ describe('Claude runtime auth service classification', () => {
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
         sourceProviderAccountId: 'live-account',
         sourceAccountLabel: 'live@example.com',
-        record: createClaudeSubscriptionRecord('team'),
       },
       error: {
         type: 'rate_limit_event',
@@ -135,33 +154,39 @@ describe('Claude runtime auth service classification', () => {
 
   it('hot-applies Claude subscription group auth by rewriting the shared config dir', async () => {
     await withLinuxPlatform(async () => {
-      const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
-      const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
+      const {
+        createClaudeConnectedAccountNativeAuthCodec,
+        createClaudeConnectedServiceRuntimeAuthAdapter,
+      } = await import('./index.js');
       const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
+      const credential = createClaudeSubscriptionRecord('team');
       const selection = {
         groupId: 'coders',
         activeProfileId: 'team',
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
-        record: createClaudeSubscriptionRecord('team'),
-        targetMaterializedRoot: claudeConfigDir,
       };
+      const { files, materializeNativeAuth } = createNativeAuthHarness({
+        codec: createClaudeConnectedAccountNativeAuthCodec(),
+        credential,
+        selection,
+      });
 
       expect(adapter.canHotApply({
         target: { agentId: 'claude' },
         selection,
+        materializeNativeAuth,
       })).toEqual({
         supported: true,
-        mode: 'claude_subscription_shared_group_auth_surface_rewrite',
       });
 
       await expect(adapter.hotApply({
         target: { agentId: 'claude' },
         selection,
+        materializeNativeAuth,
       })).resolves.toMatchObject({
         applied: true,
         reason: 'claude_shared_group_auth_surface_rewritten',
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
         verification: {
           status: 'verified',
           providerAccountId: 'team-account',
@@ -181,7 +206,7 @@ describe('Claude runtime auth service classification', () => {
         },
       });
 
-      const credentials = JSON.parse(await readFile(join(claudeConfigDir, '.credentials.json'), 'utf8')) as {
+      const credentials = JSON.parse(new TextDecoder().decode(files['.credentials.json'])) as {
         claudeAiOauth?: { accessToken?: string; refreshToken?: string };
       };
       expect(credentials.claudeAiOauth).toMatchObject({
@@ -194,16 +219,13 @@ describe('Claude runtime auth service classification', () => {
   it('keeps non-group Claude subscription and Anthropic auth on restart recovery without hot-apply subpaths', async () => {
     const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
     const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
-    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
 
     expect(adapter.canHotApply({
       target: { agentId: 'claude' },
       selection: {
         serviceId: 'claude-subscription',
         profileId: 'team',
-        record: createClaudeSubscriptionRecord('team'),
       },
-      targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
     })).toEqual({
       supported: false,
       reason: 'hot_apply_unsupported',
@@ -215,9 +237,7 @@ describe('Claude runtime auth service classification', () => {
       selection: {
         serviceId: 'anthropic',
         groupId: 'coders',
-        record: { serviceId: 'anthropic' },
       },
-      targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
     })).toEqual({
       supported: false,
       reason: 'hot_apply_unsupported',
@@ -228,13 +248,10 @@ describe('Claude runtime auth service classification', () => {
   it('does not hot-apply token-backed Claude subscription groups through the shared config dir', async () => {
     const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
     const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
-    const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
     const selection = {
       serviceId: 'claude-subscription',
       groupId: 'coders',
       activeProfileId: 'setup',
-      record: createClaudeSubscriptionSetupTokenRecord('setup'),
-      targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
     };
 
     expect(adapter.canHotApply({
@@ -257,8 +274,10 @@ describe('Claude runtime auth service classification', () => {
 
   it('verifies exact Claude group epoch provenance plus native auth under the destination lock', async () => {
     await withLinuxPlatform(async () => {
-      const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
-      const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
+      const {
+        createClaudeConnectedAccountNativeAuthCodec,
+        createClaudeConnectedServiceRuntimeAuthAdapter,
+      } = await import('./index.js');
       const record = createClaudeSubscriptionRecord('team');
       const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
 
@@ -267,16 +286,20 @@ describe('Claude runtime auth service classification', () => {
         activeProfileId: 'team',
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
-        record,
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
       };
-      await expect(adapter.hotApply({ target: { agentId: 'claude' }, selection })).resolves.toMatchObject({
+      const { inspectNativeAuth, materializeNativeAuth } = createNativeAuthHarness({
+        codec: createClaudeConnectedAccountNativeAuthCodec(),
+        credential: record,
+        selection,
+      });
+      await expect(adapter.hotApply({ target: { agentId: 'claude' }, selection, materializeNativeAuth })).resolves.toMatchObject({
         applied: true,
       });
 
       const result = await adapter.verifyActiveAccount?.({
         target: { agentId: 'claude' },
         selection,
+        inspectNativeAuth,
       });
 
       expect(result).toEqual({
@@ -299,27 +322,58 @@ describe('Claude runtime auth service classification', () => {
     });
   });
 
+  it('returns restart recovery when the host rejects superseded materialization', async () => {
+    const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
+    await expect(createClaudeConnectedServiceRuntimeAuthAdapter().hotApply({
+      target: { agentId: 'claude' },
+      selection: {
+        serviceId: 'claude-subscription',
+        groupId: 'coders',
+        activeProfileId: 'team',
+        groupGeneration: 12,
+        credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
+      },
+      materializeNativeAuth: async () => ({
+        status: 'unavailable',
+        retryable: true,
+        reason: 'credential_revision_superseded',
+      }),
+    })).resolves.toEqual({
+      applied: false,
+      reason: 'credential_revision_superseded',
+      recovery: 'restart_resume',
+    });
+  });
+
   it.each([
     ['credential revision ABA', { groupGeneration: 12, credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }],
     ['group generation change', { groupGeneration: 13, credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' }],
   ])('does not adopt same credential bytes across a %s', async (_label, desired) => {
     await withLinuxPlatform(async () => {
-      const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
-      const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
+      const {
+        createClaudeConnectedAccountNativeAuthCodec,
+        createClaudeConnectedServiceRuntimeAuthAdapter,
+      } = await import('./index.js');
       const adapter = createClaudeConnectedServiceRuntimeAuthAdapter();
+      const credential = createClaudeSubscriptionRecord('team');
       const baseSelection = {
         groupId: 'coders',
         activeProfileId: 'team',
         groupGeneration: 12,
         credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
-        record: createClaudeSubscriptionRecord('team'),
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
       };
-      await expect(adapter.hotApply({ target: { agentId: 'claude' }, selection: baseSelection }))
+      const codec = createClaudeConnectedAccountNativeAuthCodec();
+      const { files, materializeNativeAuth } = createNativeAuthHarness({ codec, credential, selection: baseSelection });
+      await expect(adapter.hotApply({ target: { agentId: 'claude' }, selection: baseSelection, materializeNativeAuth }))
         .resolves.toMatchObject({ applied: true });
       await expect(adapter.verifyActiveAccount?.({
         target: { agentId: 'claude' },
         selection: { ...baseSelection, ...desired },
+        inspectNativeAuth: async () => codec.inspect({
+          credential,
+          selection: { ...baseSelection, ...desired },
+          files,
+        }),
       })).resolves.toMatchObject({ status: 'unavailable' });
     });
   });
@@ -331,8 +385,6 @@ describe('Claude runtime auth service classification', () => {
       serviceId: 'claude-subscription',
       groupId: 'coders',
       activeProfileId: 'team',
-      record: createClaudeSubscriptionRecord('team'),
-      targetMaterializedEnv: { CLAUDE_CONFIG_DIR: '/tmp/claude-config' },
     };
 
     expect(adapter.canHotApply({
@@ -356,28 +408,18 @@ describe('Claude runtime auth service classification', () => {
   it('does not treat healthy Claude subscription native credentials as runtime account adoption proof', async () => {
     await withLinuxPlatform(async () => {
       const { createClaudeConnectedServiceRuntimeAuthAdapter } = await import('./index.js');
-      const claudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-claude-runtime-auth-test-'));
-      await writeClaudeCodeCredentialsFile({
-        claudeConfigDir,
-        payload: {
-          claudeAiOauth: {
-            accessToken: 'access-placeholder',
-            refreshToken: 'refresh-placeholder',
-            expiresAt: Date.now() + 60 * 60 * 1000,
-            scopes: CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE.split(' '),
-          },
-        },
-      });
-
       const result = await createClaudeConnectedServiceRuntimeAuthAdapter().verifyActiveAccount?.({
         target: { agentId: 'claude' },
         selection: {},
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
+        inspectNativeAuth: async () => ({
+          status: 'verified',
+          providerAccountId: 'ambient-account',
+        }),
       });
 
       expect(result).toEqual({
         status: 'unavailable',
-        retryable: true,
+        retryable: false,
         reason: 'claude_code_runtime_account_adoption_unproven',
       });
     });

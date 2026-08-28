@@ -5,7 +5,11 @@ const MAX_FEATURE_PAGES = 100;
 export const CODEX_OPERATION_ABORTED = Symbol('codex_operation_aborted');
 
 type CodexRealtimeFeatureRequestClient = Readonly<{
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(
+    method: string,
+    params?: unknown,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<unknown>;
   launchFeatures?: Readonly<{
     realtimeConversationAdvertised: boolean;
   }>;
@@ -110,11 +114,15 @@ export async function inspectCodexRealtimeFeature(params: Readonly<{
     let pageValue: unknown;
     try {
       const pageOutcome = await waitForCodexOperationOrAbort(
-        params.client.request('experimentalFeature/list', {
-          ...(typeof params.threadId === 'string' ? { threadId: params.threadId } : {}),
-          cursor,
-          limit: FEATURE_PAGE_LIMIT,
-        }),
+        params.client.request(
+          'experimentalFeature/list',
+          {
+            ...(typeof params.threadId === 'string' ? { threadId: params.threadId } : {}),
+            cursor,
+            limit: FEATURE_PAGE_LIMIT,
+          },
+          params.signal ? { signal: params.signal } : undefined,
+        ),
         params.signal,
       );
       if (pageOutcome === CODEX_OPERATION_ABORTED) {

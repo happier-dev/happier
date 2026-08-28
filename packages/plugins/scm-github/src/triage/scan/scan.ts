@@ -66,7 +66,7 @@ export type GithubScanPageRequestV1 =
   /** One GLOBAL observation projection budget shared by the five lanes, for this page. */
   | Readonly<{ kind: 'initial'; limit: number }>
   /** This source's own opaque continuation bytes, from its immediately preceding page. */
-  | Readonly<{ kind: 'continuation'; token: string; maxLimit: number }>;
+  | Readonly<{ kind: 'continuation'; token: string }>;
 
 export type GithubScanInputV1 = Readonly<{
   page: GithubScanPageRequestV1;
@@ -210,7 +210,6 @@ export async function runGithubTriageScan(
   } else {
     const resumed = decodeGithubScanContinuation(input.page.token, {
       buildLaneQuery,
-      maxScanLimit: input.page.maxLimit,
     });
     if (resumed === null) {
       return Object.freeze({ kind: 'failed', failure: CONTINUATION_UNRECOGNIZED_FAILURE });

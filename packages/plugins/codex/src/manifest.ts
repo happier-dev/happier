@@ -1,6 +1,6 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from './connectedAccounts/openAiCodexProfile.js';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
@@ -23,6 +23,12 @@ import { shouldUseCodexDeferredBootstrap } from './agent/lifecycle/deferredStart
 import { readCodexMcpConfigServers } from './agent/mcp/configServers.js';
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { createCodexAgentRuntime } from './agent/runtime/engine.js';
+import { codexStateSharingDescriptor } from './agent/auth/services/state/sharing/descriptor.js';
+import {
+  createCodexConnectedAccountNativeAuthCodec,
+  createCodexConnectedServiceRuntimeAuthAdapter,
+} from './agent/auth/services/runtime/control/runtimeAuthAdapter.js';
+import { verifyResumeReachableCodex } from './agent/auth/services/runtime/control/verifyResumeReachable.js';
 import { codexExternalSessionsContribution } from './agent/surfaces/sessions/external/contribution.js';
 import { codexExternalSessionHooksContribution } from './agent/surfaces/sessions/external/externalSessionHooks.js';
 import { codexExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
@@ -50,6 +56,10 @@ const {
   id: CODEX_AGENT_SETTINGS_CONTRIBUTION_ID,
   ...CODEX_AGENT_SETTINGS_DECLARATION
 } = CODEX_AGENT_SETTINGS_CONTRIBUTION;
+const {
+  providerId: _codexStateSharingProviderId,
+  ...CODEX_STATE_SHARING_DECLARATION
+} = codexStateSharingDescriptor;
 
 export const CODEX_PLUGIN = definePlugin({
   id: 'happier.agent.codex',
@@ -255,10 +265,6 @@ export const CODEX_PLUGIN = definePlugin({
               active: ['vendorPlugins', 'skills'],
               inactive: ['vendorPlugins', 'skills'],
             },
-            usageLimitRecovery: {
-              active: ['checkNow'],
-              inactive: ['checkNow'],
-            },
             continuationVerification: { intents: ['resume', 'fork'], requirement: 'required' },
             workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
             startupInstructions: { versions: [1] },
@@ -324,6 +330,28 @@ export const CODEX_PLUGIN = definePlugin({
         } },
       },
       factory: createCodexAgentRuntime,
+      connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_shared_state_required',
+          supportedTransitions: ['same_connected_group'],
+          providerStateSharingRequired: {
+            serviceIds: ['openai-codex'],
+            supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+          },
+        },
+        stateSharingDescriptor: {
+          ...CODEX_STATE_SHARING_DECLARATION,
+          nativeHome: {
+            environmentKey: 'CODEX_HOME',
+            defaultRelativePath: '.codex',
+          },
+        },
+        continuity: {
+          nativeAuthCodec: createCodexConnectedAccountNativeAuthCodec(),
+          runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter(),
+          verifyResumeReachable: verifyResumeReachableCodex,
+        },
+      },
       preflightSessionControls: CODEX_PREFLIGHT_SESSION_CONTROLS,
       cliAuth: {
         detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>

@@ -241,12 +241,12 @@ describe('resolveEntrySessionWorkspace', () => {
         }
     });
 
-    it('passes a null selection through rather than guessing a workspace for the user', async () => {
+    it('omits a missing selection rather than inventing a workspace or serializing null', async () => {
         const source = createTestkitPrepareReviewWorkspace({ results: [{ kind: 'workspaceRequired' }] });
 
         expect(await resolveEntrySessionWorkspace(source.deps, { ...REQUEST, workspace: null }))
             .toEqual({ status: 'failed', failure: { reason: 'refused', retryable: false } });
-        expect(source.calls[0]?.input.workspace).toBeNull();
+        expect(Object.hasOwn(source.calls[0]?.input ?? {}, 'workspace')).toBe(false);
     });
 
     it('lets cancellation abort through the execution seam instead of becoming a result', async () => {

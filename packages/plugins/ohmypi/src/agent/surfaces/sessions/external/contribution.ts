@@ -194,6 +194,7 @@ function mapReadAfterPage(
   page: Parameters<typeof mapTranscriptPage>[0] & Readonly<{
     diagnostics?: readonly Readonly<{
       code: string;
+      severity: 'benign' | 'required';
       count: number;
       positions: readonly number[];
     }>[];
@@ -217,6 +218,7 @@ function mapReadAfterPage(
     ...(page.diagnostics ?? []),
     ...[...positionsByCode].map(([code, positions]) => ({
       code,
+      severity: code === 'non_transcript_record_skipped' ? 'benign' as const : 'required' as const,
       count: positions.length,
       positions: positions.slice(0, 200),
     })),
@@ -228,6 +230,7 @@ function mapReadAfterPage(
       items: [],
       nextCursor: mapped.value.nextCursor,
       boundary: mapped.value.nextCursor,
+      hasMore: false,
       diagnostics,
     });
   }
@@ -242,6 +245,7 @@ function mapReadAfterPage(
     items: mapped.value.items,
     nextCursor: mapped.value.nextCursor,
     boundary: mapped.value.items.at(-1)!.id,
+    hasMore: false,
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
   });
 }

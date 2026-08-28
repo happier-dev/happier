@@ -14,7 +14,7 @@ import type { TriageSessionActionInvokerV1 } from './entrySessionOpen.js';
  */
 function ownerBoundary() {
     const calls: string[] = [];
-    const execute = (async (actionId: string) => {
+    const execute = (async (actionId: string, input: Readonly<{ initialInput?: unknown }>) => {
         calls.push(actionId);
         if (actionId === 'session.spawn_new') {
             return {
@@ -23,7 +23,9 @@ function ownerBoundary() {
                 sessionId: 'session-a',
                 executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                 organizationPlacement: { folderId: null, tagIds: [] },
-                initialInput: { status: 'notRequested' },
+                initialInput: input.initialInput === undefined
+                    ? { status: 'notRequested' }
+                    : { status: 'accepted', localId: 'local-a' },
             };
         }
         if (actionId === 'session.message.send') return { status: 'accepted', localId: 'local-a' };
@@ -97,7 +99,6 @@ describe('entry Session final-open ownership', () => {
         });
         expect(boundary.calls).toEqual([
             'session.spawn_new',
-            'session.message.send',
         ]);
     });
 });

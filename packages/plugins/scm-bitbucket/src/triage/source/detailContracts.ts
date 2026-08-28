@@ -3,9 +3,11 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
+import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/plugin-sdk/actions';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   TriageConfiguredSourceInstanceV1Schema,
@@ -14,14 +16,9 @@ import {
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { MAX_BITBUCKET_DETAIL_CONTINUATION_UTF8_BYTES_V1 } from './detailContinuation.js';
 import {
   BITBUCKET_DETAIL_BOUNDS_V1,
-  BITBUCKET_MAX_DETAIL_ROWS_V1,
 } from '../detail/projection.js';
-
-/** The real aggregate Action-value gate; the result itself is the measured value. */
-export const BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1 = 1_024 * 1_024;
 
 /**
  * The five source-native Bitbucket Cloud detail Action contracts.
@@ -52,8 +49,7 @@ const RowKeySchema = defineProtocolUtf8String({
   maxUtf8Bytes: BITBUCKET_DETAIL_BOUNDS_V1.textUtf8Bytes,
   minLength: 1,
 });
-const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: BITBUCKET_DETAIL_BOUNDS_V1.labelUtf8Bytes,
+const LabelSchema = defineProtocolString({
   minLength: 1,
 });
 const TextSchema = defineProtocolUtf8String({
@@ -65,18 +61,21 @@ const LocationSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 /** A comment body may be empty: an attachment-only comment is still a comment. */
-const CommentBodySchema = defineProtocolUtf8String({
-  maxUtf8Bytes: BITBUCKET_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes,
-});
+const CommentBodySchema = defineProtocolString();
 const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
+export const BitbucketDetailIncompleteReasonV1Schema = defineProtocolLiteral(
+  'continuationUnavailable',
+);
+export type BitbucketDetailIncompleteReasonV1 = ReturnType<
+  typeof BitbucketDetailIncompleteReasonV1Schema.parse
+>;
 
 const RoutingTokenSchema = defineProtocolUtf8String({
   maxUtf8Bytes: MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   minLength: 1,
 });
-const ContinuationSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: MAX_BITBUCKET_DETAIL_CONTINUATION_UTF8_BYTES_V1,
+const ContinuationSchema = defineProtocolString({
   minLength: 1,
 });
 
@@ -134,11 +133,10 @@ export const BitbucketProjectedActivityRowV1Schema = defineProtocolObject({
 export const BitbucketActivityResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('activity'),
-    rows: defineProtocolArray(BitbucketProjectedActivityRowV1Schema, {
-      maxItems: BITBUCKET_MAX_DETAIL_ROWS_V1,
-    }),
+    rows: defineProtocolArray(BitbucketProjectedActivityRowV1Schema),
     omittedRowCount: CountSchema,
     projectionTruncated: BitbucketBooleanSchema,
+    incomplete: BitbucketDetailIncompleteReasonV1Schema.optional(),
     /** Absent when this page ends the collection. */
     continuation: ContinuationSchema.optional(),
   }, { policy: 'closed' }),
@@ -165,9 +163,7 @@ export const BitbucketProjectedStatusRowV1Schema = defineProtocolObject({
 export const BitbucketBuildsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('builds'),
-    rows: defineProtocolArray(BitbucketProjectedStatusRowV1Schema, {
-      maxItems: BITBUCKET_MAX_DETAIL_ROWS_V1,
-    }),
+    rows: defineProtocolArray(BitbucketProjectedStatusRowV1Schema),
     /**
      * Every count is OMITTED, never zero, unless this page is the WHOLE status
      * collection. Three counts over the statuses that happened to fit one page
@@ -178,6 +174,7 @@ export const BitbucketBuildsResultV1Schema = defineProtocolUnion([
     passingCount: CountSchema.optional(),
     omittedRowCount: CountSchema,
     projectionTruncated: BitbucketBooleanSchema,
+    incomplete: BitbucketDetailIncompleteReasonV1Schema.optional(),
     continuation: ContinuationSchema.optional(),
   }, { policy: 'closed' }),
   BitbucketDetailUnavailableSchema,
@@ -223,11 +220,10 @@ export const BitbucketProjectedCommentRowV1Schema = defineProtocolObject({
 export const BitbucketCommentsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('comments'),
-    rows: defineProtocolArray(BitbucketProjectedCommentRowV1Schema, {
-      maxItems: BITBUCKET_MAX_DETAIL_ROWS_V1,
-    }),
+    rows: defineProtocolArray(BitbucketProjectedCommentRowV1Schema),
     omittedRowCount: CountSchema,
     projectionTruncated: BitbucketBooleanSchema,
+    incomplete: BitbucketDetailIncompleteReasonV1Schema.optional(),
     continuation: ContinuationSchema.optional(),
   }, { policy: 'closed' }),
   BitbucketDetailUnavailableSchema,
@@ -261,7 +257,7 @@ export const BitbucketProjectedDiffstatRowV1Schema = defineProtocolObject({
 const BitbucketRawDiffV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('available'),
-    text: defineProtocolUtf8String({ maxUtf8Bytes: BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1 }),
+    text: defineProtocolUtf8String({ maxUtf8Bytes: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }),
     truncated: BitbucketBooleanSchema,
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('tooLarge') }, { policy: 'closed' }),
@@ -270,11 +266,10 @@ const BitbucketRawDiffV1Schema = defineProtocolUnion([
 export const BitbucketDiffResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('diff'),
-    files: defineProtocolArray(BitbucketProjectedDiffstatRowV1Schema, {
-      maxItems: BITBUCKET_MAX_DETAIL_ROWS_V1,
-    }),
+    files: defineProtocolArray(BitbucketProjectedDiffstatRowV1Schema),
     omittedRowCount: CountSchema,
     projectionTruncated: BitbucketBooleanSchema,
+    incomplete: BitbucketDetailIncompleteReasonV1Schema.optional(),
     continuation: ContinuationSchema.optional(),
     /** Present on the first page only; later diffstat pages do not re-fetch the raw body. */
     raw: BitbucketRawDiffV1Schema.optional(),

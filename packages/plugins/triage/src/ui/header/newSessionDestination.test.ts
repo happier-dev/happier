@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1 } from '../../sessions/entrySessionWorkspace.js';
 import {
     projectTriageNewSessionDestinationV1,
+    projectTriagePreparedWorkspaceSelectionInputV1,
     triageNewSessionDraftSeedV1,
     triageNewSessionWireMaterializationV1,
 } from './newSessionDestination.js';
@@ -89,25 +90,33 @@ describe('projecting the settled new-Session draft', () => {
         }
     });
 
-    it('leaves every other member of the settled draft behind rather than spawning with it', () => {
-        // The draft is the host's whole New Session projection. Only the two
-        // members this plugin's wire declares may reach the creation call: a
-        // title, a permission mode or a startup instruction smuggled through
-        // here would make Triage a second Session-authoring surface.
+    it('carries the spawn wire defaults while dropping unowned authoring members', () => {
+        // The draft is the host's whole New Session projection. Preserve the
+        // defaults the canonical spawn wire declares, while a title or startup
+        // instruction remains outside Triage's routing contract.
         const projected = projectTriageNewSessionDestinationV1({
             workspaceMode: 'reference_only',
             creationKey: 'creation-key-3',
             settlement: {
                 ...SETTLED,
                 title: 'A title the reader never typed',
+                modelSelection: { modelId: 'claude-sonnet' },
                 permissionMode: 'bypassPermissions',
                 transcriptStorage: 'direct',
+                terminal: { mode: 'enabled' },
                 agentSessionStartupInstructionsV1: { v: 1 },
             },
         });
         expect(projected.status === 'settled' && projected.destination.kind === 'new'
-            ? Object.keys(projected.destination.spawn).sort()
-            : null).toEqual(['agentTarget', 'executionTarget']);
+            ? projected.destination.spawn
+            : null).toEqual({
+            executionTarget: SETTLED.executionTarget,
+            agentTarget: SETTLED.agentTarget,
+            modelSelection: { modelId: 'claude-sonnet' },
+            permissionMode: 'bypassPermissions',
+            transcriptStorage: 'direct',
+            terminal: { mode: 'enabled' },
+        });
         expect(projected.status === 'settled' && projected.destination.kind === 'new'
             ? Object.keys(projected.destination.materialization).sort()
             : null).toEqual(['directory', 'kind']);
@@ -156,6 +165,35 @@ describe('projecting the settled new-Session draft', () => {
                         },
                     },
                 },
+            },
+        });
+    });
+
+    it('uses the same exact candidate correspondence for prepared New Session authoring', () => {
+        expect(projectTriagePreparedWorkspaceSelectionInputV1({
+            preparation: {
+                instance: testkitConfiguredInstance(),
+                entryRef: testkitEntryRef(),
+                lastKnownLocator: testkitLocator(),
+                observed: TESTKIT_OBSERVED_REVISION,
+            },
+            placement: {
+                executionTarget: SETTLED.executionTarget,
+                directory: SETTLED.directory,
+            },
+            candidates: [{
+                projectKey: { id: 'project-example' },
+                serverId: 'server-a',
+                machineId: 'machine-a',
+                rootPath: '/workspaces/example',
+                reachable: true,
+                worktrees: [],
+            }],
+        })).toMatchObject({
+            workspace: {
+                serverId: 'server-a',
+                machineId: 'machine-a',
+                rootPath: '/workspaces/example',
             },
         });
     });

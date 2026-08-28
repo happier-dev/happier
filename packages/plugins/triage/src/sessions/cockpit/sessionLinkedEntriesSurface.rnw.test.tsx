@@ -180,17 +180,19 @@ function createDataHarness(input: Readonly<{
 
 /** Mirrors the host's post-render private Data binding without widening author context. */
 function createCockpitAdapter(
-    dataClient: PluginUiDataClient,
+    dataClient: PluginUiDataClient | null,
 ): PluginUiSemanticSurfaceAdapter<typeof renderSessionLinkedEntriesSurface> {
     const rnwAdapter = createPluginUiRnwSemanticSurfaceAdapter();
     return {
         async mount(mountInput) {
             return await rnwAdapter.mount({
                 ...mountInput,
-                surface: (context: RenderContext): ReactElement => cloneElement(
-                    mountInput.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>,
-                    { dataClient },
-                ),
+                surface: (context: RenderContext): ReactElement => dataClient === null
+                    ? mountInput.surface(context) as ReactElement
+                    : cloneElement(
+                        mountInput.surface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>,
+                        { dataClient },
+                    ),
             });
         },
     };
@@ -211,6 +213,7 @@ async function mountCockpit(
     harness: DataHarness,
     target: ReturnType<typeof createSurfaceContextFixture>['target'],
     unlinkResult: unknown = null,
+    accountReachable = true,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -230,7 +233,7 @@ async function mountCockpit(
                 },
                 target,
             }),
-            adapter: createCockpitAdapter(harness.client),
+            adapter: createCockpitAdapter(accountReachable ? harness.client : null),
             handlers: {
                 executeAction: async ({ action, input }) => {
                     actionCalls.push({ action: String(action), input });
@@ -532,6 +535,24 @@ describe('the mounted Session cockpit', () => {
 
         await expect(fixture.getByText('Linked entries could not be read')).resolves
             .toEqual({ content: 'Linked entries could not be read' });
+        expect(harness.gets).toEqual([]);
+    });
+
+    it('reports linked entries unavailable when the Account Data client is absent', async () => {
+        const harness = createDataHarness({
+            snapshot: { rows: [], hasMore: false, status: 'ready' },
+        });
+
+        const fixture = await mountCockpit(
+            harness,
+            { kind: 'session', sessionId: SESSION_ID },
+            null,
+            false,
+        );
+
+        await expect(fixture.getByText('Linked entries could not be read')).resolves
+            .toEqual({ content: 'Linked entries could not be read' });
+        expect(harness.opened).toEqual([]);
         expect(harness.gets).toEqual([]);
     });
 

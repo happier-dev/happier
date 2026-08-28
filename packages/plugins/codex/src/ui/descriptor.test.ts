@@ -25,6 +25,12 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.sessionExtras).toEqual({
       outputKey: 'codexBackendMode',
       values: ['acp', 'appServer'],
+      settingKey: 'codexBackendMode',
+      aliases: {
+        mcp: 'mcp',
+        mcp_resume: 'acp',
+      },
+      defaultValue: 'appServer',
     });
     expect(JSON.stringify(CODEX_UI_DESCRIPTOR)).not.toContain('agentRuntimeDescriptorV1');
     expect(JSON.stringify(CODEX_UI_DESCRIPTOR)).not.toContain('providerExtra');
@@ -32,11 +38,9 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
 
   it('declares the spawn/resume backend transport instead of relying on a host-side Codex override', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.backendTransport).toEqual({
-      runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
-      legacyModeOutputKey: 'codexBackendMode',
       backendMode: {
         values: ['acp', 'appServer'],
-        aliases: { mcp: 'appServer', mcp_resume: 'acp' },
+        aliases: { mcp: 'mcp', mcp_resume: 'acp' },
         legacyExperimentalValue: 'acp',
       },
       runtimeHandleFields: [
@@ -54,11 +58,11 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
         v: 1,
       },
     });
-    // The declaration must cover every retired spelling the private override
-    // normalized, or a persisted `mcp`/`mcp_resume` setting stops resolving once
-    // the bundled projection is republished.
+    // The declaration preserves each released spelling. `mcp_resume` retains
+    // its ACP meaning; unavailable `mcp` reaches the plugin lifecycle ingress
+    // unchanged so it fails closed instead of silently selecting App Server.
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.backendTransport.backendMode.aliases).toMatchObject({
-      mcp: 'appServer',
+      mcp: 'mcp',
       mcp_resume: 'acp',
     });
   });

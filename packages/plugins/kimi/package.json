@@ -21,10 +21,6 @@
     "./agent/acp/pythonSelectorEnv": {
       "types": "./dist/agent/acp/pythonSelectorEnv.d.ts",
       "default": "./dist/agent/acp/pythonSelectorEnv.js"
-    },
-    "./agent/contributions/catalog": {
-      "types": "./dist/agent/contributions/catalog.d.ts",
-      "default": "./dist/agent/contributions/catalog.js"
     }
   },
   "files": [

@@ -156,6 +156,16 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
 
     await expect(runtime.sessions.open(request, context)).resolves.toMatchObject({
       send: session.send,
+      runtimeCapabilities: {
+        localControl: null,
+        sessionCapabilities: {
+          sessionFork: {
+            conversation: 'supported',
+            fromMessage: 'unsupported',
+            protocol: 'acp',
+          },
+        },
+      },
     });
     expect(openAcp).toHaveBeenCalledWith(request, expect.objectContaining({
       transport: expect.objectContaining({
@@ -176,6 +186,15 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
 
     const session = createSession();
     const openAcp = vi.fn(async () => session);
+    const connectedAccounts = createConnectedAccountsHarness({
+      bindings: {
+        'openai-api-key': { pluginId: 'happier.voice.openai', localId: 'openai' },
+      },
+      materialize: async () => ({
+        kind: 'environment',
+        env: { OPENAI_API_KEY: 'must-not-be-projected' },
+      }),
+    });
     const runtime = createOpenCodeAgentRuntime({
       plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
       agent: { id: 'opencode' },
@@ -212,7 +231,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     try {
       await expect(runtime.sessions.open(request, {
         protocols: { acp: { open: openAcp } },
-        services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
+        services: { connectedAccounts: connectedAccounts.connectedAccounts },
       } as unknown as AgentSessionRuntimeContext)).resolves.toMatchObject({
         send: session.send,
       });
@@ -230,6 +249,9 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         expect.any(Object),
       );
       expect(openOpenCodeServerSession).not.toHaveBeenCalled();
+      expect(connectedAccounts.connectedAccounts.watch).not.toHaveBeenCalled();
+      expect(connectedAccounts.connectedAccounts.getBinding).not.toHaveBeenCalled();
+      expect(connectedAccounts.connectedAccounts.materialize).not.toHaveBeenCalled();
     } finally {
       await rm(rootPath, { recursive: true, force: true });
     }
@@ -246,7 +268,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       materialize: async (purpose, request) => {
         expect(purpose).toBe('openai-api-key');
         expect(request).toEqual({ kind: 'environment', keys: ['OPENAI_API_KEY'] });
-        return { kind: 'environment', env: { OPENAI_API_KEY: 'sk-openai-public' } };
+        return { kind: 'environment', env: { OPENAI_API_KEY: '  sk-openai-public\n' } };
       },
     });
     const runtime = createOpenCodeAgentRuntime({
@@ -294,7 +316,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         launchEnvironment: expect.objectContaining({
           values: expect.objectContaining({
             OPENCODE_AUTH_CONTENT: JSON.stringify({
-              openai: { type: 'api', key: 'sk-openai-public' },
+              openai: { type: 'api', key: '  sk-openai-public\n' },
             }),
             HAPPIER_OPENCODE_PROVIDER_API_KEY: 'provider-secret',
             OPENCODE_CONFIG_CONTENT: '{"provider":"gateway"}',
@@ -352,6 +374,45 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     expect(openAcp).not.toHaveBeenCalled();
   });
 
+  it('disposes ACP and refuses the launch when a qualified account invalidates while the opener settles', async () => {
+    const session = createSession();
+    let harness!: ReturnType<typeof createConnectedAccountsHarness>;
+    const openAcp = vi.fn(async () => {
+      await harness.listeners.get('openai-api-key')?.({ kind: 'resync' });
+      return session;
+    });
+    harness = createConnectedAccountsHarness({
+      bindings: {
+        'openai-api-key': { pluginId: 'happier.voice.openai', localId: 'openai' },
+      },
+      materialize: async () => ({
+        kind: 'environment',
+        env: { OPENAI_API_KEY: 'sk-openai-public' },
+      }),
+    });
+    const runtime = createOpenCodeAgentRuntime({
+      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+      agent: { id: 'opencode' },
+      signal: new AbortController().signal,
+    });
+
+    await expect(runtime.sessions.open({
+      kind: 'create',
+      sessionId: 'happier-invalidated-during-open',
+      cwd: '/repo',
+      launchEnvironment: {
+        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp', OPENCODE_AUTH_CONTENT: '{}' },
+        unset: [],
+      },
+    }, {
+      protocols: { acp: { open: openAcp } },
+      services: { connectedAccounts: harness.connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow('invalidated while opening');
+
+    expect(openAcp).toHaveBeenCalledTimes(1);
+    expect(session.dispose).toHaveBeenCalledWith('runtime_recovery');
+  });
+
   it('preserves the other provider request-auth marker when direct and OAuth purposes are mixed', async () => {
     const session = createSession();
     const harness = createConnectedAccountsHarness({
@@ -378,7 +439,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       signal: new AbortController().signal,
     });
 
-    await runtime.sessions.open({
+    const opened = await runtime.sessions.open({
       kind: 'create',
       sessionId: 'happier-mixed-auth',
       cwd: '/repo',
@@ -400,6 +461,23 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       services: { connectedAccounts: harness.connectedAccounts },
       workState: { publish: vi.fn() },
     } as unknown as AgentSessionRuntimeContext);
+
+    expect(opened.runtimeCapabilities).toEqual({
+      localControl: {
+        supported: true,
+        topology: 'shared',
+        attachStrategy: 'provider_attach',
+        remoteWritable: true,
+      },
+      sessionCapabilities: {
+        sessionListing: 'supported',
+        sessionFork: {
+          conversation: 'supported',
+          fromMessage: 'supported',
+        },
+        sessionRollback: { conversation: 'unsupported' },
+      },
+    });
 
     expect(openOpenCodeServerSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -476,7 +554,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       },
       materialize: async () => ({
         kind: 'environment',
-        env: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-public-setup' },
+        env: { CLAUDE_CODE_OAUTH_TOKEN: '  sk-ant-oat01-public-setup\n' },
       }),
     });
     openOpenCodeServerSession.mockResolvedValueOnce(session);
@@ -519,7 +597,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
         launchEnvironment: expect.objectContaining({
           values: expect.objectContaining({
             OPENCODE_AUTH_CONTENT: JSON.stringify({
-              anthropic: { type: 'api', key: 'sk-ant-oat01-public-setup' },
+              anthropic: { type: 'api', key: '  sk-ant-oat01-public-setup\n' },
             }),
           }),
         }),
@@ -744,13 +822,7 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       status: 'unsupported',
       diagnostic: { code: 'opencode_catalog_inactive_unsupported' },
     });
-    await expect(runtime.sessions.usageLimitRecovery?.execute(
-      { kind: 'checkNow' },
-      activeContext,
-    )).resolves.toEqual({
-      status: 'waiting',
-      retryAfterMs: 600_000,
-    });
+    expect(runtime.sessions.usageLimitRecovery).toBeUndefined();
     await expect(runtime.sessions.continuation?.verify(
       {
         kind: 'resume',
@@ -856,24 +928,13 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
       },
     };
 
-    const run = await runtime.executionRuns!.open({
+    const openedSession = await runtime.sessions.open({
       kind: 'create',
-      runId: 'run-provider-opencode',
+      sessionId: 'run-provider-opencode',
       cwd: '/repo',
-      profile: {
-        pluginId: 'happier.agent.opencode',
-        contributionType: 'agents',
-        contributionId: 'opencode',
-      },
-      input: { text: 'Run it' },
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
         unset: [],
-      },
-      modelSelection: {
-        agentTargetKey: 'backend:opencode',
-        providerConnectionId,
-        modelId: 'openai/gpt-5.1',
       },
       configuration,
       providerBinding,
@@ -882,104 +943,9 @@ describe('createOpenCodeAgentRuntime server dispatch', () => {
     expect(openOpenCodeServerSession).toHaveBeenCalledWith(
       expect.objectContaining({ configuration, providerBinding }),
       context,
+      undefined,
+      expect.any(Function),
     );
-    await run.dispose();
-  });
-
-  it.each(['rejected', 'unavailable'] as const)(
-    'returns terminal run evidence when the initial execution input is %s',
-    async (status) => {
-      const session = createSession();
-      vi.mocked(session.send).mockResolvedValueOnce({
-        status,
-        diagnostic: { code: `opencode_${status}`, severity: 'error' },
-        ...(status === 'rejected' ? { retryable: false } : { retryable: true }),
-      });
-      openOpenCodeServerSession.mockResolvedValueOnce(session);
-      const runtime = createOpenCodeAgentRuntime({
-        plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
-        agent: { id: 'opencode' },
-        signal: new AbortController().signal,
-      });
-
-      const run = await runtime.executionRuns!.open({
-        kind: 'create',
-        runId: `run-${status}`,
-        cwd: '/repo',
-        profile: {
-          pluginId: 'happier.agent.opencode',
-          contributionType: 'agents',
-          contributionId: 'opencode',
-        },
-        input: { text: 'Run it' },
-        launchEnvironment: {
-          values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
-          unset: [],
-        },
-      }, {
-        plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
-        contribution: {
-          id: 'opencode',
-          qualifiedId: 'happier.agent.opencode/agents/opencode',
-        },
-        agent: { id: 'opencode' },
-        signal: new AbortController().signal,
-        services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
-      } as unknown as AgentSessionRuntimeContext);
-      const events: Array<{ kind: string; diagnostic?: { code: string } }> = [];
-      run.watch((event) => events.push(event));
-
-      expect(events).toEqual([
-        expect.objectContaining({ kind: 'run-start' }),
-        expect.objectContaining({
-          kind: 'run-failed',
-          diagnostic: expect.objectContaining({ code: `opencode_${status}` }),
-        }),
-      ]);
-      await expect(run.stop()).resolves.toEqual({ status: 'notRunning' });
-    },
-  );
-
-  it('clears run activity and emits failure when a later send is rejected', async () => {
-    const session = createSession();
-    vi.mocked(session.send)
-      .mockResolvedValueOnce({ status: 'admitted' })
-      .mockResolvedValueOnce({
-        status: 'rejected',
-        diagnostic: { code: 'opencode_later_rejected', severity: 'error' },
-        retryable: false,
-      });
-    openOpenCodeServerSession.mockResolvedValueOnce(session);
-    const runtime = createOpenCodeAgentRuntime({
-      plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
-      agent: { id: 'opencode' },
-      signal: new AbortController().signal,
-    });
-    const run = await runtime.executionRuns!.open({
-      kind: 'create',
-      runId: 'run-later-rejected',
-      cwd: '/repo',
-      profile: {
-        pluginId: 'happier.agent.opencode',
-        contributionType: 'agents',
-        contributionId: 'opencode',
-      },
-      input: { text: 'First' },
-      launchEnvironment: {
-        values: { HAPPIER_OPENCODE_BACKEND_MODE: 'server' },
-        unset: [],
-      },
-    }, {
-      services: { connectedAccounts: createConnectedAccountsHarness().connectedAccounts },
-    } as unknown as AgentSessionRuntimeContext);
-    const events: Array<{ kind: string }> = [];
-    run.watch((event) => events.push(event));
-
-    await expect(run.send({ text: 'Second' })).resolves.toMatchObject({
-      status: 'rejected',
-    });
-
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed' });
-    await expect(run.stop()).resolves.toEqual({ status: 'notRunning' });
+    await openedSession.dispose();
   });
 });

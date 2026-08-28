@@ -215,6 +215,38 @@ describe('the PostHog selected-evidence Composer reference', () => {
         expect(resolved.context).not.toContain('00000000-0000-4000-8000-0000000000c1');
     });
 
+    it('does not invent a second eight-frame excerpt of the already bounded event projection', async () => {
+        const candidate = disclosedCandidate();
+        const frames = Array.from({ length: 9 }, (_, index) => ({
+            function: `projectedFrame${String(index + 1)}`,
+            source: `app/frame-${String(index + 1)}.ts`,
+            line: index + 1,
+            column: 1,
+            in_app: true,
+        }));
+        const host = sourceContext({
+            ...queryIssueEventsPage,
+            results: [{
+                ...queryIssueEventsPage.results[0],
+                properties: {
+                    ...queryIssueEventsPage.results[0]?.properties,
+                    $exception_list: [{
+                        type: 'TypeError',
+                        value: 'all projected frames remain selected evidence',
+                        stacktrace: { type: 'resolved', frames },
+                    }],
+                },
+            }],
+            hasMore: false,
+            limit: 1,
+            offset: 0,
+        });
+
+        const resolved = await resolvePosthogEvidenceReference(candidate.candidate.id, host.value);
+
+        expect(resolved.context).toContain('projectedFrame9');
+    });
+
     it('refuses a changed or multiply returned occurrence instead of publishing selection bytes', async () => {
         const candidate = disclosedCandidate();
         const host = sourceContext({

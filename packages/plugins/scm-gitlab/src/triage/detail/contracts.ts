@@ -1,5 +1,5 @@
 /**
- * The six source-native GitLab detail Action contracts.
+ * The source-native GitLab detail Action contracts.
  *
  * The detail body runs in a UI artifact that holds no credential and speaks no
  * HTTP, while `http/gitlabClient.ts` is this source's sole credential reader.
@@ -23,10 +23,14 @@
  */
 
 import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+} from '@happier-dev/plugin-sdk/actions';
+import {
   defineProtocolArray,
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -37,13 +41,8 @@ import {
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { MAX_GITLAB_DETAIL_CONTINUATION_UTF8_BYTES_V1 } from './continuation.js';
 import {
   GITLAB_DETAIL_BOUNDS_V1,
-  GITLAB_MAX_APPROVAL_RULES_V1,
-  GITLAB_MAX_APPROVERS_V1,
-  GITLAB_MAX_DETAIL_ROWS_V1,
-  GITLAB_MAX_DISCUSSION_NOTES_V1,
 } from './projection.js';
 import { GITLAB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
 
@@ -56,14 +55,8 @@ const IdentifierSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.identifierUtf8Bytes,
   minLength: 1,
 });
-const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes,
-  minLength: 1,
-});
-const PathSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.pathUtf8Bytes,
-  minLength: 1,
-});
+const LabelSchema = defineProtocolString({ minLength: 1 });
+const PathSchema = defineProtocolString({ minLength: 1 });
 const LocationSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.locationUtf8Bytes,
   minLength: 1,
@@ -72,9 +65,7 @@ const LocationSchema = defineProtocolUtf8String({
  * A note body may be empty: GitLab accepts a note whose content is only an
  * attachment, and such a note is still a real event in the conversation.
  */
-const NoteBodySchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.noteBodyUtf8Bytes,
-});
+const NoteBodySchema = defineProtocolString();
 const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
 
@@ -83,8 +74,7 @@ const RoutingTokenSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 
-const ContinuationSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: MAX_GITLAB_DETAIL_CONTINUATION_UTF8_BYTES_V1,
+const ContinuationSchema = defineProtocolString({
   minLength: 1,
 });
 
@@ -147,7 +137,7 @@ export const GitlabNotesResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('notes'),
     rows: defineProtocolArray(GitlabProjectedNoteRowV1Schema, {
-      maxItems: GITLAB_MAX_DETAIL_ROWS_V1,
+      maxItems: GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
     }),
     omittedRowCount: CountSchema,
     projectionTruncated: GitlabBooleanSchema,
@@ -201,7 +191,7 @@ export const GitlabActivityEventsResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('activityEvents'),
     source: ActivityEventSourceSchema,
     rows: defineProtocolArray(GitlabProjectedActivityEventRowV1Schema, {
-      maxItems: GITLAB_MAX_DETAIL_ROWS_V1,
+      maxItems: GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
     }),
     omittedRowCount: CountSchema,
     projectionTruncated: GitlabBooleanSchema,
@@ -227,9 +217,7 @@ export const GitlabProjectedDiscussionRowV1Schema = defineProtocolObject({
    * client-local window over these rows and never a nested HTTP cursor: GitLab
    * documents no per-discussion note pagination.
    */
-  notes: defineProtocolArray(GitlabProjectedNoteRowV1Schema, {
-    maxItems: GITLAB_MAX_DISCUSSION_NOTES_V1,
-  }),
+  notes: defineProtocolArray(GitlabProjectedNoteRowV1Schema),
   omittedNoteCount: CountSchema,
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
@@ -238,7 +226,7 @@ export const GitlabDiscussionsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('discussions'),
     rows: defineProtocolArray(GitlabProjectedDiscussionRowV1Schema, {
-      maxItems: GITLAB_MAX_DETAIL_ROWS_V1,
+      maxItems: GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
     }),
     omittedRowCount: CountSchema,
     projectionTruncated: GitlabBooleanSchema,
@@ -271,9 +259,7 @@ export const GitlabProjectedApprovalRuleV1Schema = defineProtocolObject({
 const GitlabApprovalRulesSchema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('available'),
-    rules: defineProtocolArray(GitlabProjectedApprovalRuleV1Schema, {
-      maxItems: GITLAB_MAX_APPROVAL_RULES_V1,
-    }),
+    rules: defineProtocolArray(GitlabProjectedApprovalRuleV1Schema),
     omittedRuleCount: CountSchema,
   }, { policy: 'closed' }),
   defineProtocolObject({
@@ -290,7 +276,8 @@ export const GitlabApprovalsResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('approvals'),
     approvalsRequired: CountSchema.optional(),
     approvalsLeft: CountSchema.optional(),
-    approvedBy: defineProtocolArray(LabelSchema, { maxItems: GITLAB_MAX_APPROVERS_V1 }),
+    approvedBy: defineProtocolArray(LabelSchema),
+    omittedApproverCount: CountSchema,
     userHasApproved: GitlabBooleanSchema.optional(),
     /**
      * GitLab's own answer for THIS account. Absent means GitLab did not say, and
@@ -326,7 +313,7 @@ export const GitlabPipelinesResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('pipelines'),
     rows: defineProtocolArray(GitlabProjectedPipelineRowV1Schema, {
-      maxItems: GITLAB_MAX_DETAIL_ROWS_V1,
+      maxItems: GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
     }),
     /**
      * The per-job rollup of the newest pipeline on this page.
@@ -381,7 +368,7 @@ export const GitlabChangesResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('changes'),
     rows: defineProtocolArray(GitlabProjectedChangedFileRowV1Schema, {
-      maxItems: GITLAB_MAX_DETAIL_ROWS_V1,
+      maxItems: GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
     }),
     diffLimitStatus: DiffLimitStatusSchema,
     omittedRowCount: CountSchema,
@@ -392,3 +379,26 @@ export const GitlabChangesResultV1Schema = defineProtocolUnion([
   GitlabDetailUnavailableSchema,
 ]);
 export type GitlabChangesResultV1 = ReturnType<typeof GitlabChangesResultV1Schema.parse>;
+
+/* --------------------------------------------------------------- raw diff */
+
+/**
+ * The raw-evidence read is deliberately separate from the `/diffs` walk. It is
+ * user initiated, returns GitLab's text without interpreting it as structured
+ * files, and never runs as part of first paint.
+ */
+export const GitlabRawDiffInputV1Schema = itemPlaneInput;
+export type GitlabRawDiffInputV1 = ReturnType<typeof GitlabRawDiffInputV1Schema.parse>;
+
+export const GitlabRawDiffResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('rawDiff'),
+    text: defineProtocolUtf8String({
+      maxUtf8Bytes: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    }),
+    /** True exactly when the Action envelope retained only a prefix. */
+    truncated: GitlabBooleanSchema,
+  }, { policy: 'closed' }),
+  GitlabDetailUnavailableSchema,
+]);
+export type GitlabRawDiffResultV1 = ReturnType<typeof GitlabRawDiffResultV1Schema.parse>;

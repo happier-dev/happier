@@ -4,9 +4,10 @@ import {
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
-import type {
-    TriageGetResultV1,
-    TriagePrepareReviewWorkspaceInputV1,
+import {
+    projectTriagePrepareReviewWorkspaceInputV1,
+    type TriagePrepareReviewWorkspaceInputV1,
+    type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import { produceScmPullRequestReviewScope } from '@happier-dev/plugin-sdk/reviews';
@@ -86,14 +87,27 @@ function destinationFrom(
         spawn: {
             executionTarget: destination.spawn.executionTarget,
             agentTarget: destination.spawn.agentTarget,
-            // The pressed action's configured Launch Profile, carried to the
-            // canonical creator that owns what a profile means. It is the only
-            // authored member this start forwards, and it forwards a reference,
-            // never a resolved default.
+            // The pressed action's configured Launch Profile is carried to the
+            // canonical creator that owns what it means. The remaining optional
+            // members are not Triage-authored defaults: they are the host's
+            // already-settled Session choices, forwarded in the spawn wire's
+            // own vocabulary without reinterpretation.
             ...(destination.spawn.profileId === undefined
                 ? {}
                 : { profileId: destination.spawn.profileId }),
-        },
+            ...(destination.spawn.modelSelection === undefined
+                ? {}
+                : { modelSelection: destination.spawn.modelSelection }),
+            ...(destination.spawn.permissionMode === undefined
+                ? {}
+                : { permissionMode: destination.spawn.permissionMode }),
+            ...(destination.spawn.transcriptStorage === undefined
+                ? {}
+                : { transcriptStorage: destination.spawn.transcriptStorage }),
+            ...(destination.spawn.terminal === undefined
+                ? {}
+                : { terminal: destination.spawn.terminal }),
+        } as Extract<TriageEntrySessionDestinationV1, Readonly<{ kind: 'new' }>>['spawn'],
         materialization: destination.materialization,
     };
 }
@@ -112,6 +126,9 @@ function projectStartResult(
     switch (result.type) {
         case 'opened': {
             const review = reviewContinuationFor(input, result);
+            const preparedReviewWorkspace = result.delivery === 'outcomeUnknown'
+                ? preparedReviewWorkspaceForWire(result.workspace)
+                : undefined;
             return {
                 v: 1,
                 type: result.type,
@@ -122,6 +139,7 @@ function projectStartResult(
                 // send happened inside this start, before the open.
                 delivery: result.delivery,
                 ...(review === undefined ? {} : { review }),
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
         }
         case 'openPending': {
@@ -135,9 +153,11 @@ function projectStartResult(
                 ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
         }
-        case 'linked':
-            {
-                const review = reviewContinuationFor(input, result);
+        case 'linked': {
+            const review = reviewContinuationFor(input, result);
+            const preparedReviewWorkspace = result.delivery === 'outcomeUnknown'
+                ? preparedReviewWorkspaceForWire(result.workspace)
+                : undefined;
             return {
                 v: 1,
                 type: 'linked',
@@ -146,8 +166,9 @@ function projectStartResult(
                 delivery: result.delivery,
                 finalOpen: result.finalOpen,
                 ...(review === undefined ? {} : { review }),
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
-            }
+        }
         case 'linkPending': {
             // Nothing was delivered, because nothing is delivered into a Session
             // this entry is not linked to yet.
@@ -157,11 +178,19 @@ function projectStartResult(
                 type: result.type,
                 sessionId: result.sessionId,
                 disposition: result.disposition,
+                ...(result.delivery === undefined ? {} : { delivery: result.delivery }),
                 ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
             };
         }
-        case 'creationPending':
-            return { v: 1, type: 'creationPending', outcome: result.outcome };
+        case 'creationPending': {
+            const preparedReviewWorkspace = preparedReviewWorkspaceForWire(result.workspace);
+            return {
+                v: 1,
+                type: 'creationPending',
+                outcome: result.outcome,
+                ...(preparedReviewWorkspace === undefined ? {} : { preparedReviewWorkspace }),
+            };
+        }
         case 'creationFailed':
             return { v: 1, type: 'creationFailed' };
         case 'workspacePreparationFailed':
@@ -180,7 +209,7 @@ function projectStartResult(
 function preparedReviewWorkspaceForWire(
     workspace: Extract<
         TriageEntrySessionStartResultV1,
-        Readonly<{ type: 'linkPending' | 'openPending' }>
+        Readonly<{ type: 'opened' | 'linked' | 'creationPending' | 'linkPending' | 'openPending' }>
     >['workspace'],
 ) {
     if (workspace.kind !== 'preparedReviewWorkspace') return undefined;
@@ -217,11 +246,14 @@ function reviewContinuationFor(
         return undefined;
     }
     const request = input.destination.materialization.request;
+    if (request.workspace === null) return undefined;
     return {
         instance: request.instance,
         entryRef: request.entryRef,
         lastKnownLocator: request.lastKnownLocator,
         observed: request.observed,
+        workspace: request.workspace,
+        repositoryPath: result.workspace.directory,
         pullRequest: result.workspace.pullRequest,
     };
 }
@@ -292,14 +324,7 @@ function selectedPrepareInputMatchesRequest(
             },
         },
     };
-    const expected: JsonValue = {
-        v: 1,
-        instance: request.instance,
-        entryRef: request.entryRef,
-        lastKnownLocator: request.lastKnownLocator,
-        observed: request.observed,
-        workspace: request.workspace,
-    };
+    const expected: JsonValue = projectTriagePrepareReviewWorkspaceInputV1(request);
     return pluginJsonValuesEqual(reconstructed, expected);
 }
 
@@ -354,8 +379,8 @@ async function readCurrentPrepareReviewWorkspace(
     };
 }
 
-/** Reads the selected source's one current authoritative get operation. */
-async function readCurrentGetOperation(
+/** Reads the selected source's exact final workspace verifier. */
+async function readCurrentVerifyReviewWorkspaceOperation(
     source: TriageStartPullRequestReviewInputV1['review']['entryRef']['source'],
     context: PluginInvocationContext,
 ) {
@@ -369,31 +394,10 @@ async function readCurrentGetOperation(
         );
         return indexTriageAdmittedSourcesV1(snapshot.contributions).get(
             renderSourceQualifiedId(source),
-        )?.operations.get;
+        )?.operations.verifyReviewWorkspace;
     } finally {
         observation.dispose();
     }
-}
-
-function matchesReviewEntry(
-    result: TriageGetResultV1,
-    review: TriageStartPullRequestReviewInputV1['review'],
-): result is Extract<TriageGetResultV1, Readonly<{ kind: 'present' }>> {
-    return result.kind === 'present'
-        && result.localRef.kindId === review.entryRef.kindId
-        && result.localRef.collisionScope === review.entryRef.collisionScope
-        && result.localRef.entryId === review.entryRef.entryId;
-}
-
-function matchesReviewRevision(
-    result: Extract<TriageGetResultV1, Readonly<{ kind: 'present' }>>,
-    review: TriageStartPullRequestReviewInputV1['review'],
-): boolean {
-    const revision = result.snapshot.reviewRevision;
-    return revision !== undefined
-        && revision.baseSha === review.observed.baseSha
-        && revision.headSha === review.observed.headSha
-        && revision.nativeRevision === review.observed.nativeRevision;
 }
 
 /**
@@ -410,37 +414,46 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         if (new Set(input.engineIds).size !== input.engineIds.length) {
             return { v: 1, status: 'refused', reason: 'reviewRejected' };
         }
-        const operation = await readCurrentGetOperation(input.review.entryRef.source, context);
+        const operation = await readCurrentVerifyReviewWorkspaceOperation(
+            input.review.entryRef.source,
+            context,
+        );
         if (operation === undefined) return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
 
-        const observed = await context.services.actions.executeAdmittedTargetedOperation(
+        const verified: TriageVerifyReviewWorkspaceResultV1 = await context.services.actions
+            .executeAdmittedTargetedOperation(
             operation,
             {
                 v: 1,
                 instance: input.review.instance,
-                localRef: {
-                    kindId: input.review.entryRef.kindId,
-                    collisionScope: input.review.entryRef.collisionScope,
-                    entryId: input.review.entryRef.entryId,
-                },
+                entryRef: input.review.entryRef,
                 lastKnownLocator: input.review.lastKnownLocator,
+                observed: input.review.observed,
+                workspace: input.review.workspace,
+                prepared: {
+                    repositoryPath: input.review.repositoryPath,
+                    pullRequest: input.review.pullRequest,
+                },
             },
             {
                 expectedSelectedConnectedAccountRef: input.review.instance.binding.account,
                 ...(context.signal === undefined ? {} : { signal: context.signal }),
             },
         );
-        if (!matchesReviewEntry(observed, input.review)) {
-            return { v: 1, status: 'refused', reason: 'sourceMismatch' };
+        if (verified.kind === 'workspaceMismatch') {
+            return { v: 1, status: 'refused', reason: 'workspaceMismatch' };
         }
-        if (!matchesReviewRevision(observed, input.review)) {
+        if (verified.kind === 'unavailable') {
+            return { v: 1, status: 'refused', reason: 'sourceUnavailable' };
+        }
+        if (verified.kind !== 'verified') {
             return { v: 1, status: 'refused', reason: 'revisionMismatch' };
         }
 
         const scope = produceScmPullRequestReviewScope({
             authoritative: {
                 account: input.review.instance.binding.account,
-                pullRequest: input.review.pullRequest,
+                pullRequest: verified.pullRequest,
                 observed: input.review.observed,
             },
             expected: {
@@ -487,8 +500,10 @@ export async function startTriageEntrySession(
         };
 
     // A resume is not a second start path. It reaches the incumbent phase-retry
-    // owner with the caller's retained identity, so nothing respawns, nothing
-    // rematerializes, and no new creation key is minted. A selected-PR retry
+    // owner with the caller's retained identity. Link/open resumes never spawn;
+    // a creation-pending resume re-enters the canonical creator under the same
+    // creation key so it can rejoin, rather than creating a second logical
+    // Session. Nothing rematerializes and no new creation key is minted. A selected-PR retry
     // carries the source result that its own previous pending response returned;
     // a raw caller that lacks it fails closed rather than invoking SCM again.
     if (input.resume) {
@@ -501,16 +516,41 @@ export async function startTriageEntrySession(
                 retryable: false,
             };
         }
-        return projectStartResult(await resumeEntrySessionStart(orchestratorDeps, {
-            entryRef: input.entryRef,
-            display: input.display,
-            pending: {
+        const pending = input.resume.phase === 'creationPending'
+            ? (() => {
+                const destination = destinationFrom(input.destination);
+                if (destination.kind !== 'new') return undefined;
+                const directory = workspace.kind === 'referenceOnly'
+                    ? destination.materialization.kind === 'reviewWorkspace'
+                        ? undefined
+                        : destination.materialization.directory
+                    : workspace.directory;
+                return directory === undefined ? undefined : {
+                    type: 'creationPending' as const,
+                    creationKey: destination.creationKey,
+                    spawn: destination.spawn,
+                    directory,
+                    workspace,
+                };
+            })()
+            : {
                 type: input.resume.phase,
                 sessionId: input.resume.sessionId,
                 disposition: input.resume.disposition,
                 workspace,
-            },
+                ...(input.resume.delivery === undefined
+                    ? {}
+                    : { settledDelivery: input.resume.delivery }),
+            };
+        if (pending === undefined) {
+            return { v: 1, type: 'workspacePreparationFailed', reason: 'refused', retryable: false };
+        }
+        return projectStartResult(await resumeEntrySessionStart(orchestratorDeps, {
+            entryRef: input.entryRef,
+            display: input.display,
+            pending,
             ...(delivery === undefined ? {} : { delivery }),
+            ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
         }), input);
     }
 

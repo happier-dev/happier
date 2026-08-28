@@ -7,12 +7,11 @@ import {
   type ScmPullRequestListResponse,
   type ScmPullRequestOpenComposeRequest,
   type ScmPullRequestOpenComposeResponse,
-  type ScmPullRequestReference,
   type ScmPullRequestState,
-  type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  type HostingProviderPullRequestsCapability,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import {
     readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
@@ -24,33 +23,12 @@ import { getGitSnapshot } from '../repository.js';
 import { defaultPrStatusCache, type PrStatusCache, type PrStatusCacheErrorKind, type PrStatusCacheKey } from '../hostingProviders/prStatusCache.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
 import { createValidatedPullRequestFollowupAction } from './pullRequestFollowupAction.js';
-import { parsePullRequestReference } from './pullRequestReference.js';
 import {
     resolveDefaultPullRequestStatusProjectionRegistry,
     resolvePullRequestBaseBranch,
 } from './pullRequestStatusProjection.js';
 
-type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter' | 'buildCompareUrl'>;
-
-type PullRequestListHookInput = Readonly<{
-    provider: ScmHostingProviderRef;
-    base?: string;
-    head: string;
-    state?: ScmPullRequestState;
-    runtimeServices?: ScmHostingProviderRuntimeServices;
-}>;
-
-type PullRequestGetHookInput = Readonly<{
-    provider: ScmHostingProviderRef;
-    reference: ScmPullRequestReference;
-    runtimeServices?: ScmHostingProviderRuntimeServices;
-}>;
-
-type PullRequestReadAdapter = Readonly<{
-    getPullRequestAuthProfileKey?: (input: Readonly<{ provider: ScmHostingProviderRef }>) => string | null;
-    listPullRequests?: (input: PullRequestListHookInput) => Promise<readonly ScmPullRequestSummary[]>;
-    getPullRequest?: (input: PullRequestGetHookInput) => Promise<ScmPullRequestSummary | null>;
-}>;
+type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequests' | 'buildCompareUrl'>;
 
 export type GitPullRequestReadOperations = Readonly<{
     list(input: Readonly<{
@@ -85,14 +63,6 @@ function errorResponse(error: string, errorCode: ScmOperationErrorCode): {
         error,
         errorCode,
     };
-}
-
-function isPullRequestReadAdapter(adapter: unknown): adapter is PullRequestReadAdapter {
-    if (!adapter || typeof adapter !== 'object') return false;
-    const candidate = adapter as Partial<Record<keyof PullRequestReadAdapter, unknown>>;
-    return typeof candidate.listPullRequests === 'function'
-        || typeof candidate.getPullRequest === 'function'
-        || typeof candidate.getPullRequestAuthProfileKey === 'function';
 }
 
 function resolveProvider(snapshot: ScmWorkingSnapshot, providerId?: string): ScmHostingProviderRef | null {
@@ -131,8 +101,8 @@ function buildCacheKey(input: Readonly<{
     };
 }
 
-function readAuthProfileKey(adapter: PullRequestReadAdapter, provider: ScmHostingProviderRef): string | undefined {
-    const key = adapter.getPullRequestAuthProfileKey?.({ provider })?.trim();
+function readAuthProfileKey(adapter: HostingProviderPullRequestsCapability, provider: ScmHostingProviderRef): string | undefined {
+    const key = adapter.getPullRequestAuthProfileKey({ provider })?.trim();
     return key ? key : undefined;
 }
 
@@ -152,17 +122,6 @@ function classifyError(error: unknown): Readonly<{
         return { message, code: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND, cacheKind: 'notFound' };
     }
     return { message, code: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED, cacheKind: 'network' };
-}
-
-function matchesReference(pr: ScmPullRequestSummary, reference: ScmPullRequestReference): boolean {
-    if ('number' in reference) return pr.number === reference.number;
-    if ('headBranch' in reference) return pr.headBranch === reference.headBranch;
-    if ('url' in reference) {
-        if (pr.url === reference.url) return true;
-        const parsed = parsePullRequestReference(reference.url);
-        return parsed.ok && 'number' in parsed.reference && pr.number === parsed.reference.number;
-    }
-    return false;
 }
 
 export function createGitPullRequestReadOperations(
@@ -192,7 +151,7 @@ export function createGitPullRequestReadOperations(
         snapshot: ScmWorkingSnapshot;
         provider: ScmHostingProviderRef;
         registry: PullRequestReadRegistry;
-        adapter: PullRequestReadAdapter | null;
+        adapter: HostingProviderPullRequestsCapability | null;
     }> | { error: ScmPullRequestListResponse & ScmPullRequestGetResponse & ScmPullRequestOpenComposeResponse }> {
         const snapshot = await readSnapshot({ context: input.context });
         if (!snapshot) {
@@ -203,12 +162,11 @@ export function createGitPullRequestReadOperations(
             return { error: errorResponse('No supported SCM hosting provider detected for this repository', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
         }
         const registry = await readRegistry();
-        const rawAdapter = registry.getAdapter(provider.id);
         return {
             snapshot,
             provider,
             registry,
-            adapter: isPullRequestReadAdapter(rawAdapter) ? rawAdapter : null,
+            adapter: registry.getPullRequests(provider.id) ?? null,
         };
     }
 
@@ -242,7 +200,7 @@ export function createGitPullRequestReadOperations(
         if (fresh?.kind === 'success') {
             return { success: true, pullRequests: [...fresh.pullRequests] };
         }
-        if (!resolved.adapter?.listPullRequests) {
+        if (!resolved.adapter) {
             return errorResponse('SCM hosting provider does not support pull request listing', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         }
         try {
@@ -300,48 +258,20 @@ export function createGitPullRequestReadOperations(
         async get({ context, request }) {
             const resolved = await readProviderContext({ context });
             if ('error' in resolved) return resolved.error;
-            if (resolved.adapter?.getPullRequest) {
-                try {
-                    const pullRequest = await resolved.adapter.getPullRequest({
-                        provider: resolved.provider,
-                        reference: request.prReference,
-                        runtimeServices: readRuntimeServices(),
-                    });
-                    return { success: true, pullRequest };
-                } catch (error) {
-                    const classified = classifyError(error);
-                    return errorResponse(classified.message, classified.code);
-                }
+            if (!resolved.adapter) {
+                return errorResponse('SCM hosting provider does not support pull request lookup', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
             }
-
-            if (!('headBranch' in request.prReference)) {
-                return errorResponse('SCM hosting provider does not support explicit pull request lookup', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
-            }
-
-            const headBranch = typeof request.prReference.headBranch === 'string'
-                ? request.prReference.headBranch
-                : null;
-            if (headBranch) {
-                const base = resolvePullRequestBaseBranch(resolved.snapshot);
-                const listResult = await list({
-                    context,
-                    request: {
-                        ...(request.cwd ? { cwd: request.cwd } : {}),
-                        ...(request.backendPreference ? { backendPreference: request.backendPreference } : {}),
-                        providerId: resolved.provider.id,
-                        ...(base ? { base } : {}),
-                        head: headBranch,
-                        state: 'open',
-                    },
+            try {
+                const pullRequest = await resolved.adapter.getPullRequest({
+                    provider: resolved.provider,
+                    reference: request.prReference,
+                    runtimeServices: readRuntimeServices(),
                 });
-                if (!listResult.success) return listResult;
-                return {
-                    success: true,
-                    pullRequest: listResult.pullRequests.find((pr) => matchesReference(pr, request.prReference)) ?? null,
-                };
+                return { success: true, pullRequest };
+            } catch (error) {
+                const classified = classifyError(error);
+                return errorResponse(classified.message, classified.code);
             }
-
-            return errorResponse('SCM hosting provider does not support pull request lookup', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
         },
         async openCompose({ context, request }) {
             const resolved = await readProviderContext({

@@ -3,6 +3,7 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 
 import { createGitlabScmHostingProviderAdapter, gitlabHostingProviderAdapter } from './adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
 
 type DetectionResult = Readonly<{
   id: string;
@@ -182,9 +183,13 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       base: 'main',
       head: 'feature/pr-support',
     })).toBeNull();
-    expect(adapter[`create${'PullRequest'}`]).toEqual(expect.any(Function));
-    expect(adapter[`list${'PullRequests'}`]).toEqual(expect.any(Function));
-    expect(adapter[`get${'PullRequest'}`]).toEqual(expect.any(Function));
-    expect(adapter[`get${'PullRequestAuthProfileKey'}`]).toEqual(expect.any(Function));
+    expect(adapter[`create${'PullRequest'}`]).toBeUndefined();
+    expect(adapter[`list${'PullRequests'}`]).toBeUndefined();
+    expect(adapter[`get${'PullRequest'}`]).toBeUndefined();
+    expect(adapter[`get${'PullRequestAuthProfileKey'}`]).toBeUndefined();
+    expect(gitlabCliPullRequestAdapter.createPullRequest).toEqual(expect.any(Function));
+    expect(gitlabCliPullRequestAdapter.listPullRequests).toEqual(expect.any(Function));
+    expect(gitlabCliPullRequestAdapter.getPullRequest).toEqual(expect.any(Function));
+    expect(gitlabCliPullRequestAdapter.getPullRequestAuthProfileKey).toEqual(expect.any(Function));
   });
 });

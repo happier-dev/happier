@@ -67,7 +67,7 @@ describe('codex handoff provider surface', () => {
     });
   });
 
-  it('emits codexBackendMode as provider-owned resume plan options on import', async () => {
+  it('keeps Codex runtime selection in the runtime descriptor on import', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-provider-ops-'));
     vi.stubEnv('CODEX_HOME', codexHome);
     const content = nativeRolloutContent({ sessionId: 'thread_surface_1', body: { event: 'surface' } });
@@ -96,9 +96,6 @@ describe('codex handoff provider surface', () => {
         launch: {
           directory: '/repo',
           environmentVariables: { CODEX_HOME: codexHome },
-          resumePlanOptions: {
-            codexBackendMode: 'appServer',
-          },
           sessionStateUpdates: expect.arrayContaining([
             expect.objectContaining({
               fieldId: 'identity.providerSessionId',
@@ -108,6 +105,8 @@ describe('codex handoff provider surface', () => {
         },
       },
     });
+    if (!result.ok) throw new Error(`Expected successful import, received ${result.code}`);
+    expect(result.value).not.toHaveProperty('runtimeDescriptorV1');
 
     await expect(readFile(
       join(codexHome, 'sessions', '2026', '06', '22', 'rollout-2026-06-22T10-00-00-thread_surface_1.jsonl'),

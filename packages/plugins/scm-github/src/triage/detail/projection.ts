@@ -2,8 +2,8 @@ import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+  normalizeTriageSingleLineV1,
   projectTriageDisplayTextV1,
-  truncateTriageUtf8V1,
   type TriageBoundedTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -12,7 +12,6 @@ import { readGithubAbsoluteWebUrl } from '../locator.js';
 
 import {
   GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
-  GITHUB_COMMENTS_PAGE_SIZE_V1,
   GITHUB_TIMELINE_PAGE_SIZE_V1,
 } from './routes.js';
 
@@ -47,39 +46,27 @@ import {
 /** The published bounds one GitHub detail projection is measured against. */
 export type GithubDetailBoundsV1 = Readonly<{
   identifierUtf8Bytes: number;
-  labelUtf8Bytes: number;
   textUtf8Bytes: number;
   locationUtf8Bytes: number;
-  /** A changed-file path; longer than display text because a path is identity. */
-  pathUtf8Bytes: number;
-  /** One comment body, which is document content rather than a row label. */
-  commentBodyUtf8Bytes: number;
 }>;
 
 /**
  * The bounds a published GitHub detail projection uses.
  *
- * They are derived from the one hard constraint that exists — the Action
- * aggregate's byte gate against a fully saturated page — rather than from a
- * guess about how long a real path, event summary or comment is.
- * `projection.test.ts` saturates every one of them at once, at each plane's page
- * size, and measures the encoded result against that gate.
+ * Only fields entering shared bounded Triage primitives remain here. Provider
+ * labels, paths and document bodies have no real provider or host byte boundary,
+ * so this source normalizes but does not truncate them.
  */
 export const GITHUB_DETAIL_BOUNDS_V1: GithubDetailBoundsV1 = Object.freeze({
   identifierUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  labelUtf8Bytes: 128,
   textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   locationUtf8Bytes: MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-  pathUtf8Bytes: 512,
-  commentBodyUtf8Bytes: 8_192,
 });
 
 /** One provider page of timeline events. */
 export const GITHUB_MAX_TIMELINE_ROWS_V1 = GITHUB_TIMELINE_PAGE_SIZE_V1;
 /** One provider page of changed files. */
 export const GITHUB_MAX_CHANGED_FILE_ROWS_V1 = GITHUB_CHANGED_FILES_PAGE_SIZE_V1;
-/** One provider page of issue comments. */
-export const GITHUB_MAX_COMMENT_ROWS_V1 = GITHUB_COMMENTS_PAGE_SIZE_V1;
 /**
  * The check rows one checks read publishes.
  *
@@ -87,8 +74,6 @@ export const GITHUB_MAX_COMMENT_ROWS_V1 = GITHUB_COMMENTS_PAGE_SIZE_V1;
  * computed over every observation, and this bounds only what is listed. A suite
  * larger than this keeps its true counts and reports the rows it omitted.
  */
-export const GITHUB_MAX_CHECK_ROWS_V1 = 200;
-
 type JsonRecord = Readonly<Record<string, unknown>>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -131,6 +116,13 @@ function boundedOrNull(value: unknown, maxUtf8Bytes: number): TriageBoundedTextV
   return projected.value === '' ? null : projected;
 }
 
+function normalizedOrNull(value: unknown): TriageBoundedTextV1 | null {
+  const raw = readString(value);
+  if (raw === null) return null;
+  const normalized = normalizeTriageSingleLineV1(raw);
+  return normalized === '' ? null : Object.freeze({ value: normalized, truncated: false });
+}
+
 function boundedWebUrl(value: unknown, bounds: GithubDetailBoundsV1): string | null {
   const absolute = readGithubAbsoluteWebUrl(value);
   if (absolute === null) return null;
@@ -145,11 +137,11 @@ export function projectGithubDetailIdentifierV1(value: unknown): TriageBoundedTe
 }
 
 export function projectGithubDetailLabelV1(value: unknown): TriageBoundedTextV1 | null {
-  return boundedOrNull(value, GITHUB_DETAIL_BOUNDS_V1.labelUtf8Bytes);
+  return normalizedOrNull(value);
 }
 
 export function projectGithubDetailPathV1(value: unknown): TriageBoundedTextV1 | null {
-  return boundedOrNull(value, GITHUB_DETAIL_BOUNDS_V1.pathUtf8Bytes);
+  return normalizedOrNull(value);
 }
 
 export function projectGithubDetailWebUrlV1(value: unknown): string | null {
@@ -175,15 +167,13 @@ const EXCESSIVE_BLANK_LINES = /\n{3,}/gu;
  */
 export function projectGithubCommentBody(
   value: string,
-  maxUtf8Bytes: number,
 ): TriageBoundedTextV1 {
   const normalized = value
     .replace(CARRIAGE_RETURNS, '\n')
     .replace(NON_STRUCTURAL_CONTROLS, ' ')
     .replace(EXCESSIVE_BLANK_LINES, '\n\n')
     .trim();
-  const truncated = truncateTriageUtf8V1(normalized, maxUtf8Bytes);
-  return { value: truncated.value.trimEnd(), truncated: truncated.truncated };
+  return { value: normalized, truncated: false };
 }
 
 /* ------------------------------------------------------------------- timeline */
@@ -415,8 +405,12 @@ export function projectGithubTimelineRows(
     }
 
     const boundedId = bounded(id, bounds.identifierUtf8Bytes);
-    const boundedKind = bounded(rawKind, bounds.labelUtf8Bytes);
-    const actor = boundedOrNull(readTimelineActor(entry, kind), bounds.labelUtf8Bytes);
+    const boundedKind = normalizedOrNull(rawKind);
+    if (boundedKind === null) {
+      omittedRowCount += 1;
+      continue;
+    }
+    const actor = normalizedOrNull(readTimelineActor(entry, kind));
     const summary = boundedOrNull(readTimelineSubject(entry, kind), bounds.textUtf8Bytes);
     const atMs = readTimelineTimestamp(entry);
     const webUrl = boundedWebUrl(entry['html_url'], bounds);
@@ -509,13 +503,17 @@ export function projectGithubChangedFileRows(
       continue;
     }
 
-    const path = bounded(rawPath, bounds.pathUtf8Bytes);
-    if (path.value === '') {
+    const path = normalizedOrNull(rawPath);
+    if (path === null) {
       omittedRowCount += 1;
       continue;
     }
-    const status = bounded(rawStatus, bounds.labelUtf8Bytes);
-    const previousPath = boundedOrNull(entry['previous_filename'], bounds.pathUtf8Bytes);
+    const status = normalizedOrNull(rawStatus);
+    if (status === null) {
+      omittedRowCount += 1;
+      continue;
+    }
+    const previousPath = normalizedOrNull(entry['previous_filename']);
     const blobSha = boundedOrNull(entry['sha'], bounds.identifierUtf8Bytes);
     const additions = readCount(entry['additions']) ?? 0;
     const deletions = readCount(entry['deletions']) ?? 0;
@@ -537,85 +535,6 @@ export function projectGithubChangedFileRows(
       ...(blobSha === null ? {} : { blobSha: blobSha.value }),
       ...(webUrl === null ? {} : { webUrl }),
       diffAvailable: typeof entry['patch'] === 'string',
-      ...(truncated ? { truncated: true as const } : {}),
-    }));
-  }
-
-  return Object.freeze({
-    rows: Object.freeze(rows),
-    omittedRowCount,
-    projectionTruncated,
-  });
-}
-
-/* ------------------------------------------------------------------ comments */
-
-export type GithubProjectedCommentRowV1 = Readonly<{
-  id: string;
-  author?: string;
-  /** The comment body, normalized and bounded but with its line structure intact. */
-  body: string;
-  atMs?: number;
-  /** Present only when GitHub reports an edit after the comment was written. */
-  editedAtMs?: number;
-  webUrl?: string;
-  truncated?: true;
-}>;
-
-export function projectGithubCommentRows(
-  raw: unknown,
-  bounds: GithubDetailBoundsV1,
-): GithubPageProjectionV1<GithubProjectedCommentRowV1> {
-  if (!Array.isArray(raw)) return emptyPage();
-
-  const rows: GithubProjectedCommentRowV1[] = [];
-  let omittedRowCount = 0;
-  let projectionTruncated = false;
-
-  for (const entry of raw) {
-    if (!isRecord(entry)) {
-      omittedRowCount += 1;
-      continue;
-    }
-    const nativeId = readNativeId(entry['id']);
-    if (nativeId === null) {
-      omittedRowCount += 1;
-      continue;
-    }
-    if (rows.length >= GITHUB_MAX_COMMENT_ROWS_V1) {
-      omittedRowCount += 1;
-      projectionTruncated = true;
-      continue;
-    }
-
-    const id = bounded(`github-issue-comment:${nativeId}`, bounds.identifierUtf8Bytes);
-    const user = entry['user'];
-    const author = boundedOrNull(
-      isRecord(user) ? user['login'] : null,
-      bounds.labelUtf8Bytes,
-    );
-    const rawBody = readString(entry['body']);
-    // A comment with no body is still a real comment — it may carry only an
-    // attachment — so it keeps its row and loses only its text.
-    const body = rawBody === null
-      ? { value: '', truncated: false }
-      : projectGithubCommentBody(rawBody, bounds.commentBodyUtf8Bytes);
-    const atMs = readTimestampMs(entry['created_at']);
-    const updatedAtMs = readTimestampMs(entry['updated_at']);
-    const editedAtMs = atMs !== null && updatedAtMs !== null && updatedAtMs > atMs
-      ? updatedAtMs
-      : null;
-    const webUrl = boundedWebUrl(entry['html_url'], bounds);
-    const truncated = id.truncated || body.truncated || (author?.truncated ?? false);
-    projectionTruncated = projectionTruncated || truncated;
-
-    rows.push(Object.freeze({
-      id: id.value,
-      ...(author === null ? {} : { author: author.value }),
-      body: body.value,
-      ...(atMs === null ? {} : { atMs }),
-      ...(editedAtMs === null ? {} : { editedAtMs }),
-      ...(webUrl === null ? {} : { webUrl }),
       ...(truncated ? { truncated: true as const } : {}),
     }));
   }
@@ -659,19 +578,18 @@ export function projectGithubCheckRows(
   let projectionTruncated = false;
 
   for (const observation of observations) {
-    if (rows.length >= GITHUB_MAX_CHECK_ROWS_V1) {
+    const key = bounded(observation.key, bounds.identifierUtf8Bytes);
+    const name = normalizedOrNull(observation.name);
+    const status = normalizedOrNull(observation.status);
+    if (name === null || status === null) {
       omittedRowCount += 1;
-      projectionTruncated = true;
       continue;
     }
-    const key = bounded(observation.key, bounds.identifierUtf8Bytes);
-    const name = bounded(observation.name, bounds.labelUtf8Bytes);
-    const status = bounded(observation.status, bounds.labelUtf8Bytes);
-    const conclusion = boundedOrNull(observation.conclusion, bounds.labelUtf8Bytes);
+    const conclusion = normalizedOrNull(observation.conclusion);
     const detailsUrl = boundedWebUrl(observation.detailsUrl, bounds);
     const logExcerpt = observation.logExcerpt === null || observation.logExcerpt === undefined
       ? null
-      : projectGithubCommentBody(observation.logExcerpt, bounds.commentBodyUtf8Bytes);
+      : projectGithubCommentBody(observation.logExcerpt);
     const truncated = key.truncated
       || name.truncated
       || status.truncated
@@ -709,8 +627,6 @@ export function projectGithubCheckRows(
  * review per author" and the derived decision are computed over every review,
  * and this bounds only what is listed.
  */
-export const GITHUB_MAX_REVIEWER_ROWS_V1 = 200;
-
 export type GithubProjectedReviewerRowV1 = Readonly<{
   login: string;
   /** GitHub's own state word, untouched; the renderer owns how it is said. */
@@ -758,13 +674,12 @@ export function projectGithubReviewPeople(
   let projectionTruncated = false;
 
   for (const reviewer of input.historical) {
-    if (reviewed.length >= GITHUB_MAX_REVIEWER_ROWS_V1) {
+    const login = normalizedOrNull(reviewer.login);
+    const state = normalizedOrNull(reviewer.state);
+    if (login === null || state === null) {
       omittedRowCount += 1;
-      projectionTruncated = true;
       continue;
     }
-    const login = bounded(reviewer.login, bounds.labelUtf8Bytes);
-    const state = bounded(reviewer.state, bounds.labelUtf8Bytes);
     const truncated = login.truncated || state.truncated;
     projectionTruncated = projectionTruncated || truncated;
     reviewed.push(Object.freeze({
@@ -776,17 +691,13 @@ export function projectGithubReviewPeople(
   }
 
   for (const request of input.outstanding) {
-    if (requested.length >= GITHUB_MAX_REVIEWER_ROWS_V1) {
-      omittedRowCount += 1;
-      projectionTruncated = true;
-      continue;
-    }
     // A team is named by the name GitHub shows for it; its slug is routing
     // material, and showing one where the other belongs renames the team.
-    const subject = bounded(
-      request.kind === 'user' ? request.login : request.name,
-      bounds.labelUtf8Bytes,
-    );
+    const subject = normalizedOrNull(request.kind === 'user' ? request.login : request.name);
+    if (subject === null) {
+      omittedRowCount += 1;
+      continue;
+    }
     projectionTruncated = projectionTruncated || subject.truncated;
     requested.push(Object.freeze({
       kind: request.kind,

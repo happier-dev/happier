@@ -1,5 +1,6 @@
 import { BITBUCKET_CLOUD_API_BASE_URL } from '../apiClient.js';
 import { encodeBitbucketPathSegment, isBitbucketEntryId } from '../identity.js';
+import { BITBUCKET_MAX_PAGE_LENGTH } from '../pagination.js';
 
 /**
  * The three Bitbucket Cloud pull-request detail collections this vertical reads.
@@ -23,11 +24,11 @@ import { encodeBitbucketPathSegment, isBitbucketEntryId } from '../identity.js';
  */
 export const BITBUCKET_COMMENTS_PAGE_LENGTH_V1 = 30;
 /** `Activity` mounts one page of the combined approval/update/comment stream. */
-export const BITBUCKET_ACTIVITY_PAGE_LENGTH_V1 = 25;
+export const BITBUCKET_ACTIVITY_PAGE_LENGTH_V1 = BITBUCKET_MAX_PAGE_LENGTH;
 /** `Builds` mounts one page of the pull request's own status collection. */
-export const BITBUCKET_STATUSES_PAGE_LENGTH_V1 = 25;
+export const BITBUCKET_STATUSES_PAGE_LENGTH_V1 = BITBUCKET_MAX_PAGE_LENGTH;
 /** Bitbucket's documented global maximum; one diffstat page never asks for more than it permits. */
-export const BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1 = 100;
+export const BITBUCKET_DIFFSTAT_PAGE_LENGTH_V1 = BITBUCKET_MAX_PAGE_LENGTH;
 
 export type BitbucketDetailRouteInputV1 = Readonly<{
   workspaceUuid: string;

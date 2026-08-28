@@ -52,7 +52,6 @@ const approvalEnabledSessionTarget = {
 const automationTarget = {
   kind: 'automation',
   automationId: 'automation-1',
-  expectedTemplateVersion: 3,
   policy: { resultDelivery: 'none' },
 } as const;
 
@@ -64,7 +63,6 @@ const finalResultAutomationTarget = {
 const retainedFinalResultAutomationTarget = {
   kind: 'automation',
   automationId: 'automation-1',
-  templateVersion: 3,
   policy: { resultDelivery: 'finalResult' },
 } as const;
 
@@ -319,6 +317,7 @@ function context(
   })),
 ): PluginInvocationContext {
   return {
+    invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     services: {
       actions: { execute, executeAdmittedTargetedOperationWithExecutionOrigin },
@@ -650,7 +649,7 @@ describe('Channels target-persisting binding management', () => {
       const current = collection.rows.get('connection-1');
       if (current === undefined) throw new Error('Expected current connection row.');
       collection.rows.set('connection-1', { ...current, revision: current.revision + 1 });
-      return { kind: 'verified' as const, templateVersion: 8 };
+      return { kind: 'verified' as const };
     });
 
     await expect(update({
@@ -918,13 +917,13 @@ describe('Channels target-persisting binding management', () => {
     });
   });
 
-  it('creates an Automation binding only from the verifier-returned template version', async () => {
+  it('creates an Automation binding after current target verification without pinning its recipe', async () => {
     const create = Reflect.get(management, 'createConversationBindingForInvocation');
     expect(create).toEqual(expect.any(Function));
     if (typeof create !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 7 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
     const result = await create(
       bindingCreateInput(automationTarget),
       context(collection, execute),
@@ -937,7 +936,6 @@ describe('Channels target-persisting binding management', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -947,7 +945,6 @@ describe('Channels target-persisting binding management', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 7,
           policy: { resultDelivery: 'none' },
         },
       },
@@ -957,10 +954,9 @@ describe('Channels target-persisting binding management', () => {
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        templateVersion: 7,
       },
     });
-    expect((row?.value.payload as Readonly<Record<string, unknown>>).target).not.toHaveProperty('expectedTemplateVersion');
+    expect((row?.value.payload as Readonly<Record<string, unknown>>).target).not.toHaveProperty('templateVersion');
   });
 
   it.each([
@@ -1037,7 +1033,7 @@ describe('Channels target-persisting binding management', () => {
           providerSnapshot = snapshot;
         },
       });
-      return { kind: 'verified' as const, templateVersion: 8 };
+      return { kind: 'verified' as const };
     });
 
     await expect(create(
@@ -1056,7 +1052,7 @@ describe('Channels target-persisting binding management', () => {
     if (typeof create !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
 
     await expect(create(
       bindingCreateInput(finalResultAutomationTarget),
@@ -1070,7 +1066,6 @@ describe('Channels target-persisting binding management', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         resultDelivery: 'finalResult',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1100,7 +1095,6 @@ describe('Channels target-persisting binding management', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         resultDelivery: 'finalResult',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1139,17 +1133,16 @@ describe('Channels target-persisting binding management', () => {
     if (typeof create !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'templateVersionMismatch' as const }));
+    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'notFound' as const }));
     await expect(create(
       bindingCreateInput(automationTarget),
       context(collection, execute),
-    )).resolves.toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+    )).resolves.toEqual({ kind: 'notVerified', reason: 'notFound' });
 
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -1157,13 +1150,13 @@ describe('Channels target-persisting binding management', () => {
     expect([...collection.rows.keys()]).toEqual(['connection-1']);
   });
 
-  it('updates an Automation target from the verifier result rather than the caller precondition', async () => {
+  it('updates an Automation target after current target verification', async () => {
     const update = Reflect.get(management, 'updateConversationBindingForInvocation');
     expect(update).toEqual(expect.any(Function));
     if (typeof update !== 'function') return;
 
     const collection = createCollection([connectionRow(), bindingRow(sessionTarget)]);
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 8 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
     await expect(update({
       bindingId: 'binding-1',
       expectedRevision: 5,
@@ -1174,12 +1167,11 @@ describe('Channels target-persisting binding management', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
-      target: { kind: 'automation', automationId: 'automation-1', templateVersion: 8 },
+      target: { kind: 'automation', automationId: 'automation-1' },
     });
   });
 
@@ -1189,7 +1181,7 @@ describe('Channels target-persisting binding management', () => {
     if (typeof mutate !== 'function') return;
 
     const collection = createCollection([connectionRow(), bindingRow(sessionTarget)]);
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
 
     await expect(mutate({
       bindingId: 'binding-1',
@@ -1201,7 +1193,6 @@ describe('Channels target-persisting binding management', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         resultDelivery: 'finalResult',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1280,7 +1271,7 @@ describe('Channels target-persisting binding management', () => {
     });
   });
 
-  it('reactivates a retained final-result binding through Account-local enablement', async () => {
+  it('keeps a retained Automation binding disabled when only Account-local enablement is available', async () => {
     const setEnabled = Reflect.get(management, 'setConversationBindingEnabledInAccountCollection');
     expect(setEnabled).toEqual(expect.any(Function));
     if (typeof setEnabled !== 'function') return;
@@ -1292,18 +1283,74 @@ describe('Channels target-persisting binding management', () => {
       expectedRevision: 5,
       enabled: true,
       signal: new AbortController().signal,
-    })).resolves.toEqual({
-      kind: 'updated',
-      bindingId: 'binding-1',
-      revision: 6,
-      authorityEpoch: 2,
+    })).rejects.toMatchObject({
+      code: 'channels_binding_set_enabled_target_verification_required',
     });
 
-    expect(collection.batches).toHaveLength(1);
+    expect(collection.batches).toHaveLength(0);
+    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
+      target: retainedFinalResultAutomationTarget,
+      enabled: false,
+    });
+  });
+
+  it('revalidates a retained Automation target before the online enable Action persists it', async () => {
+    const setEnabled = Reflect.get(management, 'setConversationBindingEnabledForInvocation');
+    expect(setEnabled).toEqual(expect.any(Function));
+    if (typeof setEnabled !== 'function') return;
+
+    const collection = createCollection([
+      connectionRow(),
+      bindingRow(retainedFinalResultAutomationTarget),
+    ]);
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
+
+    await expect(setEnabled({
+      bindingId: 'binding-1',
+      expectedRevision: 5,
+      enabled: true,
+    }, context(collection, execute))).resolves.toMatchObject({
+      kind: 'updated',
+      bindingId: 'binding-1',
+    });
+
+    expect(execute).toHaveBeenCalledWith(
+      'automation.conversation.target.verify',
+      {
+        automationId: retainedFinalResultAutomationTarget.automationId,
+        resultDelivery: 'finalResult',
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({
       target: retainedFinalResultAutomationTarget,
       enabled: true,
     });
+  });
+
+  it('leaves a retained Automation binding disabled when online revalidation rejects it', async () => {
+    const setEnabled = Reflect.get(management, 'setConversationBindingEnabledForInvocation');
+    expect(setEnabled).toEqual(expect.any(Function));
+    if (typeof setEnabled !== 'function') return;
+
+    const collection = createCollection([
+      connectionRow(),
+      bindingRow(retainedFinalResultAutomationTarget),
+    ]);
+    const execute = vi.fn(async () => ({
+      kind: 'notVerified' as const,
+      reason: 'resultDeliveryUnsupported' as const,
+    }));
+
+    await expect(setEnabled({
+      bindingId: 'binding-1',
+      expectedRevision: 5,
+      enabled: true,
+    }, context(collection, execute))).rejects.toMatchObject({
+      code: 'channels_binding_set_enabled_target_not_verified',
+    });
+    expect(collection.batches).toHaveLength(0);
+    expect(collection.rows.get('binding-1')?.value.payload).toMatchObject({ enabled: false });
   });
 
   it('does not persist an Automation update when the connection changes during verification', async () => {
@@ -1316,7 +1363,7 @@ describe('Channels target-persisting binding management', () => {
       const current = collection.rows.get('connection-1');
       if (current === undefined) throw new Error('Expected current connection row.');
       collection.rows.set('connection-1', { ...current, revision: current.revision + 1 });
-      return { kind: 'verified' as const, templateVersion: 8 };
+      return { kind: 'verified' as const };
     });
     await expect(update({
       bindingId: 'binding-1',
@@ -1337,21 +1384,20 @@ describe('Channels target-persisting binding management', () => {
     if (typeof update !== 'function') return;
 
     const collection = createCollection([connectionRow(), bindingRow(sessionTarget)]);
-    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'templateVersionMismatch' as const }));
+    const execute = vi.fn(async () => ({ kind: 'notVerified' as const, reason: 'notFound' as const }));
     await expect(update({
       bindingId: 'binding-1',
       expectedRevision: 5,
       target: automationTarget,
     }, context(collection, execute))).resolves.toEqual({
       kind: 'notVerified',
-      reason: 'templateVersionMismatch',
+      reason: 'notFound',
     });
 
     expect(execute).toHaveBeenCalledWith(
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -1763,25 +1809,7 @@ describe('Channels target-persisting binding management', () => {
     ]]);
   });
 
-  it('rejects unknown connection-update fields before the lifecycle writer', async () => {
-    const update = Reflect.get(management, 'updateConversationConnectionForInvocation');
-    expect(update).toEqual(expect.any(Function));
-    if (typeof update !== 'function') return;
-
-    const collection = createCollection([connectionRow()]);
-    await expect(update({
-      connectionId: 'connection-1',
-      expectedRevision: 4,
-      enabled: false,
-      maximumObservationAgeMs: 120_000,
-      unexpected: true,
-    }, context(collection, vi.fn()))).rejects.toMatchObject({
-      code: 'channels_connection_update_input_invalid',
-    });
-    expect(collection.batches).toEqual([]);
-  });
-
-  it('uses the public connection-update range before the lifecycle writer', async () => {
+  it('keeps the observation-age semantic bound at the lifecycle writer', async () => {
     const update = Reflect.get(management, 'updateConversationConnectionForInvocation');
     expect(update).toEqual(expect.any(Function));
     if (typeof update !== 'function') return;
@@ -1793,7 +1821,7 @@ describe('Channels target-persisting binding management', () => {
       enabled: false,
       maximumObservationAgeMs: 30 * 86_400_000 + 1,
     }, context(collection, vi.fn()))).rejects.toMatchObject({
-      code: 'channels_connection_update_input_invalid',
+      code: 'channels_connection_update_maximum_observation_age_invalid',
     });
     expect(collection.batches).toEqual([]);
   });

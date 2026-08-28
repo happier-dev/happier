@@ -12,13 +12,13 @@ describe('Codex plugin resume support', () => {
     })).toBe(true);
   });
 
-  it('normalizes legacy MCP inputs instead of preserving MCP as a final runtime mode', () => {
-    expect(supportsCodexProviderResume({
+  it('fails closed when a released legacy MCP input reaches resume support', () => {
+    expect(() => supportsCodexProviderResume({
       agentRuntimeSelection: { codexBackendMode: 'mcp' },
-    })).toBe(true);
-    expect(supportsCodexProviderResume({
+    })).toThrow(/codex_legacy_mcp_backend_mode_unsupported/u);
+    expect(() => supportsCodexProviderResume({
       agentRuntimeSelection: { codexBackendMode: 'mcp_resume' },
-    })).toBe(true);
+    })).toThrow(/codex_legacy_mcp_backend_mode_unsupported/u);
   });
 
   it('accepts a canonical runtime descriptor without a Codex-specific host input', () => {

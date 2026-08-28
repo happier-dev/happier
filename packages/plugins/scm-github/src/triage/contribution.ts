@@ -19,12 +19,13 @@ import type { GithubTriageKindIdV1 } from './types.js';
 /** The contribution's local id inside `contributesTo['happier.triage'].sources`. */
 export const GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 = 'github-forge';
 
-/** The four Action ids the contribution's operation roles bind to. */
+/** The five Action ids the contribution's operation roles bind to. */
 export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
   listInstances: 'triage/list-github-instances',
   scan: 'triage/scan-github',
   get: 'triage/get-github-entry',
   prepareReviewWorkspace: 'triage/prepare-github-review-workspace',
+  verifyReviewWorkspace: 'triage/verify-github-review-workspace',
 });
 
 /**
@@ -33,14 +34,13 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
  * They bind to no Triage operation role. A mounted Plugin UI surface holds
  * `PluginUiHostApi`, which has no storage member and no transport of its own, so
  * an Action is the ONLY way this source's detail body can reach GitHub at all.
- * They are declared separately from the role-bound three above precisely because
+ * They are declared separately from the five role-bound Actions above precisely because
  * they are not roles: the aggregate never invokes them, and only this plugin's
  * own detail renderer does.
  */
 export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
   listTimeline: 'triage/list-github-timeline',
   listChangedFiles: 'triage/list-github-changed-files',
-  listComments: 'triage/list-github-comments',
   readFeedback: 'triage/read-github-feedback',
   readChecks: 'triage/read-github-checks',
   readReviews: 'triage/read-github-reviews',
@@ -62,17 +62,14 @@ export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
  * where the manifest cannot classify it, cannot confirm withdrawal differently
  * from a summons, and cannot state which of the two a user is about to do.
  *
- * SCM.md 3.8 also names `submit-review`, `review-comment-create`,
- * `thread-reply` and `issue/comment`. They are absent here on purpose: they are
- * blocked behind the Reviews dispatch barrier (SCM.md 3.9.3a) and a registered
- * Action is a reachable external write, so declaring one early would make the
- * barrier decorative. `thread-resolution` is NOT one of them and is declared: it
- * publishes nothing, so it needs no dispatch barrier — it converges an existing
- * thread on a resolution state GitHub already models.
+ * The Reviews-owned dispatch claim is now the one barrier consumed by all four
+ * publication Actions; none owns a source-local lease, receipt or correlation.
  */
 export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
   pullRequestMerge: 'github/pull-request/merge',
   pullRequestSubmitReview: 'github/pull-request/submit-review',
+  pullRequestReviewCommentCreate: 'github/pull-request/review-comment-create',
+  pullRequestThreadReply: 'github/pull-request/thread-reply',
   pullRequestClose: 'github/pull-request/close',
   pullRequestReopen: 'github/pull-request/reopen',
   pullRequestMarkReady: 'github/pull-request/mark-ready',
@@ -82,6 +79,7 @@ export const GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 = Object.freeze({
   pullRequestThreadResolution: 'github/pull-request/thread-resolution',
   issueClose: 'github/issue/close',
   issueReopen: 'github/issue/reopen',
+  issueComment: 'github/issue/comment',
   issueAssigneeAdd: 'github/issue/assignee-add',
   issueAssigneeRemove: 'github/issue/assignee-remove',
   issueLabelAdd: 'github/issue/label-add',

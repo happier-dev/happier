@@ -51,6 +51,7 @@ function window(overrides: Partial<TriageListWindowV1> = {}): TriageListWindowV1
         v: 1,
         rows: [row()],
         lanes: [],
+        facetCensus: { types: [], scopes: [], coverage: 'complete' },
         coverage: 'complete',
         assembledAtMs: ASSEMBLED_AT_MS,
         ...overrides,

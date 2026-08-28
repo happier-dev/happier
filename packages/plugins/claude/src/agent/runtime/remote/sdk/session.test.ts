@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type {
+  AgentSessionRuntimeContext,
   AgentTranscriptFileFollowInput as TranscriptFileFollowInputV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
@@ -523,7 +524,14 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       cwd: '/tmp/claude-project',
       configuration: baseConfiguration,
       providerBinding: currentBinding,
-    });
+    }, {
+      session: {
+        services: {
+          activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext);
 
     try {
       await expect(session.updateConfiguration?.({
@@ -1689,9 +1697,6 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         agentId: 'claude',
         serviceId: 'claude-subscription',
         targetId: 'happy-session-1',
-        env: {
-          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([selection]),
-        },
         selection,
         expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         refreshAttemptId: expect.stringMatching(/^claude-auth-refresh-/u),
@@ -1723,9 +1728,6 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
         agentId: 'claude',
         serviceId: 'claude-subscription',
         targetId: 'happy-session-1',
-        env: {
-          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([selection]),
-        },
         selection,
         expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
         refreshAttemptId: expect.stringMatching(/^claude-auth-refresh-/u),

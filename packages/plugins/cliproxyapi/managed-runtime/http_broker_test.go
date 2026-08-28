@@ -661,6 +661,7 @@ func TestBrokerFailureEnvelopeIsStrictAndStatusBounded(t *testing.T) {
 		status int
 		body   string
 	}{
+		{name: "non-200 success", status: http.StatusCreated, body: `{"ok":true,"value":{}}`},
 		{name: "unsupported status", status: http.StatusBadRequest, body: `{"ok":false,"error":{"code":"request_auth_unavailable"}}`},
 		{name: "unknown code", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"fixture_error"}}`},
 		{name: "status and code disagree", status: http.StatusForbidden, body: `{"ok":false,"error":{"code":"request_auth_not_active"}}`},
@@ -698,17 +699,22 @@ func TestHTTPBrokerMatchesProtocolRequestAuthHTTPV1Vectors(t *testing.T) {
 		t.Fatalf("read Protocol request-auth HTTP vectors: %v", err)
 	}
 	var vectors struct {
-		V     int `json:"v"`
-		Paths struct {
+		V                int `json:"v"`
+		Paths            struct {
 			Lookup       string `json:"lookup"`
 			AuthFailure  string `json:"authFailure"`
 			QuotaFailure string `json:"quotaFailure"`
 		} `json:"paths"`
-		Responses []struct {
+		Responses        []struct {
 			Name   string          `json:"name"`
 			Status int             `json:"status"`
 			Body   json.RawMessage `json:"body"`
 		} `json:"responses"`
+		InvalidResponses []struct {
+			Name   string          `json:"name"`
+			Status int             `json:"status"`
+			Body   json.RawMessage `json:"body"`
+		} `json:"invalidResponses"`
 	}
 	if err := json.Unmarshal(data, &vectors); err != nil {
 		t.Fatalf("decode Protocol request-auth HTTP vectors: %v", err)
@@ -752,6 +758,20 @@ func TestHTTPBrokerMatchesProtocolRequestAuthHTTPV1Vectors(t *testing.T) {
 			}
 			if brokerError.StatusCode != vector.Status || brokerError.Code != wire.Error.Code {
 				t.Fatalf("broker error = %#v, vector status = %d code = %q", brokerError, vector.Status, wire.Error.Code)
+			}
+		})
+	}
+	for _, vector := range vectors.InvalidResponses {
+		vector := vector
+		t.Run(vector.Name, func(t *testing.T) {
+			var output RequestAuthFailureOutcome
+			if err := decodeBrokerEnvelope(vector.Status, vector.Body, &output); err == nil {
+				t.Fatal("invalid Protocol vector was accepted")
+			} else {
+				var brokerError *BrokerHTTPError
+				if errors.As(err, &brokerError) {
+					t.Fatalf("invalid Protocol vector surfaced as authoritative error: %#v", brokerError)
+				}
 			}
 		})
 	}

@@ -70,7 +70,6 @@ export const POSTHOG_TRIAGE_SETTINGS_ARTIFACT_ID = 'posthog-triage-sources-nativ
 /** The Action ids that carry the three source read roles. */
 export const POSTHOG_ACTION_IDS = {
     configuration: 'posthog/configuration',
-    capability: 'posthog/capability',
     listInstances: 'posthog/list-instances',
     scan: 'posthog/scan',
     get: 'posthog/get',
@@ -86,6 +85,8 @@ export const POSTHOG_ACTION_IDS = {
      * scope, so an account may be refused this one alone.
      */
     issueActivity: 'posthog/issue-activity',
+    /** Explicit warning-confirmed reread of one selected occurrence's Tier-3 fields. */
+    codeVariables: 'posthog/code-variables',
 } as const;
 
 /** The credential field of the administrator-configured Personal API key pilot. */

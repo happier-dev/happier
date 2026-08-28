@@ -1,16 +1,20 @@
 import {
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
-  type ConversationBindingTargetMutationV1,
+  type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationPairingResourceV1,
   type ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
-import { isPluginError, PluginError, type PluginMachineMaterializationRefV1 } from '@happier-dev/plugin-sdk';
+import {
+  arePluginMachineMaterializationRefsEqual,
+  isPluginError,
+  PluginError,
+  type PluginMachineMaterializationRefV1,
+} from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 import type { ConversationCommandClassification } from './commands.js';
-import { areConversationMaterializationRefsEqual } from './connectionLifecycle.js';
 import { renderConversationPairingDeepLink } from './pairingLink.js';
 
 export const CONVERSATION_PAIRING_EXPIRY_MS = 10 * 60 * 1_000;
@@ -49,7 +53,7 @@ export type ConversationPairingBindingWriteInput = Readonly<{
   materialization: PluginMachineMaterializationRefV1;
   endpoint: ConversationResolvedEndpointV1;
   principalId: string;
-  target: ConversationBindingTargetMutationV1;
+  target: ConversationBindingTargetV1;
   enabled: false;
   expectedConnectionRevision: number;
   finalizeIdempotencyKey: string;
@@ -82,7 +86,7 @@ type Challenge = Readonly<{
    * the destination may be a group nobody can prove identity in.
    */
   endpoint: ConversationResolvedEndpointV1;
-  target: ConversationBindingTargetMutationV1;
+  target: ConversationBindingTargetV1;
   deepLinkUrl: string | null;
 }>;
 
@@ -98,7 +102,7 @@ type Proposal = Readonly<{
   /** The private conversation the `/pair` proof actually arrived on. */
   proofEndpoint: ConversationResolvedEndpointV1;
   principalId: string;
-  target: ConversationBindingTargetMutationV1;
+  target: ConversationBindingTargetV1;
   expectedConnectionRevision: number;
   expiresAt: number;
 }> & {
@@ -318,7 +322,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
       destinationLabel: string;
       pairingDeepLinkTemplate?: string;
       endpoint: ConversationResolvedEndpointV1;
-      target: ConversationBindingTargetMutationV1;
+      target: ConversationBindingTargetV1;
     }>) {
       if (!Number.isSafeInteger(input.expectedConnectionRevision) || input.expectedConnectionRevision < 1) {
         throw new Error('Pairing challenge must freeze a valid connection revision.');
@@ -448,7 +452,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
       const challenge = challengeId === undefined ? undefined : challengesById.get(challengeId);
       if (challenge === undefined
         || challenge.connectionId !== input.connectionId
-        || !areConversationMaterializationRefsEqual(challenge.materialization, input.materialization)) {
+        || !arePluginMachineMaterializationRefsEqual(challenge.materialization, input.materialization)) {
         const ownerReason = consumedTokens.has(input.command.token) ? 'challengeConsumed' : 'tokenMismatch';
         if (chargedFailureCensusIds.has(input.censusId)) {
           return {
@@ -511,7 +515,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         challenge === undefined
         || challenge.token !== reservation.challengeToken
         || challenge.connectionId !== reservation.connectionId
-        || !areConversationMaterializationRefsEqual(challenge.materialization, reservation.materialization)
+        || !arePluginMachineMaterializationRefsEqual(challenge.materialization, reservation.materialization)
       ) {
         return { kind: 'silent', ownerReason: 'reservationUnavailable' } as const;
       }

@@ -564,6 +564,16 @@
               "minimum": 0,
               "type": "integer"
             },
+            "observedDelta": {
+              "anyOf": [
+                {
+                  "const": 0
+                },
+                {
+                  "const": 1
+                }
+              ]
+            },
             "occurredAt": {
               "maximum": 9007199254740991,
               "minimum": 0,
@@ -580,7 +590,8 @@
             "candidate",
             "occurrenceId",
             "occurredAt",
-            "observationReceivedAt"
+            "observationReceivedAt",
+            "observedDelta"
           ],
           "type": "object"
         },

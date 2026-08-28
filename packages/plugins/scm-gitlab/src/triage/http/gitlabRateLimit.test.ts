@@ -76,4 +76,17 @@ describe('readGitlabRetryEvidence', () => {
       source: 'ratelimit-reset',
     });
   });
+
+  it('omits provider evidence whose derived epoch milliseconds are not a strict-JSON integer', () => {
+    const unsafeSeconds = String(Number.MAX_SAFE_INTEGER);
+
+    expect(readGitlabRetryEvidence(
+      createGitlabResponseHeaders({ 'Retry-After': unsafeSeconds }),
+      NOW_MS,
+    )).toBeNull();
+    expect(readGitlabRetryEvidence(
+      createGitlabResponseHeaders({ 'RateLimit-Reset': unsafeSeconds }),
+      NOW_MS,
+    )).toBeNull();
+  });
 });

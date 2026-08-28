@@ -23,24 +23,6 @@ import type {
   ConversationPollRetryAttemptCountV1,
 } from './connectionPollFailureBounds.js';
 
-/**
- * Exact identity of one host-stamped plugin materialization.
- *
- * The SDK publishes the same rule one level up, for a whole execution origin;
- * Channels compares bare refs in three places (transport-origin currentness,
- * pairing challenge custody, and reconciliation caller provenance) and this is
- * the single owner for that comparison. A ref that gains a field must not be
- * silently ignored by copies that never learned about it.
- */
-export function areConversationMaterializationRefsEqual(
-  left: PluginMachineMaterializationRefV1,
-  right: PluginMachineMaterializationRefV1,
-): boolean {
-  return left.pluginId === right.pluginId
-    && left.machineId === right.machineId
-    && left.materializationId === right.materializationId;
-}
-
 type SelfStampedPluginCaller = Extract<PluginInvocationCaller, Readonly<{ kind: 'plugin' }>>;
 
 /**
@@ -533,7 +515,11 @@ export function transitionConversationConnection(input: Readonly<{
       ...(enabledChanged
         ? {
           authorityEpoch: current.authorityEpoch + 1,
-          historyGap: null,
+          // A replacement baseline may already have durably advanced its
+          // checkpoint and still be covering retained censuses. Keep that
+          // ingress fence across policy epochs so the same owner can rejoin
+          // coverage under the new row revision before admitting ingress.
+          historyGap: current.historyGap,
           providerReadiness: null,
         }
         : {}),
@@ -585,7 +571,10 @@ export function startConversationConnectionDelete(input: Readonly<{
         overlapSafety: current.overlapSafety,
         acceptedPossibleLoss: false,
       }),
-      historyGap: null,
+      // Final deletion owns physical row reclamation. Until then, preserve a
+      // staged-baseline fence so an interrupted delete cannot orphan retained
+      // uncovered censuses behind a durably advanced checkpoint.
+      historyGap: current.historyGap,
       providerReadiness: null,
       pollFailure: null,
     },
@@ -642,7 +631,11 @@ export function startConversationConnectionTransfer(input: Readonly<{
         overlapSafety: current.overlapSafety,
         acceptedPossibleLoss: false,
       }),
-      historyGap: input.replacement.historyGap,
+      // An existing gap may fence checkpoint-first baseline coverage. A
+      // transfer changes authority but must not clear that fence mid-stage;
+      // the replacement provider's baseline re-enters and replaces its
+      // checkpoint under the new revision.
+      historyGap: current.historyGap ?? input.replacement.historyGap,
       providerReadiness: null,
       pollFailure: null,
     },
@@ -689,7 +682,7 @@ export function confirmConversationConnectionStop(input: Readonly<{
       ...current,
       deletionState: 'finalizingDelete',
       pendingOldTransportStop: null,
-      historyGap: null,
+      historyGap: current.historyGap,
       providerReadiness: null,
       pollFailure: null,
     },
@@ -756,7 +749,7 @@ export function abandonConversationConnectionStop(input: Readonly<{
         ...pending,
         acceptedPossibleLoss: true,
       }),
-      historyGap: null,
+      historyGap: current.historyGap,
       providerReadiness: null,
       pollFailure: null,
     },

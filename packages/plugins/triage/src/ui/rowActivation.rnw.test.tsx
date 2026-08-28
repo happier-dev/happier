@@ -33,6 +33,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { triageListRowTestId } from './list/rows.js';
 
@@ -154,6 +155,7 @@ async function mountShell(harness: Harness): Promise<Readonly<{
     locations: readonly string[];
 }>> {
     const locations: string[] = [];
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -165,7 +167,7 @@ async function mountShell(harness: Harness): Promise<Readonly<{
             },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
@@ -179,7 +181,9 @@ async function mountShell(harness: Harness): Promise<Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return { shell: fixture, locations };
 }
 

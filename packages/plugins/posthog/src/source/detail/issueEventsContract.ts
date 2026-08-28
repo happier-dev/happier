@@ -22,24 +22,27 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
-    defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
-    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageSourceEntryLocalRefV1Schema,
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
+const definePosthogSampleString = (
+    options: Parameters<typeof defineProtocolString>[0],
+) => defineProtocolString({
+    ...options,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
 import {
     POSTHOG_ISSUE_EVENTS_INCLUDE,
     POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
 } from '../../api/types/events.js';
-import { POSTHOG_SAMPLED_EVENT_BOUNDS_V1 } from '../../ui/detail/issueEventProjection.js';
-
-/** The largest continuation this source will mint or accept, in UTF-8 bytes. */
-export const MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES = 512;
 
 /**
  * Why a sample walk stopped without reaching the end of what the provider offered.
@@ -63,58 +66,31 @@ const PosthogSampledBooleanSchema = defineProtocolUnion([
 ]);
 
 const PosthogProjectedFrameV1Schema = defineProtocolObject({
-    function: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.frameFunctionUtf8Bytes,
-        minLength: 1,
-    }).optional(),
-    source: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.frameSourceUtf8Bytes,
-        minLength: 1,
-    }).optional(),
+    function: definePosthogSampleString({ minLength: 1 }).optional(),
+    source: definePosthogSampleString({ minLength: 1 }).optional(),
     line: defineProtocolNumber({ integer: true }).optional(),
     column: defineProtocolNumber({ integer: true }).optional(),
     inApp: PosthogSampledBooleanSchema.optional(),
 }, { policy: 'closed' });
 
 const PosthogProjectedExceptionV1Schema = defineProtocolObject({
-    type: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.exceptionTypeUtf8Bytes,
-        minLength: 1,
-    }).optional(),
-    value: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.exceptionValueUtf8Bytes,
-        minLength: 1,
-    }).optional(),
-    frames: defineProtocolArray(PosthogProjectedFrameV1Schema, {
-        maxItems: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.maxFramesPerException,
-    }),
+    type: definePosthogSampleString({ minLength: 1 }).optional(),
+    value: definePosthogSampleString({ minLength: 1 }).optional(),
+    frames: defineProtocolArray(PosthogProjectedFrameV1Schema),
 }, { policy: 'closed' });
 
 /**
  * One published sampled event.
  *
- * Every bound is the exact value the boundary projector applies, so a page the projector
- * can produce always parses and a page it never could is rejected here rather than
- * becoming a second, looser statement of what may leave this source.
+ * Nested fields intentionally have no provider-invented size ledger. The final result
+ * owner fits whole rows against the canonical serialized Action envelope.
  */
 export const PosthogProjectedIssueEventV1Schema = defineProtocolObject({
-    uuid: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.identifierUtf8Bytes,
-        minLength: 1,
-    }),
+    uuid: definePosthogSampleString({ minLength: 1 }),
     timestampMs: defineProtocolNumber({ integer: true }).optional(),
-    sessionId: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.identifierUtf8Bytes,
-        minLength: 1,
-    }).optional(),
-    url: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.urlUtf8Bytes,
-        minLength: 1,
-    }).optional(),
-    exceptions: defineProtocolArray(PosthogProjectedExceptionV1Schema, {
-        maxItems: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.maxExceptionsPerEvent,
-    }),
-    truncated: defineProtocolLiteral(true).optional(),
+    sessionId: definePosthogSampleString({ minLength: 1 }).optional(),
+    url: definePosthogSampleString({ minLength: 1 }).optional(),
+    exceptions: defineProtocolArray(PosthogProjectedExceptionV1Schema),
 }, { policy: 'closed' });
 
 export const PosthogSampledEventsInputV1Schema = defineProtocolObject({
@@ -127,10 +103,7 @@ export const PosthogSampledEventsInputV1Schema = defineProtocolObject({
         maximum: POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
     }),
     /** Present only for a following page, and only as this source minted it. */
-    continuation: defineProtocolUtf8String({
-        maxUtf8Bytes: MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES,
-        minLength: 1,
-    }).optional(),
+    continuation: defineProtocolString({ minLength: 1 }).optional(),
 }, { policy: 'closed' });
 export type PosthogSampledEventsInputV1 = ReturnType<
     typeof PosthogSampledEventsInputV1Schema.parse
@@ -147,20 +120,11 @@ export type PosthogSampledEventsInputV1 = ReturnType<
  */
 export const PosthogFrozenIssueEventsRequestV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
-    issueId: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.identifierUtf8Bytes,
-        minLength: 1,
-    }),
-    from: defineProtocolUtf8String({
-        maxUtf8Bytes: MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
-        minLength: 1,
-    }),
+    issueId: definePosthogSampleString({ minLength: 1 }),
+    from: definePosthogSampleString({ minLength: 1 }),
     to: defineProtocolUnion([
         defineProtocolLiteral(null),
-        defineProtocolUtf8String({
-            maxUtf8Bytes: MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
-            minLength: 1,
-        }),
+        definePosthogSampleString({ minLength: 1 }),
     ]),
     filterTestAccounts: defineProtocolLiteral(false),
     onlyAppFrames: defineProtocolLiteral(false),
@@ -199,10 +163,7 @@ export const PosthogSampledEventsResultV1Schema = defineProtocolUnion([
          */
         omittedRowCount: defineProtocolNumber({ integer: true, minimum: 0 }),
         /** Absent when this page ends the sample. */
-        continuation: defineProtocolUtf8String({
-            maxUtf8Bytes: MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES,
-            minLength: 1,
-        }).optional(),
+        continuation: defineProtocolString({ minLength: 1 }).optional(),
         /**
          * Present only when the walk stopped short of what the provider offered. Absent
          * together with `continuation` is the provider's own end of the sample.
@@ -235,17 +196,13 @@ export type PosthogSampledEventsFrontier = Readonly<{
 export function encodePosthogSampledEventsContinuation(
     frontier: PosthogSampledEventsFrontier,
 ): string | null {
-    const token = JSON.stringify({
+    return JSON.stringify({
         v: CONTINUATION_VERSION,
         from: frontier.from,
         to: frontier.to,
         offset: frontier.offset,
         limit: frontier.limit,
     });
-    return new TextEncoder().encode(token).length
-        > MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES
-        ? null
-        : token;
 }
 
 /**

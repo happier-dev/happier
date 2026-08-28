@@ -1,9 +1,16 @@
 import {
   defineProtocolLiteral,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
+import {
+  ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema,
+  ReviewCommentPublicationResultV1ProtocolSchema,
+} from '@happier-dev/plugin-sdk/reviews';
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   TriageConfiguredSourceInstanceV1Schema,
@@ -12,11 +19,10 @@ import {
   TriageSourceObservationV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { BITBUCKET_DETAIL_BOUNDS_V1 } from '../detail/projection.js';
 import { BitbucketCommentResolutionV1Schema } from './detailContracts.js';
 
 /**
- * The four enabled Bitbucket Cloud pull-request mutation contracts.
+ * The enabled Bitbucket Cloud pull-request mutation contracts.
  *
  * `sources/SCM.md` §3.8 rules out a generic `mutate({ operation, payload })` for this vertical, so
  * each write is its own exact Action with its own closed input: there is no envelope a caller can
@@ -31,8 +37,7 @@ const HeadCommitSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 
-const MergeMessageSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: BITBUCKET_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes,
+const MergeMessageSchema = defineProtocolString({
   minLength: 1,
 });
 
@@ -137,7 +142,7 @@ export const BitbucketMutationResultV1Schema = defineProtocolUnion([
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('pending'),
-    /** The last observation the bounded poll reached; the effect is accepted, not proven. */
+    /** The exact reread after one task-status read; the effect is accepted, not proven. */
     observation: TriageSourceObservationV1Schema,
   }, { policy: 'closed' }),
   defineProtocolObject({
@@ -249,4 +254,90 @@ export const BitbucketCommentResolutionResultV1Schema = defineProtocolUnion([
 ]);
 export type BitbucketCommentResolutionResultV1 = ReturnType<
   typeof BitbucketCommentResolutionResultV1Schema.parse
+>;
+
+/* ---------------------------------------------------------- review publication */
+
+const BitbucketReviewRevisionV1Schema = defineProtocolUtf8String({
+  minLength: 40,
+  maxUtf8Bytes: 64,
+  pattern: '^[0-9a-f]{40,64}$',
+});
+const BitbucketReviewPublicationPlanV1Schema =
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(BitbucketReviewRevisionV1Schema);
+const BitbucketReviewCommentCreatePlanV1Schema =
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(
+    BitbucketReviewRevisionV1Schema,
+  );
+
+/**
+ * Publishes one canonical Reviews-owned frozen plan against one exact Bitbucket pull request.
+ * Correlations, cardinality, anchors, snapshots, base and head remain owned by Reviews; this
+ * source adds only the configured instance needed to reauthorize the provider invocation.
+ */
+export const BitbucketReviewPublicationInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  publicationPlan: BitbucketReviewPublicationPlanV1Schema,
+}, { policy: 'closed' });
+export type BitbucketReviewPublicationInputV1 = ReturnType<
+  typeof BitbucketReviewPublicationInputV1Schema.parse
+>;
+
+/** Publishes one canonical proposal at its exact pinned Bitbucket diff anchor. */
+export const BitbucketReviewCommentCreateInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  publicationPlan: BitbucketReviewCommentCreatePlanV1Schema,
+}, { policy: 'closed' });
+export type BitbucketReviewCommentCreateInputV1 = ReturnType<
+  typeof BitbucketReviewCommentCreateInputV1Schema.parse
+>;
+
+/** Publishes one canonical proposal as a reply to one exact Bitbucket comment. */
+export const BitbucketReviewCommentReplyInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  parentCommentId: defineProtocolUtf8String({
+    minLength: 1,
+    maxUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  }),
+}, { policy: 'closed' });
+export type BitbucketReviewCommentReplyInputV1 = ReturnType<
+  typeof BitbucketReviewCommentReplyInputV1Schema.parse
+>;
+
+/**
+ * A refusal happens before the generic dispatch claim and before any provider effect. Once claimed,
+ * every selected entry and the verdict settle in the canonical exact-cardinality Reviews result.
+ */
+export const BitbucketReviewPublicationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('settled'),
+    publication: ReviewCommentPublicationResultV1ProtocolSchema,
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('rejected'),
+    reason: defineProtocolUnion([
+      defineProtocolLiteral('invalid_input'),
+      defineProtocolLiteral('admission_failed'),
+      defineProtocolLiteral('base_advanced'),
+      defineProtocolLiteral('head_advanced'),
+      defineProtocolLiteral('state_changed'),
+      defineProtocolLiteral('unsupported_verdict'),
+      defineProtocolLiteral('unsupported_anchor'),
+      defineProtocolLiteral('dispatch_claim_failed'),
+    ]),
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+]);
+export type BitbucketReviewPublicationResultV1 = ReturnType<
+  typeof BitbucketReviewPublicationResultV1Schema.parse
 >;

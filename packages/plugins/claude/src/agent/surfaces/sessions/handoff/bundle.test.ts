@@ -15,6 +15,13 @@ function handoffContext(): import('@happier-dev/plugin-sdk').PluginInvocationCon
     return { signal: new AbortController().signal } as import('@happier-dev/plugin-sdk').PluginInvocationContext;
 }
 
+async function readExportedClaudeTranscript(
+    bundle: Awaited<ReturnType<typeof exportClaudeSessionBundle>>,
+): Promise<string> {
+    if (!bundle.transcriptFile) throw new Error('Expected a file-backed Claude handoff export');
+    return await readFile(bundle.transcriptFile.filePath, 'utf8');
+}
+
 describe('Claude handoff bundle leaf', () => {
     afterEach(() => {
         vi.unstubAllEnvs();
@@ -86,11 +93,11 @@ describe('Claude handoff bundle leaf', () => {
                 agent: { configDir: '/tmp/native-claude' },
             },
         },
-    ])('does not project a source for $name', async ({ identity, runtimeDescriptorV1 }) => {
-        await expect(claudeHandoffSurface.buildRuntimeLocalMetadata?.({
+    ])('does not project a source for $name', ({ identity, runtimeDescriptorV1 }) => {
+        expect(claudeHandoffSurface.buildRuntimeLocalMetadata?.({
             identity,
             runtimeDescriptorV1,
-        }, handoffContext())).resolves.toBeNull();
+        }, handoffContext())).toBeNull();
     });
 
     it('exports the exact host-admitted Session id instead of a stale generic metadata id', async () => {
@@ -142,11 +149,11 @@ describe('Claude handoff bundle leaf', () => {
             env: {},
         });
 
-        expect(bundle).toEqual({
+        expect(bundle).toMatchObject({
             agentId: 'claude',
             remoteSessionId: 'session-1',
-            transcriptBase64: Buffer.from('{"type":"assistant","text":"live"}\n', 'utf8').toString('base64'),
         });
+        await expect(readExportedClaudeTranscript(bundle)).resolves.toBe('{"type":"assistant","text":"live"}\n');
     });
 
     it.each(['linked source', 'derived path'] as const)(
@@ -219,7 +226,7 @@ describe('Claude handoff bundle leaf', () => {
             remoteSessionId: 'session-owner-private',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         });
-        expect(Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8')).toContain('fallback-public');
+        await expect(readExportedClaudeTranscript(bundle)).resolves.toContain('fallback-public');
     });
 
     it('falls back to the derived transcript when the public source is absent', async () => {
@@ -237,7 +244,7 @@ describe('Claude handoff bundle leaf', () => {
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         });
 
-        expect(Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8')).toContain('derived-nullish');
+        await expect(readExportedClaudeTranscript(bundle)).resolves.toContain('derived-nullish');
     });
 
     it('derives the transcript from the working directory instead of public transcript-path metadata', async () => {
@@ -260,9 +267,7 @@ describe('Claude handoff bundle leaf', () => {
             env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
         });
 
-        expect(Buffer.from(bundle.transcriptBase64, 'base64').toString('utf8')).toBe(
-            '{"type":"assistant","text":"derived"}\n',
-        );
+        await expect(readExportedClaudeTranscript(bundle)).resolves.toBe('{"type":"assistant","text":"derived"}\n');
     });
 
     it('imports into the Claude project path and returns direct external-session source metadata', async () => {
@@ -299,6 +304,42 @@ describe('Claude handoff bundle leaf', () => {
         await expect(readFile(join(configDir, 'projects', projectId, 'session-2.jsonl'), 'utf8')).resolves.toBe(
             '{"type":"assistant","text":"imported"}\n',
         );
+    });
+
+    it('streams a large file-backed transcript into the target Claude project', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-plugin-handoff-import-file-'));
+        const targetPath = join(root, 'workspace');
+        const configDir = join(root, '.claude-target');
+        const sourcePath = join(root, 'transcript-source.jsonl');
+        const transcript = Buffer.from(
+            JSON.stringify({ type: 'assistant', text: 'x'.repeat(5 * 1024 * 1024) }) + '\n',
+            'utf8',
+        );
+        await writeFile(sourcePath, transcript);
+
+        await importClaudeSessionBundle({
+            bundle: {
+                agentId: 'claude',
+                remoteSessionId: 'session-file-large',
+                transcriptFile: {
+                    t: 'happier.handoff.file.v1',
+                    filePath: sourcePath,
+                    offsetBytes: 0,
+                    sizeBytes: transcript.length,
+                },
+            },
+            targetPath,
+            env: { HAPPIER_CLAUDE_CONFIG_DIR: configDir },
+        });
+
+        const projectId = resolveClaudeProjectId(targetPath);
+        const importedTranscript = await readFile(join(
+            configDir,
+            'projects',
+            projectId,
+            'session-file-large.jsonl',
+        ));
+        expect(importedTranscript.equals(transcript)).toBe(true);
     });
 
     it('persists a direct source that the external-session reader accepts when both config vars differ', async () => {
@@ -743,17 +784,18 @@ describe('Claude handoff bundle leaf', () => {
             'utf8',
         );
 
-        await expect(exportClaudeSessionBundle({
+        const bundle = await exportClaudeSessionBundle({
             metadata: {
                 path: workspace,
                 externalSessionSource: { kind: 'claudeConfig', configDir: linkedConfigDir },
             },
             remoteSessionId: 'session-config-only-ok',
             env: { HAPPIER_CLAUDE_CONFIG_DIR: environmentConfigDir },
-        })).resolves.toEqual({
+        });
+        expect(bundle).toMatchObject({
             agentId: 'claude',
             remoteSessionId: 'session-config-only-ok',
-            transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
         });
+        await expect(readExportedClaudeTranscript(bundle)).resolves.toBe(transcript);
     });
 });

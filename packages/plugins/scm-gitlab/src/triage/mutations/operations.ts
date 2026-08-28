@@ -1,5 +1,5 @@
 /**
- * The ten bound GitLab mutation Actions.
+ * The bound GitLab mutation Actions.
  *
  * Each is its own exact Action with its own strict input, its own confirming
  * read and its own declared danger level. There is deliberately no shared
@@ -31,6 +31,12 @@ import { changeGitlabMergeRequestReviewers as changeGitlabMergeRequestReviewersU
 import { resolveGitlabMergeRequestDiscussion as resolveGitlabMergeRequestDiscussionUnbounded } from './discussionResolution.js';
 import { assignGitlabIssue as assignGitlabIssueUnbounded } from './issueAssignees.js';
 import { changeGitlabIssueLabels as changeGitlabIssueLabelsUnbounded } from './issueLabels.js';
+import {
+  publishGitlabIssueComment as publishGitlabIssueCommentUnbounded,
+  publishGitlabMergeRequestReview as publishGitlabMergeRequestReviewUnbounded,
+  publishGitlabMergeRequestReviewComment as publishGitlabMergeRequestReviewCommentUnbounded,
+  publishGitlabMergeRequestThreadReply as publishGitlabMergeRequestThreadReplyUnbounded,
+} from './reviewPublication.js';
 
 const boundMutation = <TInput, TResult>(
   run: (input: TInput, context: PluginInvocationContext) => Promise<TResult>,
@@ -46,3 +52,11 @@ export const changeGitlabMergeRequestReviewers = boundMutation(changeGitlabMerge
 export const resolveGitlabMergeRequestDiscussion = boundMutation(resolveGitlabMergeRequestDiscussionUnbounded);
 export const assignGitlabIssue = boundMutation(assignGitlabIssueUnbounded);
 export const changeGitlabIssueLabels = boundMutation(changeGitlabIssueLabelsUnbounded);
+export const publishGitlabMergeRequestReview = boundMutation(publishGitlabMergeRequestReviewUnbounded);
+export const publishGitlabMergeRequestReviewComment = boundMutation(
+  publishGitlabMergeRequestReviewCommentUnbounded,
+);
+export const publishGitlabMergeRequestThreadReply = boundMutation(
+  publishGitlabMergeRequestThreadReplyUnbounded,
+);
+export const publishGitlabIssueComment = boundMutation(publishGitlabIssueCommentUnbounded);

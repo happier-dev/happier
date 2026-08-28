@@ -49,7 +49,10 @@ import {
   MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES,
 } from '@happier-dev/channels-protocol/v1';
 
-import { CONVERSATION_DELIVERY_CUSTODY_STATES } from './deliveryCustody.js';
+import {
+  CONVERSATION_DELIVERY_CONTENT_FREE_STATES,
+  CONVERSATION_DELIVERY_CUSTODY_STATES,
+} from './deliveryCustody.js';
 import { createConversationNewSessionCreationKey } from './commands.js';
 import { CONVERSATION_NON_ADMISSION_REASONS } from './commandPolicy.js';
 import { MAX_CONVERSATION_POLL_FAILURE_ATTEMPTS } from './connectionPollFailureBounds.js';
@@ -372,24 +375,22 @@ const CONNECTION_DELETION_CONSISTENCY_SCHEMA: PluginJsonSchema = {
       properties: {
         deletionState: { type: 'string', const: 'pendingStopReconciliation' },
         enabled: { type: 'boolean', const: false },
-        historyGap: NULL_SCHEMA,
         providerReadiness: NULL_SCHEMA,
         pendingOldTransportStop: PENDING_OLD_TRANSPORT_STOP_DELETE_UNACCEPTED_SCHEMA,
       },
-      required: ['deletionState', 'enabled', 'historyGap', 'pendingOldTransportStop'],
+      required: ['deletionState', 'enabled', 'pendingOldTransportStop'],
     },
     {
       type: 'object',
       properties: {
         deletionState: { type: 'string', const: 'finalizingDelete' },
         enabled: { type: 'boolean', const: false },
-        historyGap: NULL_SCHEMA,
         providerReadiness: NULL_SCHEMA,
         pendingOldTransportStop: {
           anyOf: [NULL_SCHEMA, PENDING_OLD_TRANSPORT_STOP_DELETE_ACCEPTED_SCHEMA],
         },
       },
-      required: ['deletionState', 'enabled', 'historyGap', 'pendingOldTransportStop'],
+      required: ['deletionState', 'enabled', 'pendingOldTransportStop'],
     },
   ],
 };
@@ -802,7 +803,6 @@ const FROZEN_AUTOMATION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
   properties: {
     kind: { type: 'string', const: 'automation' },
     automationId: boundedString(MAX_PLUGIN_ID_LENGTH),
-    templateVersion: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
     occurrenceKey: boundedString(MAX_CONVERSATION_SESSION_IDEMPOTENCY_KEY_UTF8_BYTES),
     // The generic Automation Action owns the actual reply-context bounds and
     // validation. This row freezes its exact JSON input before the first call;
@@ -841,7 +841,7 @@ const FROZEN_AUTOMATION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
       ],
     },
   },
-  required: ['kind', 'automationId', 'templateVersion', 'occurrenceKey', 'resultDelivery'],
+  required: ['kind', 'automationId', 'occurrenceKey', 'resultDelivery'],
   additionalProperties: false,
 };
 
@@ -1033,8 +1033,15 @@ const INGRESS_CENSUS_COMPACTED_SCHEMA = {
   properties: {
     shell: ConversationAuthenticatedObservationShellV1JsonSchema,
     textDigest: { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' },
+    // A settled attention row remains independently visible until this
+    // census's frozen horizon. Persist its exact identity here so retention
+    // never needs an Account-wide reverse scan after discarding fan-out.
+    retainedAttentionObligationRowIds: {
+      type: 'array',
+      items: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+    },
   },
-  required: ['shell', 'textDigest'],
+  required: ['shell', 'textDigest', 'retainedAttentionObligationRowIds'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 
@@ -1780,9 +1787,14 @@ const DELIVERY_PAYLOAD_STATE_CONSISTENCY_SCHEMA: PluginJsonSchema = {
 };
 
 /**
- * Full delivery bytes may disappear only after a non-attention terminal
- * custody result. The opaque HMAC proof lets a later source replay rejoin the
+ * Full delivery bytes may disappear only where the canonical
+ * {@link isConversationDeliveryContentFree} predicate says the body is no
+ * longer required: a content-free state that no owner-led archive retry can
+ * still consume. The opaque HMAC proof lets a later source replay rejoin the
  * same structural custody row without restoring or exposing message content.
+ * The body-free arm's `archiveRecovery` constraint is the schema-image of that
+ * predicate's archive-retry exception, so schema admission and runtime
+ * compaction share one body-required/body-free decision.
  */
 const DELIVERY_PAYLOAD_CONTENT_RETENTION_SCHEMA: PluginJsonSchema = {
   oneOf: [
@@ -1797,9 +1809,18 @@ const DELIVERY_PAYLOAD_CONTENT_RETENTION_SCHEMA: PluginJsonSchema = {
       properties: {
         content: NULL_SCHEMA,
         contentFingerprint: OPAQUE_ROUTING_ROW_ID_SCHEMA,
-        state: { type: 'string', enum: ['delivered', 'suppressed', 'resolvedAccepted', 'resolvedDiscarded', 'connectionDeleted'] },
+        state: { type: 'string', enum: [...CONVERSATION_DELIVERY_CONTENT_FREE_STATES] },
+        // Everything except the one recovery arm an owner can still unarchive
+        // and resend; non-`notDelivered` states always carry null here. The
+        // literal is tied to the protocol vocabulary rather than a positional
+        // index, so reordering that const cannot silently flip this
+        // schema-image of the canonical content-free predicate.
+        archiveRecovery: nullable({
+          type: 'string',
+          const: 'ownerMustUnarchiveOrRebind' satisfies (typeof CONVERSATION_DELIVERY_ARCHIVE_RECOVERY_KINDS_V1)[number],
+        }),
       },
-      required: ['content', 'contentFingerprint', 'state'],
+      required: ['content', 'contentFingerprint', 'state', 'archiveRecovery'],
     },
   ],
 };

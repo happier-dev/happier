@@ -1,18 +1,7 @@
 /**
- * Stable Sentry plugin identities and the bounded semantic constants this source
- * projects against. Nothing here is derived from a provider response.
+ * Stable Sentry plugin identities and provider-specific contract constants.
+ * Shared Triage projection bounds stay at their protocol owner.
  */
-
-import {
-  MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
-  MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
-  MAX_TRIAGE_ROW_FACTS_V1,
-  MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
-  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
-  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
-} from '@happier-dev/triage-protocol/v1';
 
 export const SENTRY_PLUGIN_ID = 'happier.sentry';
 export const SENTRY_CONNECTED_ACCOUNT_ID = 'sentry-account';
@@ -36,6 +25,8 @@ export const SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID = 'sentry-cloud-api';
 export const SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'sentry-account-api';
 export const SENTRY_CONTRIBUTION_ID = 'sentry-issues';
 export const SENTRY_ENTRY_KIND_ID = 'error-issue';
+/** Reserved evidence identity pending the approved projection-size amendment. */
+export const SENTRY_EVIDENCE_REFERENCE_ID = 'sentry-evidence';
 
 /** The source display name, named once for the descriptor and the Settings page. */
 export const SENTRY_SOURCE_DISPLAY_NAME = 'Sentry';
@@ -86,26 +77,6 @@ export const SENTRY_CLOUD_REGIONS: readonly SentryCloudRegionV1[] = Object.freez
 export function isSentryCloudRegion(value: unknown): value is SentryCloudRegionV1 {
   return typeof value === 'string' && Object.hasOwn(SENTRY_CLOUD_REGION_ORIGINS, value);
 }
-
-/**
- * Semantic projection bounds.
- *
- * Stage 1 restated these locally while the target protocol package did not yet
- * exist. It does now, and it is the published owner of every one of them, so
- * these names are aliases rather than a second copy that could silently drift
- * from the contract this source projects into.
- */
-export const SENTRY_MAX_TEXT_UTF8_BYTES = MAX_TRIAGE_TEXT_UTF8_BYTES_V1;
-/** A machine-meaningful destination: emitted whole or omitted, never shortened. */
-export const SENTRY_MAX_LOCATION_UTF8_BYTES = MAX_TRIAGE_LOCATION_UTF8_BYTES_V1;
-export const SENTRY_MAX_IDENTIFIER_UTF8_BYTES = MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1;
-export const SENTRY_MAX_ROW_FACT_VALUE_UTF8_BYTES = MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1;
-export const SENTRY_MAX_ROW_FACTS = MAX_TRIAGE_ROW_FACTS_V1;
-export const SENTRY_MAX_CONFIGURATION_TOKEN_UTF8_BYTES =
-  MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1;
-export const SENTRY_MAX_PAGING_TOKEN_UTF8_BYTES = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1;
-/** The aggregate's per-invocation scan page bound. */
-export const SENTRY_MAX_SCAN_PAGE_ENTRIES = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1;
 
 /** `[SCHEMA]` the organization issues list caps `limit` at 100. */
 export const SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT = 100;

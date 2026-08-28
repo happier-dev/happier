@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { access, link, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { access, link, lstat, mkdir, open, stat, unlink } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -12,9 +12,80 @@ import type { ClaudeExternalSessionSource } from '../external/source.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from './path.js';
 import {
     ClaudeSessionBundleSchema,
+    type ClaudeHandoffBundleFile,
     type ClaudeSessionBundle,
     type ImportedClaudeSessionHandoffBundle,
 } from './types.js';
+
+type ClaudeTranscriptContent = Buffer | ClaudeHandoffBundleFile;
+const HANDOFF_COPY_CHUNK_BYTES = 1024 * 1024;
+type ClaudeTranscriptReader = (offsetBytes: number, buffer: Buffer) => Promise<number>;
+
+function transcriptSize(content: ClaudeTranscriptContent): number {
+    return Buffer.isBuffer(content) ? content.length : content.sizeBytes;
+}
+
+async function withTranscriptReader<TResult>(
+    content: ClaudeTranscriptContent,
+    effect: (reader: ClaudeTranscriptReader) => Promise<TResult>,
+): Promise<TResult> {
+    if (Buffer.isBuffer(content)) {
+        return await effect(async (offsetBytes, buffer) => {
+            const bytes = Math.min(buffer.length, Math.max(0, content.length - offsetBytes));
+            content.copy(buffer, 0, offsetBytes, offsetBytes + bytes);
+            return bytes;
+        });
+    }
+    const source = await open(content.filePath, 'r');
+    try {
+        return await effect(async (offsetBytes, buffer) => {
+            const bytes = Math.min(buffer.length, Math.max(0, content.sizeBytes - offsetBytes));
+            if (bytes === 0) return 0;
+            return (await source.read(buffer, 0, bytes, content.offsetBytes + offsetBytes)).bytesRead;
+        });
+    } finally {
+        await source.close();
+    }
+}
+
+async function transcriptEqualsFile(content: ClaudeTranscriptContent, filePath: string): Promise<boolean> {
+    const entry = await lstat(filePath);
+    if (!entry.isFile() || entry.size !== transcriptSize(content)) return false;
+    const existing = await open(filePath, 'r');
+    try {
+        return await withTranscriptReader(content, async (readTranscriptChunk) => {
+            const sourceBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+            const existingBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+            for (let offset = 0; offset < entry.size; offset += HANDOFF_COPY_CHUNK_BYTES) {
+                const requested = Math.min(HANDOFF_COPY_CHUNK_BYTES, entry.size - offset);
+                const [sourceBytes, existingRead] = await Promise.all([
+                    readTranscriptChunk(offset, sourceBuffer),
+                    existing.read(existingBuffer, 0, requested, offset),
+                ]);
+                if (
+                    sourceBytes !== requested
+                    || existingRead.bytesRead !== requested
+                    || !sourceBuffer.subarray(0, requested).equals(existingBuffer.subarray(0, requested))
+                ) return false;
+            }
+            return true;
+        });
+    } finally {
+        await existing.close();
+    }
+}
+
+async function writeTranscript(target: Awaited<ReturnType<typeof open>>, content: ClaudeTranscriptContent): Promise<void> {
+    await withTranscriptReader(content, async (readTranscriptChunk) => {
+        const buffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+        const size = transcriptSize(content);
+        for (let offset = 0; offset < size; offset += HANDOFF_COPY_CHUNK_BYTES) {
+            const bytesRead = await readTranscriptChunk(offset, buffer);
+            if (bytesRead === 0) throw new Error('Invalid session handoff transfer payload');
+            await target.write(buffer.subarray(0, bytesRead));
+        }
+    });
+}
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
     if (!signal?.aborted) return;
@@ -149,7 +220,7 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     configDir: string;
     projectDir: string;
     transcriptPath: string;
-    transcript: Buffer;
+    transcript: ClaudeTranscriptContent;
     signal?: AbortSignal;
 }>): Promise<'absent' | 'identical'> {
     throwIfAborted(params.signal);
@@ -170,9 +241,10 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
         throw targetIdentityConflict();
     }
 
-    let existingTranscript: Buffer;
     try {
-        existingTranscript = await readFile(params.transcriptPath);
+        if (!await transcriptEqualsFile(params.transcript, params.transcriptPath)) {
+            throw targetIdentityConflict();
+        }
     } catch {
         throw targetIdentityConflict();
     }
@@ -188,9 +260,6 @@ async function preflightClaudeTranscriptTarget(params: Readonly<{
     if (!entryAfterRead.isFile() || !isSameFileIdentity(entry, entryAfterRead)) {
         throw targetIdentityConflict();
     }
-    if (!existingTranscript.equals(params.transcript)) {
-        throw targetIdentityConflict();
-    }
     return 'identical';
 }
 
@@ -198,8 +267,7 @@ function isSameFileIdentity(before: Awaited<ReturnType<typeof lstat>>, after: Aw
     return before.dev === after.dev
         && before.ino === after.ino
         && before.size === after.size
-        && before.mtimeMs === after.mtimeMs
-        && before.ctimeMs === after.ctimeMs;
+        && before.mtimeMs === after.mtimeMs;
 }
 
 async function assertExistingClaudeProjectParentsAreSafe(params: Readonly<{
@@ -244,7 +312,7 @@ async function createClaudeTranscriptIfAbsent(params: Readonly<{
     configDir: string;
     projectDir: string;
     transcriptPath: string;
-    transcript: Buffer;
+    transcript: ClaudeTranscriptContent;
     signal?: AbortSignal;
 }>): Promise<void> {
     throwIfAborted(params.signal);
@@ -267,7 +335,7 @@ async function createClaudeTranscriptIfAbsent(params: Readonly<{
         temporaryCreated = true;
         try {
             throwIfAborted(params.signal);
-            await temporaryFile.writeFile(params.transcript);
+            await writeTranscript(temporaryFile, params.transcript);
             throwIfAborted(params.signal);
         } finally {
             await temporaryFile.close();
@@ -299,12 +367,17 @@ export async function exportClaudeSessionBundle(params: Readonly<{
     throwIfAborted(params.signal);
     const transcriptPath = await resolveReadableTranscriptPath(params);
     throwIfAborted(params.signal);
-    const transcript = await readFile(transcriptPath, 'utf8');
+    const transcriptStats = await stat(transcriptPath);
     throwIfAborted(params.signal);
     return {
         agentId: 'claude',
         remoteSessionId: params.remoteSessionId,
-        transcriptBase64: Buffer.from(transcript, 'utf8').toString('base64'),
+        transcriptFile: {
+            t: 'happier.handoff.file.v1',
+            filePath: transcriptPath,
+            offsetBytes: 0,
+            sizeBytes: transcriptStats.size,
+        },
     };
 }
 
@@ -315,13 +388,24 @@ export async function importClaudeSessionBundle(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<ImportedClaudeSessionHandoffBundle> {
     throwIfAborted(params.signal);
-    const bundle = ClaudeSessionBundleSchema.parse(params.bundle);
+    const parsedBundle = ClaudeSessionBundleSchema.parse(params.bundle);
+    const bundle: ClaudeSessionBundle = parsedBundle.transcriptFile
+        ? {
+            agentId: 'claude',
+            remoteSessionId: parsedBundle.remoteSessionId,
+            transcriptFile: parsedBundle.transcriptFile,
+        }
+        : {
+            agentId: 'claude',
+            remoteSessionId: parsedBundle.remoteSessionId,
+            transcriptBase64: parsedBundle.transcriptBase64 ?? '',
+        };
     const resolvedClaudeConfigDir = resolveClaudeConfigDir(params.env);
     const projectId = resolveClaudeProjectId(params.targetPath);
     const projectDir = getClaudeProjectPath(params.targetPath, resolvedClaudeConfigDir);
     const transcriptPath = resolveClaudeTranscriptPath(projectDir, bundle.remoteSessionId);
 
-    const transcript = Buffer.from(bundle.transcriptBase64, 'base64');
+    const transcript = bundle.transcriptFile ?? Buffer.from(bundle.transcriptBase64 ?? '', 'base64');
     await createClaudeTranscriptIfAbsent({
         configDir: resolvedClaudeConfigDir,
         projectDir,

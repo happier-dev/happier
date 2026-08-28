@@ -33,14 +33,6 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
           sharedStatePrivacyRiskAcknowledgementRequired: true,
         },
       },
-      sessionAuthSwitch: {
-        continuityMode: 'restart_same_home',
-        supportedTransitions: ['same_connected_group'],
-        providerStateSharingRequired: {
-          serviceIds: ['claude-subscription', 'anthropic'],
-          supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-        },
-      },
       supportedKindsByServiceId: {
         'claude-subscription': ['oauth', 'token'],
         anthropic: ['token'],
@@ -56,7 +48,7 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
       sessionListing: 'supported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
       sessionRollback: { conversation: 'unsupported' },
-      usageLimitRecovery: { checkNow: 'supported' },
+      usageLimitRecovery: { checkNow: 'unsupported' },
     },
     handoff: { vendorStateTransfer: 'supported' },
     localControl: {
@@ -76,16 +68,4 @@ export const AGENT_DEFINITION = defineAgentWithPublicModelConfig({
     runtimeSwitch: 'provider-native',
   },
   sessionModesKind: 'staticAgentModes',
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'CLAUDE_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-    protocolMemoryDefaults: {
-      kind: 'providerMemoryDefaultsV1',
-      providerId: 'claude',
-      source: './protocol/memory',
-      exportName: 'CLAUDE_MEMORY_DEFAULTS',
-    },
-  },
 } as const, CLAUDE_AGENT_MODEL_CONFIG);

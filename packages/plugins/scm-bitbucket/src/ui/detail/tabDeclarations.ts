@@ -44,6 +44,7 @@ export type BitbucketDetailTabReadPlaneV1 =
 export type BitbucketDetailTabDeclarationV1 = Readonly<{
   id: BitbucketDetailTabIdV1;
   title: string;
+  titleKey: string;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -57,6 +58,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
   Object.freeze({
     id: 'overview' as const,
     title: 'Overview',
+    titleKey: 'plugins.bitbucket.ui.tabs.overview',
     retention: 'retain' as const,
     retainedState: 'its one reader scroll anchor only; it holds no provider read to keep',
     readPlane: 'observation' as const,
@@ -65,6 +67,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
   Object.freeze({
     id: 'activity' as const,
     title: 'Activity',
+    titleKey: 'plugins.bitbucket.ui.tabs.activity',
     retention: 'discard' as const,
     retainedState: 'nothing: activity rows, the opaque next link, scroll and expansion remount',
     readPlane: 'activity' as const,
@@ -73,6 +76,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
   Object.freeze({
     id: 'diff' as const,
     title: 'Diff',
+    titleKey: 'plugins.bitbucket.ui.tabs.diff',
     retention: 'retain' as const,
     retainedState: 'the bounded raw prefix, diffstat rows and reader scroll anchor',
     readPlane: 'diff' as const,
@@ -81,6 +85,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
   Object.freeze({
     id: 'builds' as const,
     title: 'Builds',
+    titleKey: 'plugins.bitbucket.ui.tabs.builds',
     retention: 'discard' as const,
     retainedState: 'nothing: status rows, the rollup, the opaque next link and scroll remount',
     readPlane: 'builds' as const,
@@ -89,6 +94,7 @@ export const BITBUCKET_DETAIL_TABS_V1: readonly BitbucketDetailTabDeclarationV1[
   Object.freeze({
     id: 'comments' as const,
     title: 'Comments',
+    titleKey: 'plugins.bitbucket.ui.tabs.comments',
     retention: 'discard' as const,
     retainedState: 'nothing: comment rows, the opaque next link, the 30-record window, scroll,'
       + ' reply expansion and any draft remount from defaults',

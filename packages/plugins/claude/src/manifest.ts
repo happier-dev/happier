@@ -3,7 +3,6 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
-  CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -11,8 +10,14 @@ import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import type {
   McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
 } from '@happier-dev/plugin-sdk/mcp';
+import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './connectedAccounts/claudeSubscriptionProfile.js';
 
 import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES } from './agent/auth/services/native/scopes.js';
+import { claudeAuthStateSharingDescriptor } from './agent/auth/services/stateSharing.js';
+import {
+  createClaudeConnectedAccountNativeAuthCodec,
+  createClaudeConnectedServiceRuntimeAuthAdapter,
+} from './agent/auth/services/runtime/failure.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import {
   claudeCliSessionCommandConfig,
@@ -120,6 +125,10 @@ const {
   id: CLAUDE_AGENT_SETTINGS_CONTRIBUTION_ID,
   ...CLAUDE_AGENT_SETTINGS_DECLARATION
 } = CLAUDE_AGENT_SETTINGS_CONTRIBUTION;
+const {
+  providerId: _claudeStateSharingProviderId,
+  ...CLAUDE_STATE_SHARING_DECLARATION
+} = claudeAuthStateSharingDescriptor;
 
 export const CLAUDE_PLUGIN = definePlugin({
   id: 'happier.agent.claude',
@@ -142,10 +151,9 @@ export const CLAUDE_PLUGIN = definePlugin({
       {
         id: 'claude-process',
         capability: 'process',
-        reason: 'Run the declared Claude Code executable and its macOS keychain boundary.',
+        reason: 'Run the declared Claude Code executable.',
         scope: { executables: [
           { kind: 'systemTool', id: 'claude-cli' },
-          { kind: 'systemTool', id: 'macos-security' },
         ], envKeys: [
           ...CLAUDE_PROVIDER_OWNED_ENV_KEYS,
           'CLAUDE_CONFIG_DIR',
@@ -408,6 +416,39 @@ export const CLAUDE_PLUGIN = definePlugin({
         } },
       },
       factory: createClaudeAgentRuntime,
+      connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: ['same_connected_group'],
+          providerStateSharingRequired: {
+            serviceIds: ['claude-subscription', 'anthropic'],
+            supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+          },
+        },
+        requestAuthUses: [{
+          purpose: 'model_upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }],
+        environmentUses: [{
+          purpose: 'model_upstream_api_key',
+          environmentKey: 'ANTHROPIC_API_KEY',
+        }],
+        stateSharingDescriptor: {
+          ...CLAUDE_STATE_SHARING_DECLARATION,
+          nativeHome: {
+            environmentKey: 'CLAUDE_CONFIG_DIR',
+            defaultRelativePath: '.claude',
+          },
+        },
+        continuity: {
+          nativeAuthCodec: createClaudeConnectedAccountNativeAuthCodec(),
+          runtimeAuthAdapter: createClaudeConnectedServiceRuntimeAuthAdapter(),
+        },
+      },
       cliSessionCommand: {
         ...claudeCliSessionCommandConfig,
         buildSessionOptions: (input) => {
@@ -441,7 +482,6 @@ export const CLAUDE_PLUGIN = definePlugin({
   },
   systemTools: {
     'claude-cli': { title: 'Claude Code CLI', executableNames: ['claude'] },
-    'macos-security': { title: 'macOS Keychain security', executableNames: ['security'] },
   },
   hooks: {
     'resolve-prerequisites': {

@@ -31,7 +31,6 @@ describe('Codex connected-service runtime auth application', () => {
                 return { ok: true };
             }),
         };
-        const persistAuthStore = vi.fn(async () => undefined);
         const updateRefreshSelection = vi.fn(async () => {
             order.push('refresh-selection');
             return async () => {
@@ -43,7 +42,6 @@ describe('Codex connected-service runtime auth application', () => {
             client,
             candidate,
             forcedWorkspaceId: 'workspace-work',
-            persistAuthStore,
             refreshSelection: {
                 kind: 'group',
                 serviceId: 'openai-codex',
@@ -57,7 +55,6 @@ describe('Codex connected-service runtime auth application', () => {
             applied: true,
             appliedVia: 'direct_live_hot_auth',
             activeAccountId: 'workspace-work',
-            durability: { persisted: true },
         });
 
         expect(client.request).toHaveBeenCalledWith('account/login/start', {
@@ -74,7 +71,6 @@ describe('Codex connected-service runtime auth application', () => {
             generation: 2,
         });
         expect(order).toEqual(['refresh-selection', 'login']);
-        expect(persistAuthStore).toHaveBeenCalledOnce();
     });
 
     it('rolls back an armed refresh bridge selection when live login fails before mutation', async () => {
@@ -148,14 +144,12 @@ describe('Codex connected-service runtime auth application', () => {
             },
         });
         const client = { request: vi.fn(async () => ({ ok: true })) };
-        const persistAuthStore = vi.fn(async () => undefined);
         const updateRefreshSelection = vi.fn(async () => undefined);
 
         await expect(applyCodexConnectedServiceAuthGeneration({
             client,
             candidate,
             forcedWorkspaceId: 'workspace-work',
-            persistAuthStore,
             refreshSelection: {
                 kind: 'profile',
                 serviceId: 'openai-codex',
@@ -166,7 +160,6 @@ describe('Codex connected-service runtime auth application', () => {
             applied: true,
             appliedVia: 'direct_live_hot_auth',
             activeAccountId: 'workspace-work',
-            durability: { persisted: true },
         });
 
         expect(client.request).toHaveBeenCalledWith('account/login/start', {
@@ -179,7 +172,6 @@ describe('Codex connected-service runtime auth application', () => {
             serviceId: 'openai-codex',
             profileId: 'work',
         });
-        expect(persistAuthStore).toHaveBeenCalledOnce();
     });
 
     it('does not fabricate exact account identity from labels when providerAccountId is missing', async () => {

@@ -56,7 +56,8 @@ function matchesHistoryGapResetSource(
   input: PluginEventAutomationHistoryGapResetActionInputV1,
 ): boolean {
   return definition.automationId === input.automationId
-    && definition.templateVersion === input.templateVersion
+    && definition.triggerId === input.triggerId
+    && definition.triggerRevision === input.triggerRevision
     && definition.sourceSelectorId === input.sourceSelectorId;
 }
 

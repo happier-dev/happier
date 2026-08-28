@@ -17,18 +17,18 @@ describe('Pi preflight model parsing', () => {
     ]);
   });
 
-  it('declares the exact Pi environment allowlist and delegates command execution', async () => {
+  it('declares the exact Pi environment allowlist and delegates command execution', () => {
     const models = PI_PREFLIGHT_SESSION_CONTROLS.models;
     expect(models?.command).toMatchObject({
       toolId: 'pi-cli',
       args: ['--list-models'],
       environmentKeys: expect.arrayContaining(['OPENAI_API_KEY', 'CI']),
     });
-    await expect(models?.parseOutput?.({
+    expect(models?.parseOutput?.({
       ok: true,
       stdout: '',
       stderr: 'openai-codex  gpt-5.4  272K  128K  yes  yes\n',
       exitCode: 0,
-    })).resolves.toEqual([expect.objectContaining({ id: 'openai-codex/gpt-5.4' })]);
+    })).toEqual([expect.objectContaining({ id: 'openai-codex/gpt-5.4' })]);
   });
 });

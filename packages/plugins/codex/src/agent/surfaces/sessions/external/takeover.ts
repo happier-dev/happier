@@ -6,6 +6,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import {
+  buildCodexAgentRuntimeDescriptorV1,
   normalizeCodexBackendMode,
   readCanonicalCodexAgentRuntimeDescriptorV1,
 } from '../../../../protocol/runtimeDescriptorV1.js';
@@ -106,11 +107,24 @@ export function resolveCodexExternalSessionTakeoverPlan(
   if (runtimeDescriptor?.backendMode && linkMode && runtimeDescriptor.backendMode !== linkMode) {
     return null;
   }
-  const backendModeHint = runtimeDescriptor?.backendMode ?? linkMode;
+  const backendMode = runtimeDescriptor?.backendMode ?? linkMode;
 
   return Object.freeze({
     directory,
-    ...(backendModeHint ? { backendModeHint } : {}),
+    ...(backendMode ? { backendModeHint: backendMode } : {}),
+    ...(backendMode
+      ? {
+          runtimeDescriptorV1: buildCodexAgentRuntimeDescriptorV1({
+            backendMode,
+            providerSessionId: remoteSessionId,
+            home: source.home,
+            homePath: source.homePath,
+            connectedServiceId: source.connectedServiceId,
+            connectedServiceProfileId: source.connectedServiceProfileId,
+            connectedServiceGroupId: source.connectedServiceGroupId,
+          }),
+        }
+      : {}),
     environmentVariables: Object.freeze({
       CODEX_HOME: source.homePath,
     }),

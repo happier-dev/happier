@@ -145,6 +145,19 @@ export function configuredSourceInstanceIsOwnedBy(
     return owner.pluginId === source.pluginId && owner.localId === source.localId;
 }
 
+/** The one progress check for every cursor walk over `source-instances`. */
+export function advanceConfiguredSourceCollectionCursor(
+    seen: Set<string>,
+    nextCursor: string | undefined,
+): string | undefined {
+    if (nextCursor === undefined) return undefined;
+    if (seen.has(nextCursor)) {
+        throw new Error('Configured-source Collection returned a repeated continuation cursor.');
+    }
+    seen.add(nextCursor);
+    return nextCursor;
+}
+
 async function readRow(
     sourceInstances: CorpusCollectionHandleV1,
     instanceTag: string,
@@ -177,6 +190,7 @@ export async function findConfiguredSourceInstanceRow(
     sourceInstanceId: string,
     options?: PluginCancellationOptions,
 ): Promise<CorpusRowV1<CorpusSourceInstanceRowV1> | null> {
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
         const page = await sourceInstances.query({
@@ -188,7 +202,7 @@ export async function findConfiguredSourceInstanceRow(
             const decoded = fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row);
             if (decoded.value.configured.instance.sourceInstanceId === sourceInstanceId) return decoded;
         }
-        cursor = page.nextCursor;
+        cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
     return null;
 }

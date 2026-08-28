@@ -163,6 +163,57 @@ describe('Channels command policy', () => {
     });
   });
 
+  it('keeps AskUserQuestion answers independent from permission approval scope', () => {
+    const common = {
+      actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false },
+      contentProvenance: 'original' as const,
+      actorAllowed: true,
+      allowBotSenders: false,
+      targetKind: 'session' as const,
+      approvalCommandsEnabled: false,
+      newSessionEnabled: false,
+      senderFeedback: 'eligibleRefusals' as const,
+    };
+
+    expect(decideConversationCommandPolicy({
+      ...common,
+      command: classifyConversationCommand('/answer input-1 [{"questionIndex":0,"values":["Safe"]}]'),
+    })).toEqual({
+      kind: 'userActionAnswer',
+      requestId: 'input-1',
+      answers: [{ questionIndex: 0, values: ['Safe'] }],
+    });
+    expect(decideConversationCommandPolicy({
+      ...common,
+      command: classifyConversationCommand('/answer input-1 not-json'),
+    })).toEqual({
+      kind: 'terminal',
+      disposition: 'rejected',
+      reason: 'malformedCommand',
+      senderFeedbackEligible: true,
+    });
+    expect(decideConversationCommandPolicy({
+      ...common,
+      targetKind: 'automation',
+      command: classifyConversationCommand('/answer input-1 [{"questionIndex":0,"values":["Safe"]}]'),
+    })).toEqual({
+      kind: 'terminal',
+      disposition: 'rejected',
+      reason: 'commandNotAuthorized',
+      senderFeedbackEligible: false,
+    });
+    expect(decideConversationCommandPolicy({
+      ...common,
+      targetKind: 'automation',
+      command: classifyConversationCommand('/answer input-1 not-json'),
+    })).toEqual({
+      kind: 'terminal',
+      disposition: 'rejected',
+      reason: 'malformedCommand',
+      senderFeedbackEligible: false,
+    });
+  });
+
   it('never executes /new on Automation and does not leak disabled policy', () => {
     const common = {
       actor: { principalId: 'person-1', kind: 'human' as const, isIntegrationSelf: false },

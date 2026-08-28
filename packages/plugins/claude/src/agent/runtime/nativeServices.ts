@@ -1,5 +1,4 @@
 import type {
-    AgentRuntimeContext,
     AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -99,10 +98,9 @@ export function createClaudeNativeGoalWorkStatePublisher(
 }
 
 export function createClaudeNativeAgentSdkContext(
-  context: AgentRuntimeContext,
-  sessionContext?: AgentSessionRuntimeContext,
+  context: AgentSessionRuntimeContext,
 ): ClaudeAgentSdkContext {
-  const services = sessionContext?.session.services;
+  const services = context.session.services;
   const currentSession = context.services.sessions?.current;
   const workflowSystemRecords = createClaudeWorkflowSystemRecordBridge(
     currentSession,
@@ -119,60 +117,45 @@ export function createClaudeNativeAgentSdkContext(
       exec: createClaudeNativeSdkQueryContext(context.services.exec),
       sessionHooks: {
         async startServer(request) {
-          if (!services) return unavailable('session hooks');
           const { providerId: _providerId, sessionId: _sessionId, lifecycle: _lifecycle, ...nativeRequest } = request;
           return await services.sessionHooks.startServer(nativeRequest);
         },
         async resolveForwarderAssets() {
-          if (!services) return unavailable('session hook assets');
           return await services.sessionHooks.resolveForwarderAssets();
         },
         async createPluginDir(request) {
-          if (!services) return unavailable('session hook plugin directory');
           const { providerId: _providerId, lifecycle: _lifecycle, ...nativeRequest } = request;
           return await services.sessionHooks.createPluginDir(nativeRequest);
         },
         async disposePluginDir(pluginDir) {
-          if (!services) return unavailable('session hook plugin directory');
           await services.sessionHooks.disposePluginDir(pluginDir);
         },
         async publishProviderTranscript(request) {
-          if (!services) return unavailable('provider transcript publication');
           await services.sessionHooks.publishProviderTranscript(request);
         },
       },
       transcripts: {
         fileFollow: {
           async follow(input) {
-            if (!services) return unavailable('transcript following');
             return await services.transcripts.fileFollow.follow(input);
           },
         },
         async publishSessionEvent(event) {
-          if (!services) return unavailable('durable transcript publication');
           return await services.transcripts.publishSessionEvent(event);
         },
       },
       accountUsage: {
         async resolveSourceContext(input, options) {
-          if (!services) return null;
           const sourceContext = await services.accountUsage.resolveSourceContext(input, options);
           return sourceContext ? { ...sourceContext, serviceId: input.serviceId } : null;
         },
         async recordSnapshot(input, options) {
-          if (!services) return { status: 'unavailable', reason: 'session_scope_unavailable' };
           const { sessionId: _sessionId, ...nativeInput } = input;
           return await services.accountUsage.recordSnapshot(nativeInput, options);
         },
       },
-      toolExecution: services?.toolExecution ?? Object.freeze({
-        async before(request) {
-          // Execution-run contexts do not own the session-scoped interception
-          // service. Preserve their existing permission path without claiming a
-          // hook result or denying an otherwise valid provider tool proposal.
-          return { status: 'continue' as const, input: request.input };
-        },
-      }),
+      ...(services.nativeHome ? { nativeHome: services.nativeHome } : {}),
+      toolExecution: services.toolExecution,
     },
     sessions: {
       current: {
@@ -206,7 +189,6 @@ export function createClaudeNativeAgentSdkContext(
         },
         workflowActivity: {
           async publishHeadlines(bundle) {
-            if (!services) return unavailable('workflow activity headline publication');
             // Fail closed on the whole bundle: publishing one key of a pair meant to describe the
             // same snapshots would leave the two disagreeing about what exists.
             await services.workflowActivity.publishHeadlines(

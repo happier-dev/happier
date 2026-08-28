@@ -13,11 +13,12 @@ import type {
 import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD,
-  createGithubAutomationEventCheckpointRowId,
+  createGithubAutomationEventCheckpointRowId as createGithubAutomationEventCheckpointRowIdOwner,
   type GithubAutomationEventCheckpointRowV1,
 } from './githubAutomationEventCheckpoint.js';
 import {
   createGithubAutomationEventCheckpointedPullObserver,
+  normalizeGithubRepositoryEventForAutomation,
   type GithubAutomationEventCheckpointedPullObserver,
 } from './githubAutomationEventObserver.js';
 import {
@@ -25,9 +26,13 @@ import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID,
 } from './githubProviderContracts.js';
 import { resetGithubRepositoryEventHistoryGap } from '../githubAutomationEventActions.js';
+import {
+  GITHUB_AUTOMATION_EVENT_LOCAL_IDS,
+  type GithubAutomationEventLocalIdV1,
+} from '../githubAutomationEvents.js';
 
 const GITHUB_PLUGIN_ID = 'happier.scm.forge.github';
-const EVENT_LOCAL_ID = 'automation/repository-event-v1';
+const EVENT_LOCAL_ID = 'automation/repository-pushed-v1';
 const sourceSelectorA = '00000000-0000-4000-8000-000000000001';
 const sourceSelectorB = '00000000-0000-4000-8000-000000000002';
 const credentialRef = {
@@ -39,6 +44,22 @@ const watcherMaterializationRef = {
   machineId: 'machine-1',
   materializationId: 'materialization-1',
 } as const;
+
+function createGithubAutomationEventCheckpointRowId(
+  input: Readonly<{
+    automationId?: string;
+    triggerId?: string;
+    eventRef?: Readonly<{ pluginId: string; localId: string }>;
+    sourceSelectorId?: string;
+  }>,
+): string {
+  return createGithubAutomationEventCheckpointRowIdOwner({
+    automationId: input.automationId ?? 'automation-a',
+    triggerId: input.triggerId ?? `trigger-${input.automationId ?? 'automation-a'}`,
+    eventRef: input.eventRef ?? { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
+    sourceSelectorId: input.sourceSelectorId ?? sourceSelectorA,
+  });
+}
 
 type CheckpointCollection = PluginAccountCollectionForDefinition<
   typeof GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION
@@ -56,43 +77,51 @@ type CatalogReconciliationStatus = Extract<
 
 function checkpointRow(input: Readonly<{
   automationId: string;
+  triggerId?: string;
+  eventLocalId?: GithubAutomationEventLocalIdV1;
   sourceSelectorId: string;
   sourceInstanceId?: string;
   sourceContractVersion?: number;
 }>): GithubAutomationEventCheckpointRowV1 {
+  const triggerId = input.triggerId ?? `trigger-${input.automationId}`;
+  const eventLocalId = input.eventLocalId ?? EVENT_LOCAL_ID;
   return {
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: createGithubAutomationEventCheckpointRowId({
       automationId: input.automationId,
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
+      triggerId,
+      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: eventLocalId },
       sourceSelectorId: input.sourceSelectorId,
     }),
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: 1,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: input.automationId,
+    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId]: triggerId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: GITHUB_PLUGIN_ID,
-    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: EVENT_LOCAL_ID,
+    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: eventLocalId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: input.sourceSelectorId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload]: {
-    sourceInstanceId: input.sourceInstanceId ?? 'github:repository:77',
-    sourceContractVersion: input.sourceContractVersion ?? 1,
-    checkpointContractVersion: 1,
-    cursor: {
-      v: 1,
-      observationStartsAtMs: 1_000,
-      observedAtMs: 1_000,
-      seenEventIds: ['old'],
-      etag: 'prior-etag',
+      sourceInstanceId: input.sourceInstanceId ?? 'github:repository:77',
+      sourceContractVersion: input.sourceContractVersion ?? 1,
+      checkpointContractVersion: 1,
+      cursor: {
+        v: 1,
+        observationStartsAtMs: 1_000,
+        observedAtMs: 1_000,
+        seenEventIds: ['old'],
+        etag: 'prior-etag',
+      },
+      lastContiguousOccurrenceId: 'github:repository:77:event:old',
+      baseline: { kind: 'currentHead', establishedAt: 1_000 },
+      lastEvaluatedTriggerRevision: 1,
+      continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
     },
-    lastContiguousOccurrenceId: 'github:repository:77:event:old',
-    baseline: { kind: 'currentHead', establishedAt: 1_000 },
-    lastEvaluatedTemplateVersion: 1,
-    continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
-  },
   };
 }
 
 function checkpointRetirementCandidate(row: GithubAutomationEventCheckpointRowV1) {
   return {
     automationId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+    triggerId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId],
+    triggerRevision: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload].lastEvaluatedTriggerRevision,
     eventRef: {
       pluginId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId],
       localId: row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId],
@@ -135,6 +164,7 @@ function createCheckpointCollection(
   collection: CheckpointCollection;
   delete: ReturnType<typeof vi.fn>;
   query: ReturnType<typeof vi.fn>;
+  rowCount(): number;
   read(rowId: string): PluginCollectionRow<GithubAutomationEventCheckpointRowV1> | null;
 }> {
   const rows = new Map<string, PluginCollectionRow<GithubAutomationEventCheckpointRowV1>>();
@@ -239,6 +269,9 @@ function createCheckpointCollection(
     collection,
     delete: remove,
     query,
+    rowCount() {
+      return rows.size;
+    },
     read(rowId) {
       const row = rows.get(rowId);
       return row === undefined ? null : structuredClone(row);
@@ -250,13 +283,16 @@ function definition(input: Readonly<{
   automationId: string;
   sourceSelectorId: string;
   repositoryId?: string;
+  triggerId?: string;
+  eventLocalId?: GithubAutomationEventLocalIdV1;
 }>): SourceDefinition {
   const repositoryId = input.repositoryId ?? '77';
   const repositoryName = repositoryId === '77' ? 'widgets' : `widgets-${repositoryId}`;
   return {
     automationId: input.automationId,
-    templateVersion: 1,
-    eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
+    triggerId: input.triggerId ?? `trigger-${input.automationId}`,
+    triggerRevision: 1,
+    eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: input.eventLocalId ?? EVENT_LOCAL_ID },
     sourceInstanceId: `github:repository:${repositoryId}`,
     sourceSelectorId: input.sourceSelectorId,
     sourceContractVersion: 1,
@@ -317,6 +353,7 @@ function sourceAttemptContext(
                 qualifiedId: `${GITHUB_PLUGIN_ID}/actions/${GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID}`,
               },
               surface: 'plugin' as const,
+              invokedAtMs: 1_760_000_700_000,
               caller: {
                 kind: 'plugin' as const,
                 pluginId: GITHUB_PLUGIN_ID,
@@ -379,6 +416,69 @@ function observerBackgroundContext(input: Readonly<{
 }
 
 describe('GitHub Automation Event checkpointed-pull observer', () => {
+  it('maps all four repository timeline variants to the same semantic Event refs used by webhooks', () => {
+    const repository = {
+      v: 1 as const,
+      repositoryId: '77',
+      owner: 'acme',
+      name: 'widgets',
+      nameWithOwner: 'acme/widgets',
+    };
+    const cases = [{
+      localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push,
+      raw: {
+        id: '101', type: 'PushEvent', created_at: '2026-08-10T12:00:00Z',
+        repo: { id: 77, name: 'acme/widgets' },
+        payload: { ref: 'refs/heads/main', before: 'a'.repeat(40), head: 'b'.repeat(40) },
+      },
+      payload: { ref: 'refs/heads/main', before: 'a'.repeat(40), after: 'b'.repeat(40) },
+    }, {
+      localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
+      raw: {
+        id: '102', type: 'IssuesEvent', created_at: '2026-08-10T12:01:00Z',
+        repo: { id: 77, name: 'acme/widgets' },
+        payload: { action: 'opened', issue: { id: 201, number: 7, title: 'A new issue' } },
+      },
+      payload: { issue: { id: '201', number: 7, title: 'A new issue' } },
+    }, {
+      localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened,
+      raw: {
+        id: '103', type: 'PullRequestEvent', created_at: '2026-08-10T12:02:00Z',
+        repo: { id: 77, name: 'acme/widgets' },
+        payload: {
+          action: 'opened',
+          pull_request: { id: 301, number: 11, title: 'A new pull request' },
+        },
+      },
+      payload: { pullRequest: { id: '301', number: 11, title: 'A new pull request' } },
+    }, {
+      localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestMerged,
+      raw: {
+        id: '104', type: 'PullRequestEvent', created_at: '2026-08-10T12:03:00Z',
+        repo: { id: 77, name: 'acme/widgets' },
+        payload: {
+          action: 'closed',
+          pull_request: {
+            id: 302, number: 12, merged: true, merge_commit_sha: 'c'.repeat(40),
+          },
+        },
+      },
+      payload: { pullRequest: { id: '302', number: 12, mergeCommitSha: 'c'.repeat(40) } },
+    }] as const;
+
+    for (const entry of cases) {
+      expect(normalizeGithubRepositoryEventForAutomation(entry.raw, repository, entry.localId))
+        .toMatchObject({
+          eventId: entry.raw.id,
+          observation: {
+            eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: entry.localId },
+            occurrenceId: `github:repository:77:event:${entry.raw.id}`,
+            payload: { repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' }, ...entry.payload },
+          },
+        });
+    }
+  });
+
   it('rejects a source attempt that did not come from the current GitHub observer materialization', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const checkpoints = createCheckpointCollection([
@@ -524,7 +624,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     })).rejects.toThrow('not part of the current observer cycle');
   });
 
-  it('coalesces an identical repository request while preserving each Automation checkpoint and safe-prefix admission', async () => {
+  it('coalesces one repository read while preserving independent trigger checkpoints', async () => {
     const definitions = [
       definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
       definition({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB }),
@@ -552,18 +652,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         if (actionId === 'automation.event.admit') {
           const request = input as AutomationEventAdmitInput;
           admitted.push(request);
-          const selectedDefinition = request.definitions[0];
-          if (selectedDefinition === undefined) throw new Error('expected one definition');
           return {
-            results: [
+            results: request.definitions.map((selectedDefinition) => (
               selectedDefinition.automationId === 'automation-a' && request.occurrenceId.endsWith(':new-2')
                 ? { kind: 'blocked', reason: 'capacity', checkpointSafe: false }
                 : {
                   kind: 'admitted',
                   runId: `run-${selectedDefinition.automationId}-${request.occurrenceId}`,
                   checkpointSafe: true,
-                },
-            ],
+                }
+            )),
           } satisfies PluginActionResultById['automation.event.admit'];
         }
         if (actionId === 'automation.event.source.status.report') {
@@ -624,57 +722,149 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         },
         {
           id: 'new-2',
-          type: 'PullRequestEvent',
+          type: 'PushEvent',
           created_at: '1970-01-01T00:00:01.200Z',
           repo: { id: 77, name: 'acme/widgets' },
-          payload: {
-            action: 'closed',
-            number: 12,
-            pull_request: {
-              id: 333,
-              number: 12,
-              merged: true,
-              merge_commit_sha: 'd'.repeat(40),
-            },
-          },
+          payload: { ref: 'refs/heads/release', before: 'c'.repeat(40), head: 'd'.repeat(40) },
         },
       ])),
     });
     await cycle;
 
     expect(admitted).toHaveLength(4);
+    expect(admitted.every((request) => request.definitions.length === 1)).toBe(true);
     expect(admitted).toContainEqual(expect.objectContaining({
+      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push },
       occurrenceId: 'github:repository:77:event:new-1',
-      payload: expect.objectContaining({ kind: 'push', eventId: 'new-1', after: 'c'.repeat(40) }),
+      payload: expect.objectContaining({ ref: 'refs/heads/main', after: 'c'.repeat(40) }),
     }));
     expect(admitted).toContainEqual(expect.objectContaining({
+      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push },
       occurrenceId: 'github:repository:77:event:new-2',
-      payload: expect.objectContaining({
-        kind: 'pullRequestMerged',
-        eventId: 'new-2',
-        pullRequest: { id: '333', number: 12, mergeCommitSha: 'd'.repeat(40) },
-      }),
+      payload: expect.objectContaining({ ref: 'refs/heads/release', after: 'd'.repeat(40) }),
     }));
 
-    const first = checkpoints.read(createGithubAutomationEventCheckpointRowId({
+    const blockedCheckpoint = checkpoints.read(createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     }));
-    const second = checkpoints.read(createGithubAutomationEventCheckpointRowId({
+    const admittedCheckpoint = checkpoints.read(createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-b',
+      triggerId: 'trigger-automation-b',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorB,
     }));
-    expect(first?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1'] });
-    expect(first?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-1');
-    expect(second?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1', 'new-2'] });
-    expect(second?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-2');
+    expect(blockedCheckpoint?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1'] });
+    expect(blockedCheckpoint?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-1');
+    expect(admittedCheckpoint?.value.payload.cursor).toMatchObject({ seenEventIds: ['old', 'new-1', 'new-2'] });
+    expect(admittedCheckpoint?.value.payload.lastContiguousOccurrenceId).toBe('github:repository:77:event:new-2');
+    expect(checkpoints.rowCount()).toBe(2);
     expect(statuses).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'catalogReconciliation', state: 'current', observedRevision: '7' }),
       expect.objectContaining({ kind: 'source', automationId: 'automation-a', state: 'backingOff', code: 'capacityBlocked' }),
       expect.objectContaining({ kind: 'source', automationId: 'automation-b', state: 'observing', code: 'none' }),
     ]));
+  });
+
+  it('coalesces provider reads while each semantic trigger admits only its matching Event', async () => {
+    const push = definition({ automationId: 'automation-push', sourceSelectorId: sourceSelectorA });
+    const issue = definition({
+      automationId: 'automation-issue',
+      sourceSelectorId: sourceSelectorB,
+      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
+    });
+    const checkpoints = createCheckpointCollection([
+      checkpointRow({ automationId: push.automationId, sourceSelectorId: push.sourceSelectorId }),
+      checkpointRow({
+        automationId: issue.automationId,
+        eventLocalId: issue.eventRef.localId,
+        sourceSelectorId: issue.sourceSelectorId,
+      }),
+    ]);
+    const admissions: AutomationEventAdmitInput[] = [];
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        headers: { etag: 'current-etag' },
+        body: new TextEncoder().encode(JSON.stringify([
+          {
+            id: 'old', type: 'PushEvent', created_at: '1970-01-01T00:00:00.900Z',
+            repo: { id: 77, name: 'acme/widgets' },
+            payload: { ref: 'refs/heads/main', before: 'a'.repeat(40), head: 'b'.repeat(40) },
+          },
+          {
+            id: 'push-new', type: 'PushEvent', created_at: '1970-01-01T00:00:01.100Z',
+            repo: { id: 77, name: 'acme/widgets' },
+            payload: { ref: 'refs/heads/main', before: 'b'.repeat(40), head: 'c'.repeat(40) },
+          },
+          {
+            id: 'issue-new', type: 'IssuesEvent', created_at: '1970-01-01T00:00:01.200Z',
+            repo: { id: 77, name: 'acme/widgets' },
+            payload: { action: 'opened', issue: { id: 301, number: 11, title: 'Observed issue' } },
+          },
+        ])),
+      })),
+    };
+    const actions = {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
+        if (actionId === 'automation.event.sources.list') {
+          return {
+            kind: 'page', revision: '7', definitions: [push, issue], nextCursor: null,
+          } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.admit') {
+          const request = input as AutomationEventAdmitInput;
+          admissions.push(request);
+          return {
+            results: request.definitions.map((definition) => ({
+              kind: 'admitted' as const,
+              runId: `run-${definition.triggerId}`,
+              checkpointSafe: true as const,
+            })),
+          } satisfies PluginActionResultById['automation.event.admit'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const context = {
+      plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+      contribution: { id: 'observer', qualifiedId: `${GITHUB_PLUGIN_ID}/backgroundServices/observer` },
+      surface: 'background' as const,
+      signal: new AbortController().signal,
+      services: {
+        actions,
+        connectedAccounts: {
+          materialize: vi.fn(async () => ({
+            kind: 'httpHeaders' as const,
+            headers: { Authorization: 'Bearer token' },
+          })),
+        },
+        http,
+        storage: { account: { collection: vi.fn(() => checkpoints.collection) } },
+      },
+    } as unknown as BackgroundServiceContext;
+
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+    await observer.runCycle(sourceAttemptContext(observer, context));
+
+    expect(admissions).toHaveLength(2);
+    expect(admissions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventRef: push.eventRef,
+        definitions: [expect.objectContaining({ triggerId: push.triggerId })],
+      }),
+      expect.objectContaining({
+        eventRef: issue.eventRef,
+        definitions: [expect.objectContaining({ triggerId: issue.triggerId })],
+      }),
+    ]));
+    expect(http.request).toHaveBeenCalledOnce();
+    expect(checkpoints.rowCount()).toBe(2);
   });
 
   it('retains an adopted source snapshot across an unchanged scan and persists each completed 304 observation time', async () => {
@@ -732,6 +922,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     const row = checkpoints.read(createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     }));
@@ -746,6 +937,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -816,6 +1008,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -874,6 +1067,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -968,14 +1162,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, actionContext)).resolves.toMatchObject({ kind: 'baselined' });
 
     expect(statuses).toContainEqual(expect.objectContaining({
       kind: 'source',
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
       state: 'baselined',
       code: 'none',
@@ -1025,6 +1221,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const otherSource = definition({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -1090,7 +1287,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toMatchObject({ kind: 'baselined' });
 
@@ -1106,6 +1304,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -1165,7 +1364,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'stale' });
 
@@ -1181,6 +1381,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -1245,7 +1446,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'stale' });
 
@@ -1261,6 +1463,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -1321,7 +1524,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'stale' });
 
@@ -1338,6 +1542,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -1370,7 +1575,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'stale' });
 
@@ -1385,6 +1591,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -1424,7 +1631,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'noHistoryGap' });
 
@@ -1444,6 +1652,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -1494,7 +1703,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'stale' });
 
@@ -1509,6 +1719,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
@@ -1564,7 +1775,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).rejects.toBe(cancellation);
 
@@ -1639,16 +1851,19 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     const exactRowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
     const rotatedRowId = createGithubAutomationEventCheckpointRowId({
       automationId: rotated.automationId,
+      triggerId: rotated.triggerId,
       eventRef: rotated.eventRef,
       sourceSelectorId: rotated.sourceSelectorId,
     });
     const elsewhereRowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-watched-elsewhere',
+      triggerId: 'trigger-automation-watched-elsewhere',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorB,
     });
@@ -1659,11 +1874,13 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const retiredCheckpoint = checkpointRow({
       automationId: rotated.automationId,
       sourceSelectorId: rotated.sourceSelectorId,
+      sourceInstanceId: 'github:repository:88',
       sourceContractVersion: 2,
     });
     const elsewhereCheckpoint = checkpointRow({
       automationId: 'automation-watched-elsewhere',
       sourceSelectorId: sourceSelectorB,
+      sourceInstanceId: 'github:repository:99',
     });
     const checkpoints = createCheckpointCollection([
       exactCheckpoint,
@@ -1722,23 +1939,31 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
   });
 
   it('deletes only the server-classified retired checkpoints through their existing Collection CAS', async () => {
-    const absent = checkpointRow({ automationId: 'automation-absent', sourceSelectorId: sourceSelectorA });
-    const softDeletedWithoutRuns = checkpointRow({ automationId: 'automation-deleted-empty', sourceSelectorId: sourceSelectorB });
+    const absent = checkpointRow({
+      automationId: 'automation-absent', sourceSelectorId: sourceSelectorA, sourceInstanceId: 'github:repository:71',
+    });
+    const softDeletedWithoutRuns = checkpointRow({
+      automationId: 'automation-deleted-empty', sourceSelectorId: sourceSelectorB, sourceInstanceId: 'github:repository:72',
+    });
     const selectorChanged = checkpointRow({
       automationId: 'automation-selector-changed',
       sourceSelectorId: '00000000-0000-4000-8000-000000000003',
+      sourceInstanceId: 'github:repository:73',
     });
     const contractChanged = checkpointRow({
       automationId: 'automation-contract-changed',
       sourceSelectorId: '00000000-0000-4000-8000-000000000004',
+      sourceInstanceId: 'github:repository:74',
     });
     const disabled = checkpointRow({
       automationId: 'automation-disabled',
       sourceSelectorId: '00000000-0000-4000-8000-000000000005',
+      sourceInstanceId: 'github:repository:75',
     });
     const softDeletedWithRun = checkpointRow({
       automationId: 'automation-deleted-retained-run',
       sourceSelectorId: '00000000-0000-4000-8000-000000000006',
+      sourceInstanceId: 'github:repository:76',
     });
     const checkpoints = createCheckpointCollection([
       absent,
@@ -1852,6 +2077,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -1906,13 +2132,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
   });
 
-  it('retires a selector-rotated predecessor only after server classification', async () => {
-    // A caller-scoped catalog cannot distinguish a moved watcher from an
-    // obsolete selector. The server resolves that identity under the adopted
-    // revision and returns the only subset this observer may CAS-delete.
+  it('retires the predecessor checkpoint when trigger source-selector identity changes', async () => {
     const rotated = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorB });
     const predecessorRowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: rotated.eventRef,
       sourceSelectorId: sourceSelectorA,
     });
@@ -1926,11 +2150,13 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         if (actionId === 'automation.event.sources.list') {
           const request = input as PluginActionInputById['automation.event.sources.list'];
           if (request.checkpointRetirementCandidates !== undefined) {
-            expect(request).toMatchObject({
-              transport: { kind: 'checkpointedPull' },
-              knownRevision: '7',
-              checkpointRetirementCandidates: [checkpointRetirementCandidate(predecessor)],
-            });
+            expect(request.checkpointRetirementCandidates).toEqual([
+              expect.objectContaining({
+                automationId: 'automation-a',
+                triggerId: 'trigger-automation-a',
+                sourceSelectorId: sourceSelectorA,
+              }),
+            ]);
             return {
               kind: 'unchanged',
               revision: '7',
@@ -1962,14 +2188,28 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
 
     await observer.runCycle(sourceAttemptContext(observer, context));
 
-    expect(checkpoints.delete).toHaveBeenCalledWith(predecessorRowId, expect.anything());
-    expect(checkpoints.read(predecessorRowId)).toBeNull();
+    expect(checkpoints.delete).toHaveBeenCalledWith(
+      predecessorRowId,
+      expect.objectContaining({ expectedRevision: 1 }),
+    );
+    expect(checkpoints.read(createGithubAutomationEventCheckpointRowId({
+      automationId: rotated.automationId,
+      triggerId: rotated.triggerId,
+      eventRef: rotated.eventRef,
+      sourceSelectorId: rotated.sourceSelectorId,
+    }))).toMatchObject({
+      value: {
+        [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: sourceSelectorB,
+      },
+    });
+    expect(checkpoints.rowCount()).toBe(1);
   });
 
   it('retires a retained checkpoint when its source contract is no longer compatible', async () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const rowId = createGithubAutomationEventCheckpointRowId({
+    const currentRowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -2021,7 +2261,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(checkpoints.delete).toHaveBeenCalledTimes(1);
-    expect(checkpoints.read(rowId)).toMatchObject({
+    expect(checkpoints.read(currentRowId)).toMatchObject({
       revision: 1,
       value: { payload: { sourceContractVersion: 1 } },
     });
@@ -2264,8 +2504,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sourceSelectorId: sourceSelectorA,
       repositoryId: '88',
     });
-    const rowId = createGithubAutomationEventCheckpointRowId({
+    const retiredRowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -2273,6 +2514,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       checkpointRow({
         automationId: source.automationId,
         sourceSelectorId: source.sourceSelectorId,
+        sourceInstanceId: source.sourceInstanceId,
         sourceContractVersion: 2,
       }),
     ], { deleteConflictCount: 1 });
@@ -2329,7 +2571,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
 
     await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
-    expect(checkpoints.read(rowId)).toMatchObject({
+    expect(checkpoints.read(retiredRowId)).toMatchObject({
       value: { payload: { sourceContractVersion: 2 } },
     });
     await expect(observer.runCycle(sourceAttemptContext(observer, context))).resolves.toBeUndefined();
@@ -2337,7 +2579,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     // The retry retires the incompatible row; the replacement baseline is
     // written by the next observation that is due for this source.
     expect(checkpoints.delete).toHaveBeenCalledTimes(2);
-    expect(checkpoints.read(rowId)).toBeNull();
+    expect(checkpoints.read(retiredRowId)).toBeNull();
   });
 
   it('withholds a current catalog until the adopted revision reconciles its checkpoint rows', async () => {
@@ -2427,6 +2669,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: source.automationId,
+      triggerId: source.triggerId,
       eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
     });
@@ -2436,6 +2679,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
     const retiredRowId = createGithubAutomationEventCheckpointRowId({
       automationId: retiredCheckpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+      triggerId: retiredCheckpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId],
       eventRef: source.eventRef,
       sourceSelectorId: retiredCheckpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId],
     });
@@ -2930,25 +3174,21 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     }));
   });
 
-  it('shares a settled same-key request for the entire source cycle when a slower definition arrives later', async () => {
+  it('persists independent semantic-trigger checkpoints while coalescing repository reads', async () => {
     const firstSource = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
-    const secondSource = definition({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB });
-    const secondRowId = createGithubAutomationEventCheckpointRowId({
+    const secondSource = definition({
       automationId: 'automation-b',
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorB,
+      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
     });
-    let releaseSecondGet: (() => void) | undefined;
-    const secondGet = new Promise<void>((resolve) => { releaseSecondGet = resolve; });
-    const checkpoints = createCheckpointCollection([
-      checkpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
-      checkpointRow({ automationId: 'automation-b', sourceSelectorId: sourceSelectorB }),
-    ], {
-      beforeGet: async (rowId) => {
-        if (rowId === secondRowId) await secondGet;
-      },
-    });
-    const http = { request: vi.fn(async () => ({ status: 304, headers: {}, body: new Uint8Array() })) };
+    const checkpoints = createCheckpointCollection([]);
+    const http = {
+      request: vi.fn(async () => ({
+        status: 200,
+        headers: { etag: 'initial' },
+        body: new TextEncoder().encode(JSON.stringify([])),
+      })),
+    };
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
@@ -2957,8 +3197,6 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           } satisfies PluginActionResultById['automation.event.sources.list'];
         }
         if (actionId === 'automation.event.source.status.report') {
-          const status = input as AutomationEventSourceStatusReport;
-          if (status.kind === 'source' && status.automationId === 'automation-a') releaseSecondGet?.();
           return {} satisfies PluginActionResultById['automation.event.source.status.report'];
         }
         throw new Error(`unexpected Action ${actionId}`);
@@ -2984,6 +3222,77 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     await observer.runCycle(sourceAttemptContext(observer, context));
 
     expect(http.request).toHaveBeenCalledOnce();
+    expect(checkpoints.rowCount()).toBe(2);
+  });
+
+  it('retires only the removed trigger checkpoint while preserving its sibling', async () => {
+    const removed = definition({ automationId: 'automation-removed', sourceSelectorId: sourceSelectorA });
+    const sibling = definition({
+      automationId: 'automation-sibling',
+      sourceSelectorId: sourceSelectorB,
+      eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
+    });
+    const retained = checkpointRow({
+      automationId: removed.automationId,
+      triggerId: removed.triggerId,
+      sourceSelectorId: removed.sourceSelectorId,
+    });
+    const checkpoints = createCheckpointCollection([retained]);
+    const actions = {
+      execute: vi.fn(async (actionId: string, input: unknown) => {
+        if (actionId === 'automation.event.sources.list') {
+          const request = input as PluginActionInputById['automation.event.sources.list'];
+          if (request.checkpointRetirementCandidates !== undefined) {
+            expect(request.checkpointRetirementCandidates).toEqual([
+              expect.objectContaining({
+                automationId: removed.automationId,
+                triggerId: removed.triggerId,
+              }),
+            ]);
+            return {
+              kind: 'unchanged',
+              revision: '8',
+              checkpointRetirements: request.checkpointRetirementCandidates,
+            } satisfies PluginActionResultById['automation.event.sources.list'];
+          }
+          return {
+            kind: 'page', revision: '8', definitions: [sibling], nextCursor: null,
+          } satisfies PluginActionResultById['automation.event.sources.list'];
+        }
+        if (actionId === 'automation.event.source.status.report') {
+          return {} satisfies PluginActionResultById['automation.event.source.status.report'];
+        }
+        throw new Error(`unexpected Action ${actionId}`);
+      }),
+    };
+    const context = observerBackgroundContext({
+      actions,
+      collection: checkpoints.collection,
+      http: {
+        request: vi.fn(async () => ({
+          status: 200,
+          headers: { etag: 'sibling-baseline' },
+          body: new TextEncoder().encode(JSON.stringify([])),
+        })),
+      },
+    });
+    const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
+
+    await observer.runCycle(sourceAttemptContext(observer, context));
+
+    expect(checkpoints.delete).toHaveBeenCalledOnce();
+    expect(checkpoints.rowCount()).toBe(1);
+    expect(checkpoints.read(createGithubAutomationEventCheckpointRowId({
+      automationId: sibling.automationId,
+      triggerId: sibling.triggerId,
+      eventRef: sibling.eventRef,
+      sourceSelectorId: sibling.sourceSelectorId,
+    }))?.value).toMatchObject({
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: sibling.automationId,
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId]: sibling.triggerId,
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: sibling.eventRef.localId,
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: sibling.sourceSelectorId,
+    });
   });
 
   it('bounds concurrent source calls and fairly rotates the source that starts each subsequent cycle', async () => {
@@ -3067,6 +3376,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
+      triggerId: 'trigger-automation-a',
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });

@@ -1,15 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { CURSOR_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
-import { CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './runtime.js';
-import { CURSOR_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION } from './catalog.js';
 
-describe('Cursor agent runtime contribution', () => {
-  it('keeps legacy catalog data free of a competing preflight owner', () => {
-    expect(CURSOR_AGENT_RUNTIME_CONTRIBUTION).toBe(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION);
-    expect(CATALOG_CURSOR_AGENT_RUNTIME_CONTRIBUTION).toEqual({ agentId: 'cursor' });
-  });
-
+describe('Cursor Agent preflight declaration', () => {
   it('declares Cursor native models parsing without process authority', async () => {
     const models = CURSOR_PREFLIGHT_SESSION_CONTROLS.models;
     expect(models?.command).toEqual({
@@ -17,7 +10,7 @@ describe('Cursor agent runtime contribution', () => {
       args: ['models'],
       ci: 'omit',
     });
-    await expect(models?.parseOutput?.({
+    const parsed = await models?.parseOutput?.({
       ok: true,
       stdout: [
         'Available models',
@@ -27,7 +20,8 @@ describe('Cursor agent runtime contribution', () => {
       ].join('\n'),
       stderr: '',
       exitCode: 0,
-    })).resolves.toEqual([
+    });
+    expect(parsed).toEqual([
       { id: 'auto', name: 'Auto' },
       { id: 'composer-2.5-fast', name: 'Composer 2.5 Fast' },
     ]);

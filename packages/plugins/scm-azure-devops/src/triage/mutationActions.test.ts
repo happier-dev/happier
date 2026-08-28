@@ -1,6 +1,9 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+  type TriageConfiguredSourceInstanceV1,
+} from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
@@ -15,6 +18,7 @@ import {
 } from './mutationActions.js';
 import {
   AzureMutationResultV1Schema,
+  AzureRequestReviewInputV1Schema,
   AzureThreadStatusResultV1Schema,
 } from './mutations/contracts.js';
 import { normalizeAzureDevOpsBaseUrl } from './origin.js';
@@ -33,6 +37,7 @@ const BASE_URL = 'https://dev.azure.com/acme';
 const PROJECT_ID = '5feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d';
 const REPOSITORY_ID = 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b';
 const PULL_REQUEST_ID = 17;
+const ROUTING_TOKEN = 'acme/Payments/payments';
 const VIEWER_ID = 'd6245f20-2af8-44f4-9451-8107cb2767db';
 const OBSERVED_SOURCE_COMMIT = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 const ADVANCED_SOURCE_COMMIT = '0f9e8d7c6b5a49382716059f8e7d6c5b4a392817';
@@ -78,6 +83,7 @@ function completeInput(overrides: Readonly<Record<string, unknown>> = {}) {
     v: 1,
     instance: configuredInstance(),
     localRef: localRef(),
+    routingToken: ROUTING_TOKEN,
     observedSourceCommitId: OBSERVED_SOURCE_COMMIT,
     deleteSourceBranch: false,
     ...overrides,
@@ -85,7 +91,7 @@ function completeInput(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 function abandonInput() {
-  return { v: 1, instance: configuredInstance(), localRef: localRef() };
+  return { v: 1, instance: configuredInstance(), localRef: localRef(), routingToken: ROUTING_TOKEN };
 }
 
 /** One Azure pull-request body, at whichever state the case needs. */
@@ -218,6 +224,34 @@ const nonReadRequests = (requests: readonly Captured[]): readonly Captured[] =>
 /* ------------------------------------------------------------------ complete */
 
 describe('Azure DevOps pull-request completion', () => {
+  it('refuses an unusable routing token before contacting Azure', async () => {
+    const { context, requests } = harness({ reads: [pullRequest()] });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(
+        completeInput({ routingToken: `${REPOSITORY_ID}/${String(PULL_REQUEST_ID)}` }),
+        context,
+      ),
+    );
+
+    expect(settled.kind).toBe('unavailable');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('does not write through a stale source locator', async () => {
+    const { context, requests } = harness({ reads: [pullRequest()] });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(
+        completeInput({ routingToken: 'acme/Payments/renamed' }),
+        context,
+      ),
+    );
+
+    expect(settled.kind).toBe('unavailable');
+    expect(nonReadRequests(requests)).toHaveLength(0);
+  });
+
   it('refuses a completion whose pinned merge source has moved, with zero writes', async () => {
     const { context, requests } = harness({
       reads: [pullRequest({ lastMergeSourceCommit: { commitId: ADVANCED_SOURCE_COMMIT } })],
@@ -312,6 +346,27 @@ describe('Azure DevOps pull-request completion', () => {
     expect(settled.detail).toBe('Required reviewers have not approved.');
   });
 
+  it('projects a merge rejection through the result carrier bound without splitting Unicode', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest(),
+        pullRequest({
+          mergeStatus: 'rejectedByPolicy',
+          mergeFailureMessage: '\u{1F680}'.repeat(200),
+        }),
+      ],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(completeInput(), context),
+    );
+
+    if (settled.kind !== 'rejected') throw new Error('a policy rejection is terminal');
+    expect(settled.detail).toBe('\u{1F680}'.repeat(128));
+    expect(new TextEncoder().encode(settled.detail ?? '').byteLength)
+      .toBe(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  });
+
   it('refuses to call a completion applied when Azure silently ignored the options we sent', async () => {
     const { context } = harness({
       reads: [
@@ -336,7 +391,10 @@ describe('Azure DevOps pull-request completion', () => {
 
   it('confirms an answer-lost completion instead of returning unavailable', async () => {
     const { context, requests } = harness({
-      reads: [pullRequest(), completed({ deleteSourceBranch: false })],
+      reads: [
+        pullRequest(),
+        completed({ deleteSourceBranch: false, transitionWorkItems: false, bypassPolicy: false }),
+      ],
       respond: ({ method }) => (
         method === 'PATCH' ? { status: 502, body: { message: 'gateway' } } : undefined
       ),
@@ -347,6 +405,30 @@ describe('Azure DevOps pull-request completion', () => {
     );
 
     expect(settled.kind).toBe('applied');
+    expect(writes(requests)).toHaveLength(1);
+  });
+
+  it('keeps an answer-lost completion uncertain when Azure ignored its options', async () => {
+    const { context, requests } = harness({
+      reads: [
+        pullRequest(),
+        completed({ deleteSourceBranch: false, transitionWorkItems: false, bypassPolicy: false }),
+      ],
+      respond: ({ method }) => (
+        method === 'PATCH' ? { status: 502, body: { message: 'gateway' } } : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await completeAzureDevOpsPullRequest(
+        completeInput({ deleteSourceBranch: true }),
+        context,
+      ),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost completion must remain uncertain');
+    expect(settled.failure?.code).toBe('azure-devops/server-error');
     expect(writes(requests)).toHaveLength(1);
   });
 });
@@ -421,6 +503,30 @@ describe('Azure DevOps pull-request abandonment', () => {
     expect(writes(requests)[0]?.body).toEqual({ status: 'abandoned' });
   });
 
+  it('reports an abandon Azure silently ignored as fields-ignored rather than pending', async () => {
+    const { context } = harness({
+      reads: [pullRequest(), pullRequest()],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await abandonAzureDevOpsPullRequest(abandonInput(), context),
+    );
+
+    expect(settled.kind).toBe('rejected');
+    if (settled.kind !== 'rejected') throw new Error('a synchronous ignored PATCH is not pending');
+    expect(settled.reason).toBe('fields-ignored');
+  });
+
+  it('keeps an accepted abandon uncertain when its confirming read is undecodable', async () => {
+    const { context } = harness({ reads: [pullRequest(), { malformed: true }] });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await abandonAzureDevOpsPullRequest(abandonInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+  });
+
   it('refuses to abandon a pull request that is already completed, with zero writes', async () => {
     const { context, requests } = harness({
       reads: [completed({ deleteSourceBranch: false })],
@@ -459,7 +565,7 @@ const REVIEWER_B = 'bb22cc33-dd44-4e55-9f66-001122334455';
 const REVIEWER_NEW = 'cc33dd44-ee55-4f66-a077-112233445566';
 
 function reactivateInput() {
-  return { v: 1, instance: configuredInstance(), localRef: localRef() };
+  return { v: 1, instance: configuredInstance(), localRef: localRef(), routingToken: ROUTING_TOKEN };
 }
 
 describe('Azure DevOps pull-request reactivation', () => {
@@ -495,7 +601,7 @@ describe('Azure DevOps pull-request reactivation', () => {
     expect(writes(requests)).toHaveLength(0);
   });
 
-  it('reports a reactivation Azure silently ignored as pending rather than applied', async () => {
+  it('reports a reactivation Azure silently ignored as fields-ignored rather than pending', async () => {
     const { context } = harness({
       reads: [pullRequest({ status: 'abandoned' }), pullRequest({ status: 'abandoned' })],
     });
@@ -504,7 +610,21 @@ describe('Azure DevOps pull-request reactivation', () => {
       await reactivateAzureDevOpsPullRequest(reactivateInput(), context),
     );
 
-    expect(settled.kind).toBe('pending');
+    expect(settled.kind).toBe('rejected');
+    if (settled.kind !== 'rejected') throw new Error('a synchronous ignored PATCH is not pending');
+    expect(settled.reason).toBe('fields-ignored');
+  });
+
+  it('keeps an accepted reactivation uncertain when its confirming read is undecodable', async () => {
+    const { context } = harness({
+      reads: [pullRequest({ status: 'abandoned' }), { malformed: true }],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await reactivateAzureDevOpsPullRequest(reactivateInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
   });
 
   it('confirms an answer-lost reactivation instead of returning unavailable', async () => {
@@ -531,6 +651,7 @@ function requestReviewInput(overrides: Readonly<Record<string, unknown>> = {}) {
     v: 1,
     instance: configuredInstance(),
     localRef: localRef(),
+    routingToken: ROUTING_TOKEN,
     observedSourceCommitId: OBSERVED_SOURCE_COMMIT,
     reviewerIds: [REVIEWER_NEW],
     ...overrides,
@@ -544,6 +665,12 @@ function reviewer(id: string, vote: number) {
 const REVIEWERS_URL_FRAGMENT = `/pullRequests/${String(PULL_REQUEST_ID)}/reviewers?`;
 
 describe('Azure DevOps request review', () => {
+  it('admits every explicitly selected reviewer instead of enforcing a provider ceiling Azure does not publish', () => {
+    expect(AzureRequestReviewInputV1Schema.safeParse(requestReviewInput({
+      reviewerIds: Array.from({ length: 11 }, (_, index) => `reviewer-${String(index)}`),
+    })).success).toBe(true);
+  });
+
   it('adds reviewers with one bulk identity-only POST and confirms through the reviewer list', async () => {
     const { context, requests } = harness({
       reads: [
@@ -587,6 +714,21 @@ describe('Azure DevOps request review', () => {
     if (settled.kind !== 'refused') throw new Error('an existing reviewer must not be re-added');
     expect(settled.reason).toBe('reviewer-already-present');
     expect(nonReadRequests(requests)).toHaveLength(0);
+  });
+
+  it('does not confirm an addition when Azure changed an existing reviewer vote', async () => {
+    const { context } = harness({
+      reads: [
+        pullRequest({ reviewers: [reviewer(REVIEWER_A, 10)] }),
+        pullRequest({ reviewers: [reviewer(REVIEWER_A, 0), reviewer(REVIEWER_NEW, 0)] }),
+      ],
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await requestAzureDevOpsPullRequestReview(requestReviewInput(), context),
+    );
+
+    expect(settled.kind).toBe('pending');
   });
 
   it('refuses a review request whose pinned merge source has moved, with zero writes', async () => {
@@ -671,6 +813,25 @@ describe('Azure DevOps request review', () => {
     expect(settled.kind).toBe('applied');
   });
 
+  it('keeps an ambiguous reviewer POST uncertain when the authoritative list cannot confirm it', async () => {
+    const { context } = harness({
+      reads: [pullRequest({ reviewers: [] }), pullRequest({ reviewers: [] })],
+      respond: ({ url, method }) => (
+        method === 'POST' && url.includes(REVIEWERS_URL_FRAGMENT)
+          ? { status: 502, body: { message: 'gateway' } }
+          : undefined
+      ),
+    });
+
+    const settled = AzureMutationResultV1Schema.parse(
+      await requestAzureDevOpsPullRequestReview(requestReviewInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost POST must remain uncertain');
+    expect(settled.failure?.code).toBe('azure-devops/server-error');
+  });
+
   it('still reports a reviewer POST Azure itself refused as unavailable, with no reconciliation claim', async () => {
     const { context } = harness({
       reads: [
@@ -720,6 +881,7 @@ function threadStatusInput(overrides: Readonly<Record<string, unknown>> = {}) {
     v: 1,
     instance: configuredInstance(),
     localRef: localRef(),
+    routingToken: ROUTING_TOKEN,
     threadId: String(THREAD_ID),
     status: 'fixed',
     ...overrides,
@@ -778,6 +940,50 @@ describe('Azure DevOps thread status', () => {
     );
 
     expect(settled.kind).toBe('applied');
+    expect(nonReadRequests(requests)).toHaveLength(1);
+  });
+
+  it('preserves the answer-loss failure when the thread reread cannot prove the update landed', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest()],
+      respond: ({ url, method }) => {
+        if (!url.includes(THREAD_URL_FRAGMENT)) return undefined;
+        if (method === 'PATCH') return { status: 502, body: { message: 'gateway' } };
+        return { body: { id: THREAD_ID, status: 'active' } };
+      },
+    });
+
+    const settled = AzureThreadStatusResultV1Schema.parse(
+      await setAzureDevOpsPullRequestThreadStatus(threadStatusInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost update cannot become unchanged');
+    expect(settled.failure?.code).toBe('azure-devops/server-error');
+    expect(nonReadRequests(requests)).toHaveLength(1);
+  });
+
+  it('keeps an accepted thread update uncertain when its confirming read fails', async () => {
+    let read = 0;
+    const { context, requests } = harness({
+      reads: [pullRequest()],
+      respond: ({ url, method }) => {
+        if (!url.includes(THREAD_URL_FRAGMENT)) return undefined;
+        if (method === 'PATCH') return { body: {} };
+        read += 1;
+        return read === 1
+          ? { body: { id: THREAD_ID, status: 'active' } }
+          : { status: 502, body: { message: 'gateway' } };
+      },
+    });
+
+    const settled = AzureThreadStatusResultV1Schema.parse(
+      await setAzureDevOpsPullRequestThreadStatus(threadStatusInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('a failed confirmation cannot erase a write');
+    expect(settled.failure?.code).toBe('azure-devops/server-error');
     expect(nonReadRequests(requests)).toHaveLength(1);
   });
 

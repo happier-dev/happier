@@ -78,7 +78,7 @@ function createRegistry(input?: Readonly<{
     remoteRef?: string;
 }>) {
     return {
-        getAdapter(id: string) {
+        getPullRequestCheckout(id: string) {
             return id === provider.id
                 ? {
                     resolvePullRequestCheckoutReference: vi.fn(async () => ({

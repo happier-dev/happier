@@ -64,21 +64,17 @@ function json(body: unknown, headers: Readonly<Record<string, string>> = {}): Az
 }
 
 describe('createAzureScanFrontier', () => {
-  it('starts both lanes at offset zero with one fixed native page geometry', () => {
-    const frontier = createAzureScanFrontier({ scanLimit: 50, nativePageSize: 25 });
-    expect(frontier.nativePageSize).toBe(25);
+  it('starts both lanes at offset zero with the caller-owned scan budget', () => {
+    const frontier = createAzureScanFrontier({ scanLimit: 50 });
+    expect(frontier.scanLimit).toBe(50);
     expect(frontier.lanes.map((lane) => lane.laneId)).toEqual(['authored', 'reviewer']);
     expect(frontier.lanes.every((lane) => lane.skip === 0 && !lane.ended)).toBe(true);
     expect(frontier.projectNextToken).toBeNull();
     expect(frontier.lastCompletedRepositoryId).toBeNull();
   });
 
-  it('never lets the native page exceed the submitted scan limit', () => {
-    expect(createAzureScanFrontier({ scanLimit: 10, nativePageSize: 100 }).nativePageSize).toBe(10);
-  });
-
   it('carries no credential and no delivered ids beyond its offsets and provider token', () => {
-    const frontier = createAzureScanFrontier({ scanLimit: 10, nativePageSize: 5 });
+    const frontier = createAzureScanFrontier({ scanLimit: 10 });
     frontier.projectNextToken = 'opaque-project-token';
     frontier.lastCompletedRepositoryId = REPO_GATEWAY;
 
@@ -92,7 +88,6 @@ describe('createAzureScanFrontier', () => {
       'currentRepositoryId',
       'lanes',
       'lastCompletedRepositoryId',
-      'nativePageSize',
       'nextLaneIndex',
       'observed',
       'projectId',
@@ -102,15 +97,17 @@ describe('createAzureScanFrontier', () => {
     ]);
   });
 
-  it('stops before a whole native page that cannot fit the remaining budget', () => {
-    const frontier = createAzureScanFrontier({ scanLimit: 30, nativePageSize: 25 });
+  it('stops when the caller-owned scan budget is exhausted', () => {
+    const frontier = createAzureScanFrontier({ scanLimit: 30 });
     expect(azurePageFitsBudget(frontier)).toBe(true);
-    frontier.observed = 10;
+    frontier.observed = 29;
+    expect(azurePageFitsBudget(frontier)).toBe(true);
+    frontier.observed = 30;
     expect(azurePageFitsBudget(frontier)).toBe(false);
   });
 
   it('advances a lane by the raw provider cardinality, not the decoded row count', () => {
-    const frontier = createAzureScanFrontier({ scanLimit: 100, nativePageSize: 25 });
+    const frontier = createAzureScanFrontier({ scanLimit: 100 });
     advanceAzureLane(frontier, 'authored', 25, false);
     expect(frontier.lanes[0]).toEqual({ laneId: 'authored', skip: 25, ended: false });
     expect(frontier.lanes[1]).toEqual({ laneId: 'reviewer', skip: 0, ended: false });

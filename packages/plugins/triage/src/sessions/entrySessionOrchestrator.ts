@@ -1,4 +1,7 @@
-import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
+import type {
+    PluginActionInputById,
+    PluginActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
 import type { SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -10,6 +13,7 @@ import {
 } from './entrySessionLinks.js';
 import {
     deliverEntrySessionInput,
+    planEntrySessionInput,
     type TriageEntrySessionDeliveryOutcomeV1,
     type TriageEntrySessionDeliveryRequestV1,
 } from './entrySessionDelivery.js';
@@ -53,18 +57,21 @@ type SessionSpawnInput = PluginActionInputById['session.spawn_new'];
  * never typed, startup instructions this plugin does not own, and a second
  * checkout draft competing with the source-owned preparation.
  *
- * **`initialMessage` is admitted, and it has exactly one admitted producer**
- * (`PLAN.md` §0a A4): the body resolved from the pressed action's own Prompt
- * Library invocation. The invariant the blanket prohibition protected is
- * unchanged and is now stated positively — **Triage never stringifies provider
- * prose into a prompt**. The selected entry's title, body, facts and provider
- * words still never reach a prompt, because entry context reaches the agent
- * through the declared `entry` attachment, whose `resolveForDispatch`
+ * Neither legacy `initialMessage` nor caller-supplied `initialInput` is
+ * admitted. The start owner below is the sole producer of canonical
+ * `initialInput`, from the pressed action's resolved Prompt Library body and
+ * declared entry attachments (`PLAN.md` §0a A4/A4a). The invariant is stated
+ * positively: **Triage never stringifies provider prose into a prompt**. The
+ * selected entry's title, body, facts and provider words still never reach the
+ * text arm, because entry context reaches the agent through the declared
+ * `entry` attachment, whose `resolveForDispatch`
  * (`composer/attachmentRuntime.ts`) supplies authoritative facts at dispatch
  * time — fresher than any snapshot a start could have embedded.
  */
 const PROHIBITED_SPAWN_MEMBERS = [
     'title',
+    'initialMessage',
+    'initialInput',
     'agentSessionStartupInstructionsV1',
     'checkoutCreationDraft',
 ] as const;
@@ -76,8 +83,9 @@ export type TriageSessionSpawnRequestV1 = Omit<
 
 /**
  * Strips the prohibited members even when a caller carried them in an
- * unnarrowed value. The type says a Triage start cannot seed prose or a second
- * workspace; this makes the running code say it too.
+ * unnarrowed value. The type says a caller cannot bypass the canonical initial
+ * input planner or seed a second workspace; this makes the running code say it
+ * too.
  */
 function withoutProhibitedSpawnMembers(
     spawn: TriageSessionSpawnRequestV1,
@@ -167,6 +175,7 @@ export type TriageEntrySessionStartResultV1 =
         sessionId: SessionId;
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
+        delivery?: TriageEntrySessionDeliveryOutcomeV1;
     }>
     | Readonly<{
         type: 'openPending';
@@ -230,6 +239,7 @@ async function linkDeliverThenOpen(
         disposition: TriageEntrySessionDispositionV1;
         workspace: TriageEntrySessionWorkspaceFactsV1;
         delivery?: TriageEntrySessionDeliveryRequestV1;
+        settledDelivery?: TriageEntrySessionDeliveryOutcomeV1;
         finalOpen?: TriageEntrySessionFinalOpenV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
@@ -250,16 +260,18 @@ async function linkDeliverThenOpen(
             sessionId: input.sessionId,
             disposition: input.disposition,
             workspace: input.workspace,
+            ...(input.settledDelivery === undefined ? {} : { delivery: input.settledDelivery }),
         };
     }
-    const delivery: TriageEntrySessionDeliveryOutcomeV1 = input.delivery === undefined
-        ? 'notRequested'
-        : await deliverEntrySessionInput({
-            execute: deps.execute,
-            sessionId: input.sessionId,
-            delivery: input.delivery,
-            ...(deps.signal ? { signal: deps.signal } : {}),
-        });
+    const delivery: TriageEntrySessionDeliveryOutcomeV1 = input.settledDelivery
+        ?? (input.delivery === undefined
+            ? 'notRequested'
+            : await deliverEntrySessionInput({
+                execute: deps.execute,
+                sessionId: input.sessionId,
+                delivery: input.delivery,
+                ...(deps.signal ? { signal: deps.signal } : {}),
+            }));
     if (input.finalOpen !== undefined) {
         // This is not an `openPending`: the canonical open phase has not been
         // attempted or failed. The start owner has linked and delivered all it
@@ -292,26 +304,65 @@ async function linkDeliverThenOpen(
  * The phase a settled start stopped at, and everything a retry of it needs.
  *
  * It is stated rather than extracted from the result union because a resume
- * needs strictly less than a verdict carries: the delivery outcome the settled
- * arms report is history, and re-declaring it here would make a caller echo an
- * answer back that the resume is about to ask for again.
+ * needs strictly less than a verdict carries. A link/open retry retains a
+ * delivery verdict only when admission already settled; an absent verdict is
+ * the explicit instruction to ask the canonical admission owner again.
  */
-export type TriageEntrySessionPendingPhaseV1 = Readonly<{
-    type: 'linkPending' | 'openPending';
-    sessionId: SessionId;
-    disposition: TriageEntrySessionDispositionV1;
-    workspace: TriageEntrySessionWorkspaceFactsV1;
-}>;
+export type TriageEntrySessionPendingPhaseV1 =
+    | Readonly<{
+        type: 'creationPending';
+        creationKey: string;
+        spawn: TriageSessionSpawnRequestV1;
+        directory: string;
+        workspace: TriageEntrySessionWorkspaceFactsV1;
+    }>
+    | Readonly<{
+        type: 'linkPending' | 'openPending';
+        sessionId: SessionId;
+        disposition: TriageEntrySessionDispositionV1;
+        workspace: TriageEntrySessionWorkspaceFactsV1;
+        settledDelivery?: Exclude<TriageEntrySessionDeliveryOutcomeV1, 'outcomeUnknown'>;
+    }>;
+
+type TriageSpawnDeliveryPlanV1 =
+    | Readonly<{ kind: 'withoutInput'; outcome: 'notRequested' | 'none' }>
+    | Readonly<{
+        kind: 'withInput';
+        initialInput: NonNullable<SessionSpawnInput['initialInput']>;
+    }>;
+
+function planSpawnDelivery(
+    delivery: TriageEntrySessionDeliveryRequestV1 | undefined,
+): TriageSpawnDeliveryPlanV1 {
+    if (delivery === undefined) return { kind: 'withoutInput', outcome: 'notRequested' };
+    const plan = planEntrySessionInput(delivery);
+    if (plan.kind === 'none') return { kind: 'withoutInput', outcome: 'none' };
+    return {
+        kind: 'withInput',
+        initialInput: {
+            text: plan.text,
+            ...(plan.attachments.length === 0 ? {} : { attachments: plan.attachments }),
+        },
+    };
+}
+
+function settledSpawnDelivery(
+    plan: TriageSpawnDeliveryPlanV1,
+    result: Extract<PluginActionResultById['session.spawn_new'], Readonly<{ type: 'success' }>>,
+): TriageEntrySessionDeliveryOutcomeV1 {
+    return plan.kind === 'withoutInput' ? plan.outcome : result.initialInput.status;
+}
 
 /**
  * Retries exactly the phase that failed, and nothing earlier.
  *
- * A pending link retries the idempotent link, delivers and then opens; a pending
- * open re-delivers under the SAME idempotency key and re-invokes only
- * `session.open` with the same stable id. Neither respawns, rematerializes,
- * reseeds a draft or mints a second identity for one press — which is the whole
- * reason the caller retains its keys instead of minting new ones, and the whole
- * reason the notice may promise that pressing again resumes the same Session.
+ * A pending link retries the idempotent link, delivers if admission has not
+ * settled and then opens; a pending open likewise asks admission only when no
+ * settled verdict was retained, then re-invokes `session.open` with the same
+ * stable id. Neither respawns, rematerializes, reseeds a draft or mints a second
+ * identity for one press. An ambiguous atomic first input is represented as a
+ * creation retry by the caller, because its identity belongs to spawn rather
+ * than `session.message.send`.
  *
  * The re-delivery is safe by construction rather than by a remembered verdict:
  * the same key rejoins the same durable input, so an accepted send answers
@@ -326,10 +377,52 @@ export async function resumeEntrySessionStart(
         display: TriageEntrySessionLinkDisplayV1;
         pending: TriageEntrySessionPendingPhaseV1;
         delivery?: TriageEntrySessionDeliveryRequestV1;
+        finalOpen?: TriageEntrySessionFinalOpenV1;
     }>,
 ): Promise<TriageEntrySessionStartResultV1> {
     const pending = input.pending;
     const delivery = input.delivery;
+    if (pending.type === 'creationPending') {
+        const spawnDelivery = planSpawnDelivery(delivery);
+        const result = await deps.execute(
+            'session.spawn_new',
+            {
+                ...withoutProhibitedSpawnMembers(pending.spawn),
+                directory: pending.directory,
+                creationKey: pending.creationKey,
+                ...(spawnDelivery.kind === 'withInput'
+                    ? { initialInput: spawnDelivery.initialInput }
+                    : {}),
+            },
+            deps.signal ? { signal: deps.signal } : undefined,
+        );
+        if (result.type === 'pending') {
+            return {
+                type: 'creationPending',
+                creationKey: pending.creationKey,
+                outcome: result.outcome,
+                workspace: pending.workspace,
+            };
+        }
+        if (result.type !== 'success') {
+            return {
+                type: 'creationFailed',
+                creationKey: pending.creationKey,
+                workspace: pending.workspace,
+            };
+        }
+        return await linkDeliverThenOpen(deps, {
+            entryRef: input.entryRef,
+            display: input.display,
+            sessionId: result.sessionId,
+            disposition: result.disposition,
+            workspace: pending.workspace,
+            ...(delivery === undefined
+                ? {}
+                : { settledDelivery: settledSpawnDelivery(spawnDelivery, result) }),
+            ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
+        });
+    }
     if (pending.type === 'linkPending') {
         return await linkDeliverThenOpen(deps, {
             entryRef: input.entryRef,
@@ -337,17 +430,21 @@ export async function resumeEntrySessionStart(
             sessionId: pending.sessionId,
             disposition: pending.disposition,
             workspace: pending.workspace,
-            ...(delivery === undefined ? {} : { delivery }),
+            ...(pending.settledDelivery === undefined
+                ? delivery === undefined ? {} : { delivery }
+                : { settledDelivery: pending.settledDelivery }),
+            ...(input.finalOpen === undefined ? {} : { finalOpen: input.finalOpen }),
         });
     }
-    const delivered: TriageEntrySessionDeliveryOutcomeV1 = delivery === undefined
-        ? 'notRequested'
-        : await deliverEntrySessionInput({
-            execute: deps.execute,
-            sessionId: pending.sessionId,
-            delivery,
-            ...(deps.signal ? { signal: deps.signal } : {}),
-        });
+    const delivered: TriageEntrySessionDeliveryOutcomeV1 = pending.settledDelivery
+        ?? (delivery === undefined
+            ? 'notRequested'
+            : await deliverEntrySessionInput({
+                execute: deps.execute,
+                sessionId: pending.sessionId,
+                delivery,
+                ...(deps.signal ? { signal: deps.signal } : {}),
+            }));
     const opened = await openLinkedSession({
         execute: deps.execute,
         sessionId: pending.sessionId,
@@ -477,10 +574,14 @@ export async function startEntrySession(
     }
 
     const workspace = materializationWorkspaceFacts(resolved.materialization);
+    const spawnDelivery = planSpawnDelivery(request.delivery);
     const spawnInput: SessionSpawnInput = {
         ...withoutProhibitedSpawnMembers(destination.spawn),
         directory: materializationDirectory(resolved.materialization),
         creationKey: destination.creationKey,
+        ...(spawnDelivery.kind === 'withInput'
+            ? { initialInput: spawnDelivery.initialInput }
+            : {}),
     };
     const result = await deps.execute(
         'session.spawn_new',
@@ -514,7 +615,9 @@ export async function startEntrySession(
         sessionId: result.sessionId,
         disposition: result.disposition,
         workspace,
-        ...(request.delivery === undefined ? {} : { delivery: request.delivery }),
+        ...(request.delivery === undefined
+            ? {}
+            : { settledDelivery: settledSpawnDelivery(spawnDelivery, result) }),
         ...(request.finalOpen === undefined ? {} : { finalOpen: request.finalOpen }),
     });
 }

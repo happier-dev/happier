@@ -143,17 +143,26 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
         expect.objectContaining({
           id: 'github',
           adapter: expect.objectContaining({
-            detectRemote: expect.any(Function),
-            buildCompareUrl: expect.any(Function),
-            listPullRequests: expect.any(Function),
-            getPullRequest: expect.any(Function),
-            createPullRequest: expect.any(Function),
-            getDefaultBranch: expect.any(Function),
-            resolvePullRequestCheckoutReference: expect.any(Function),
-            describePublishTargets: expect.any(Function),
-            describeCloneTargets: expect.any(Function),
-            createRepository: expect.any(Function),
-            getRepository: expect.any(Function),
+            routing: expect.objectContaining({
+              detectRemote: expect.any(Function),
+              buildCompareUrl: expect.any(Function),
+            }),
+            pullRequests: expect.objectContaining({
+              listPullRequests: expect.any(Function),
+              getPullRequest: expect.any(Function),
+              createPullRequest: expect.any(Function),
+            }),
+            pullRequestCheckout: expect.objectContaining({
+              resolvePullRequestCheckoutReference: expect.any(Function),
+            }),
+            repositoryPublishing: expect.objectContaining({
+              describePublishTargets: expect.any(Function),
+              createRepository: expect.any(Function),
+              getRepository: expect.any(Function),
+            }),
+            repositoryClone: expect.objectContaining({
+              describeCloneTargets: expect.any(Function),
+            }),
           }),
         }),
       ]);
@@ -194,7 +203,9 @@ describe('bundled GitHub SCM hosting provider plugin', () => {
 
     try {
       const executedCommands: string[] = [];
-      const describePublishTargets = registered[0]?.adapter.describePublishTargets;
+      const describePublishTargets = (
+        registered[0]?.adapter.repositoryPublishing as Readonly<Record<string, unknown>> | undefined
+      )?.describePublishTargets;
       expect(describePublishTargets).toEqual(expect.any(Function));
       if (typeof describePublishTargets !== 'function') return;
 

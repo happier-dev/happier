@@ -1,10 +1,7 @@
 import type {
   AgentSessionCatalogControl,
   AgentSessionContinuationControl,
-  AgentSessionUsageLimitRecoveryControl,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-
-import { OPEN_CODE_USAGE_LIMIT_RECOVERY } from '../auth/services/usageLimit.js';
 
 export type OpenCodeActiveSkillsReader = (
   options?: Readonly<{ signal?: AbortSignal }>,
@@ -28,21 +25,6 @@ function record(value: unknown): Readonly<Record<string, unknown>> | null {
 function string(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
-
-const usageLimitRecovery: AgentSessionUsageLimitRecoveryControl = {
-  async execute(request) {
-    if (request.kind !== 'checkNow') {
-      return {
-        status: 'unsupported',
-        diagnostic: diagnostic('opencode_reset_credit_unsupported'),
-      };
-    }
-    return {
-      status: 'waiting',
-      retryAfterMs: OPEN_CODE_USAGE_LIMIT_RECOVERY.defaultFallbackBackoffMs,
-    };
-  },
-};
 
 const continuation: AgentSessionContinuationControl = {
   async verify() {
@@ -121,7 +103,6 @@ export function createOpenCodeNativeSessionControls() {
   return Object.freeze({
     sessions: Object.freeze({
       catalog,
-      usageLimitRecovery,
       continuation,
     }),
     bindActiveSkillsReader,

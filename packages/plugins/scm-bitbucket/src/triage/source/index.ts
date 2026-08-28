@@ -29,6 +29,7 @@ export { scanBitbucketSource } from './scan.js';
 export { getBitbucketSourceEntry } from './get.js';
 export {
   prepareBitbucketReviewWorkspace,
+  verifyBitbucketReviewWorkspace,
   type BitbucketReviewWorkspaceRuntime,
 } from './prepareReviewWorkspace.js';
 export {
@@ -42,4 +43,5 @@ export {
   listBitbucketInstancesAction,
   prepareBitbucketReviewWorkspaceAction,
   scanBitbucketSourceAction,
+  verifyBitbucketReviewWorkspaceAction,
 } from './actions.js';

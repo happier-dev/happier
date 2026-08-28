@@ -1,5 +1,3 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -7,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import {
   createCodexSessionImportRoots,
   normalizeCodexVendorResumeId,
-  resolveCodexConnectedServiceCandidatePersistedSessionFile,
   resolveCodexMaterializedSessionsRoot,
   resolveCodexSessionFileMappingDestinationPaths,
   resolveCodexVendorResumeIdFromImportedSessionFile,
@@ -70,38 +67,6 @@ describe('Codex connected-service home sync session files', () => {
       sourcePath: '/materialized/sessions/imported.jsonl',
       destinationPath: '/user/.codex/sessions/other.jsonl',
       relativePath: 'archive/manual-export.jsonl',
-    })).toBeNull();
-  });
-
-  it('resolves the app-server candidate persisted session file from Codex metadata', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-session-file-'));
-    const codexHome = join(root, 'codex-home');
-    const sessionsRoot = join(codexHome, 'sessions');
-    await mkdir(sessionsRoot, { recursive: true });
-    const vendorResumeId = '11111111-2222-3333-4444-555555555555';
-    const rolloutFile = join(sessionsRoot, `rollout-2026-06-06T00-00-00-${vendorResumeId}.jsonl`);
-    await writeFile(rolloutFile, '{}\n', 'utf8');
-
-    expect(resolveCodexConnectedServiceCandidatePersistedSessionFile({
-      codexHome,
-      metadata: {
-        codexBackendMode: 'appServer',
-        codexSessionId: ` ${vendorResumeId} `,
-      },
-    })).toBe(rolloutFile);
-    expect(resolveCodexConnectedServiceCandidatePersistedSessionFile({
-      codexHome,
-      metadata: {
-        codexBackendMode: 'acp',
-        codexSessionId: vendorResumeId,
-      },
-    })).toBeNull();
-    expect(resolveCodexConnectedServiceCandidatePersistedSessionFile({
-      codexHome,
-      metadata: {
-        codexBackendMode: 'appServer',
-        codexSessionId: '../escape',
-      },
     })).toBeNull();
   });
 

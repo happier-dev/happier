@@ -6,7 +6,7 @@ export const GITHUB_CONNECTED_ACCOUNT_ID = 'github-account';
 export const GITHUB_CONNECTED_ACCOUNT_PURPOSE = 'github-connected-account';
 export const GITHUB_WEBHOOK_CONTRIBUTION_ID = 'github-events';
 export const GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID = 'automation/setup-repository-event-v1';
-/** Host target-Action boundary for one checkpointed-pull source attempt. */
+/** Host target-Action boundary for one repository-scoped checkpointed-pull attempt. */
 export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID = 'automation/run-repository-event-source-attempt-v1';
 /** Explicit user/host Action for replacing a pull history-gap marker with a current-head baseline. */
 export const GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID = 'automation/reset-repository-event-baseline-v1';

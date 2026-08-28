@@ -14,14 +14,6 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./agent/contributions/runtime": {
-      "types": "./dist/agent/contributions/runtime.d.ts",
-      "default": "./dist/agent/contributions/runtime.js"
-    },
-    "./agent/contributions/catalog": {
-      "types": "./dist/agent/contributions/catalog.d.ts",
-      "default": "./dist/agent/contributions/catalog.js"
-    },
     "./agent/auth/state": {
       "types": "./dist/agent/auth/state.d.ts",
       "default": "./dist/agent/auth/state.js"
@@ -66,10 +58,6 @@
       "types": "./dist/agent/identity/session.d.ts",
       "default": "./dist/agent/identity/session.js"
     },
-    "./agent/surfaces/sessions/controls/adapter": {
-      "types": "./dist/agent/surfaces/sessions/controls/adapter.d.ts",
-      "default": "./dist/agent/surfaces/sessions/controls/adapter.js"
-    },
     "./agent/preferences/session": {
       "types": "./dist/agent/preferences/session.d.ts",
       "default": "./dist/agent/preferences/session.js"
@@ -111,11 +99,11 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0",
     "zod": "4.3.6"
   },
   "devDependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

@@ -36,6 +36,13 @@ type Adapter = Readonly<{
   getRepository?: unknown;
 }>;
 
+type RuntimeAdapter = Readonly<{
+  routing?: Adapter;
+  pullRequests?: Adapter;
+  pullRequestCheckout?: Adapter;
+  repositoryPublishing?: Adapter;
+}>;
+
 function decodeBasicAuthorization(value: string): string {
   const binary = atob(value.slice('Basic '.length));
   return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)));
@@ -249,7 +256,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
     expect(mod).not.toBeNull();
     if (!mod) return;
 
-    const registrations: Array<Readonly<{ id: string; adapter: Adapter }>> = [];
+    const registrations: Array<Readonly<{ id: string; adapter: RuntimeAdapter }>> = [];
     const hooks: Array<Readonly<{ hookId: string; handler: unknown }>> = [];
     const connectedAccountRegistrations: Array<Readonly<{
       id: string;
@@ -261,7 +268,7 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       scm: {
         registerHostingProvider(
           id: string,
-          runtime: Readonly<{ adapter: Adapter }>,
+          runtime: Readonly<{ adapter: RuntimeAdapter }>,
         ) {
           registrations.push({ id, ...runtime });
           return { dispose() {} };
@@ -482,15 +489,23 @@ describe('bundled Bitbucket SCM hosting provider plugin', () => {
       .toEqual((await import('./manifest.js')).PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id));
     expect(registrations[0]).not.toHaveProperty('auth');
     expect(registrations[0]?.adapter).toMatchObject({
-      detectRemote: expect.any(Function),
-      buildCompareUrl: expect.any(Function),
-      listPullRequests: expect.any(Function),
-      getPullRequest: expect.any(Function),
-      createPullRequest: expect.any(Function),
-      resolvePullRequestCheckoutReference: expect.any(Function),
-      describePublishTargets: expect.any(Function),
-      createRepository: expect.any(Function),
-      getRepository: expect.any(Function),
+      routing: expect.objectContaining({
+        detectRemote: expect.any(Function),
+        buildCompareUrl: expect.any(Function),
+      }),
+      pullRequests: expect.objectContaining({
+        listPullRequests: expect.any(Function),
+        getPullRequest: expect.any(Function),
+        createPullRequest: expect.any(Function),
+      }),
+      pullRequestCheckout: expect.objectContaining({
+        resolvePullRequestCheckoutReference: expect.any(Function),
+      }),
+      repositoryPublishing: expect.objectContaining({
+        describePublishTargets: expect.any(Function),
+        createRepository: expect.any(Function),
+        getRepository: expect.any(Function),
+      }),
     });
   });
 

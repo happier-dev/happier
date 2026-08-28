@@ -2,10 +2,19 @@ import type {
   ConversationIngressAutomationEventCandidateV1,
   ConversationNormalizedIngressV1,
 } from '@happier-dev/channels-protocol/v1';
+import {
+  CONVERSATION_CORE_PLUGIN_ID_V1,
+  CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
+  ConversationProviderConnectionsSnapshotV1Schema,
+  hasCurrentConversationProviderConnectionV1,
+} from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/plugin-sdk/events';
+import {
+  createPluginEventAutomationSetupResultV1JsonSchema,
+  type PluginEventAutomationSetupResultV1,
+} from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import { createDiscordBotApi } from './discordApi.js';
@@ -98,21 +107,11 @@ export const DISCORD_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA = {
   required: ['credentialRef', 'channelId'],
 } satisfies PluginJsonSchema;
 
-export const DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-    sourceContractVersion: {
-      type: 'integer',
-      const: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
-    },
-    sourceConfig: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
-    displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-  },
-  required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-} satisfies PluginJsonSchema;
+export const DISCORD_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA =
+  createPluginEventAutomationSetupResultV1JsonSchema(
+    DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
+  );
 
 /**
  * Every leaf is a bounded scalar so the host's `eq`/`in` Automation filter can
@@ -337,6 +336,48 @@ export async function setupDiscordAutomationMessageSource(
     throw new PluginError({
       code: `discord_bot_${identity.reason}`,
       message: identity.diagnostic ?? 'Discord is unavailable.',
+    });
+  }
+  let currentConnections: unknown;
+  try {
+    currentConnections = await context.services.actions.execute(
+      {
+        pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+        localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,
+      },
+      {},
+      { signal: context.signal },
+    );
+  } catch (error) {
+    if (context.signal.aborted) throw context.signal.reason ?? error;
+    throw new PluginError({
+      code: 'discord_automation_channels_connection_unavailable',
+      message: 'Happier could not verify the Discord Channels connection. Try again after Channels is available.',
+      retryable: true,
+      remediation: { kind: 'retry' },
+    }, { cause: error });
+  }
+  const connections = ConversationProviderConnectionsSnapshotV1Schema.safeParse(currentConnections);
+  if (!connections.success) {
+    throw new PluginError({
+      code: 'discord_automation_channels_connection_unavailable',
+      message: 'Happier could not verify the Discord Channels connection. Try again after Channels is available.',
+      retryable: true,
+      remediation: { kind: 'retry' },
+    });
+  }
+  if (!hasCurrentConversationProviderConnectionV1({
+    connections: connections.data,
+    credentialRef: input.credentialRef,
+    providerConnectionKey: `discord:application:${identity.applicationId}`,
+  })) {
+    throw new PluginError({
+      code: 'discord_automation_channels_connection_required',
+      message: 'Set up and enable this Discord bot in Channels before watching one of its channels.',
+      remediation: {
+        kind: 'openSettings',
+        path: '/settings/plugins/happier.channels/connections',
+      },
     });
   }
   const channel = await api.getChannel({ channelId }, { signal: context.signal });

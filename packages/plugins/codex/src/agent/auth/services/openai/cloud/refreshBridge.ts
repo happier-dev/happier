@@ -81,8 +81,9 @@ function readDirectMetadataBinding(facts: CodexChatGptRefreshSessionFacts): Code
   const bindingsByServiceId = connectedServices && isRecord(connectedServices.bindingsByServiceId)
     ? connectedServices.bindingsByServiceId
     : null;
-  const binding = bindingsByServiceId && isRecord(bindingsByServiceId['openai-codex'])
-    ? bindingsByServiceId['openai-codex']
+  const serviceKey = 'happier.agent.codex/openai-codex';
+  const binding = bindingsByServiceId && isRecord(bindingsByServiceId[serviceKey])
+    ? bindingsByServiceId[serviceKey]
     : null;
   if (binding?.source === 'connected' && binding.selection === 'group') {
     const groupId = connectedServiceAuthGroupIdSchema.safeParse(binding.groupId);

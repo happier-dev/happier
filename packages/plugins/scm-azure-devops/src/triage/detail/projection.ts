@@ -3,7 +3,6 @@ import {
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
-  truncateTriageUtf8V1,
 } from '@happier-dev/triage-protocol/v1';
 
 /**
@@ -32,29 +31,15 @@ import {
 
 export type AzureDetailBoundsV1 = Readonly<{
   identifierUtf8Bytes: number;
-  labelUtf8Bytes: number;
   textUtf8Bytes: number;
   locationUtf8Bytes: number;
-  pathUtf8Bytes: number;
-  /** One comment body, which is document content rather than a row label. */
-  commentBodyUtf8Bytes: number;
 }>;
 
 export const AZURE_DETAIL_BOUNDS_V1: AzureDetailBoundsV1 = Object.freeze({
   identifierUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  labelUtf8Bytes: 128,
   textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   locationUtf8Bytes: MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-  pathUtf8Bytes: 512,
-  commentBodyUtf8Bytes: 8_192,
 });
-
-/** The largest number of rows any one Azure detail page publishes. */
-export const AZURE_MAX_DETAIL_ROWS_V1 = 100;
-/** Threads one read publishes; the documented endpoint returns all of them at once. */
-export const AZURE_MAX_THREAD_ROWS_V1 = 200;
-/** Iterations published by the one shared iteration read. */
-export const AZURE_MAX_ITERATION_ROWS_V1 = 100;
 
 /**
  * The documented configuration type of Azure's own build-validation policy.
@@ -114,7 +99,7 @@ function readIdentityName(
   bounds: AzureDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> | null {
   if (!isRecord(value)) return null;
-  return bounded(value.displayName, bounds.labelUtf8Bytes);
+  return bounded(value.displayName, bounds.textUtf8Bytes);
 }
 
 /** C0 controls that are not line structure, plus `U+007F`. */
@@ -124,7 +109,6 @@ const EXCESSIVE_BLANK_LINES = /\n{3,}/gu;
 
 function projectCommentBody(
   value: unknown,
-  bounds: AzureDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> {
   if (typeof value !== 'string') return { value: '', truncated: false };
   const normalized = value
@@ -132,7 +116,7 @@ function projectCommentBody(
     .replace(NON_STRUCTURAL_CONTROLS, '')
     .replace(EXCESSIVE_BLANK_LINES, '\n\n')
     .trim();
-  return truncateTriageUtf8V1(normalized, bounds.commentBodyUtf8Bytes);
+  return { value: normalized, truncated: false };
 }
 
 export type AzurePageProjectionV1<TRow> = Readonly<{
@@ -143,7 +127,6 @@ export type AzurePageProjectionV1<TRow> = Readonly<{
 
 function projectRows<TRow>(
   body: unknown,
-  maxRows: number | null,
   projectOne: (row: JsonRecord) => Readonly<{ row: TRow; truncated: boolean }> | null,
 ): AzurePageProjectionV1<TRow> {
   // Azure wraps every collection as `{ count, value: [...] }`.
@@ -154,7 +137,7 @@ function projectRows<TRow>(
   let omitted = 0;
   let truncated = false;
   for (const candidate of values) {
-    if ((maxRows !== null && rows.length >= maxRows) || !isRecord(candidate)) {
+    if (!isRecord(candidate)) {
       omitted += 1;
       continue;
     }
@@ -190,14 +173,14 @@ export function projectAzureIterationRows(
   body: unknown,
   bounds: AzureDetailBoundsV1,
 ): AzurePageProjectionV1<AzureProjectedIterationRowV1> {
-  return projectRows(body, AZURE_MAX_ITERATION_ROWS_V1, (raw) => {
+  return projectRows(body, (raw) => {
     // A 1-based real iteration only. `0` is the comparison baseline, and a row
     // claiming it would let a caller path-address a resource that does not exist.
     const id = readPositiveInteger(raw.id);
     if (id === null) return null;
     const description = bounded(raw.description, bounds.textUtf8Bytes);
     const author = readIdentityName(raw.author, bounds);
-    const reason = bounded(raw.reason, bounds.labelUtf8Bytes);
+    const reason = bounded(raw.reason, bounds.textUtf8Bytes);
     const createdAtMs = readTimestampMs(raw.createdDate);
     const truncated = (description?.truncated ?? false)
       || (author?.truncated ?? false)
@@ -230,13 +213,12 @@ export type AzureProjectedCommitRowV1 = Readonly<{
 export function projectAzureCommitRows(
   body: unknown,
   bounds: AzureDetailBoundsV1,
-  maxRows: number = AZURE_MAX_DETAIL_ROWS_V1,
 ): AzurePageProjectionV1<AzureProjectedCommitRowV1> {
-  return projectRows(body, maxRows, (raw) => {
+  return projectRows(body, (raw) => {
     const commitId = bounded(raw.commitId, bounds.identifierUtf8Bytes);
     if (commitId === null) return null;
     const comment = bounded(raw.comment, bounds.textUtf8Bytes);
-    const author = isRecord(raw.author) ? bounded(raw.author.name, bounds.labelUtf8Bytes) : null;
+    const author = isRecord(raw.author) ? bounded(raw.author.name, bounds.textUtf8Bytes) : null;
     const authoredAtMs = isRecord(raw.author) ? readTimestampMs(raw.author.date) : null;
     const url = boundedWebUrl(raw.remoteUrl ?? raw.url, bounds);
     const truncated = commitId.truncated
@@ -283,20 +265,20 @@ export type AzureChangesPositionV1 = Readonly<{
 export type AzureChangesProjectionV1 =
   AzurePageProjectionV1<AzureProjectedChangedFileRowV1> & Readonly<{
     next: AzureChangesPositionV1 | null;
+    continuationMalformed: boolean;
   }>;
 
 export function projectAzureIterationChanges(
   body: unknown,
   bounds: AzureDetailBoundsV1,
-  maxRows: number = AZURE_MAX_DETAIL_ROWS_V1,
 ): AzureChangesProjectionV1 {
   const changes = isRecord(body) && Array.isArray(body.changeEntries)
     ? { value: body.changeEntries }
     : body;
-  const projected = projectRows<AzureProjectedChangedFileRowV1>(changes, maxRows, (raw) => {
+  const projected = projectRows<AzureProjectedChangedFileRowV1>(changes, (raw) => {
     const item = isRecord(raw.item) ? raw.item : {};
-    const path = bounded(item.path, bounds.pathUtf8Bytes);
-    const changeType = bounded(raw.changeType, bounds.labelUtf8Bytes);
+    const path = bounded(item.path, bounds.locationUtf8Bytes);
+    const changeType = bounded(raw.changeType, bounds.textUtf8Bytes);
     if (path === null || changeType === null) return null;
     const objectId = bounded(item.objectId, bounds.identifierUtf8Bytes);
     const truncated = path.truncated || changeType.truncated;
@@ -312,16 +294,22 @@ export function projectAzureIterationChanges(
     };
   });
 
-  const nextSkip = isRecord(body) ? readNonNegativeInteger(body.nextSkip) : null;
-  const nextTop = isRecord(body) ? readNonNegativeInteger(body.nextTop) : null;
+  const bodyRecord = isRecord(body) ? body : null;
+  const hasNextSkip = bodyRecord !== null && Object.prototype.hasOwnProperty.call(bodyRecord, 'nextSkip');
+  const hasNextTop = bodyRecord !== null && Object.prototype.hasOwnProperty.call(bodyRecord, 'nextTop');
+  const nextSkip = bodyRecord === null ? null : readNonNegativeInteger(bodyRecord.nextSkip);
+  const nextTop = bodyRecord === null ? null : readNonNegativeInteger(bodyRecord.nextTop);
+  const continuationMalformed = hasNextSkip !== hasNextTop
+    || (hasNextSkip && (nextSkip === null || nextTop === null));
   // The walk continues only while the provider says there is more. Two zeroes,
   // or an absent pair, end it — this source never invents the next offset.
   const hasMore = (nextSkip ?? 0) > 0 || (nextTop ?? 0) > 0;
   return Object.freeze({
     ...projected,
-    next: hasMore
-      ? Object.freeze({ nextSkip: nextSkip ?? 0, nextTop: nextTop ?? 0 })
+    next: hasMore && !continuationMalformed && nextSkip !== null && nextTop !== null
+      ? Object.freeze({ nextSkip, nextTop })
       : null,
+    continuationMalformed,
   });
 }
 
@@ -341,9 +329,9 @@ export function projectAzureStatusRows(
   body: unknown,
   bounds: AzureDetailBoundsV1,
 ): AzurePageProjectionV1<AzureProjectedStatusRowV1> {
-  return projectRows(body, AZURE_MAX_DETAIL_ROWS_V1, (raw) => {
+  return projectRows(body, (raw) => {
     const id = readPositiveInteger(raw.id);
-    const state = bounded(raw.state, bounds.labelUtf8Bytes);
+    const state = bounded(raw.state, bounds.textUtf8Bytes);
     if (id === null || state === null) return null;
     const description = bounded(raw.description, bounds.textUtf8Bytes);
     const context = isRecord(raw.context)
@@ -351,7 +339,7 @@ export function projectAzureStatusRows(
         [readString(raw.context.genre), readString(raw.context.name)]
           .filter((part): part is string => part !== null)
           .join('/'),
-        bounds.labelUtf8Bytes,
+        bounds.textUtf8Bytes,
       )
       : null;
     const targetUrl = boundedWebUrl(raw.targetUrl, bounds);
@@ -394,13 +382,13 @@ export function projectAzurePolicyEvaluationRows(
   body: unknown,
   bounds: AzureDetailBoundsV1,
 ): AzurePageProjectionV1<AzureProjectedPolicyEvaluationRowV1> {
-  return projectRows(body, AZURE_MAX_DETAIL_ROWS_V1, (raw) => {
+  return projectRows(body, (raw) => {
     const evaluationId = bounded(raw.evaluationId, bounds.identifierUtf8Bytes);
-    const status = bounded(raw.status, bounds.labelUtf8Bytes);
+    const status = bounded(raw.status, bounds.textUtf8Bytes);
     if (evaluationId === null || status === null) return null;
     const configuration = isRecord(raw.configuration) ? raw.configuration : {};
     const type = isRecord(configuration.type) ? configuration.type : {};
-    const displayName = bounded(type.displayName, bounds.labelUtf8Bytes);
+    const displayName = bounded(type.displayName, bounds.textUtf8Bytes);
     const startedAtMs = readTimestampMs(raw.startedDate);
     const completedAtMs = readTimestampMs(raw.completedDate);
     const truncated = evaluationId.truncated
@@ -460,12 +448,12 @@ export function projectAzureThreadRows(
   body: unknown,
   bounds: AzureDetailBoundsV1,
 ): AzurePageProjectionV1<AzureProjectedThreadRowV1> {
-  return projectRows(body, AZURE_MAX_THREAD_ROWS_V1, (raw) => {
+  return projectRows(body, (raw) => {
     const id = readPositiveInteger(raw.id);
     if (id === null) return null;
-    const status = bounded(raw.status, bounds.labelUtf8Bytes);
+    const status = bounded(raw.status, bounds.textUtf8Bytes);
     const context = isRecord(raw.threadContext) ? raw.threadContext : null;
-    const path = context === null ? null : bounded(context.filePath, bounds.pathUtf8Bytes);
+    const path = context === null ? null : bounded(context.filePath, bounds.locationUtf8Bytes);
     const rightStart = context !== null && isRecord(context.rightFileStart)
       ? readPositiveInteger(context.rightFileStart.line)
       : null;
@@ -473,13 +461,12 @@ export function projectAzureThreadRows(
     const allComments = Array.isArray(raw.comments) ? raw.comments : [];
     const comments = projectRows<AzureProjectedThreadCommentV1>(
       { value: allComments },
-      null,
       (comment) => {
         const commentId = readPositiveInteger(comment.id);
         if (commentId === null) return null;
         const author = readIdentityName(comment.author, bounds);
-        const content = projectCommentBody(comment.content, bounds);
-        const commentType = bounded(comment.commentType, bounds.labelUtf8Bytes);
+        const content = projectCommentBody(comment.content);
+        const commentType = bounded(comment.commentType, bounds.textUtf8Bytes);
         const commentTruncated = content.truncated || (author?.truncated ?? false);
         return {
           row: Object.freeze({

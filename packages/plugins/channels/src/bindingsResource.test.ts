@@ -89,7 +89,6 @@ function bindingRecord(input: Readonly<{
         : {
           kind: 'automation',
           automationId: targetId,
-          templateVersion: 7,
           policy: { resultDelivery: 'finalResult' },
         },
       allowedPrincipalIds: ['principal-sensitive'],

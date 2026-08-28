@@ -38,15 +38,10 @@ const LANE_ORDER: readonly AzureInvolvementLaneId[] = ['authored', 'reviewer'];
  */
 export function createAzureScanFrontier(input: Readonly<{
   scanLimit: number;
-  nativePageSize: number;
 }>): AzureScanFrontier {
   const scanLimit = Math.max(1, Math.floor(input.scanLimit));
-  // One fixed native page geometry for the whole invocation. Shrinking `$top` mid-walk
-  // corrupts the provider offset the walk already committed to.
-  const nativePageSize = Math.min(Math.max(1, Math.floor(input.nativePageSize)), scanLimit);
   return {
     scanLimit,
-    nativePageSize,
     projectId: null,
     projectNextToken: null,
     lastCompletedRepositoryId: null,
@@ -79,9 +74,9 @@ export function recordAzureWalkHealth(
   ));
 }
 
-/** True when a whole further native page still fits the remaining projection budget. */
+/** True while the caller's projection budget has room for another provider row. */
 export function azurePageFitsBudget(frontier: AzureScanFrontier): boolean {
-  return frontier.observed + frontier.nativePageSize <= frontier.scanLimit;
+  return frontier.observed < frontier.scanLimit;
 }
 
 /**

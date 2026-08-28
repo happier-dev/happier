@@ -148,6 +148,8 @@ describe('startEntrySession', () => {
         const leakingSpawn = {
             ...TESTKIT_SPAWN_REQUEST,
             title: 'Replace the duplicated normalizer',
+            initialMessage: 'legacy input',
+            initialInput: { text: 'competing input' },
             agentSessionStartupInstructionsV1: { instructions: 'review it', v: 1, id: 'i', revision: 1 },
             checkoutCreationDraft: { kind: 'git_worktree', displayName: 'pr-17', baseRef: null },
         } as unknown as typeof TESTKIT_SPAWN_REQUEST;
@@ -167,6 +169,8 @@ describe('startEntrySession', () => {
         const spawn = invoker.callsFor('session.spawn_new')[0]?.input ?? {};
         for (const member of [
             'title',
+            'initialMessage',
+            'initialInput',
             'agentSessionStartupInstructionsV1',
             'checkoutCreationDraft',
         ]) {
@@ -175,27 +179,14 @@ describe('startEntrySession', () => {
     });
 
     /**
-     * `PLAN.md` §0a A4 narrowed the blanket prohibition: `initialMessage` is
-     * admissible, and its one admitted producer is the body resolved from the
-     * pressed action's own Prompt Library invocation. The invariant the blanket
-     * prohibition protected is unchanged and now stated positively — **Triage
-     * never stringifies provider prose into a prompt** — and it is enforced by
-     * this module never composing one, plus the wire's closed spawn shape
-     * (`actions/entrySessionProtocol.ts`) refusing a caller-supplied one.
-     *
-     * So the structural fact this pins is the narrow one: the stripper no
-     * longer deletes a resolved prompt body on its way to the creator, which is
-     * what would silently drop the instruction a configured action exists to
-     * send.
+     * The start owner, not its callers, constructs canonical `initialInput`
+     * from the resolved Prompt Library body and structured entry attachment.
+     * Legacy `initialMessage`, caller-supplied `initialInput`, and provider
+     * prose remain prohibited at the spawn request boundary.
      */
-    it('carries a resolved prompt body through to the creation call unchanged', async () => {
+    it('admits the resolved prompt and attachment atomically through initialInput only', async () => {
         const fixture = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
-        const withPrompt = {
-            ...TESTKIT_SPAWN_REQUEST,
-            initialMessage: 'Summarize what changed and propose the smallest fix.',
-        } as unknown as typeof TESTKIT_SPAWN_REQUEST;
-
         await startEntrySession(deps(fixture, invoker), {
             entryRef: testkitEntryRef(),
             display: TESTKIT_LINK_DISPLAY,
@@ -203,14 +194,19 @@ describe('startEntrySession', () => {
             destination: {
                 kind: 'new',
                 creationKey: 'creation-key-a',
-                spawn: withPrompt,
+                spawn: TESTKIT_SPAWN_REQUEST,
                 materialization: { kind: 'referenceOnly', directory: '/projects/example' },
             },
+            delivery: TESTKIT_DELIVERY_REQUEST,
         });
 
         expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
-            initialMessage: 'Summarize what changed and propose the smallest fix.',
+            initialInput: {
+                text: 'Repair the failing parser test.',
+                attachments: [expect.objectContaining({ attachmentLocalId: 'entry' })],
+            },
         });
+        expect(invoker.callsFor('session.message.send')).toHaveLength(0);
     });
 
     it('links and opens an existing Session for a reference-only action without materializing anything', async () => {
@@ -570,6 +566,60 @@ describe('startEntrySession', () => {
         expect(spawnCalls[1]?.input).toEqual(spawnCalls[0]?.input);
     });
 
+    it('retries an uncertain prepared-workspace spawn with the same key and input without preparing or sending again', async () => {
+        const fixture = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const invoker = createTestkitActionInvoker({
+            spawn: [
+                { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' },
+                spawnSuccess({
+                    disposition: 'rejoined',
+                    initialInput: { status: 'alreadyAccepted', localId: 'pending-a' },
+                }),
+            ],
+        });
+        const source = createTestkitPrepareReviewWorkspace({ results: [PREPARED_RESULT] });
+        const start = await startEntrySession(deps(fixture, invoker, source), {
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            workspaceMode: 'pull_request',
+            destination: {
+                kind: 'new',
+                creationKey: 'creation-key-a',
+                spawn: TESTKIT_SPAWN_REQUEST,
+                materialization: REVIEW_WORKSPACE,
+            },
+            delivery: TESTKIT_DELIVERY_REQUEST,
+        });
+        expect(start).toMatchObject({ type: 'creationPending', workspace: PREPARED_FACTS });
+        if (start.type !== 'creationPending') throw new Error('expected pending creation');
+
+        const resumed = await resumeEntrySessionStart(deps(fixture, invoker, source), {
+            entryRef,
+            display: TESTKIT_LINK_DISPLAY,
+            pending: {
+                type: 'creationPending',
+                creationKey: start.creationKey,
+                spawn: TESTKIT_SPAWN_REQUEST,
+                directory: PREPARED_FACTS.directory,
+                workspace: start.workspace,
+            },
+            delivery: TESTKIT_DELIVERY_REQUEST,
+        });
+
+        expect(resumed).toMatchObject({
+            type: 'opened',
+            disposition: 'rejoined',
+            delivery: 'alreadyAccepted',
+            workspace: PREPARED_FACTS,
+        });
+        expect(source.calls).toHaveLength(1);
+        const spawns = invoker.callsFor('session.spawn_new');
+        expect(spawns).toHaveLength(2);
+        expect(spawns[1]?.input).toEqual(spawns[0]?.input);
+        expect(invoker.callsFor('session.message.send')).toHaveLength(0);
+    });
+
     it('treats a creation conflict as terminal without fabricating a Session id', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
@@ -607,10 +657,12 @@ describe('startEntrySession', () => {
      *
      * This case fails if the send moves back after the open, or disappears.
      */
-    it('delivers the structured input after the link and BEFORE the open', async () => {
+    it('admits structured input with spawn before the runtime can start and never sends it again', async () => {
         const fixture = createTestkitCorpusCollections();
         const entryRef = testkitEntryRef();
-        const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
+        const invoker = createTestkitActionInvoker({
+            spawn: [spawnSuccess({ initialInput: { status: 'accepted', localId: 'pending-a' } })],
+        });
 
         const result = await startEntrySession(deps(fixture, invoker), {
             entryRef,
@@ -634,7 +686,6 @@ describe('startEntrySession', () => {
         });
         expect(invoker.calls.map((call) => call.actionId)).toEqual([
             'session.spawn_new',
-            'session.message.send',
             'session.open',
         ]);
         // The link committed before the send: a delivery into a Session this
@@ -643,25 +694,19 @@ describe('startEntrySession', () => {
         const linkTag = await deriveSessionLinkTag(fixture.collections.sessionLinks, entryRef, 'session-a');
         expect(await fixture.collections.sessionLinks.get(linkTag)).not.toBeNull();
 
-        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
-            sessionId: string;
-            message: string;
-            idempotencyKey: string;
-            attachments?: readonly Readonly<{ attachmentLocalId: string }>[];
-        }>;
-        expect(send.sessionId).toBe('session-a');
-        expect(send.message).toBe('Repair the failing parser test.');
-        // The press's own delivery identity, never the Session id: a
-        // Session-scoped key would make a second, different action's prompt a
-        // duplicate of the first and dedupe it away.
-        expect(send.idempotencyKey).toBe('delivery-key-a');
-        expect(send.idempotencyKey).not.toBe('session-a');
+        const initialInput = (invoker.callsFor('session.spawn_new')[0]?.input as Readonly<{
+            initialInput?: Readonly<{
+                text: string;
+                attachments?: readonly Readonly<{ attachmentLocalId: string }>[];
+            }>;
+        }>).initialInput;
         // The prompt never travels alone. Entry context rides the declared
         // attachment, whose `resolveForDispatch` reads authoritative facts at
         // dispatch rather than any prose this start embedded.
-        expect(send.attachments).toHaveLength(1);
-        expect(send.attachments?.[0]?.attachmentLocalId).toBe('entry');
-        expect(send.message).not.toContain('example/repository');
+        expect(initialInput?.text).toBe('Repair the failing parser test.');
+        expect(initialInput?.attachments).toHaveLength(1);
+        expect(initialInput?.attachments?.[0]?.attachmentLocalId).toBe('entry');
+        expect(initialInput?.text).not.toContain('example/repository');
     });
 
     it('delivers every selected entry when one bulk unit asks for one Session', async () => {
@@ -691,11 +736,13 @@ describe('startEntrySession', () => {
             } as never,
         });
 
-        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
-            attachments?: readonly Readonly<{
-                value?: Readonly<{ value?: Readonly<{ entryRef?: unknown }> }>;
-            }>[];
-        }>;
+        const send = (invoker.callsFor('session.spawn_new')[0]?.input as Readonly<{
+            initialInput?: Readonly<{
+                attachments?: readonly Readonly<{
+                    value?: Readonly<{ value?: Readonly<{ entryRef?: unknown }> }>;
+                }>[];
+            }>;
+        }>).initialInput!;
         expect(send.attachments).toHaveLength(2);
         expect(send.attachments?.map((attachment) => attachment.value?.value?.entryRef)).toEqual([
             entryRef,
@@ -712,8 +759,9 @@ describe('startEntrySession', () => {
     it('reports a refused delivery as refused and an unanswered one as unknown', async () => {
         const refusedFixture = createTestkitCorpusCollections();
         const refused = createTestkitActionInvoker({
-            spawn: [spawnSuccess()],
-            send: [{ status: 'rejected', code: 'session_input_archived' }],
+            spawn: [spawnSuccess({
+                initialInput: { status: 'rejected', code: 'session_input_archived' },
+            })],
         });
         const refusedResult = await startEntrySession(deps(refusedFixture, refused), {
             entryRef: testkitEntryRef(),
@@ -733,8 +781,9 @@ describe('startEntrySession', () => {
 
         const unknownFixture = createTestkitCorpusCollections();
         const unanswered = createTestkitActionInvoker({
-            spawn: [spawnSuccess()],
-            sendThrows: true,
+            spawn: [spawnSuccess({
+                initialInput: { status: 'outcomeUnknown', localId: 'pending-a', code: 'timeout' },
+            })],
         });
         const unknownResult = await startEntrySession(deps(unknownFixture, unanswered), {
             entryRef: testkitEntryRef(),
@@ -751,6 +800,7 @@ describe('startEntrySession', () => {
         expect(unknownResult).toMatchObject({ type: 'opened', delivery: 'outcomeUnknown' });
         // A send that never answered still opens the Session it created.
         expect(unanswered.callsFor('session.open')).toHaveLength(1);
+        expect(unanswered.callsFor('session.message.send')).toHaveLength(0);
 
         const silentFixture = createTestkitCorpusCollections();
         const silent = createTestkitActionInvoker({ spawn: [spawnSuccess()] });

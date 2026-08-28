@@ -60,7 +60,7 @@ import {
   ConversationBindingReadResultV1Schema,
   ConversationBindingResolveInputV1Schema,
   ConversationBindingResolveResultV1Schema,
-  ConversationBindingTargetMutationV1Schema,
+  ConversationBindingTargetV1Schema,
   ConversationBindingUpdateInputV1Schema,
   ConversationConnectionCreateResultV1Schema,
   isConversationConnectionSelectableTransportV1,
@@ -85,7 +85,7 @@ import {
   MAX_CONVERSATION_INBOUND_DEBOUNCE_MS,
   MAX_CONVERSATION_OBSERVATION_AGE_MS,
   MIN_CONVERSATION_OBSERVATION_AGE_MS,
-  type ConversationBindingTargetMutationV1,
+  type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationConnectionCreateInputV1,
   type ConversationPairingResourceV1,
@@ -378,7 +378,7 @@ type BindingPolicyInput = Readonly<{
   bindingId: string;
   expectedRevision: number;
   /** Session only: the one target arm an unreachable machine can still decide. */
-  target?: ConversationBindingTargetMutationV1;
+  target?: ConversationBindingTargetV1;
   /** Senders withdrawn from the retained audience; admitting one stays online-only. */
   revokedPrincipalIds?: readonly string[];
   allowBotSenders: boolean;
@@ -821,6 +821,21 @@ function parseSessionConversationAttention(
     const bindingId = candidate.bindingId;
     const reason = candidate.reason;
     if (!isNonEmptyString(bindingId) || !isConversationSessionBindingAttentionReason(reason)) continue;
+    if (reason === 'transcriptHistoryGap') {
+      if (!Number.isSafeInteger(candidate.bindingRevision)
+        || typeof candidate.bindingRevision !== 'number'
+        || candidate.bindingRevision < 1
+        || !Number.isSafeInteger(candidate.frontierRevision)
+        || typeof candidate.frontierRevision !== 'number'
+        || candidate.frontierRevision < 1) continue;
+      entries.push({
+        bindingId,
+        reason,
+        bindingRevision: candidate.bindingRevision,
+        frontierRevision: candidate.frontierRevision,
+      });
+      continue;
+    }
     entries.push({ bindingId, reason });
   }
   return entries;
@@ -2388,6 +2403,7 @@ function BindingRow(props: Readonly<{
           testID={`channels-provider-brand-binding-${binding.bindingId}`}
         />
       )}
+      accessoryOutsidePressable
       accessory={(
         <Stack gap="small">
           {props.onEdit === undefined || binding.deletionState !== 'none' ? null : (
@@ -2557,14 +2573,12 @@ type BindingCreateTarget =
   | Readonly<{
     kind: 'automation';
     automationId: string;
-    expectedTemplateVersion: number;
     label: string;
     execution: BindingCreateAutomationExecution;
   }>;
 type BindingCreateSessionCandidate = Readonly<{ id: string; label: string }>;
 type BindingCreateAutomationCandidate = Readonly<{
   automationId: string;
-  templateVersion: number;
   label: string;
   execution: BindingCreateAutomationExecution;
 }>;
@@ -2593,6 +2607,14 @@ type BindingCreateFeedback =
   | 'createUnavailable'
   | 'pairingUnavailable'
   | 'created';
+
+function bindingTargetVerificationFeedback(
+  reason: string,
+): 'targetNotVerified' | 'targetResultDeliveryUnavailable' {
+  return reason === 'resultDeliveryUnsupported'
+    ? 'targetResultDeliveryUnavailable'
+    : 'targetNotVerified';
+}
 
 type BindingEditorDetail = Extract<
   ReturnType<typeof ConversationBindingReadResultV1Schema.parse>,
@@ -2647,7 +2669,6 @@ type BindingEditorSessionTarget = Readonly<{
 type BindingEditorAutomationTarget = Readonly<{
   kind: 'automation';
   automationId: string;
-  expectedTemplateVersion: number;
   policy: Readonly<{ resultDelivery: 'finalResult' | 'none' }>;
 }>;
 type BindingEditorTarget = BindingEditorSessionTarget | BindingEditorAutomationTarget;
@@ -2681,7 +2702,6 @@ function bindingEditorTargetFromBinding(binding: ConversationBindingV1): Binding
   return {
     kind: 'automation',
     automationId: binding.target.automationId,
-    expectedTemplateVersion: binding.target.templateVersion,
     policy: binding.target.policy,
   };
 }
@@ -3021,7 +3041,6 @@ function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomati
   for (const entry of value.items) {
     if (!isRecord(entry)
       || !isNonEmptyString(entry.automationId)
-      || !isNonNegativeSafeInteger(entry.templateVersion)
       || !isNonEmptyString(entry.label)
       || seen.has(entry.automationId)) {
       continue;
@@ -3033,7 +3052,6 @@ function parseBindingCreateAutomationPage(value: unknown): BindingCreateAutomati
     seen.add(entry.automationId);
     candidates.push({
       automationId: entry.automationId,
-      templateVersion: entry.templateVersion,
       label: entry.label,
       execution,
     });
@@ -3253,7 +3271,13 @@ function BindingCreatePairingHandoff(props: Readonly<{
   const finalizeAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingFinalize);
   const cancelAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCancel);
   const [feedback, setFeedback] = React.useState<
-    'completed' | 'targetNotVerified' | 'expired' | 'restarted' | 'unavailable' | undefined
+    | 'completed'
+    | 'targetNotVerified'
+    | 'targetResultDeliveryUnavailable'
+    | 'expired'
+    | 'restarted'
+    | 'unavailable'
+    | undefined
   >();
   const mountedRef = React.useRef(true);
   const parsedResource = React.useMemo(
@@ -3338,7 +3362,7 @@ function BindingCreatePairingHandoff(props: Readonly<{
       return;
     }
     if (result.data.kind === 'notVerified') {
-      setFeedback('targetNotVerified');
+      setFeedback(bindingTargetVerificationFeedback(result.data.reason));
       return;
     }
     setFeedback(result.data.kind === 'expired'
@@ -3453,14 +3477,24 @@ function BindingCreatePairingHandoff(props: Readonly<{
   ) : (
     <Banner
       tone="warning"
-      title={feedback === 'targetNotVerified'
+      title={feedback === 'targetResultDeliveryUnavailable'
+        ? props.t(
+          'plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle',
+          'This Automation cannot return a final result',
+        )
+        : feedback === 'targetNotVerified'
         ? props.t('plugins.channels.surface.bindingCreateTargetNotVerifiedTitle', 'The selected target is no longer available')
         : feedback === 'expired'
           ? props.t('plugins.channels.surface.bindingCreatePairingExpiredTitle', 'Pairing expired')
           : feedback === 'restarted'
             ? props.t('plugins.channels.surface.bindingCreatePairingRestartedTitle', 'Pairing restarted')
             : props.t('plugins.channels.surface.bindingCreatePairingUnavailableTitle', 'Pairing status is unavailable')}
-      description={feedback === 'targetNotVerified'
+      description={feedback === 'targetResultDeliveryUnavailable'
+        ? props.t(
+          'plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription',
+          'Choose "Do not reply" to save this binding. The Automation still runs; only the reply back to the conversation is unavailable.',
+        )
+        : feedback === 'targetNotVerified'
         ? props.t('plugins.channels.surface.bindingCreateTargetNotVerifiedDescription', 'Choose a current target before trying again.')
         : props.t(
           'plugins.channels.surface.bindingCreatePairingUnavailableDescription',
@@ -4019,7 +4053,6 @@ function BindingCreateJourney(props: Readonly<{
       return {
         kind: 'automation',
         automationId: target.automationId,
-        expectedTemplateVersion: target.expectedTemplateVersion,
         policy: { resultDelivery: automationResultDelivery },
       };
     }
@@ -4075,7 +4108,7 @@ function BindingCreateJourney(props: Readonly<{
     } else if (result.data.kind === 'stale') {
       setFeedback('resolverStale');
     } else if (result.data.kind === 'notVerified') {
-      setFeedback('targetNotVerified');
+      setFeedback(bindingTargetVerificationFeedback(result.data.reason));
     } else {
       // The Resource remains the only bindings-list projection owner.
       setFeedback('created');
@@ -4131,7 +4164,17 @@ function BindingCreateJourney(props: Readonly<{
       return;
     }
     const result = ConversationPairingCreateResultV1Schema.safeParse(settled.result);
-    if (!result.success || result.data.kind !== 'created') {
+    if (!result.success) {
+      setPairingCreateRequest(undefined);
+      setFeedback('targetNotVerified');
+      return;
+    }
+    if (result.data.kind === 'notVerified') {
+      setPairingCreateRequest(undefined);
+      setFeedback(bindingTargetVerificationFeedback(result.data.reason));
+      return;
+    }
+    if (result.data.kind !== 'created') {
       setPairingCreateRequest(undefined);
       setFeedback('targetNotVerified');
       return;
@@ -4201,7 +4244,7 @@ function BindingCreateJourney(props: Readonly<{
       targetResultDeliveryUnavailable: [
         props.t(
           'plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle',
-          'Returning the Automation result is not available on an end-to-end encrypted Account yet',
+          'This Automation cannot return a final result',
         ),
         props.t(
           'plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription',
@@ -4441,7 +4484,6 @@ function BindingCreateJourney(props: Readonly<{
                       setTarget({
                         kind: 'automation',
                         automationId: candidate.automationId,
-                        expectedTemplateVersion: candidate.templateVersion,
                         label: candidate.label,
                         execution: candidate.execution,
                       });
@@ -5420,7 +5462,7 @@ function BindingEditJourney(props: Readonly<{
         return;
       }
       if (result.data.kind === 'notVerified') {
-        setFeedback('targetNotVerified');
+        setFeedback(bindingTargetVerificationFeedback(result.data.reason));
         return;
       }
       if (result.data.kind === 'unavailable') {
@@ -5530,7 +5572,7 @@ function BindingEditJourney(props: Readonly<{
       targetResultDeliveryUnavailable: [
         props.t(
           'plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle',
-          'Returning the Automation result is not available on an end-to-end encrypted Account yet',
+          'This Automation cannot return a final result',
         ),
         props.t(
           'plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription',
@@ -5891,7 +5933,6 @@ function BindingEditJourney(props: Readonly<{
                   target: {
                     kind: 'automation',
                     automationId: candidate.automationId,
-                    expectedTemplateVersion: candidate.templateVersion,
                     policy: current.target.kind === 'automation'
                       ? current.target.policy
                       : { resultDelivery: 'none' },
@@ -6581,9 +6622,9 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
     // The protocol parser is the authority for the drafted target, exactly as
     // it is for the daemon-backed editor. A draft this surface cannot admit is
     // reported rather than silently dropped from the write.
-    let target: ConversationBindingTargetMutationV1 | undefined;
+    let target: ConversationBindingTargetV1 | undefined;
     if (draft.targetChanged && draft.target.kind === 'session') {
-      const parsed = ConversationBindingTargetMutationV1Schema.safeParse(draft.target);
+      const parsed = ConversationBindingTargetV1Schema.safeParse(draft.target);
       if (!parsed.success) {
         setFeedback('saveUnavailable');
         return;
@@ -6805,7 +6846,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
         A Session target is decided entirely from the Account, so the offline
         editor offers the same control set the daemon-backed editor does. An
         Automation target is intentionally absent here: only its Automation
-        owner can verify the template a rotation would persist.
+        owner can verify current target eligibility before a rotation.
       */}
       {draft.target.kind === 'session' ? (
         <BindingSessionTargetPolicyControls
@@ -6826,7 +6867,7 @@ function AccountLocalBindingPolicyEditor(props: Readonly<{
           )}
           description={props.t(
             'plugins.channels.surface.bindingEditAutomationTargetOfflineDescription',
-            'Only the Automation owner can confirm the current template version, so this target stays read-only until the selected machine is reachable.',
+            'Only the Automation owner can confirm current target eligibility, so this target stays read-only until the selected machine is reachable.',
           )}
         />
       )}
@@ -10301,6 +10342,11 @@ function sessionBindingAttentionTitle(
         'plugins.channels.session.attentionBindingDisabled',
         'This conversation is paused',
       );
+    case 'transcriptHistoryGap':
+      return t(
+        'plugins.channels.session.attentionTranscriptHistoryGap',
+        'This conversation needs a new transcript baseline',
+      );
   }
 }
 
@@ -10343,6 +10389,60 @@ function SessionConversationsRecoveryAction(props: Readonly<{
   );
 }
 
+function SessionProjectionGapRecoveryAction(props: Readonly<{
+  attention: ConversationSessionBindingAttentionV1;
+  onRefresh: () => void;
+  t: Translate;
+}>): React.ReactElement {
+  const action = useExecutePluginAction(
+    CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept,
+  );
+  const busy = action.execution.status === 'pending';
+  const accept = React.useCallback(async () => {
+    if (props.attention.reason !== 'transcriptHistoryGap'
+      || props.attention.bindingRevision === undefined
+      || props.attention.frontierRevision === undefined
+      || busy) return;
+    const settled = await action.execute({
+      bindingId: props.attention.bindingId,
+      expectedBindingRevision: props.attention.bindingRevision,
+      expectedFrontierRevision: props.attention.frontierRevision,
+    });
+    if (settled.status === 'success') props.onRefresh();
+  }, [action, busy, props]);
+  return (
+    <Stack gap="small">
+      <Button
+        testID={`channels-session-transcript-baseline-accept:${props.attention.bindingId}`}
+        title={busy
+          ? props.t('plugins.channels.session.transcriptBaselineAccepting', 'Accepting baseline…')
+          : props.t('plugins.channels.session.transcriptBaselineAccept', 'Continue from current transcript')}
+        accessibilityLabel={props.t(
+          'plugins.channels.session.transcriptBaselineAccept',
+          'Continue from current transcript',
+        )}
+        busy={busy}
+        disabled={busy || action.execution.status === 'outcomeUnknown'}
+        onPress={() => { void accept(); }}
+      />
+      {action.execution.status === 'error' || action.execution.status === 'outcomeUnknown' ? (
+        <Banner
+          tone="warning"
+          title={props.t(
+            'plugins.channels.session.transcriptBaselineUnconfirmed',
+            'Could not confirm the new transcript baseline',
+          )}
+          description={props.t(
+            'plugins.channels.session.transcriptBaselineUnconfirmedDescription',
+            'Refresh this conversation before trying again.',
+          )}
+          action={<Action.Refresh title={props.t('plugins.channels.surface.refresh', 'Refresh')} onRefresh={props.onRefresh} />}
+        />
+      ) : null}
+    </Stack>
+  );
+}
+
 /**
  * The Session destination: a read-only list of the external conversations bound
  * to THIS Session.
@@ -10379,7 +10479,7 @@ function SessionConversationsSurface(props: Readonly<{
     t,
   ), [parsed, parsedConnections, t]);
   const attentionByBindingId = React.useMemo(() => new Map(
-    (sessionConversations?.attention ?? []).map((entry) => [entry.bindingId, entry.reason] as const),
+    (sessionConversations?.attention ?? []).map((entry) => [entry.bindingId, entry] as const),
   ), [sessionConversations]);
 
   if (parsed === undefined && resource.pending === 'initial') {
@@ -10424,18 +10524,22 @@ function SessionConversationsSurface(props: Readonly<{
             style={{ paddingHorizontal: theme.spacing.large, paddingVertical: theme.spacing.small }}
           >
             {(() => {
-              const reason = attentionByBindingId.get(presentation.binding.bindingId);
-              return reason === undefined ? null : (
+              const attention = attentionByBindingId.get(presentation.binding.bindingId);
+              return attention === undefined ? null : (
                 <Stack gap="small" testID={`channels-session-conversation-attention:${presentation.binding.bindingId}`}>
                   <Banner
                     tone="danger"
-                    title={sessionBindingAttentionTitle(reason, t)}
+                    title={sessionBindingAttentionTitle(attention.reason, t)}
                     description={t(
                       'plugins.channels.session.attentionDescription',
                       'Messages for this conversation will not be delivered until it is repaired in conversation settings.',
                     )}
                   />
-                  <SessionConversationsRecoveryAction t={t} />
+                  {attention.reason === 'transcriptHistoryGap' ? (
+                    <SessionProjectionGapRecoveryAction attention={attention} onRefresh={refresh} t={t} />
+                  ) : (
+                    <SessionConversationsRecoveryAction t={t} />
+                  )}
                 </Stack>
               );
             })()}

@@ -1,8 +1,3 @@
-import {
-  truncateTriageUtf8V1,
-  type TriageBoundedTextV1,
-} from '@happier-dev/triage-protocol/v1';
-
 import { isAzureGuid } from './identity.js';
 import type {
   AzureCompletionOptionsRow,
@@ -32,16 +27,6 @@ const MERGE_STATUSES: readonly AzurePullRequestMergeStatus[] = [
   'rejectedByPolicy',
   'failure',
 ];
-
-/**
- * The published UTF-8-safe truncation, under this source's own name.
- *
- * The rule belongs to `@happier-dev/triage-protocol` because every value it bounds is
- * measured against that package's own limits; a local reimplementation would be a second
- * decision-maker for one rule.
- */
-export const truncateUtf8: (value: string, maxUtf8Bytes: number) => TriageBoundedTextV1 =
-  truncateTriageUtf8V1;
 
 export function readRecord(raw: unknown): Readonly<Record<string, unknown>> | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;

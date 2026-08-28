@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -201,22 +198,4 @@ export function verifyCodexActiveProviderAccount(params: Readonly<{
     retryable: true,
     reason: 'active_account_probe_missing_account_id',
   };
-}
-
-export async function readCodexAuthStoreProviderAccountId(
-  codexHome: string,
-): Promise<CodexAuthStoreProviderAccountIdProof> {
-  const normalizedCodexHome = codexHome.trim();
-  if (!normalizedCodexHome) return { status: 'missing' };
-  let raw: string;
-  try {
-    raw = await readFile(join(normalizedCodexHome, 'auth.json'), 'utf8');
-  } catch {
-    return { status: 'missing' };
-  }
-  try {
-    return readCodexAuthStoreProviderAccountIdFromJson(JSON.parse(raw));
-  } catch {
-    return { status: 'missing' };
-  }
 }

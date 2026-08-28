@@ -70,14 +70,16 @@ describe('Codex external-session candidate helpers', () => {
     const cursor = encodeCodexExternalSessionIndexCursor({
       ...createInitialCodexExternalSessionIndexCursor(),
       rolloutOffset: 42,
+      suppressedRolloutIds: ['native-owned-rollout-twin'],
       active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
       archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
     });
 
     expect(decodeCodexExternalSessionIndexCursor(cursor)).toEqual({
-      v: 5,
+      v: 6,
       kind: 'codexMergedCandidatePage',
       rolloutOffset: 42,
+      suppressedRolloutIds: ['native-owned-rollout-twin'],
       active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
       archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
     });

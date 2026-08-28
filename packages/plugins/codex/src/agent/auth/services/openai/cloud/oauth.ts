@@ -1,4 +1,4 @@
-import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '../../../../../connectedAccounts/openAiCodexProfile.js';
 
 export function buildCodexAuthorizationUrl(params: Readonly<{
   redirectUri: string;

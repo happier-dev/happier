@@ -1,5 +1,4 @@
 export * from './apiKey.js';
-export * from './cliAuth.js';
 export * from './native/index.js';
 export * from './quota/subscriptionFetcher.js';
 export * from './quota/userAgent.js';

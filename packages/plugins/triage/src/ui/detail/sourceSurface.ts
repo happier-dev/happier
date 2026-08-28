@@ -17,6 +17,7 @@ import {
   TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1,
   admitTriageSourceDescriptorV1,
   type TriageEntryRefV1,
+  type TriageSourceDescriptorV1,
   type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -86,6 +87,24 @@ function findTriageSourceContributionV1(
   return selectTargetedContribution(targetedContributions, triageSourceSelectorV1(source));
 }
 
+/**
+ * The source descriptor from this mount's exact host-stamped snapshot.
+ *
+ * Descriptor presentation and operation/surface availability are one admitted
+ * fact. Routing the descriptor through an own Action would take a second
+ * daemon snapshot with a different generation and would also make otherwise
+ * durable detail reads depend on a reachable daemon.
+ */
+export function resolveTriageSourceDescriptorV1(
+  targetedContributions: PluginUiTargetedContributionsV1,
+  source: TriageEntryRefV1['source'],
+): TriageSourceDescriptorV1 | null {
+  const contribution = findTriageSourceContributionV1(targetedContributions, source);
+  if (contribution === undefined) return null;
+  const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
+  return admitted.ok ? admitted.descriptor : null;
+}
+
 export function resolveTriageSourceDetailContributionV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   source: TriageEntryRefV1['source'],
@@ -136,11 +155,8 @@ export function resolveTriageSourceWorkflowSubjectV1(
   targetedContributions: PluginUiTargetedContributionsV1,
   entryRef: TriageEntryRefV1,
 ): TriageSourceWorkflowSubjectV1 | null {
-  const contribution = findTriageSourceContributionV1(targetedContributions, entryRef.source);
-  if (contribution === undefined) return null;
-  const admitted = admitTriageSourceDescriptorV1(contribution.descriptor);
-  if (!admitted.ok) return null;
-  return admitted.descriptor.kinds.find((kind) => kind.id === entryRef.kindId)?.workflowSubject ?? null;
+  return resolveTriageSourceDescriptorV1(targetedContributions, entryRef.source)
+    ?.kinds.find((kind) => kind.id === entryRef.kindId)?.workflowSubject ?? null;
 }
 
 /** The same lookup, read from the mount's own host-stamped surface context. */
@@ -149,6 +165,14 @@ export function readTriageSourceDetailContributionV1(
   source: TriageEntryRefV1['source'],
 ): TriageSourceDetailContributionLookupV1 {
   return resolveTriageSourceDetailContributionV1(context.targetedContributions, source);
+}
+
+/** The descriptor from this mounted surface's one exact snapshot. */
+export function readTriageSourceDescriptorV1(
+  context: SurfaceContext,
+  source: TriageEntryRefV1['source'],
+): TriageSourceDescriptorV1 | null {
+  return resolveTriageSourceDescriptorV1(context.targetedContributions, source);
 }
 
 /** The same capability, read from the mount's own host-stamped surface context. */

@@ -25,14 +25,16 @@ type TriagePostMutationHostV1 = Readonly<{
  * Source renderers signal only that a potentially changing Action settled. This target callback
  * invokes the exact configured-source `get` Action and feeds its qualified answer through the
  * canonical aggregate fold. It returns one row which the parent supplies to both its common header
- * and its targeted child; no provider result or source-local fold participates.
+ * and its targeted child; no provider result or source-local fold participates. The mounted detail
+ * must supply its lifetime signal so leaving or replacing that detail cancels the exact read and
+ * makes a late answer inert.
  */
 export async function reobserveTriagePostMutationRow(
   host: TriagePostMutationHostV1,
   row: TriageListRowV1,
   lanes: readonly TriageListLaneV1[],
   sourceInstanceId: string,
-  options?: PluginCancellationOptions,
+  options: PluginCancellationOptions,
 ): Promise<TriageListRowV1 | null> {
   const prior = row.observations.find(
     (observation) => observation.sourceInstanceId === sourceInstanceId,

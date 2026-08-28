@@ -21,7 +21,6 @@ export type PosthogOccurrenceRowV1 = Readonly<{
     headline: string;
     /** The page the exception was thrown on, when the sample named one. */
     detail: string | null;
-    truncated: boolean;
 }>;
 
 export type PosthogStackFrameRowV1 = Readonly<{
@@ -37,7 +36,6 @@ export type PosthogStackTraceV1 = Readonly<{
     frames: readonly PosthogStackFrameRowV1[];
     appFrameCount: number;
     otherFrameCount: number;
-    truncated: boolean;
 }>;
 
 export type PosthogAffectedSessionRowV1 = Readonly<{
@@ -71,7 +69,6 @@ export function posthogOccurrenceRows(
         atMs: event.timestampMs ?? null,
         headline: exceptionLabel(event) ?? NO_EXCEPTION_LABEL,
         detail: event.url ?? null,
-        truncated: event.truncated === true,
     }));
 }
 
@@ -98,7 +95,6 @@ export function posthogStackTrace(
             frames: [],
             appFrameCount: 0,
             otherFrameCount: 0,
-            truncated: false,
         };
     }
     const frames: PosthogStackFrameRowV1[] = [];
@@ -122,7 +118,6 @@ export function posthogStackTrace(
         frames,
         appFrameCount,
         otherFrameCount: frames.length - appFrameCount,
-        truncated: event.truncated === true,
     };
 }
 

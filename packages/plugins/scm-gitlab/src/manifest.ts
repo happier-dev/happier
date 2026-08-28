@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID, gitlabHostingProviderAdapter } from './adapter.js';
+import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
 import { GITLAB_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
 import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 
@@ -40,6 +41,7 @@ import {
   listGitlabDiscussions,
   listGitlabNotes,
   listGitlabPipelines,
+  readGitlabRawDiff,
   readGitlabApprovals,
 } from './triage/detailOperations.js';
 import {
@@ -47,6 +49,7 @@ import {
   listGitlabInstancesAction,
   prepareGitlabReviewWorkspaceAction,
   scanGitlabSourceAction,
+  verifyGitlabReviewWorkspaceAction,
 } from './triage/operations.js';
 import {
   assignGitlabIssue,
@@ -56,6 +59,10 @@ import {
   closeGitlabMergeRequest,
   markGitlabMergeRequestReady,
   mergeGitlabMergeRequest,
+  publishGitlabIssueComment,
+  publishGitlabMergeRequestReview,
+  publishGitlabMergeRequestReviewComment,
+  publishGitlabMergeRequestThreadReply,
   reopenGitlabIssue,
   reopenGitlabMergeRequest,
   resolveGitlabMergeRequestDiscussion,
@@ -127,9 +134,15 @@ export const GITLAB_PLUGIN = definePlugin({
         title: 'GitLab',
         description: 'GitLab.com repositories.',
         kind: 'gitlab',
+        authService: GITLAB_CONNECTED_ACCOUNT_ID,
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
       },
-      runtime: { adapter: gitlabHostingProviderAdapter },
+      runtime: {
+        adapter: {
+          routing: gitlabHostingProviderAdapter,
+          pullRequests: gitlabCliPullRequestAdapter,
+        },
+      },
     },
   },
   systemTools: {
@@ -168,7 +181,9 @@ export const GITLAB_PLUGIN = definePlugin({
                 title: 'GitLab URL',
                 description: 'The base URL of your GitLab, for example https://gitlab.com.',
                 semantic: 'connectedAccountOrigin',
-                schema: { type: 'string', minLength: 8, maxLength: 2048 },
+                // Canonical origin parsing/admission is host-owned. Do not add
+                // a second URL length policy at the provider declaration.
+                schema: { type: 'string', minLength: 1 },
                 secret: false,
                 required: true,
               }],
@@ -196,6 +211,10 @@ export const GITLAB_PLUGIN = definePlugin({
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
       run: prepareGitlabReviewWorkspaceAction,
     },
+    [GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace),
+      run: verifyGitlabReviewWorkspaceAction,
+    },
     [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes),
       run: listGitlabNotes,
@@ -219,6 +238,10 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges),
       run: listGitlabChanges,
+    },
+    [GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff),
+      run: readGitlabRawDiff,
     },
     [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestMerge),
@@ -259,6 +282,22 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel]: {
       ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueLabel),
       run: changeGitlabIssueLabels,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
+      run: publishGitlabMergeRequestReview,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate),
+      run: publishGitlabMergeRequestReviewComment,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply),
+      run: publishGitlabMergeRequestThreadReply,
+    },
+    [GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment]: {
+      ...readGitlabActionDeclaration(GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment),
+      run: publishGitlabIssueComment,
     },
   },
   ui: {

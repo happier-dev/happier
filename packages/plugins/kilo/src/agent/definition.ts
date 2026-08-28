@@ -30,10 +30,4 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'KILO_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-  },
 });

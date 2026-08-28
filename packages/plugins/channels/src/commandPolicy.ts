@@ -116,11 +116,13 @@ export function decideConversationCommandPolicy(
   }
   if (command.kind === 'ordinaryText') return command;
   if (command.kind === 'malformedCommand') {
-    const commandEligible = command.command === 'approve' || command.command === 'answer'
+    const commandEligible = command.command === 'approve'
       ? input.approvalCommandsEnabled
-      : command.command === 'newSession'
-        ? input.targetKind === 'session' && input.newSessionEnabled
-        : false;
+      : command.command === 'answer'
+        ? input.targetKind === 'session'
+        : command.command === 'newSession'
+          ? input.targetKind === 'session' && input.newSessionEnabled
+          : false;
     return terminal(input, 'malformedCommand', commandEligible);
   }
   if (command.kind === 'pair') return terminal(input, 'commandNotAuthorized');
@@ -132,7 +134,7 @@ export function decideConversationCommandPolicy(
   if (command.kind === 'userActionAnswer') {
     // This authorizes the binding-scoped external mediator only. It does not
     // consult a permission scope because a user action creates no grant.
-    return input.approvalCommandsEnabled
+    return input.targetKind === 'session'
       ? command
       : terminal(input, 'commandNotAuthorized');
   }

@@ -3,6 +3,7 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -13,18 +14,14 @@ import {
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1 } from './continuation.js';
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   GITHUB_MAX_CHANGED_FILE_ROWS_V1,
-  GITHUB_MAX_CHECK_ROWS_V1,
-  GITHUB_MAX_COMMENT_ROWS_V1,
-  GITHUB_MAX_REVIEWER_ROWS_V1,
   GITHUB_MAX_TIMELINE_ROWS_V1,
 } from './projection.js';
 import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
 import {
-  GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1,
+  GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1,
   GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1,
   GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1,
   GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1,
@@ -65,18 +62,12 @@ const IdentifierSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.identifierUtf8Bytes,
   minLength: 1,
 });
-const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.labelUtf8Bytes,
-  minLength: 1,
-});
+const LabelSchema = defineProtocolString({ minLength: 1 });
 const TextSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.textUtf8Bytes,
   minLength: 1,
 });
-const PathSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.pathUtf8Bytes,
-  minLength: 1,
-});
+const PathSchema = defineProtocolString({ minLength: 1 });
 const LocationSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.locationUtf8Bytes,
   minLength: 1,
@@ -85,9 +76,7 @@ const LocationSchema = defineProtocolUtf8String({
  * A comment body may be empty: GitHub accepts a comment whose content is only an
  * attachment, and such a comment is still a real event in the conversation.
  */
-const CommentBodySchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITHUB_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes,
-});
+const CommentBodySchema = defineProtocolString();
 const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
 
@@ -102,8 +91,7 @@ const RoutingTokenSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 
-const ContinuationSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1,
+const ContinuationSchema = defineProtocolString({
   minLength: 1,
 });
 
@@ -256,36 +244,6 @@ export const GithubChangedFilesResultV1Schema = defineProtocolUnion([
 ]);
 export type GithubChangedFilesResultV1 = ReturnType<typeof GithubChangedFilesResultV1Schema.parse>;
 
-/* ------------------------------------------------------------------- comments */
-
-export const GithubCommentsInputV1Schema = pagedPlaneInput;
-export type GithubCommentsInputV1 = ReturnType<typeof GithubCommentsInputV1Schema.parse>;
-
-export const GithubProjectedCommentRowV1Schema = defineProtocolObject({
-  id: IdentifierSchema,
-  author: LabelSchema.optional(),
-  body: CommentBodySchema,
-  atMs: TimestampSchema.optional(),
-  editedAtMs: TimestampSchema.optional(),
-  webUrl: LocationSchema.optional(),
-  truncated: defineProtocolLiteral(true).optional(),
-}, { policy: 'closed' });
-
-export const GithubCommentsResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({
-    kind: defineProtocolLiteral('comments'),
-    rows: defineProtocolArray(GithubProjectedCommentRowV1Schema, {
-      maxItems: GITHUB_MAX_COMMENT_ROWS_V1,
-    }),
-    omittedRowCount: CountSchema,
-    projectionTruncated: GithubBooleanSchema,
-    incomplete: IncompleteReasonSchema.optional(),
-    continuation: ContinuationSchema.optional(),
-  }, { policy: 'closed' }),
-  GithubDetailUnavailableSchema,
-]);
-export type GithubCommentsResultV1 = ReturnType<typeof GithubCommentsResultV1Schema.parse>;
-
 /* ------------------------------------------------------------------- feedback */
 
 const feedbackInputBase = {
@@ -354,13 +312,21 @@ export const GithubFeedbackRequestV1Schema = defineProtocolObject({
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
+const feedbackPageEvidenceShape = {
+  omittedRowCount: CountSchema,
+  projectionTruncated: GithubBooleanSchema,
+  /** The provider cursor alone exceeded the canonical external Action envelope. */
+  incomplete: defineProtocolLiteral('continuationUnavailable').optional(),
+} as const;
+
 export const GithubFeedbackResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('comments'),
     rows: defineProtocolArray(GithubFeedbackCommentV1Schema, {
-      maxItems: GITHUB_FEEDBACK_COMMENT_PAGE_SIZE_V1,
+      maxItems: GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1,
     }),
     previousCursor: ContinuationSchema.optional(),
+    ...feedbackPageEvidenceShape,
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('threads'),
@@ -368,6 +334,7 @@ export const GithubFeedbackResultV1Schema = defineProtocolUnion([
       maxItems: GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1,
     }),
     previousCursor: ContinuationSchema.optional(),
+    ...feedbackPageEvidenceShape,
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('reviews'),
@@ -376,6 +343,7 @@ export const GithubFeedbackResultV1Schema = defineProtocolUnion([
     }),
     reviewDecision: ReviewDecisionSchema.optional(),
     previousCursor: ContinuationSchema.optional(),
+    ...feedbackPageEvidenceShape,
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('requests'),
@@ -383,6 +351,7 @@ export const GithubFeedbackResultV1Schema = defineProtocolUnion([
       maxItems: GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1,
     }),
     nextCursor: ContinuationSchema.optional(),
+    ...feedbackPageEvidenceShape,
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('threadReplies'),
@@ -391,6 +360,7 @@ export const GithubFeedbackResultV1Schema = defineProtocolUnion([
       maxItems: GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1,
     }),
     previousCursor: ContinuationSchema.optional(),
+    ...feedbackPageEvidenceShape,
   }, { policy: 'closed' }),
   GithubDetailUnavailableSchema,
 ]);
@@ -471,9 +441,7 @@ export const GithubChecksResultV1Schema = defineProtocolUnion([
     /** The commit the two reads were issued against, with no synthesis. */
     headRevision: IdentifierSchema,
     state: ChecksStateSchema,
-    rows: defineProtocolArray(GithubProjectedCheckRowV1Schema, {
-      maxItems: GITHUB_MAX_CHECK_ROWS_V1,
-    }),
+    rows: defineProtocolArray(GithubProjectedCheckRowV1Schema),
     /**
      * Counts are OMITTED, never zero, where a per-job breakdown is unavailable.
      * A rendered `0 failing` on a suite nobody could read is a fabricated fact.
@@ -534,21 +502,17 @@ export const GithubReviewsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('reviews'),
     /** Distinct authors at their newest review; never unioned with `requested`. */
-    reviewed: defineProtocolArray(GithubProjectedReviewerRowV1Schema, {
-      maxItems: GITHUB_MAX_REVIEWER_ROWS_V1,
-    }),
+    reviewed: defineProtocolArray(GithubProjectedReviewerRowV1Schema),
     /** Users AND teams whose review is still awaited. */
-    requested: defineProtocolArray(GithubProjectedReviewRequestRowV1Schema, {
-      maxItems: GITHUB_MAX_REVIEWER_ROWS_V1,
-    }),
+    requested: defineProtocolArray(GithubProjectedReviewRequestRowV1Schema),
     reviewDecision: ReviewDecisionSchema.optional(),
     /** Present when the reviews walk failed; the requests still render. */
     reviewsFailure: TriageSourceFailureV1Schema.optional(),
     /** Present when the requested-reviewers walk failed; the reviews still render. */
     requestsFailure: TriageSourceFailureV1Schema.optional(),
-    /** GitHub still advertised another reviews page at its 1,000-row result ceiling. */
+    /** The submitted-review walk ended before GitHub's collection ended. */
     reviewsIncomplete: defineProtocolLiteral(true).optional(),
-    /** GitHub still advertised another requested-reviewers page at that same ceiling. */
+    /** The requested-reviewer walk ended before GitHub's collection ended. */
     requestsIncomplete: defineProtocolLiteral(true).optional(),
     omittedRowCount: CountSchema,
     projectionTruncated: GithubBooleanSchema,

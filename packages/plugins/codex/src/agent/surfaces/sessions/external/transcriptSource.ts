@@ -1094,6 +1094,7 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
   const knownNonTranscriptPositionsByStream = new Map<string, number[]>();
   const malformedSourceDiagnostics: Array<Readonly<{
     code: 'malformed_source_utf8';
+    severity: 'required';
     count: number;
     positions: readonly number[];
   }>> = [];
@@ -1116,7 +1117,10 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
       fileSystem,
     });
     throwIfCodexExternalSessionInvocationStopped(params);
-    malformedSourceDiagnostics.push(...(page.diagnostics ?? []));
+    malformedSourceDiagnostics.push(...(page.diagnostics ?? []).map((diagnostic) => ({
+      ...diagnostic,
+      severity: 'required' as const,
+    })));
     if (!page.reachedEnd || page.truncated) truncated = true;
     let projectedCount = 0;
     const streamKnownNonTranscriptPositions: number[] = [];
@@ -1274,6 +1278,7 @@ export async function readAfterCodexExternalSessionTranscript(params: Readonly<{
             ...malformedSourceDiagnostics,
             ...(knownNonTranscriptPositions.length > 0 ? [{
               code: 'non_transcript_record_skipped',
+              severity: 'benign' as const,
               count: knownNonTranscriptPositions.length,
               positions: knownNonTranscriptPositions.slice(0, 200),
             }] : []),

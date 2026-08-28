@@ -19,15 +19,6 @@ import { GITHUB_MAX_DETAIL_PAGE_SIZE_V1 } from './routes.js';
  * persisted, and is never a watermark.
  */
 
-/**
- * The largest continuation this source will mint or accept, in UTF-8 bytes.
- *
- * The token is two small integers and a version; the bound exists so an
- * unexpectedly long value is refused at the boundary rather than carried into
- * panel state.
- */
-export const MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1 = 256;
-
 const CONTINUATION_VERSION = 1;
 
 export type GithubDetailFrontierV1 = Readonly<{
@@ -49,14 +40,11 @@ export function encodeGithubDetailContinuation(
   frontier: GithubDetailFrontierV1,
 ): string | null {
   if (!isAdmissibleGeometry(frontier.page, frontier.perPage)) return null;
-  const token = JSON.stringify({
+  return JSON.stringify({
     v: CONTINUATION_VERSION,
     page: frontier.page,
     perPage: frontier.perPage,
   });
-  return new TextEncoder().encode(token).length > MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1
-    ? null
-    : token;
 }
 
 /**
@@ -66,9 +54,6 @@ export function encodeGithubDetailContinuation(
  * for.
  */
 export function decodeGithubDetailContinuation(token: string): GithubDetailFrontierV1 | null {
-  if (new TextEncoder().encode(token).length > MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1) {
-    return null;
-  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(token);

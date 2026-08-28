@@ -19,6 +19,7 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../displayName.js';
+import { isHostCancellation } from '../hostCancellation.js';
 import type { TriageRefreshPacingReasonV1 } from '../refresh/refreshEligibility.js';
 import { useTriageListWindow } from '../ui/window/useTriageListWindow.js';
 import { selectTriageAttachedEntries, type TriageAttachedEntryV1 } from './attachedEntries.js';
@@ -114,18 +115,31 @@ function TriagePickerRow(props: Readonly<{
     const mutate = React.useCallback(async () => {
         if (row.mutation.kind === 'unavailable' || handle === null) return;
         dispatch({ kind: 'invoked', action: 'attachment' });
-        const outcome = row.mutation.kind === 'remove'
-            ? await applyTriageEntryMutation({ handle, intent: 'remove', entryRef: row.entryRef })
-            : await applyTriageEntryMutation({
-                handle,
-                intent: 'attach',
-                entryRef: row.entryRef,
-                sourceInstance: row.mutation.sourceInstance,
-                presentation: row.mutation.presentation,
-                ...(row.mutation.lastKnownLocator === undefined
-                    ? {}
-                    : { lastKnownLocator: row.mutation.lastKnownLocator }),
-            });
+        let outcome: Awaited<ReturnType<typeof applyTriageEntryMutation>>;
+        try {
+            outcome = row.mutation.kind === 'remove'
+                ? await applyTriageEntryMutation({ handle, intent: 'remove', entryRef: row.entryRef })
+                : await applyTriageEntryMutation({
+                    handle,
+                    intent: 'attach',
+                    entryRef: row.entryRef,
+                    sourceInstance: row.mutation.sourceInstance,
+                    presentation: row.mutation.presentation,
+                    ...(row.mutation.lastKnownLocator === undefined
+                        ? {}
+                        : { lastKnownLocator: row.mutation.lastKnownLocator }),
+                });
+        } catch (error) {
+            // Cancellation states no outcome about the draft. Return this
+            // control to idle/focused so it can be retried; the canonical
+            // snapshot remains the only answer to whether anything landed.
+            if (isHostCancellation(error, undefined)) {
+                dispatch({ kind: 'cancelled', action: 'attachment' });
+                await onSettled();
+                return;
+            }
+            throw error;
+        }
         if (outcome.kind === 'refused') {
             dispatch({ kind: 'failed', action: 'attachment', reason: outcome.reason });
         } else {
@@ -211,6 +225,7 @@ function TriagePickerRow(props: Readonly<{
             // always Attach/Remove then View details; RTL mirrors where the
             // line sits and nothing else.
             accessoryWraps
+            accessoryOutsidePressable
             accessory={(
                 <Row gap="small" align="center" wrap>
                     <Button

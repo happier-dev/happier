@@ -49,6 +49,8 @@ export type StubGitlabResponse = Readonly<{
   status: number;
   headers?: Readonly<Record<string, string>>;
   body?: unknown;
+  /** Exact response text for non-JSON resources such as `raw_diffs`. */
+  bodyText?: string;
 }>;
 
 /**
@@ -139,7 +141,9 @@ export function createStubGitlabTransport(input: Readonly<{
         status: response.status,
         finalUrl: recorded.url,
         headers: Object.freeze({ ...(response.headers ?? {}) }),
-        body: new TextEncoder().encode(JSON.stringify(response.body ?? null)),
+        body: new TextEncoder().encode(
+          response.bodyText ?? JSON.stringify(response.body ?? null),
+        ),
       });
     },
   };

@@ -1,6 +1,4 @@
 import {
-  createExecutionRunHostBackendFromSessionRuntime,
-  type AgentExecutionRunOpenRequest,
   type AgentRuntime,
   type AgentRuntimeContext,
   type AgentSessionOpenRequest,
@@ -11,23 +9,18 @@ import {
 import type { ConcreteAntigravityRuntimeMode } from '../lifecycle/runtimeMode.js';
 import { createAntigravityNativeTerminalSurface } from '../terminal/nativeSurface.js';
 
-type AntigravityNativeRuntimeFactory<TContext extends AgentRuntimeContext> = (input: Readonly<{
+type AntigravityNativeRuntimeFactory = (input: Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
-  context: TContext;
+  context: AgentSessionRuntimeContext;
   connectedAccountEnv?: Readonly<Record<string, string>>;
   materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
 }>) => AgentSessionRuntime | Promise<AgentSessionRuntime>;
 
-export type AntigravityNativeSessionFactory =
-  AntigravityNativeRuntimeFactory<AgentSessionRuntimeContext>;
-
-export type AntigravityNativeExecutionRunFactory =
-  AntigravityNativeRuntimeFactory<AgentRuntimeContext>;
+export type AntigravityNativeSessionFactory = AntigravityNativeRuntimeFactory;
 
 export type CreateAntigravityNativeRuntimeOptions = Readonly<{
   openSession: AntigravityNativeSessionFactory;
-  openExecutionRun: AntigravityNativeExecutionRunFactory;
   resolveMode?: (input: Readonly<{
     request: AgentSessionOpenRequest;
     context: AgentRuntimeContext;
@@ -73,13 +66,11 @@ async function materializeAntigravityGeminiEnvironment(
   return Object.freeze(env);
 }
 
-async function openAntigravityRuntimeWithConnectedAccount<
-  TContext extends AgentRuntimeContext,
->(input: Readonly<{
+async function openAntigravityRuntimeWithConnectedAccount(input: Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
-  context: TContext;
-  openRuntime: AntigravityNativeRuntimeFactory<TContext>;
+  context: AgentSessionRuntimeContext;
+  openRuntime: AntigravityNativeRuntimeFactory;
 }>): Promise<AgentSessionRuntime> {
   let initialResyncPending = true;
   let invalidated = false;
@@ -95,6 +86,12 @@ async function openAntigravityRuntimeWithConnectedAccount<
       void disposePreparedSession?.('runtime_recovery');
     },
   );
+  let subscriptionDisposed = false;
+  const disposeSubscription = (): void => {
+    if (subscriptionDisposed) return;
+    subscriptionDisposed = true;
+    subscription.dispose();
+  };
 
   try {
     const binding = await input.context.services.connectedAccounts.getBinding(
@@ -118,15 +115,20 @@ async function openAntigravityRuntimeWithConnectedAccount<
     const dispose = async (reason?: Parameters<AgentSessionRuntime['dispose']>[0]): Promise<void> => {
       if (disposed) return;
       disposed = true;
-      subscription.dispose();
+      disposeSubscription();
       await session.dispose(reason);
     };
     disposePreparedSession = async (reason) => await dispose(reason);
     const prepared = { ...session, dispose } satisfies AgentSessionRuntime;
-    if (invalidated) void dispose('runtime_recovery');
+    if (invalidated) {
+      await dispose('runtime_recovery');
+      throw new Error(
+        'Antigravity qualified Connected Account launch was invalidated while opening the runtime.',
+      );
+    }
     return prepared;
   } catch (error) {
-    subscription.dispose();
+    disposeSubscription();
     throw error;
   }
 }
@@ -156,41 +158,9 @@ export function createAntigravityNativeRuntime(
       openRuntime: options.openSession,
     });
   };
-  const openExecutionRunRuntime = async (
-    request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
-    context: AgentRuntimeContext,
-  ): Promise<AgentSessionRuntime> => {
-    const sessionRequest: AgentSessionOpenRequest = {
-      kind: 'create',
-      sessionId: request.runId,
-      cwd: request.cwd,
-      ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-    };
-    const mode = await (
-      options.resolveMode?.({ request: sessionRequest, context })
-      ?? readRequestedMode(sessionRequest)
-    );
-    return await openAntigravityRuntimeWithConnectedAccount({
-      mode,
-      request: sessionRequest,
-      context,
-      openRuntime: options.openExecutionRun,
-    });
-  };
 
   return {
     sessions: { open: openSession },
-    executionRuns: {
-      async open(request, context) {
-        if (request.kind !== 'create') {
-          throw new Error(`Antigravity execution runs do not support ${request.kind}.`);
-        }
-        return await createExecutionRunHostBackendFromSessionRuntime({
-          request,
-          openSession: async () => await openExecutionRunRuntime(request, context),
-        });
-      },
-    },
     surfaces: {
       terminal: createAntigravityNativeTerminalSurface(),
     },

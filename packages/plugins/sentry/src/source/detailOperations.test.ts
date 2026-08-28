@@ -1,14 +1,23 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES,
+  decodeSentryDetailContinuation,
   SentryIssueEventsResultV1Schema,
   SentryReadIssueResultV1Schema,
+  SentryReadEventResultV1Schema,
   SentryTagValuesResultV1Schema,
 } from '../detail/detailContracts.js';
 import { deriveSentryCollisionScope } from '../instances/sentryCollisionScope.js';
 import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
+import {
+  SENTRY_EVENT_BOUNDS_V1,
+  type SentryEventProjectionV1,
+} from '../privacy/sentryEventProjection.js';
 import {
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
   SENTRY_SCOPE_SEPARATOR,
@@ -16,8 +25,10 @@ import {
 
 import {
   SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
+  fitSentryEventResult,
   listSentryIssueEvents,
   listSentryTagValues,
+  readSentryEvent,
   readSentryIssue,
 } from './detailOperations.js';
 
@@ -193,6 +204,35 @@ const ISSUE_BODY = Object.freeze({
   }],
 });
 
+function selectedEventProjection(
+  overrides: Partial<SentryEventProjectionV1>,
+): SentryEventProjectionV1 {
+  return {
+    eventId: 'a'.repeat(32),
+    dateCreatedMs: null,
+    title: '',
+    message: '',
+    location: null,
+    culprit: null,
+    platform: null,
+    sections: [],
+    tags: [],
+    user: null,
+    redactions: [],
+    sensitivePaths: [],
+    projectionTruncated: false,
+    omitted: {
+      sections: 0,
+      frames: 0,
+      breadcrumbs: 0,
+      tags: 0,
+      redactions: 0,
+      sensitivePaths: 0,
+    },
+    ...overrides,
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -311,6 +351,103 @@ describe('Sentry detail operations', () => {
     expect(serialized).toContain('Ada Lovelace');
     expect(serialized).not.toContain('ada@example.com');
   });
+
+  it('publishes normal provider content beyond the retired local count caps', async () => {
+    const frames = Array.from({ length: 43 }, (_unused, index) => ({
+      filename: `app/frame-${String(index)}.ts`,
+      function: `frame${String(index)}`,
+      lineNo: index + 1,
+      inApp: true,
+    }));
+    const harness = host([{
+      status: 200,
+      headers: {},
+      body: {
+        eventID: 'a'.repeat(32),
+        entries: [{ type: 'stacktrace', data: { frames } }],
+      },
+    }]);
+
+    const result = await readSentryEvent({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      selector: { kind: 'event', eventId: 'a'.repeat(32) },
+    }, harness.context);
+
+    expect(() => SentryReadEventResultV1Schema.parse(result)).not.toThrow();
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result.kind).toBe('event');
+    if (result.kind !== 'event') return;
+    expect(result.projection.sections).toHaveLength(1);
+    const [section] = result.projection.sections;
+    expect(section?.kind).toBe('stacktrace');
+    if (section?.kind !== 'stacktrace') return;
+    expect(section.frames).toHaveLength(43);
+    expect(result.projection.projectionTruncated).toBe(false);
+    expect(result.projection.omitted.frames).toBe(0);
+  });
+
+  it('fits a huge selected event against the canonical Action envelope with honest omissions', () => {
+    // Backslashes consume one retained UTF-8 byte but two serialized JSON
+    // bytes. Filling all three frame strings reaches the real envelope with a
+    // smaller fixture and no copied transport quota.
+    const escapedText = '\\'.repeat(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes);
+    const frameCount = Math.floor(
+      EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES
+        / (SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes * 2 * 3),
+    ) + 1;
+    const projection = selectedEventProjection({
+      sections: [{
+        kind: 'stacktrace',
+        frames: Array.from({ length: frameCount }, (_unused, index) => ({
+          filename: escapedText,
+          function: escapedText,
+          lineNo: index + 1,
+          colNo: null,
+          inApp: true,
+          contextLine: escapedText,
+          vars: {},
+        })),
+      }],
+    });
+
+    const result = fitSentryEventResult(projection);
+
+    expect(() => SentryReadEventResultV1Schema.parse(result)).not.toThrow();
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result.projection.projectionTruncated).toBe(true);
+    expect(
+      result.projection.omitted.sections
+      + result.projection.omitted.frames
+      + result.projection.omitted.redactions
+      + result.projection.omitted.sensitivePaths,
+    ).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('counts disclosure evidence omitted by the canonical Action envelope', () => {
+    const disclosureCount = Math.floor(
+      EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+    ) + 1;
+    const projection = selectedEventProjection({
+      redactions: Array.from({ length: disclosureCount }, (_unused, index) => ({
+        path: `${String(index)}-${'x'.repeat(SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes)}`.slice(
+          0,
+          SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
+        ),
+        reason: 'pluginWithheld' as const,
+      })),
+    });
+
+    const result = fitSentryEventResult(projection);
+
+    expect(() => SentryReadEventResultV1Schema.parse(result)).not.toThrow();
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result.projection.projectionTruncated).toBe(true);
+    expect(result.projection.omitted.redactions).toBeGreaterThan(0);
+    expect(result.projection.redactions.length + result.projection.omitted.redactions)
+      .toBe(disclosureCount);
+  }, 30_000);
 
   it('separates an empty history from a history it could not read', async () => {
     const empty = host([{ status: 200, headers: {}, body: { ...ISSUE_BODY, activity: [] } }]);
@@ -455,8 +592,8 @@ describe('Sentry detail operations', () => {
   });
 
   it('keeps offering another page however many the reader has already loaded', async () => {
-    // The panel's non-progress evidence rides inside a BOUNDED token, so
-    // evidence that grows per page is an undeclared "Load more" ceiling. With
+    // The panel's non-progress evidence rides inside a constant-space token, so
+    // evidence that grows per page creates an undeclared "Load more" ceiling. With
     // Sentry's own keyset cursors the predecessor position history stopped
     // fitting at the 23rd page — roughly 2,200 occurrences — and the panel
     // settled `continuationUnavailable`, which no reader can get past.
@@ -487,17 +624,12 @@ describe('Sentry detail operations', () => {
       expect(result.incomplete).toBeUndefined();
       expect(result.continuation).toBeDefined();
       if (result.continuation === undefined) return;
-      expect(new TextEncoder().encode(result.continuation).byteLength)
-        .toBeLessThan(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES / 2);
       continuation = result.continuation;
     }
   });
 
-  it('blames its own bound, not the provider, when the frontier will not fit', async () => {
-    // The provider's cursor is intact and the walk is open; it simply does not
-    // fit the bounded token this side owns. Reporting that as a malformed
-    // cursor would accuse Sentry of something it did not do.
-    const cursor = 'c'.repeat(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES);
+  it('preserves a wide valid provider cursor without an invented local ceiling', async () => {
+    const cursor = 'c'.repeat(32 * 1024);
     const harness = host([{
       status: 200,
       headers: {
@@ -515,15 +647,46 @@ describe('Sentry detail operations', () => {
     }, harness.context);
 
     expect(() => SentryIssueEventsResultV1Schema.parse(page)).not.toThrow();
+    expect(page).toMatchObject({ kind: 'events', rows: [{ eventId: 'e1' }] });
+    if (page.kind !== 'events') return;
+    expect(page.incomplete).toBeUndefined();
+    expect(page.continuation).toBeDefined();
+    expect(decodeSentryDetailContinuation(page.continuation ?? '')?.cursor).toBe(cursor);
+  });
+
+  it('retains fitting rows and states incompleteness when a provider cursor exceeds the Action envelope', async () => {
+    // The minted frontier carries the current cursor and the probe cursor. This
+    // derives the first definitely over-envelope pair from the canonical byte
+    // boundary without installing a Sentry-local cursor limit.
+    const cursor = 'c'.repeat(
+      Math.floor(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2) + 1,
+    );
+    const harness = host([{
+      status: 200,
+      headers: {
+        Link: `<https://de.sentry.io/api/0/organizations/7701/issues/1234/events/?cursor=${cursor}>;`
+          + ` rel="next"; results="true"; cursor="${cursor}"`,
+      },
+      body: [{ eventID: 'e1', title: 'retained row' }],
+    }]);
+
+    const page = await listSentryIssueEvents({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: localRef(),
+      limit: 100,
+    }, harness.context);
+
+    expect(() => SentryIssueEventsResultV1Schema.parse(page)).not.toThrow();
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(page)).toBe(true);
     expect(page).toMatchObject({
       kind: 'events',
-      rows: [{ eventId: 'e1' }],
+      rows: [{ eventId: 'e1', headline: 'retained row' }],
       incomplete: 'continuationUnavailable',
     });
     if (page.kind !== 'events') return;
-    // Never an over-bound token that would discard the page it belongs to.
     expect(page.continuation).toBeUndefined();
-  });
+  }, 30_000);
 
   it('refuses a continuation it did not mint rather than requesting it', async () => {
     const harness = host([]);

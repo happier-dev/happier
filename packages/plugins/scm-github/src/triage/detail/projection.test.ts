@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   githubChangedFile,
-  githubIssueComment,
   githubTimelineCommitEvent,
   githubTimelineEvent,
   githubTimelineReviewEvent,
@@ -11,37 +10,22 @@ import {
 import {
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
-  GithubCommentsResultV1Schema,
+  GithubReviewsResultV1Schema,
   GithubTimelineResultV1Schema,
 } from './contracts.js';
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   GITHUB_MAX_CHANGED_FILE_ROWS_V1,
-  GITHUB_MAX_CHECK_ROWS_V1,
-  GITHUB_MAX_COMMENT_ROWS_V1,
   GITHUB_MAX_TIMELINE_ROWS_V1,
   GITHUB_TIMELINE_KINDS_V1,
   projectGithubChangedFileRows,
   projectGithubCheckRows,
   projectGithubCommentBody,
-  projectGithubCommentRows,
+  projectGithubReviewPeople,
   projectGithubTimelineRows,
 } from './projection.js';
 
 const BOUNDS = GITHUB_DETAIL_BOUNDS_V1;
-
-/**
- * A local serialized-size regression budget for projected GitHub detail values.
- * It is not a Protocol Action-admission boundary: `AgentRuntimeJsonValueV1Schema`
- * establishes strict JSON safety without an aggregate byte cap. A future
- * transport or persistence ceiling must be owned and tested at that named
- * boundary.
- */
-const ACTION_JSON_BYTE_GATE = 1_024 * 1_024;
-
-function encodedBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
 
 /** A string of exactly `count` ASCII code points, which is `count` UTF-8 bytes. */
 function filler(count: number): string {
@@ -226,55 +210,23 @@ describe('GitHub detail comment projection', () => {
   it('keeps the line structure a comment body IS', () => {
     const body = projectGithubCommentBody(
       'First line\r\n\r\n\r\n\r\nSecond line\0with a control',
-      BOUNDS.commentBodyUtf8Bytes,
     );
     expect(body.value).toBe('First line\n\nSecond line with a control');
     expect(body.truncated).toBe(false);
   });
 
-  it('truncates a body on a whole code point', () => {
-    // A four-byte code point straddling the bound must not be cut in half: the
-    // reader would get a replacement character in text they are reading.
-    const body = projectGithubCommentBody(`${filler(6)}\u{1F600}`, 8);
-    expect(body.value).toBe(filler(6));
-    expect(body.truncated).toBe(true);
+  it('preserves provider document bytes when no real boundary requires truncation', () => {
+    const value = `${filler(9_000)}\u{1F600}`;
+    const body = projectGithubCommentBody(value);
+    expect(body.value).toBe(value);
+    expect(body.truncated).toBe(false);
   });
 
-  it('keeps a comment with no body and reports an edit only when there was one', () => {
-    const projected = projectGithubCommentRows([
-      Object.freeze({ ...githubIssueComment({ id: 1, body: 'x' }), body: '' }),
-      githubIssueComment({
-        id: 2,
-        body: 'edited',
-        createdAt: '2026-08-10T10:00:00Z',
-        updatedAt: '2026-08-10T11:00:00Z',
-      }),
-      githubIssueComment({ id: 3, body: 'untouched', createdAt: '2026-08-10T12:00:00Z' }),
-    ], BOUNDS);
-
-    expect(projected.rows.map((row) => row.id)).toEqual([
-      'github-issue-comment:1',
-      'github-issue-comment:2',
-      'github-issue-comment:3',
-    ]);
-    expect(projected.rows[0]?.body).toBe('');
-    expect(projected.rows[1]?.editedAtMs).toBe(Date.parse('2026-08-10T11:00:00Z'));
-    expect(projected.rows[2]?.editedAtMs).toBeUndefined();
-  });
-
-  it('omits a comment with no provider id', () => {
-    const projected = projectGithubCommentRows([
-      { body: 'orphan', user: { login: 'octocat' } },
-      githubIssueComment({ id: 4, body: 'kept' }),
-    ], BOUNDS);
-    expect(projected.rows).toHaveLength(1);
-    expect(projected.omittedRowCount).toBe(1);
-  });
 });
 
 describe('GitHub detail check projection', () => {
-  it('bounds the listed rows and reports what it did not list', () => {
-    const observations = Array.from({ length: GITHUB_MAX_CHECK_ROWS_V1 + 5 }, (_, index) => ({
+  it('keeps every valid listed row when the result fits the canonical Action envelope', () => {
+    const observations = Array.from({ length: 205 }, (_, index) => ({
       key: `github-check-run:${index + 1}`,
       resourceKind: 'check-run' as const,
       name: `job-${index + 1}`,
@@ -286,28 +238,20 @@ describe('GitHub detail check projection', () => {
     }));
 
     const projected = projectGithubCheckRows(observations, BOUNDS);
-    expect(projected.rows).toHaveLength(GITHUB_MAX_CHECK_ROWS_V1);
-    expect(projected.omittedRowCount).toBe(5);
-    expect(projected.projectionTruncated).toBe(true);
+    expect(projected.rows).toHaveLength(observations.length);
+    expect(projected.omittedRowCount).toBe(0);
+    expect(projected.projectionTruncated).toBe(false);
   });
 });
 
-/**
- * The derivation the bounds above exist for: a fully saturated page of every
- * plane, measured against the one gate a contributed Action result crosses.
- *
- * It is a worst case, not a sample. Every bounded string is filled to its exact
- * byte budget and every collection is filled to its exact ceiling, so widening a
- * bound or raising a page size fails here rather than at a user's device.
- */
-describe('GitHub detail projection byte budget', () => {
-  it('keeps a fully saturated timeline page inside the Action byte gate', () => {
+describe('GitHub detail projection schema admission', () => {
+  it('admits a fully saturated timeline page', () => {
     const raw = Array.from({ length: GITHUB_MAX_TIMELINE_ROWS_V1 }, (_, index) => ({
       id: index + 1,
       node_id: filler(BOUNDS.identifierUtf8Bytes * 2),
-      event: filler(BOUNDS.labelUtf8Bytes * 2),
+      event: filler(256),
       created_at: '2026-08-05T00:00:00Z',
-      actor: { login: filler(BOUNDS.labelUtf8Bytes * 2) },
+      actor: { login: filler(256) },
       label: { name: filler(BOUNDS.textUtf8Bytes * 2) },
       html_url: `https://github.com/${filler(BOUNDS.locationUtf8Bytes - 20)}`,
     }));
@@ -321,14 +265,14 @@ describe('GitHub detail projection byte budget', () => {
       projectionTruncated: true,
       continuation: JSON.stringify({ v: 1, page: 2, perPage: 50 }),
     });
-    expect(encodedBytes(result)).toBeLessThan(ACTION_JSON_BYTE_GATE);
+    expect(result.rows).toHaveLength(GITHUB_MAX_TIMELINE_ROWS_V1);
   });
 
-  it('keeps a fully saturated changed-file page inside the Action byte gate', () => {
+  it('admits a fully saturated changed-file page', () => {
     const raw = Array.from({ length: GITHUB_MAX_CHANGED_FILE_ROWS_V1 }, (_, index) => ({
-      filename: `${filler(BOUNDS.pathUtf8Bytes * 2)}${index}`,
-      previous_filename: filler(BOUNDS.pathUtf8Bytes * 2),
-      status: filler(BOUNDS.labelUtf8Bytes * 2),
+      filename: `${filler(1_024)}${index}`,
+      previous_filename: filler(1_024),
+      status: filler(256),
       additions: Number.MAX_SAFE_INTEGER,
       deletions: Number.MAX_SAFE_INTEGER,
       changes: Number.MAX_SAFE_INTEGER,
@@ -339,6 +283,8 @@ describe('GitHub detail projection byte budget', () => {
 
     const projected = projectGithubChangedFileRows(raw, BOUNDS);
     expect(projected.rows).toHaveLength(GITHUB_MAX_CHANGED_FILE_ROWS_V1);
+    expect(projected.rows[0]?.path).toBe(`${filler(1_024)}0`);
+    expect(projected.rows[0]?.status).toBe(filler(256));
     const result = GithubChangedFilesResultV1Schema.parse({
       kind: 'changedFiles',
       rows: projected.rows,
@@ -347,38 +293,16 @@ describe('GitHub detail projection byte budget', () => {
       incomplete: 'ceiling',
       continuation: JSON.stringify({ v: 1, page: 2, perPage: 100 }),
     });
-    expect(encodedBytes(result)).toBeLessThan(ACTION_JSON_BYTE_GATE);
+    expect(result.rows).toHaveLength(GITHUB_MAX_CHANGED_FILE_ROWS_V1);
   });
 
-  it('keeps a fully saturated comment page inside the Action byte gate', () => {
-    const raw = Array.from({ length: GITHUB_MAX_COMMENT_ROWS_V1 }, (_, index) => ({
-      id: index + 1,
-      body: filler(BOUNDS.commentBodyUtf8Bytes * 2),
-      user: { login: filler(BOUNDS.labelUtf8Bytes * 2) },
-      created_at: '2026-08-10T10:00:00Z',
-      updated_at: '2026-08-10T11:00:00Z',
-      html_url: `https://github.com/${filler(BOUNDS.locationUtf8Bytes - 20)}`,
-    }));
-
-    const projected = projectGithubCommentRows(raw, BOUNDS);
-    expect(projected.rows).toHaveLength(GITHUB_MAX_COMMENT_ROWS_V1);
-    const result = GithubCommentsResultV1Schema.parse({
-      kind: 'comments',
-      rows: projected.rows,
-      omittedRowCount: 0,
-      projectionTruncated: true,
-      continuation: JSON.stringify({ v: 1, page: 2, perPage: 30 }),
-    });
-    expect(encodedBytes(result)).toBeLessThan(ACTION_JSON_BYTE_GATE);
-  });
-
-  it('keeps a fully saturated checks result inside the Action byte gate', () => {
-    const observations = Array.from({ length: GITHUB_MAX_CHECK_ROWS_V1 }, (_, index) => ({
+  it('admits a fully saturated checks result', () => {
+    const observations = Array.from({ length: 205 }, (_, index) => ({
       key: `${filler(BOUNDS.identifierUtf8Bytes * 2)}${index}`,
       resourceKind: 'check-run' as const,
-      name: filler(BOUNDS.labelUtf8Bytes * 2),
-      status: filler(BOUNDS.labelUtf8Bytes * 2),
-      conclusion: filler(BOUNDS.labelUtf8Bytes * 2),
+      name: filler(256),
+      status: filler(256),
+      conclusion: filler(256),
       detailsUrl: `https://ci.example.com/${filler(BOUNDS.locationUtf8Bytes - 25)}`,
       startedAtMs: 1_700_000_000_000,
       completedAtMs: 1_700_000_100_000,
@@ -396,6 +320,29 @@ describe('GitHub detail projection byte budget', () => {
       omittedRowCount: 0,
       projectionTruncated: true,
     });
-    expect(encodedBytes(result)).toBeLessThan(ACTION_JSON_BYTE_GATE);
+    expect(result.rows).toHaveLength(observations.length);
+  });
+
+  it('admits review people beyond the retired source-local count ceiling', () => {
+    const historical = Array.from({ length: 205 }, (_, index) => ({
+      login: `reviewer-${index}`,
+      state: 'APPROVED',
+      submittedAtMs: index,
+    }));
+    const outstanding = Array.from({ length: 205 }, (_, index) => ({
+      kind: 'user' as const,
+      login: `requested-${index}`,
+    }));
+    const projected = projectGithubReviewPeople({ historical, outstanding }, BOUNDS);
+    const result = GithubReviewsResultV1Schema.parse({
+      kind: 'reviews',
+      reviewed: projected.reviewed,
+      requested: projected.requested,
+      omittedRowCount: projected.omittedRowCount,
+      projectionTruncated: projected.projectionTruncated,
+    });
+    expect(result.reviewed).toHaveLength(historical.length);
+    expect(result.requested).toHaveLength(outstanding.length);
+    expect(result.omittedRowCount).toBe(0);
   });
 });

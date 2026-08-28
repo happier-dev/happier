@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntimeContext,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
+  AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const captured = vi.hoisted(() => ({
@@ -39,7 +39,6 @@ vi.mock('../localharness/runtime/sessionRuntime.js', async (importOriginal) => {
 });
 
 import {
-  createAntigravityNativeExecutionRunRuntime,
   createAntigravityNativeSessionRuntime,
 } from './nativeSession.js';
 
@@ -77,7 +76,7 @@ describe('Antigravity native transient interactions', () => {
         },
       },
       session: { id: 'session-1', services: {} },
-    } as unknown as AgentRuntimeContext;
+    } as unknown as AgentSessionRuntimeContext;
 
     createAntigravityNativeSessionRuntime({ mode: 'sdk', request, context });
     const result = await captured.runtimeDeps?.requestPermission({
@@ -123,7 +122,7 @@ describe('Antigravity native transient interactions', () => {
         },
       },
       session: { id: 'session-1', services: {} },
-    } as unknown as AgentRuntimeContext;
+    } as unknown as AgentSessionRuntimeContext;
 
     createAntigravityNativeSessionRuntime({ mode: 'sdk', request, context });
     const answered = await captured.runtimeDeps?.elicit({
@@ -162,29 +161,5 @@ describe('Antigravity native transient interactions', () => {
       ],
     });
     expect(unavailable).toEqual({ status: 'cancelled' });
-  });
-
-  it('does not give a detached execution run MCP from the generic invocation bag', async () => {
-    const genericMcp = {
-      list: vi.fn(() => {
-        throw new Error('generic MCP must not resolve native-session launch servers');
-      }),
-    };
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        exec: {},
-        interactions: {
-          confirm: vi.fn(),
-          askQuestions: vi.fn(),
-        },
-        mcp: genericMcp,
-      },
-    } as unknown as AgentRuntimeContext;
-
-    createAntigravityNativeExecutionRunRuntime({ mode: 'sdk', request, context });
-
-    await expect(captured.runtimeDeps?.resolveMcpServers()).resolves.toEqual([]);
-    expect(genericMcp.list).not.toHaveBeenCalled();
   });
 });

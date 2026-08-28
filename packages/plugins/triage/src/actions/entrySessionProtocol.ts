@@ -68,6 +68,11 @@ const triageIdentifier = defineProtocolString({
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
+const reviewEngineId = defineProtocolString({
+    minLength: 1,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
 /** How the canonical creator settled one start: created, rejoined, or already there. */
 const triageDisposition = defineProtocolUnion([
     defineProtocolLiteral('created'),
@@ -139,6 +144,10 @@ const TriageNewSessionSpawnV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
     profileId: triageIdentifier.optional(),
+    modelSelection: defineProtocolJsonValue().optional(),
+    permissionMode: defineProtocolJsonValue().optional(),
+    transcriptStorage: defineProtocolJsonValue().optional(),
+    terminal: defineProtocolJsonValue().optional(),
 }, { policy: 'closed' });
 
 /**
@@ -155,16 +164,22 @@ const TriageNewSessionSpawnV1Schema = defineProtocolObject({
  * can already carry and Triage never acquires a second Agent-target grammar.
  *
  * The policy is additive-open/drop because the settled draft is the host's
- * WHOLE New Session projection. Every other member it carries — a title, a
- * permission mode, a model selection, startup instructions — is dropped here
- * rather than forwarded: a Triage start is routing, and forwarding them would
- * make this the second Session-authoring surface the spawn contract above
- * already refuses.
+ * WHOLE New Session projection. The small set of Session defaults that the
+ * canonical spawn wire already owns (model, permission, transcript and
+ * terminal selection) survives unchanged, together with the configured
+ * profile reference. Unowned authoring members such as title and startup
+ * instructions are dropped here rather than teaching Triage a second spelling
+ * for them.
  */
 export const TriageStartEntrySessionSettledDraftV1Schema = defineProtocolObject({
     executionTarget: TriageSessionExecutionTargetV1Schema,
     agentTarget: TriageAgentExecutionTargetV1Schema,
     directory: triageText,
+    profileId: triageIdentifier.optional(),
+    modelSelection: defineProtocolJsonValue().optional(),
+    permissionMode: defineProtocolJsonValue().optional(),
+    transcriptStorage: defineProtocolJsonValue().optional(),
+    terminal: defineProtocolJsonValue().optional(),
 }, { policy: 'additive-open/drop' });
 export type TriageStartEntrySessionSettledDraftV1 =
     ReturnType<typeof TriageStartEntrySessionSettledDraftV1Schema.parse>;
@@ -320,6 +335,20 @@ const TriageStartEntrySessionDeliveryV1Schema = defineProtocolObject({
     idempotencyKey: triageIdentifier,
 }, { policy: 'closed' });
 
+const triageSettledDeliveryOutcomeMembers = [
+    defineProtocolLiteral('notRequested'),
+    defineProtocolLiteral('none'),
+    defineProtocolLiteral('accepted'),
+    defineProtocolLiteral('alreadyAccepted'),
+    defineProtocolLiteral('rejected'),
+] as const;
+
+const triageSettledDeliveryOutcome = defineProtocolUnion(triageSettledDeliveryOutcomeMembers);
+const triageDeliveryOutcome = defineProtocolUnion([
+    ...triageSettledDeliveryOutcomeMembers,
+    defineProtocolLiteral('outcomeUnknown'),
+]);
+
 /**
  * The source result facts a pending selected-PR start carries only long enough
  * to retry its link/open phase. This is not a saved workspace record: the
@@ -333,7 +362,7 @@ const TriageStartEntrySessionPreparedReviewWorkspaceV1Schema = defineProtocolObj
         defineProtocolLiteral(true),
         defineProtocolLiteral(false),
     ]),
-    pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+    pullRequest: defineProtocolJsonValue(),
     currentness: TriageReviewWorkspaceCurrentnessV1Schema,
 }, { policy: 'closed' });
 
@@ -344,23 +373,32 @@ const TriageStartEntrySessionPreparedReviewWorkspaceV1Schema = defineProtocolObj
  * behind. Pressing again re-sends this input with the SAME creation and
  * delivery keys plus the phase it stopped at, so the incumbent resume owner
  * (`sessions/entrySessionOrchestrator.ts#resumeEntrySessionStart`) retries only
- * that phase. Without it every press minted a new creation key and the copy
- * promising that pressing again resumes the same Session was simply untrue.
+ * that phase. A settled spawn-input verdict travels with link/open retry; an
+ * ambiguous atomic first input resumes creation under the same creation key.
+ * Without this every press could mint a second Session or deliver a second
+ * Message while claiming to resume the first.
  *
  * There is no durable retry record anywhere behind this: the identity is the
  * caller's retained keys, and the canonical creator and the idempotent link
  * already make repeating a phase safe.
  */
-const TriageStartEntrySessionResumeV1Schema = defineProtocolObject({
-    phase: defineProtocolUnion([
-        defineProtocolLiteral('linkPending'),
-        defineProtocolLiteral('openPending'),
-    ]),
-    sessionId: triageSessionId,
-    disposition: triageDisposition,
-    /** Present only when retrying a prepared selected-PR workspace. */
-    preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
-}, { policy: 'closed' });
+const TriageStartEntrySessionResumeV1Schema = defineProtocolUnion([
+    defineProtocolObject({
+        phase: defineProtocolLiteral('creationPending'),
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
+    }, { policy: 'closed' }),
+    defineProtocolObject({
+        phase: defineProtocolUnion([
+            defineProtocolLiteral('linkPending'),
+            defineProtocolLiteral('openPending'),
+        ]),
+        sessionId: triageSessionId,
+        disposition: triageDisposition,
+        /** A genuinely unknown admission must resume through its identity owner. */
+        delivery: triageSettledDeliveryOutcome.optional(),
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
+    }, { policy: 'closed' }),
+]);
 
 /**
  * The one optional departure from a normal single-entry start's automatic
@@ -402,7 +440,9 @@ const TriageStartEntrySessionReviewContextV1Schema = defineProtocolObject({
     entryRef: TriageEntryRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema,
     observed: TriageReviewWorkspaceObservedRevisionV1Schema,
-    pullRequest: defineProtocolJsonValue({ maxSerializedUtf8Bytes: 512 }),
+    workspace: TriageSelectedWorkspaceScopeV1Schema,
+    repositoryPath: triageText,
+    pullRequest: defineProtocolJsonValue(),
 }, { policy: 'closed' });
 
 /**
@@ -415,7 +455,7 @@ export const TriageStartPullRequestReviewInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     sessionId: triageSessionId,
     review: TriageStartEntrySessionReviewContextV1Schema,
-    engineIds: defineProtocolArray(triageIdentifier, { minItems: 1 }),
+    engineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
     instructions: triagePromptBody,
 }, { policy: 'closed' });
 export type TriageStartPullRequestReviewInputV1 = ReturnType<
@@ -436,6 +476,7 @@ export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
             defineProtocolLiteral('sourceUnavailable'),
             defineProtocolLiteral('sourceMismatch'),
             defineProtocolLiteral('revisionMismatch'),
+            defineProtocolLiteral('workspaceMismatch'),
             defineProtocolLiteral('scopeRefused'),
             defineProtocolLiteral('reviewRejected'),
         ]),
@@ -465,17 +506,6 @@ export const TriageStartPullRequestReviewResultV1JsonSchema: PluginJsonSchema =
  * a refusal and an unknown outcome are the two the previous surface reported as
  * success, having awaited the send and discarded its value.
  */
-const triageDeliveryOutcome = defineProtocolUnion([
-    /** The start carried no delivery: a `compose` action places its own. */
-    defineProtocolLiteral('notRequested'),
-    /** Requested, with neither a prompt nor a placeable attachment to send. */
-    defineProtocolLiteral('none'),
-    defineProtocolLiteral('accepted'),
-    defineProtocolLiteral('alreadyAccepted'),
-    defineProtocolLiteral('rejected'),
-    defineProtocolLiteral('outcomeUnknown'),
-]);
-
 export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
@@ -484,6 +514,7 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         disposition: triageDisposition,
         delivery: triageDeliveryOutcome,
         review: TriageStartEntrySessionReviewContextV1Schema.optional(),
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
@@ -494,6 +525,7 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         delivery: triageDeliveryOutcome,
         finalOpen: TriageStartEntrySessionFinalOpenV1Schema,
         review: TriageStartEntrySessionReviewContextV1Schema.optional(),
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
@@ -501,6 +533,7 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
         type: defineProtocolLiteral('linkPending'),
         sessionId: triageSessionId,
         disposition: triageDisposition,
+        delivery: triageDeliveryOutcome.optional(),
         preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
@@ -520,6 +553,7 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
             defineProtocolLiteral('accepted'),
             defineProtocolLiteral('unknown'),
         ]),
+        preparedReviewWorkspace: TriageStartEntrySessionPreparedReviewWorkspaceV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),

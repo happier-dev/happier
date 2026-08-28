@@ -18,19 +18,19 @@ describe('Antigravity preflight model parsing', () => {
     ]);
   });
 
-  it('declares the bounded command and interprets host-bounded stdout or stderr', async () => {
+  it('declares the bounded command and interprets host-bounded stdout or stderr', () => {
     const models = ANTIGRAVITY_PREFLIGHT_SESSION_CONTROLS.models;
     expect(models?.command).toEqual({
       toolId: 'antigravity-cli',
       args: ['models'],
       environmentExcludeKeys: expect.arrayContaining(['GEMINI_API_KEY']),
     });
-    await expect(models?.parseOutput?.({
+    expect(models?.parseOutput?.({
       ok: true,
       stdout: '',
       stderr: 'Gemini 3.5 Flash (Medium)\n',
       exitCode: 0,
-    })).resolves.toEqual([
+    })).toEqual([
       { id: 'Gemini 3.5 Flash (Medium)', name: 'Gemini 3.5 Flash (Medium)' },
     ]);
   });

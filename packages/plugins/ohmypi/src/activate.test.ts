@@ -9,7 +9,6 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -105,14 +104,19 @@ describe('OhMyPi plugin activation', () => {
     await fixture.dispose();
   });
 
-  it('registers only the data-only Connected Account state-sharing descriptor before open', async () => {
+  it('registers the data-only state-sharing descriptor and host-custodied resume matcher before open', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
       const launch = fixture.registration('agents', 'ohmypi')?.connectedAccountLaunch;
 
-      expect(Object.keys(launch ?? {}).sort()).toEqual(['stateSharingDescriptor']);
+      expect(Object.keys(launch ?? {}).sort()).toEqual(['continuity', 'stateSharingDescriptor']);
+      expect(launch?.continuity?.verifyResumeReachable).toBeTypeOf('function');
       expect(launch?.stateSharingDescriptor).toEqual({
-        providerSupportStatus: 'unsupported',
+        nativeHome: {
+          environmentKey: 'PI_CODING_AGENT_DIR',
+          defaultRelativePath: '.omp/agent',
+        },
+        providerSupportStatus: 'supported',
         config: {
           supported: false,
           modes: ['isolated'],
@@ -120,11 +124,11 @@ describe('OhMyPi plugin activation', () => {
           unavailableReason: 'not_implemented',
         },
         state: {
-          supported: false,
-          modes: ['isolated'],
-          entries: [],
+          supported: true,
+          modes: ['isolated', 'shared'],
+          entries: [{ path: 'sessions', mode: 'linked' }],
+          sharedStatePrivacyRiskAcknowledgementRequired: true,
           symlinkUnavailableDegradePolicy: 'block_continuity',
-          unavailableReason: 'not_implemented',
         },
         authIsolation: {
           mode: 'process_env',
@@ -137,7 +141,6 @@ describe('OhMyPi plugin activation', () => {
           ],
         },
       });
-      expect(OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
     } finally {
       await fixture.dispose();
     }
@@ -208,6 +211,16 @@ describe('OhMyPi plugin activation', () => {
     );
 
     expect(opened.send).toBe(session.send);
+    expect(opened.runtimeCapabilities).toEqual({
+      sessionCapabilities: {
+        sessionListing: 'supported',
+        sessionFork: {
+          conversation: 'supported',
+          fromMessage: 'unsupported',
+        },
+        sessionRollback: { conversation: 'unsupported' },
+      },
+    });
     expect(open).toHaveBeenCalledWith(request, {
       transport: {
         kind: 'stdio',

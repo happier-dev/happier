@@ -498,6 +498,9 @@ export async function runConversationOutwardDeliveryCycle(
     const pendingRequestKeys = new Set<string>();
     for (const request of pending.requests) {
       if (context.signal.aborted) break;
+      // AskUserQuestion is a canonical user action, not a permission grant.
+      // Permission requests retain the binding's explicit approval policy.
+      if (request.kind !== 'user_action' && !source.permissionApprovalsEnabled) continue;
       pendingRequestKeys.add(permissionWaitRequestIdentityKey({
         sessionId: source.source.sessionId,
         turnId: request.turnId,
@@ -588,6 +591,7 @@ export async function runConversationOutwardDeliveryCycle(
         store: projectionStore,
         bindingId,
         signal: context.signal,
+        now,
         deliver: async ({ binding, item, source }) => await deliverConversationSessionProjectionOutwardDelivery({
           stateCollection,
           targetedContributions: context.services.targetedContributions,
@@ -602,7 +606,9 @@ export async function runConversationOutwardDeliveryCycle(
         }),
       });
       if (projected.kind === 'historyGap') {
-        logConversationSessionProjectionHistoryGap(context, { bindingId, reason: projected.reason });
+        if (projected.disposition === 'recorded') {
+          logConversationSessionProjectionHistoryGap(context, { bindingId, reason: projected.reason });
+        }
       }
     } catch (error) {
       // Projection never receives a local replacement owner; its unchanged

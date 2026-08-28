@@ -11,9 +11,6 @@ import type { GitlabConfiguredOrigin } from './origin.js';
 import { encodeGitlabConfiguredOriginScope } from './origin.js';
 import type { GitlabEntryIdentity, GitlabEntryLocator, GitlabKindId } from './types.js';
 
-/** `entryId` is joined into an identity tuple, so it stays printable non-space ASCII. */
-const ENTRY_ID_PATTERN = /^[\x21-\x7E]{1,256}$/u;
-
 const KIND_REFERENCE_SEPARATOR: Readonly<Record<GitlabKindId, string>> = {
   'merge-request': '!',
   issue: '#',
@@ -95,9 +92,6 @@ export function buildGitlabEntryIdentity(input: GitlabIdentityInput): GitlabIden
     return { kind: 'undecodable', reason: 'missing-iid' };
   }
   const entryId = String(iid);
-  if (!ENTRY_ID_PATTERN.test(entryId)) {
-    return { kind: 'undecodable', reason: 'unusable-iid' };
-  }
 
   const repositoryKey = readGitlabProjectPath(input.kindId, input.row);
   if (!repositoryKey) {

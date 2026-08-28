@@ -1,4 +1,16 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import type {
+  ReviewCommentClaimPublicationDispatchResponseV1,
+  ReviewCommentPublicationEntryV1,
+  ReviewCommentPublicationPlanV1,
+  ReviewCommentPublicationResultV1,
+} from '@happier-dev/plugin-sdk/reviews';
+import {
+  formatReviewCommentPublicationMarkerV1,
+  matchReviewCommentPublicationMarkerV1,
+  preflightReviewCommentPublicationRoutingV1,
+  validateReviewCommentPublicationResultAgainstPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
 
 import type {
@@ -25,9 +37,8 @@ import {
   type GithubRepositoryReaderV1,
 } from '../repositories.js';
 import {
-  readGithubPullRequestReviewRecords,
-  type GithubPullRequestReviewRecordV1,
-  type GithubPullRequestReviewRecordsReadV1,
+  readGithubPullRequestReviewCommentRecords,
+  readGithubPullRequestReviewPublicationRecords,
 } from '../reviews.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
 
@@ -36,6 +47,11 @@ import type {
   GithubPullRequestReviewVerdictV1,
 } from './contracts.js';
 import { sendGithubGraphqlRequest } from './graphql.js';
+import {
+  preflightGithubReviewThread,
+  readGithubReviewThreadReplyPublicationRecords,
+  sendGithubReviewThreadReply,
+} from './reviewThread.js';
 
 /**
  * The head-pinned and state-transition GitHub pull-request writes, each
@@ -120,14 +136,20 @@ export type GithubPullRequestMarkReadyOutcomeV1 =
   | Failed;
 
 export type GithubPullRequestReviewPublicationOutcomeV1 =
-  | Readonly<{ kind: 'applied'; observation: ProjectedObservation }>
   | Readonly<{
-    kind: 'rejected';
-    reason: 'admission_failed' | 'head_advanced' | 'state_changed' | 'provider_rejected';
+    kind: 'settled';
+    publication: ReviewCommentPublicationResultV1;
     observation?: ProjectedObservation;
     failure?: TriageSourceFailureV1;
   }>
-  | Uncertain;
+  | Readonly<{
+    kind: 'rejected';
+    reason: 'admission_failed' | 'base_advanced' | 'head_advanced' | 'dispatch_claim_failed'
+      | 'unsupported_anchor' | 'state_changed' | 'provider_rejected';
+    observation?: ProjectedObservation;
+    failure?: TriageSourceFailureV1;
+  }>
+  ;
 
 /**
  * `pending` is a settled outcome of its own: GitHub accepted the request and the
@@ -264,34 +286,70 @@ const GITHUB_REVIEW_EVENT_BY_VERDICT: Readonly<
   comment: 'COMMENT',
 });
 
-const GITHUB_REVIEW_STATE_BY_VERDICT: Readonly<
-  Record<GithubPullRequestReviewVerdictV1, 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED'>
-> = Object.freeze({
-  approve: 'APPROVED',
-  requestChanges: 'CHANGES_REQUESTED',
-  comment: 'COMMENTED',
-});
+function githubReviewComment(
+  entry: ReviewCommentPublicationEntryV1,
+  publicationCorrelationId: string,
+): Readonly<Record<string, unknown>> | null | undefined {
+  const body = `${entry.body}\n\n${formatReviewCommentPublicationMarkerV1('entry', publicationCorrelationId)}`;
+  if (entry.anchor.kind === 'file') {
+    return Object.freeze({ path: entry.anchor.filePath, body, subject_type: 'file' });
+  }
+  if (entry.anchor.kind !== 'line' && entry.anchor.kind !== 'range') return null;
+  if (entry.snapshot.kind !== 'text' || entry.snapshot.diffContext === undefined) return null;
+  const side = entry.anchor.side ?? entry.snapshot.diffContext.side;
+  const githubSide = side === 'before' ? 'LEFT' : 'RIGHT';
+  if (entry.anchor.kind === 'line') {
+    return Object.freeze({
+      path: entry.anchor.filePath,
+      line: entry.anchor.line,
+      side: githubSide,
+      body,
+    });
+  }
+  if (entry.anchor.startLine === entry.anchor.endLine) {
+    return Object.freeze({
+      path: entry.anchor.filePath,
+      line: entry.anchor.endLine,
+      side: githubSide,
+      body,
+    });
+  }
+  return Object.freeze({
+    path: entry.anchor.filePath,
+    start_line: entry.anchor.startLine,
+    start_side: githubSide,
+    line: entry.anchor.endLine,
+    side: githubSide,
+    body,
+  });
+}
 
-function matchingReviewIds(
-  read: GithubPullRequestReviewRecordsReadV1,
-  input: Readonly<{
-    headRevision: string;
-    verdict: GithubPullRequestReviewVerdictV1;
-    summary: string;
-  }>,
-): ReadonlySet<string> | null {
-  if (read.failure !== null || read.incomplete) return null;
-  return new Set(read.reviews
-    .filter((review: GithubPullRequestReviewRecordV1) => (
-      review.commitRevision === input.headRevision
-      && review.state === GITHUB_REVIEW_STATE_BY_VERDICT[input.verdict]
-      && review.body === input.summary
-    ))
-    .map((review) => review.providerId));
+function supportsGithubReviewEntry(
+  entry: ReviewCommentPublicationEntryV1,
+  plan: ReviewCommentPublicationPlanV1,
+  routesToVerdictSummary = false,
+): boolean {
+  if (routesToVerdictSummary) {
+    if (entry.snapshot.kind !== 'text') return true;
+    const diff = entry.snapshot.diffContext;
+    return (diff === undefined
+      || (diff.baseSha === plan.baseRevision && diff.headSha === plan.headRevision))
+      && (diff?.startSha === undefined || diff.startSha === plan.baseRevision)
+      && (entry.snapshot.commitSha === undefined || entry.snapshot.commitSha === plan.headRevision);
+  }
+  if ((entry.anchor.kind !== 'file' && entry.anchor.kind !== 'line' && entry.anchor.kind !== 'range')
+    || entry.snapshot.kind !== 'text'
+    || entry.snapshot.diffContext === undefined
+  ) return false;
+  const diff = entry.snapshot.diffContext;
+  return diff.baseSha === plan.baseRevision
+    && diff.headSha === plan.headRevision
+    && (diff.startSha === undefined || diff.startSha === plan.baseRevision)
+    && (entry.snapshot.commitSha === undefined || entry.snapshot.commitSha === plan.headRevision);
 }
 
 /**
- * Publishes one GitHub review summary and verdict through one provider request.
+ * Publishes one frozen canonical review plan through one provider request.
  *
  * The ordinary mutation owner supplies the whole lifecycle: current account
  * materialization happens above this function, and this leaf rereads the exact
@@ -303,9 +361,8 @@ export async function publishGithubPullRequestReview(
   input: Readonly<{
     localRef: GithubTriageEntryLocalRefV1;
     route: GithubRepositoryRouteV1;
-    headRevision: string;
-    verdict: GithubPullRequestReviewVerdictV1;
-    summary: string;
+    publicationPlan: ReviewCommentPublicationPlanV1;
+    claimPublicationDispatch: () => Promise<ReviewCommentClaimPublicationDispatchResponseV1>;
   }>,
   dependencies: GithubMutationDependenciesV1,
 ): Promise<GithubPullRequestReviewPublicationOutcomeV1> {
@@ -327,132 +384,437 @@ export async function publishGithubPullRequestReview(
       observation: current.observation,
     });
   }
-  if (current.facts.headRevision !== input.headRevision) {
+  if (current.facts.reviewRevision?.baseSha !== input.publicationPlan.baseRevision) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'base_advanced' as const,
+      observation: current.observation,
+    });
+  }
+  if (current.facts.headRevision !== input.publicationPlan.headRevision) {
     return Object.freeze({
       kind: 'rejected' as const,
       reason: 'head_advanced' as const,
       observation: current.observation,
     });
   }
-
-  // Invocation-local baseline only: it lets the confirming read distinguish a
-  // newly observed provider review from an identical review that already existed.
-  // If the baseline cannot finish, dispatch still occurs once, but an ambiguous
-  // settlement can only remain uncertain.
-  const reviewBaseline = matchingReviewIds(
-    await readGithubPullRequestReviewRecords({
-      route: input.route,
-      number: input.localRef.entryId,
-    }, dependencies),
-    input,
-  );
-
-  const settlement = await settleAtMostOnceProviderWrite<
-    Awaited<ReturnType<typeof send>>,
-    ProjectedObservation,
-    TriageSourceFailureV1
-  >({
-    dispatch: () => send(dependencies, {
-      url: `${pullRequestUrl(input.route, input.localRef.entryId)}/reviews`,
-      method: 'POST',
-      body: {
-        commit_id: input.headRevision,
-        event: GITHUB_REVIEW_EVENT_BY_VERDICT[input.verdict],
-        body: input.summary,
-        // Inline anchoring remains deliberately out of this lane: the source does
-        // not yet project diff positions. An empty collection keeps the one-request
-        // shape explicit without pretending an anchor can be reconstructed.
-        comments: [],
-      },
-    }),
-    // A lost transport answer and a server-side failure both sit inside the
-    // response-loss window. A definite 4xx is handled below without reconciliation.
-    mayHaveChanged: (result) => !result.ok
-      || isGithubWriteResponseAmbiguous(result.response),
-    confirm: async () => {
-      const confirmedReviews = matchingReviewIds(
-        await readGithubPullRequestReviewRecords({
-          route: input.route,
-          number: input.localRef.entryId,
-        }, dependencies),
-        input,
-      );
-      if (reviewBaseline === null || confirmedReviews === null) {
-        return Object.freeze({ kind: 'uncertain' as const });
-      }
-      const hasNewMatchingReview = [...confirmedReviews]
-        .some((providerId) => !reviewBaseline.has(providerId));
-      const confirmedPullRequest = await confirm(
-        input.localRef,
-        input.route,
-        repositories,
-        dependencies,
-      );
-      if (!confirmedPullRequest.ok) {
-        return Object.freeze({
-          kind: 'uncertain' as const,
-          failure: confirmedPullRequest.failure,
-        });
-      }
-      return hasNewMatchingReview
-        ? Object.freeze({
-          kind: 'applied' as const,
-          observation: confirmedPullRequest.observation,
-        })
-        : Object.freeze({
-          kind: 'unchanged' as const,
-          observation: confirmedPullRequest.observation,
-        });
-    },
-  });
-  if (settlement.kind === 'applied') {
-    return Object.freeze({ kind: 'applied' as const, observation: settlement.observation });
-  }
-  if (settlement.kind === 'unchanged') {
-    return Object.freeze({
-      kind: 'uncertain' as const,
-      observation: settlement.observation,
-    });
-  }
-  if (settlement.kind === 'uncertain') {
-    return Object.freeze({
-      kind: 'uncertain' as const,
-      ...(settlement.observation === undefined ? {} : { observation: settlement.observation }),
-      ...(settlement.failure === undefined ? {} : { failure: settlement.failure }),
-    });
-  }
-  const written = settlement.result;
-  if (!written.ok) {
-    // Unreachable while transport failures are classified as ambiguous above.
-    // Keep the residual fail-safe if that provider-owned predicate changes.
-    return Object.freeze({ kind: 'uncertain' as const, failure: written.failure });
-  }
-
-  const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
-  if (!isGithubSuccessStatus(written.response.status)) {
-    const failure = toTriageFailure(
-      classifyGithubResponseFailure(written.response, dependencies.now()),
-    );
-    // The shared ladder classifies 5xx above. This residual arm fails safe if
-    // that predicate changes rather than turning possible application into a
-    // definite rejection.
-    if (isGithubWriteResponseAmbiguous(written.response)) {
-      return Object.freeze({
-        kind: 'uncertain' as const,
-        ...(confirmed.ok ? { observation: confirmed.observation } : {}),
-        failure,
-      });
-    }
+  const publicationRouting = preflightReviewCommentPublicationRoutingV1(input.publicationPlan);
+  if (publicationRouting.kind === 'rejected') {
     return Object.freeze({
       kind: 'rejected' as const,
-      reason: 'provider_rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  }
+  const verdictSummaryEntryIndexes = new Set(publicationRouting.verdictSummaryEntryIndexes);
+  if (input.publicationPlan.entries.some((entry, index) => (
+    !supportsGithubReviewEntry(entry, input.publicationPlan, verdictSummaryEntryIndexes.has(index))
+  ))) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  }
+
+  let claim: Awaited<ReturnType<typeof input.claimPublicationDispatch>>;
+  try {
+    claim = await input.claimPublicationDispatch();
+  } catch {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const verdictMarker = claim.verdict === null
+    ? null
+    : formatReviewCommentPublicationMarkerV1('verdict', claim.verdict.publicationCorrelationId);
+  const entryMarkers = claim.entries.map((correlation) => Object.freeze({
+    happierCommentId: correlation.happierCommentId,
+    marker: formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId),
+  }));
+  const correlationByCommentId = new Map(claim.entries.map((correlation) => (
+    [correlation.happierCommentId, correlation.publicationCorrelationId] as const
+  )));
+  const orderedCorrelations = input.publicationPlan.entries.map((entry) => (
+    correlationByCommentId.get(entry.happierCommentId)
+  ));
+  if (orderedCorrelations.some((correlation) => correlation === undefined)) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const projectedComments = input.publicationPlan.entries.map((entry, index) => (
+    verdictSummaryEntryIndexes.has(index)
+      ? undefined
+      : githubReviewComment(entry, orderedCorrelations[index] as string)
+  ));
+  if (projectedComments.some((comment) => comment === null)) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  }
+  const summaryEntries = publicationRouting.verdictSummaryEntryIndexes.map(
+    (index) => input.publicationPlan.entries[index]!,
+  );
+  const comments = projectedComments.filter(
+    (comment): comment is Readonly<Record<string, unknown>> => comment !== null && comment !== undefined,
+  );
+
+  const reconcile = async (
+    dispatchFailure?: TriageSourceFailureV1,
+  ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const reviewRead = verdictMarker === null && summaryEntries.length === 0
+      ? Object.freeze({ reviews: [], failure: null, incomplete: false })
+      : await readGithubPullRequestReviewPublicationRecords({
+        route: input.route,
+        number: input.localRef.entryId,
+      }, dependencies);
+    const confirmedComments = entryMarkers.length === 0
+      ? Object.freeze({ comments: [], failure: null, incomplete: false })
+      : await readGithubPullRequestReviewCommentRecords({
+        route: input.route,
+        number: input.localRef.entryId,
+      }, dependencies);
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(
+      input.publicationPlan,
+      claim,
+      {
+        publicationPlanId: claim.publicationPlanId,
+        entries: input.publicationPlan.entries.map((entry, index) => {
+          const correlation = claim.entries[index]!;
+          const marker = entryMarkers[index]!.marker;
+          const comment = confirmedComments.failure === null && !confirmedComments.incomplete
+            ? matchReviewCommentPublicationMarkerV1(
+              confirmedComments.comments.map((candidate) => ({
+                externalRef: candidate.providerId,
+                body: candidate.body,
+              })),
+              marker,
+            )
+            : { kind: 'absent' as const };
+          const review = reviewRead.failure === null && !reviewRead.incomplete
+            ? matchReviewCommentPublicationMarkerV1(
+              reviewRead.reviews.map((candidate) => ({
+                externalRef: candidate.providerId,
+                body: candidate.body,
+              })),
+              marker,
+            )
+            : { kind: 'absent' as const };
+          const refs = [comment, review].flatMap((match) => match.kind === 'unique'
+            ? [match.externalRef]
+            : []);
+          const externalRef = comment.kind === 'duplicate' || review.kind === 'duplicate' || refs.length !== 1
+            ? undefined
+            : refs[0];
+          return Object.freeze({
+            happierCommentId: entry.happierCommentId,
+            publicationCorrelationId: correlation.publicationCorrelationId,
+            outcome: externalRef === undefined
+              ? Object.freeze({ kind: 'uncertain' as const })
+              : Object.freeze({ kind: 'published' as const, externalRef }),
+          });
+        }),
+        verdict: input.publicationPlan.verdict === null || claim.verdict === null
+          ? Object.freeze({ kind: 'notRequested' as const })
+          : (() => {
+            const review = reviewRead.failure === null && !reviewRead.incomplete
+              ? matchReviewCommentPublicationMarkerV1(
+                reviewRead.reviews.map((candidate) => ({
+                  externalRef: candidate.providerId,
+                  body: candidate.body,
+                })),
+                verdictMarker!,
+              )
+              : { kind: 'absent' as const };
+            return Object.freeze({
+              publicationCorrelationId: claim.verdict.publicationCorrelationId,
+              outcome: review.kind !== 'unique'
+                ? Object.freeze({ kind: 'uncertain' as const })
+                : Object.freeze({ kind: 'published' as const, externalRef: review.externalRef }),
+            });
+          })(),
+      },
+    );
+    const confirmedPullRequest = await confirm(
+      input.localRef,
+      input.route,
+      repositories,
+      dependencies,
+    );
+    const readFailure = reviewRead.failure !== null
+      ? toTriageFailure(reviewRead.failure)
+      : confirmedComments.failure !== null
+        ? toTriageFailure(confirmedComments.failure)
+        : undefined;
+    return Object.freeze({
+      kind: 'settled' as const,
+      publication,
+      ...(confirmedPullRequest.ok ? { observation: confirmedPullRequest.observation } : {}),
+      ...(dispatchFailure !== undefined
+        ? { failure: dispatchFailure }
+        : readFailure !== undefined
+          ? { failure: readFailure }
+          : !confirmedPullRequest.ok
+            ? { failure: confirmedPullRequest.failure }
+            : {}),
+    });
+  };
+
+  if (claim.disposition === 'reconcile') {
+    return await reconcile();
+  }
+
+  const written = await send(dependencies, {
+    url: `${pullRequestUrl(input.route, input.localRef.entryId)}/reviews`,
+    method: 'POST',
+    body: {
+      commit_id: input.publicationPlan.headRevision,
+      event: GITHUB_REVIEW_EVENT_BY_VERDICT[input.publicationPlan.verdict?.kind ?? 'comment'],
+      ...(input.publicationPlan.verdict === null || verdictMarker === null
+        ? {}
+        : {
+          body: [
+            input.publicationPlan.verdict.body,
+            ...summaryEntries.map((entry) => {
+              const correlation = correlationByCommentId.get(entry.happierCommentId)!;
+              return `${entry.body}\n\n${formatReviewCommentPublicationMarkerV1('entry', correlation)}`;
+            }),
+            verdictMarker,
+          ].join('\n\n'),
+        }),
+      comments,
+    },
+  });
+  if (!written.ok) {
+    return await reconcile(written.failure);
+  }
+  const responseFailure = !isGithubSuccessStatus(written.response.status)
+    ? toTriageFailure(classifyGithubResponseFailure(written.response, dependencies.now()))
+    : undefined;
+  return await reconcile(responseFailure);
+}
+
+/**
+ * Publishes one canonical Review Comment either as a new pinned diff comment or
+ * as a reply to one existing provider-native review comment. Both paths consume
+ * the same Reviews claim and marker/result validators as whole-review
+ * publication; only their provider endpoint and revision precondition differ.
+ */
+export async function publishGithubPullRequestComment(
+  input: Readonly<{
+    localRef: GithubTriageEntryLocalRefV1;
+    route: GithubRepositoryRouteV1;
+    publicationPlan: ReviewCommentPublicationPlanV1;
+    mode: 'create' | 'reply';
+    threadId?: string;
+    claimPublicationDispatch: () => Promise<ReviewCommentClaimPublicationDispatchResponseV1>;
+  }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestReviewPublicationOutcomeV1> {
+  const repositories = openResolver(dependencies);
+  const current = reduce(
+    await readGithubPullRequest(input.localRef, input.route, repositories, dependencies),
+  );
+  if (!current.ok) {
+    return Object.freeze({ kind: 'rejected' as const, reason: 'admission_failed' as const, failure: current.failure });
+  }
+  const entry = input.publicationPlan.entries[0];
+  if (input.publicationPlan.entries.length !== 1 || entry === undefined
+    || input.publicationPlan.verdict !== null
+  ) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  }
+  let projected: Readonly<Record<string, unknown>> | null = null;
+  if (input.mode === 'create') {
+    if (typeof input.publicationPlan.baseRevision !== 'string'
+      || typeof input.publicationPlan.headRevision !== 'string'
+    ) {
+      return Object.freeze({
+        kind: 'rejected' as const,
+        reason: 'unsupported_anchor' as const,
+        observation: current.observation,
+      });
+    }
+    if (current.facts.reviewRevision?.baseSha !== input.publicationPlan.baseRevision) {
+      return Object.freeze({ kind: 'rejected' as const, reason: 'base_advanced' as const, observation: current.observation });
+    }
+    if (current.facts.headRevision !== input.publicationPlan.headRevision) {
+      return Object.freeze({ kind: 'rejected' as const, reason: 'head_advanced' as const, observation: current.observation });
+    }
+    if (!supportsGithubReviewEntry(entry, input.publicationPlan)
+      || githubReviewComment(entry, 'P'.repeat(43)) == null
+    ) {
+      return Object.freeze({ kind: 'rejected' as const, reason: 'unsupported_anchor' as const, observation: current.observation });
+    }
+  } else if (input.publicationPlan.baseRevision !== null
+    || input.publicationPlan.headRevision !== null
+    || input.threadId === undefined
+  ) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  } else {
+    const thread = await preflightGithubReviewThread({
+      localRef: input.localRef,
+      route: input.route,
+      threadId: input.threadId,
+    }, dependencies);
+    if (!thread.ok) {
+      return Object.freeze({
+        kind: 'rejected' as const,
+        reason: 'state_changed' as const,
+        observation: current.observation,
+        failure: thread.failure,
+      });
+    }
+  }
+
+  let claim: ReviewCommentClaimPublicationDispatchResponseV1;
+  try {
+    claim = await input.claimPublicationDispatch();
+  } catch {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const correlation = claim.entries[0];
+  if (correlation === undefined) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const marker = formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId);
+  if (input.mode === 'create') {
+    projected = githubReviewComment(entry, correlation.publicationCorrelationId) ?? null;
+    if (projected === null) {
+      return Object.freeze({
+        kind: 'rejected' as const,
+        reason: 'unsupported_anchor' as const,
+        observation: current.observation,
+      });
+    }
+  }
+
+  const reconcile = async (
+    dispatchFailure?: TriageSourceFailureV1,
+  ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const comments = input.mode === 'reply'
+      ? await readGithubReviewThreadReplyPublicationRecords({
+        localRef: input.localRef,
+        route: input.route,
+        threadId: input.threadId!,
+      }, dependencies)
+      : await readGithubPullRequestReviewCommentRecords({
+        route: input.route,
+        number: input.localRef.entryId,
+      }, dependencies);
+    const matched = comments.failure === null && !comments.incomplete
+      ? matchReviewCommentPublicationMarkerV1(
+        comments.comments.map((comment) => ({ externalRef: comment.providerId, body: comment.body })),
+        marker,
+      )
+      : { kind: 'absent' as const };
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(
+      input.publicationPlan,
+      claim,
+      {
+        publicationPlanId: claim.publicationPlanId,
+        entries: [{
+          happierCommentId: entry.happierCommentId,
+          publicationCorrelationId: correlation.publicationCorrelationId,
+          outcome: matched.kind !== 'unique'
+            ? { kind: 'uncertain' }
+            : { kind: 'published', externalRef: matched.externalRef },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    );
+    const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+    return Object.freeze({
+      kind: 'settled' as const,
+      publication,
+      ...(confirmed.ok ? { observation: confirmed.observation } : {}),
+      ...(dispatchFailure !== undefined
+        ? { failure: dispatchFailure }
+        : comments.failure !== null
+          ? { failure: toTriageFailure(comments.failure) }
+          : !confirmed.ok
+            ? { failure: confirmed.failure }
+            : {}),
+    });
+  };
+
+  const rejectedPublication = async (
+    failure: TriageSourceFailureV1,
+  ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(
+      input.publicationPlan,
+      claim,
+      {
+        publicationPlanId: claim.publicationPlanId,
+        entries: [{
+          happierCommentId: entry.happierCommentId,
+          publicationCorrelationId: correlation.publicationCorrelationId,
+          outcome: { kind: 'failed', code: failure.code },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    );
+    const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+    return Object.freeze({
+      kind: 'settled' as const,
+      publication,
       ...(confirmed.ok ? { observation: confirmed.observation } : {}),
       failure,
     });
+  };
+
+  if (claim.disposition === 'reconcile') return await reconcile();
+  if (input.mode === 'create') {
+    const written = await send(dependencies, {
+      url: buildGithubApiUrl([
+        'repos', input.route.owner, input.route.name, 'pulls', input.localRef.entryId, 'comments',
+      ]),
+      method: 'POST',
+      body: { ...projected!, commit_id: input.publicationPlan.headRevision! },
+    });
+    if (!written.ok) return await reconcile(written.failure);
+    if (isGithubSuccessStatus(written.response.status)) return await reconcile();
+    const failure = toTriageFailure(
+      classifyGithubResponseFailure(written.response, dependencies.now()),
+    );
+    return isGithubWriteResponseAmbiguous(written.response)
+      ? await reconcile(failure)
+      : await rejectedPublication(failure);
   }
-  return confirmed.ok
-    ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
-    : Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
+
+  const written = await sendGithubReviewThreadReply({
+      threadId: input.threadId!,
+      body: `${entry.body}\n\n${marker}`,
+    }, dependencies);
+  if (!written.ok) {
+    return !written.mayHaveChanged
+      ? await rejectedPublication(written.failure)
+      : await reconcile(written.failure);
+  }
+  return await reconcile();
 }
 
 /* ---------------------------------------------------------------------- merge */
@@ -711,12 +1073,16 @@ export async function updateGithubPullRequestBranch(
     });
   }
 
+  let dispatched: Awaited<ReturnType<typeof send>> | null = null;
   const settlement = await settleAtMostOnceProviderWrite({
-    dispatch: () => send(dependencies, {
-      url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
-      method: 'PUT',
-      body: { expected_head_sha: input.headRevision },
-    }),
+    dispatch: async () => {
+      dispatched = await send(dependencies, {
+        url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
+        method: 'PUT',
+        body: { expected_head_sha: input.headRevision },
+      });
+      return dispatched;
+    },
     // A transport failure or 5xx cannot say whether GitHub accepted the PUT.
     // A 4xx can, and keeps its status-specific handling below.
     mayHaveChanged: (result) => result.ok
@@ -741,7 +1107,22 @@ export async function updateGithubPullRequestBranch(
     });
   }
   if (settlement.kind === 'unchanged') {
-    return Object.freeze({ kind: 'uncertain' as const, observation: settlement.observation });
+    const dispatchedOutcome = dispatched as Awaited<ReturnType<typeof send>> | null;
+    const failure = dispatchedOutcome === null
+      ? undefined
+      : dispatchedOutcome.ok
+        ? isGithubWriteResponseAmbiguous(dispatchedOutcome.response)
+          ? toTriageFailure(classifyGithubResponseFailure(
+            dispatchedOutcome.response,
+            dependencies.now(),
+          ))
+          : undefined
+        : dispatchedOutcome.failure;
+    return Object.freeze({
+      kind: 'uncertain' as const,
+      observation: settlement.observation,
+      ...(failure === undefined ? {} : { failure }),
+    });
   }
   if (settlement.kind === 'uncertain') {
     return Object.freeze({

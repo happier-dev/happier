@@ -1,25 +1,15 @@
-import { basename, isAbsolute } from 'node:path';
+import type {
+  AgentConnectedAccountResumeReachabilityInputV1,
+  AgentConnectedAccountResumeReachabilityResultV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
-  buildPiResumeSearchRoots,
   doesPiSessionFileNameMatchSessionId,
-  findPiSessionFileForId,
-  pathExistsAsFile,
   resolvePiSessionIdFromResumeReference,
 } from '../sessionFiles.js';
 
-export type VerifyPiResumeReachableInput = Readonly<{
-  targetMaterializedRoot: string;
-  targetMaterializedEnv: Readonly<Record<string, string>>;
-  vendorResumeId: string | null;
-  cwd: string;
-  candidatePersistedSessionFile?: string | null;
-  targetStrict?: boolean;
-}>;
-
-export type VerifyPiResumeReachableResult =
-  | Readonly<{ ok: true; resolvedPath: string | null }>
-  | Readonly<{ ok: false; reason: string }>;
+export type VerifyPiResumeReachableInput = AgentConnectedAccountResumeReachabilityInputV1;
+export type VerifyPiResumeReachableResult = AgentConnectedAccountResumeReachabilityResultV1;
 
 function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -30,8 +20,6 @@ function asNonEmptyString(value: unknown): string | null {
 export async function verifyResumeReachablePi(
   input: VerifyPiResumeReachableInput,
 ): Promise<VerifyPiResumeReachableResult> {
-  const targetStrict = input.targetStrict === true;
-  const candidatePersistedSessionFile = asNonEmptyString(input.candidatePersistedSessionFile);
   const vendorResumeId = asNonEmptyString(input.vendorResumeId);
   if (!vendorResumeId) {
     return { ok: false, reason: 'pi_session_file_not_found' };
@@ -41,30 +29,13 @@ export async function verifyResumeReachablePi(
     return { ok: false, reason: 'pi_session_file_not_found' };
   }
 
-  if (
-    !targetStrict
-    && candidatePersistedSessionFile
-    && doesPiSessionFileNameMatchSessionId(basename(candidatePersistedSessionFile), sessionId)
-    && await pathExistsAsFile(candidatePersistedSessionFile)
-  ) {
-    return { ok: true, resolvedPath: candidatePersistedSessionFile };
-  }
-
-  if (!targetStrict && isAbsolute(vendorResumeId) && await pathExistsAsFile(vendorResumeId)) {
-    return { ok: true, resolvedPath: vendorResumeId };
-  }
-
-  const roots = buildPiResumeSearchRoots({
-    cwd: input.cwd,
-    env: input.targetMaterializedEnv,
-    targetMaterializedRoot: input.targetMaterializedRoot,
-    candidatePersistedSessionFile,
-    targetStrict,
+  const candidate = await input.sessionFiles.findDeclaredCandidate({
+    matchesCandidate: ({ fileName, nativeSessionId }) => (
+      nativeSessionId === sessionId
+      || doesPiSessionFileNameMatchSessionId(fileName, sessionId)
+    ),
   });
-  const resolvedPath = await findPiSessionFileForId({ sessionId, roots });
-  if (resolvedPath) {
-    return { ok: true, resolvedPath };
-  }
-
-  return { ok: false, reason: 'pi_session_file_not_found' };
+  return candidate.found
+    ? { ok: true }
+    : { ok: false, reason: 'pi_session_file_not_found' };
 }

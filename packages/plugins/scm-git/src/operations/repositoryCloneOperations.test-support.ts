@@ -170,7 +170,7 @@ export function makeRequest(parent: string, remotePath: string, destinationDirec
 export function makeProviderRegistry(description: ScmRepositoryCloneTargetDescription) {
     return {
         getProvider: () => description.repository.provider,
-        getAdapter: () => ({
+        getRepositoryClone: () => ({
             describeCloneTargets: async () => description,
         }),
     };

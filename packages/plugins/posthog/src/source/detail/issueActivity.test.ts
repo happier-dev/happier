@@ -84,8 +84,11 @@ describe('readPosthogIssueActivity', () => {
         const elsewhere
             = 'https://eu.posthog.com/api/projects/4821/error_tracking/issues/'
             + '00000000-0000-4000-8000-0000000000ff/activity/?limit=50&page=2';
+        const crossOriginSameRoute
+            = 'https://attacker.invalid/api/projects/4821/error_tracking/issues/'
+            + '00000000-0000-4000-8000-000000000001/activity/?limit=50&page=2';
 
-        for (const next of [nonAdvancing, elsewhere, 'not-a-url', '']) {
+        for (const next of [nonAdvancing, elsewhere, crossOriginSameRoute, 'not-a-url', '']) {
             const { client } = setup(() => json({ ...issueActivityPage, next }));
             const outcome = await readPosthogIssueActivity(client, {
                 teamRouteId: 4821,

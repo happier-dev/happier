@@ -13,6 +13,19 @@ import { exportCodexSessionBundle } from './export.js';
 import { importCodexSessionBundle } from './import.js';
 
 export const codexHandoffSurface = {
+  evaluateAvailability: ({ sessionId, metadata }) => {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      return { available: false as const, reasonCode: 'missing_metadata' as const };
+    }
+    const runtimeDescriptorV1 = metadata?.runtimeDescriptorV1;
+    if (!runtimeDescriptorV1 || runtimeDescriptorV1.agentId !== 'codex') {
+      return { available: false as const, reasonCode: 'missing_metadata' as const };
+    }
+    const backendMode = runtimeDescriptorV1.agent.backendMode;
+    return backendMode === 'acp' || backendMode === 'appServer'
+      ? { available: true as const }
+      : { available: false as const, reasonCode: 'runtime_mode_unsupported' as const };
+  },
   exportBundle: async (params, context) => {
     const remoteSessionId = params.sessionId.trim() || null;
     if (!remoteSessionId) {

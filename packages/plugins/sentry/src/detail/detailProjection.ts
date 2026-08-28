@@ -31,53 +31,36 @@
  */
 
 import {
+  MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
   type TriageBoundedTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { SENTRY_MAX_DETAIL_PAGE_SIZE, isSentryRoutableTagKey } from '../api/sentryRoutes.js';
-import { SENTRY_MAX_IDENTIFIER_UTF8_BYTES } from '../sentryContracts.js';
 
 /** The published bounds one detail projection is measured against. */
 export type SentryDetailBoundsV1 = Readonly<{
   identifierUtf8Bytes: number;
   textUtf8Bytes: number;
-  labelUtf8Bytes: number;
-  maxTagKeys: number;
-  maxTopValuesPerTag: number;
 }>;
 
 /**
  * The bounds a published Sentry detail projection uses.
  *
- * They are derived from the one hard constraint that exists — the Action
- * aggregate's byte gate against a fully saturated page — rather than from a
- * guess about how long a real title, tag value or member name is.
- * `detailProjection.test.ts` saturates every one of them at once, at each
- * collection's ceiling below, and measures the encoded result against that gate.
+ * These are aliases of the shared Triage semantic string bounds. Collection
+ * cardinality is fitted later against the canonical encoded Action boundary,
+ * rather than selected by a Sentry-local product cap.
  */
 export const SENTRY_DETAIL_BOUNDS_V1: SentryDetailBoundsV1 = Object.freeze({
-  identifierUtf8Bytes: SENTRY_MAX_IDENTIFIER_UTF8_BYTES,
+  identifierUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
-  labelUtf8Bytes: 128,
-  maxTagKeys: 32,
-  maxTopValuesPerTag: 8,
 });
 
 /** One provider page of retained events; `[SCHEMA]` the endpoint caps it at 100. */
 export const SENTRY_MAX_EVENT_ROWS = SENTRY_MAX_DETAIL_PAGE_SIZE;
 /** One provider page of tag values; `[SCHEMA]` the endpoint caps it at 100. */
 export const SENTRY_MAX_TAG_VALUE_ROWS = SENTRY_MAX_DETAIL_PAGE_SIZE;
-/**
- * The activity history one issue response may contribute.
- *
- * The public issue response embeds `activity` inline and states no page size, so
- * this ceiling is the source's own: the largest history whose fully saturated
- * projection still clears the Action byte gate.
- */
-export const SENTRY_MAX_ACTIVITY_ITEMS = 100;
-
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -160,7 +143,7 @@ function projectActivityActor(
 ): TriageBoundedTextV1 | null {
   if (!isRecord(value)) return null;
   const name = readString(value['name']);
-  return name === null ? null : bounded(name, bounds.labelUtf8Bytes);
+  return name === null ? null : bounded(name, bounds.textUtf8Bytes);
 }
 
 export function projectSentryActivity(
@@ -187,13 +170,8 @@ export function projectSentryActivity(
       malformedItemCount += 1;
       continue;
     }
-    if (items.length >= SENTRY_MAX_ACTIVITY_ITEMS) {
-      omittedItemCount += 1;
-      projectionTruncated = true;
-      continue;
-    }
     const id = bounded(rawId, bounds.identifierUtf8Bytes);
-    const type = bounded(rawType, bounds.labelUtf8Bytes);
+    const type = bounded(rawType, bounds.textUtf8Bytes);
     const atMs = readTimestampMs(entry['dateCreated']);
     const actor = projectActivityActor(entry['user'], bounds);
     const truncated = id.truncated || type.truncated || (actor?.truncated ?? false);
@@ -432,22 +410,15 @@ export function projectSentryIssueTags(
       omittedTagCount += 1;
       continue;
     }
-    if (tags.length >= bounds.maxTagKeys) {
-      omittedTagCount += 1;
-      projectionTruncated = true;
-      continue;
-    }
-
     const key = bounded(rawKey, bounds.identifierUtf8Bytes);
     const rawName = readString(entry['name']);
-    const name = rawName === null ? null : bounded(rawName, bounds.labelUtf8Bytes);
+    const name = rawName === null ? null : bounded(rawName, bounds.textUtf8Bytes);
     const totalValues = readCount(entry['totalValues']);
     const rawTopValues = entry['topValues'];
     const topValues: SentryProjectedTagValueV1[] = [];
     let tagTruncated = key.truncated || (name?.truncated ?? false);
     if (Array.isArray(rawTopValues)) {
-      tagTruncated = tagTruncated || rawTopValues.length > bounds.maxTopValuesPerTag;
-      for (const candidate of rawTopValues.slice(0, bounds.maxTopValuesPerTag)) {
+      for (const candidate of rawTopValues) {
         const projected = projectTagValue(candidate, bounds);
         if (projected === null) continue;
         tagTruncated = tagTruncated || projected.truncated === true;

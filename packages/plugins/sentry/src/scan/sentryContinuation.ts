@@ -13,7 +13,7 @@
  * configured instance, and repeating them would create a second authority that
  * can go stale after a reconfiguration. No host clock reading is carried either.
  *
- * The bounded JSON envelope is the protocol's (`encodeTriagePagingTokenV1` /
+ * The strict-JSON envelope is the protocol's (`encodeTriagePagingTokenV1` /
  * `decodeTriagePagingTokenV1`); what stays here is the frontier record inside it
  * and every field check that decides what this walk may resume from.
  */
@@ -24,12 +24,11 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import {
-  readSentryCursorProbe,
-  type SentryCursorProbeV1,
-} from '../api/sentryCursorCycle.js';
+  readCursorCycleProbeV1,
+  type CursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
 import {
   SENTRY_MAX_NATIVE_ISSUE_PAGE_LIMIT,
-  SENTRY_MAX_SCAN_PAGE_ENTRIES,
   SENTRY_SCAN_STATS_PERIOD,
 } from '../sentryContracts.js';
 
@@ -50,7 +49,7 @@ export type SentryScanContinuationV1 = Readonly<{
   cursor: string;
   /**
    * The earlier position this pass is watching for, and the schedule that moves
-   * it (`api/sentryCursorCycle.ts`).
+   * it (the shared Triage source cursor-cycle owner).
    *
    * It is the walk's own non-progress evidence, and it lives here because that
    * is the only place a pass whose pages are separate invocations can keep it.
@@ -65,11 +64,10 @@ export type SentryScanContinuationV1 = Readonly<{
    *
    * It is a within-pass position, exactly like `cursor`: no route, no
    * credential, no clock, and nothing that outlives the pass. It is one saved
-   * cursor rather than the whole requested-position history because this token
-   * is BOUNDED: evidence that grew per page turned the over-bound branch into
-   * the ordinary end of a long walk, at the 199th page.
+   * cursor rather than the whole requested-position history because one witness
+   * detects a cycle without making the frontier grow on every page.
    */
-  probe: SentryCursorProbeV1;
+  probe: CursorCycleProbeV1;
   /**
    * The caveats this walk has already established, carried forward across every
    * page of the same pass.
@@ -93,12 +91,9 @@ export type SentryScanContinuationResultV1 =
 /**
  * The health reason a walk settles on when its frontier cannot be minted.
  *
- * It is emphatically **not** a cursor verdict. The provider's cursor can be
- * perfectly well formed and still not fit the protocol's bounded paging token,
- * and reporting that as `sentry-pagination-cursor-malformed` blames the
- * provider for a bound this side owns. The truthful claim is the one the other
- * sources already make for the same condition: this page is the last one this
- * pass can hand back.
+ * It is emphatically **not** a cursor verdict. It remains available for genuine
+ * serialization failures; reporting those as cursor malformation would blame
+ * the provider for a failure this side owns.
  */
 export const SENTRY_CONTINUATION_UNAVAILABLE_REASON = 'sentry-continuation-unavailable';
 
@@ -112,18 +107,16 @@ function isValidGeometry(scanLimit: unknown, nativeLimit: unknown): boolean {
   return typeof scanLimit === 'number'
     && Number.isSafeInteger(scanLimit)
     && scanLimit >= 1
-    && scanLimit <= SENTRY_MAX_SCAN_PAGE_ENTRIES
     && nativeLimit === resolveSentryNativeLimit(scanLimit);
 }
 
 /**
- * Projects this pass's frozen facts into the protocol's bounded token.
+ * Projects this pass's frozen facts into the protocol's strict-JSON token.
  *
  * `null` means no continuation can be minted — the record does not describe the
- * geometry this pass froze, or it does not fit the bound. The caller then
+ * geometry this pass froze, or strict JSON serialization failed. The caller then
  * settles a truthful partial rather than presenting a truncated walk as a
- * finished one, and never emits an over-bound token that would discard the page
- * it belongs to.
+ * finished one.
  */
 export function encodeSentryScanContinuation(
   continuation: SentryScanContinuationV1,
@@ -131,7 +124,7 @@ export function encodeSentryScanContinuation(
   if (continuation.v !== 1) return null;
   if (!isValidGeometry(continuation.scanLimit, continuation.nativeLimit)) return null;
   if (continuation.cursor === '') return null;
-  if (readSentryCursorProbe(continuation.probe) === null) return null;
+  if (readCursorCycleProbeV1(continuation.probe) === null) return null;
   if (readSentryWalkHealth(continuation.walkHealth) === null) return null;
   if (
     continuation.query !== SENTRY_SCAN_QUERY
@@ -159,7 +152,7 @@ export function decodeSentryScanContinuation(token: string): SentryScanContinuat
   const { scanLimit, nativeLimit, cursor, query, statsPeriod, sort } = record;
   if (!isValidGeometry(scanLimit, nativeLimit)) return REJECTED;
   if (typeof cursor !== 'string' || cursor === '') return REJECTED;
-  const probe = readSentryCursorProbe(record['probe']);
+  const probe = readCursorCycleProbeV1(record['probe']);
   if (probe === null) return REJECTED;
   const walkHealth = readSentryWalkHealth(record['walkHealth']);
   if (walkHealth === null) return REJECTED;

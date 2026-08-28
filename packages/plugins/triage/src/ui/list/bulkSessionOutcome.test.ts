@@ -4,6 +4,7 @@ import {
     isTriageBulkEntryOutcomeIncompleteV1,
     projectTriageBulkEntryOutcomesV1,
     projectTriageBulkSeedOutcomesV1,
+    summarizeTriageBulkSettlementV1,
 } from './bulkSessionOutcome.js';
 
 describe('bulk per-entry settlement', () => {
@@ -57,5 +58,43 @@ describe('bulk per-entry settlement', () => {
             { attachment: 'refused', seed: 'refused' },
             { attachment: 'refused', seed: 'refused' },
         ]);
+    });
+
+    it('does not report an answered creation failure as a started Session', () => {
+        const failed = projectTriageBulkEntryOutcomesV1({
+            entries: [entries[0]!],
+            start: {
+                v: 1,
+                type: 'creationFailed',
+            },
+            secondaryLinks: [],
+            compose: 'notRequested',
+        });
+        const pending = projectTriageBulkEntryOutcomesV1({
+            entries: [entries[1]!],
+            start: {
+                v: 1,
+                type: 'creationPending',
+                outcome: 'unknown',
+            },
+            secondaryLinks: [],
+            compose: 'notRequested',
+        });
+
+        expect(summarizeTriageBulkSettlementV1({
+            results: [
+                { status: 'settled', outcome: { start: {
+                    v: 1,
+                    type: 'creationFailed',
+                }, entries: failed } },
+                { status: 'settled', outcome: { start: {
+                    v: 1,
+                    type: 'creationPending',
+                    outcome: 'unknown',
+                }, entries: pending } },
+            ],
+            unavailableCount: 0,
+            refusalCount: 0,
+        })).toEqual({ opened: 0, unknown: 1, notStarted: 1, left: 0 });
     });
 });

@@ -1,12 +1,8 @@
-import { join } from 'node:path';
-
-import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
 import type {
     OauthCredentialRecord,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { parseCredentialRecord } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { buildCodexCloudAuthFile } from '../../openai/cloud/authFile.js';
 import type { CodexConnectedServiceRefreshSelection } from './application.js';
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -126,21 +122,4 @@ export function resolveCodexAppliedGeneration(input: Readonly<{
 }>): number | null {
   if (input.selection?.kind === 'group') return input.selection.generation;
   return input.expected.generation;
-}
-
-export async function writeCodexConnectedServiceAuthStore(input: Readonly<{
-  codexHome: string;
-  credential: OauthCredentialRecord;
-}>): Promise<void> {
-  await writeAtomicJsonFile({
-    path: join(input.codexHome, 'auth.json'),
-    mode: 0o600,
-    value: buildCodexCloudAuthFile({
-      accessToken: input.credential.oauth.accessToken,
-      refreshToken: input.credential.oauth.refreshToken,
-      idToken: input.credential.oauth.idToken,
-      accountId: input.credential.oauth.providerAccountId,
-      lastRefreshIso: new Date().toISOString(),
-    }),
-  });
 }

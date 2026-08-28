@@ -10,7 +10,7 @@ import { getBitbucketPullRequest } from '../pullRequests.js';
 import { getBitbucketViewer } from '../viewer.js';
 import { toTriageSourceFailure } from './failures.js';
 import type { BitbucketEntryRouteV1 } from './invocationAdmission.js';
-import { toBitbucketPresentObservation } from './observations.js';
+import { readViewerReviewVerdict, toBitbucketPresentObservation } from './observations.js';
 
 /**
  * The one authoritative observation of a single Bitbucket entry, given an authorized client.
@@ -39,6 +39,7 @@ export type BitbucketEntryObservationV1 = Readonly<{
    */
   state: BitbucketPullRequestNativeState | null;
   headCommit: string | null;
+  viewerReviewVerdict: 'approved' | 'changes_requested' | null;
 }>;
 
 export async function observeBitbucketEntryWithFacts(
@@ -57,6 +58,7 @@ export async function observeBitbucketEntryWithFacts(
     },
     state: null,
     headCommit: null,
+    viewerReviewVerdict: null,
   });
 
   const viewer = await getBitbucketViewer({
@@ -91,6 +93,7 @@ export async function observeBitbucketEntryWithFacts(
     observation,
     state: outcome.entry.state.native,
     headCommit: outcome.entry.source?.commitHash ?? null,
+    viewerReviewVerdict: readViewerReviewVerdict(outcome.entry, viewer.viewer.accountUuid),
   };
 }
 

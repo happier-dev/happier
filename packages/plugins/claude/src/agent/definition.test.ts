@@ -28,10 +28,15 @@ describe('AGENT_DEFINITION', () => {
         });
     });
 
-    it('declares its catalog contribution from the static contribution leaf', () => {
-        expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
-            importName: 'CLAUDE_AGENT_RUNTIME_CONTRIBUTION',
-            source: './agent/contributions/catalog',
+    it('keeps the public Agent definition free of private runtime aggregates', () => {
+        expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
+    });
+
+    it('does not advertise check-now recovery without an executable control', () => {
+        expect(AGENT_DEFINITION.core.sessionCapabilities.usageLimitRecovery).toEqual({
+            checkNow: 'unsupported',
         });
+        expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities.sessions?.usageLimitRecovery)
+            .toBeUndefined();
     });
 });

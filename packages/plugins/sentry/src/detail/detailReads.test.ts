@@ -399,6 +399,21 @@ describe('Sentry selected-event read', () => {
     });
   });
 
+  it('refuses a valid body whose id is not the exact selected occurrence', async () => {
+    const selectedEventId = 'c'.repeat(32);
+    const harness = client(respond({ eventID: 'd'.repeat(32), title: 'another event' }));
+    const result = await readSentryEventProjection(harness.client, {
+      instance: INSTANCE,
+      entryId: '1234',
+      selector: { kind: 'event', eventId: selectedEventId },
+      nowMs: 0,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.class).toBe('unsupportedContract');
+  });
+
   it('never lets a raw event body leave this call frame', async () => {
     const harness = client(respond({
       eventID: 'd'.repeat(32),

@@ -38,9 +38,6 @@ import {
 } from '../../source/detail/issueEventsContract.js';
 import type { PosthogProjectedIssueEvent } from './issueEventProjection.js';
 
-/** The page size one detail session asks for; the provider ceiling is the only bound. */
-export const POSTHOG_DETAIL_SAMPLE_PAGE_SIZE = POSTHOG_ISSUE_EVENTS_MAX_LIMIT;
-
 /**
  * The sampled-occurrence state.
  *
@@ -259,7 +256,9 @@ export function usePosthogOccurrenceController(
                 collisionScope: input.observation.entryRef.collisionScope,
                 entryId: input.observation.entryRef.entryId,
             },
-            limit: POSTHOG_DETAIL_SAMPLE_PAGE_SIZE,
+            // The provider contract owns this ceiling; the controller adds no
+            // second page-size policy.
+            limit: POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
             ...(continuation === null ? {} : { continuation }),
         }, { signal: pageSignal });
         if (pageSignal.aborted) {

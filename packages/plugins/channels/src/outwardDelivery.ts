@@ -61,6 +61,7 @@ import {
   deriveConversationDeliveryAttention,
   deriveConversationDeliveryProjection,
   isConversationDeliveryAutomaticTerminal,
+  isConversationDeliveryContentFree,
   isConversationDeliveryRetentionEligible,
   resolveConversationDeliveryCustody,
   retryConversationDeliveryAfterArchiveRecovery,
@@ -187,11 +188,6 @@ type ConversationStoredOutwardDeliveryObligation =
       content: null;
       contentFingerprint: string;
     }>);
-
-/** Compatibility view for C2 control-response callers; it uses the same owner. */
-export type ConversationControlResponseObligation = ConversationOutwardDeliveryObligation & Readonly<{
-  source: Extract<ConversationOutwardSourceV1, Readonly<{ kind: 'controlResponse' }>>;
-}>;
 
 export type ConversationOutwardDeliveryRecord = Readonly<{
   /** Opaque physical Account-Collection row ID; never caller supplied. */
@@ -569,7 +565,6 @@ function sourceIdentityParts(source: ConversationOutwardSourceV1): readonly stri
         source.automationRunId,
         source.resultId,
         source.automationId,
-        String(source.templateVersion),
         source.resultDelivery,
       ];
     case 'permissionWait':
@@ -678,11 +673,6 @@ async function matchesConversationOutwardDeliveryObligation(input: Readonly<{
   return fingerprint !== null && fingerprint === input.stored.contentFingerprint;
 }
 
-function shouldCompactConversationOutwardDeliveryContent(custody: ConversationDeliveryCustody): boolean {
-  return isConversationDeliveryRetentionEligible(custody)
-    && retryConversationDeliveryAfterArchiveRecovery({ custody }).kind !== 'retryReady';
-}
-
 function readConversationDeliveryCustody(input: Readonly<{
   payload: JsonRecord;
   retryNotBefore: JsonValue | undefined;
@@ -779,7 +769,7 @@ function readConversationOutwardDeliveryRecord(input: Readonly<{
     if (
       typeof contentFingerprint !== 'string'
       || !/^[A-Za-z0-9_-]{43}$/u.test(contentFingerprint)
-      || !shouldCompactConversationOutwardDeliveryContent(custody)
+      || !isConversationDeliveryContentFree(custody)
     ) return null;
     const obligation: ConversationStoredOutwardDeliveryObligation = bindingId === undefined
       ? {
@@ -1315,7 +1305,7 @@ export function createConversationOutwardDeliveryCollectionStore(
         return { kind: 'conflict' };
       }
       let obligation = existing.record.obligation;
-      if (shouldCompactConversationOutwardDeliveryContent(cas.custody)) {
+      if (isConversationDeliveryContentFree(cas.custody)) {
         let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
         try {
           accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
@@ -2098,7 +2088,7 @@ async function compactConversationOutwardDeliveryObligation(input: Readonly<{
   accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   signal: AbortSignal;
 }>): Promise<ConversationStoredOutwardDeliveryObligation | undefined> {
-  if (!shouldCompactConversationOutwardDeliveryContent(input.custody)) return input.obligation;
+  if (!isConversationDeliveryContentFree(input.custody)) return input.obligation;
   if (!hasRetainedConversationOutwardDeliveryContent(input.obligation)) return input.obligation;
   let connection: StoredCollectionRow | null;
   try {
@@ -2184,7 +2174,6 @@ function matchesAutomationTarget(input: Readonly<{
   if (!current.success
     || current.data.kind !== 'automation'
     || current.data.automationId !== input.expected.automationId
-    || current.data.templateVersion !== input.expected.templateVersion
     || current.data.policy.resultDelivery !== input.expected.resultDelivery) {
     return false;
   }
@@ -2348,6 +2337,7 @@ export type ConversationPermissionWaitMediationSourceReadResult =
   | Readonly<{
     kind: 'ready';
     source: ConversationPermissionWaitMediationSource;
+    permissionApprovalsEnabled: boolean;
   }>
   | Readonly<{ kind: 'notEligible' }>
   | Readonly<{
@@ -2419,7 +2409,7 @@ async function readCurrentConversationPermissionWaitMediationSource(input: Reado
   }
   const target = ConversationBindingTargetV1Schema.safeParse(binding.target);
   if (!target.success) return { kind: 'unavailable', reason: 'stateCorrupt' };
-  if (target.data.kind !== 'session' || !hasConversationApprovalPolicyEnabled(target.data)) {
+  if (target.data.kind !== 'session') {
     return { kind: 'notEligible' };
   }
   let connectionRow: StoredCollectionRow | null;
@@ -2443,6 +2433,7 @@ async function readCurrentConversationPermissionWaitMediationSource(input: Reado
   if (!connection.enabled || connection.deletionState !== 'none') return { kind: 'notEligible' };
   return {
     kind: 'ready',
+    permissionApprovalsEnabled: hasConversationApprovalPolicyEnabled(target.data),
     source: {
       connectionId: binding.connectionId,
       bindingId: input.bindingId,
@@ -2470,7 +2461,11 @@ export async function readConversationPermissionWaitMediationSource(input: Reado
 }>): Promise<ConversationPermissionWaitMediationSourceReadResult> {
   const current = await readCurrentConversationPermissionWaitMediationSource(input);
   return current.kind === 'ready'
-    ? { kind: 'ready', source: current.source }
+    ? {
+      kind: 'ready',
+      source: current.source,
+      permissionApprovalsEnabled: current.permissionApprovalsEnabled,
+    }
     : current;
 }
 
@@ -2496,13 +2491,6 @@ function isSameConversationPermissionWaitMediationSource(
 function renderConversationPendingPermissionRequest(
   request: ConversationPendingPermissionRequest,
 ): string {
-  if (request.kind === 'legacy_permission') {
-    // The predecessor projection did not publish a semantic summary. Keep its
-    // released, opaque permission wording rather than treating it as a
-    // user-action or fabricating details Channels never received.
-    return 'This Session is waiting for an approval in Happier. '
-      + `Reply /allow ${request.requestId} or /deny ${request.requestId}.`;
-  }
   if (request.kind === 'permission') {
     const summary = request.agentRequestSummary;
     return `${summary.title}\n${summary.detail}\n`
@@ -2589,6 +2577,9 @@ export async function acceptConversationPermissionWaitOutwardDelivery(input: Rea
     signal: input.signal,
   });
   if (current.kind !== 'ready') return current;
+  if (input.request.kind !== 'user_action' && !current.permissionApprovalsEnabled) {
+    return { kind: 'notEligible' };
+  }
   if (!isSameConversationPermissionWaitMediationSource(current.source, input.source)) {
     return { kind: 'notEligible' };
   }
@@ -2734,12 +2725,6 @@ export const CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASONS = [
 export type ConversationOutwardDeliverySuppressionReason =
   (typeof CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASONS)[number];
 
-/** Compatibility aliases for existing control-response callers. */
-export const CONVERSATION_CONTROL_RESPONSE_SUPPRESSION_REASONS =
-  CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASONS;
-export type ConversationControlResponseSuppressionReason =
-  ConversationOutwardDeliverySuppressionReason;
-
 const CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASON_SET =
   new Set<string>(CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASONS);
 
@@ -2749,9 +2734,6 @@ export type ConversationOutwardDeliveryCurrentnessResult =
     kind: 'suppressed';
     reason: ConversationOutwardDeliverySuppressionReason;
   }>;
-
-export type ConversationControlResponseCurrentnessResult =
-  ConversationOutwardDeliveryCurrentnessResult;
 
 /**
  * Adapter for the Channels core's canonical Account authority/currentness
@@ -2763,8 +2745,6 @@ export interface ConversationOutwardDeliveryAuthority {
     signal: AbortSignal;
   }>): Promise<ConversationOutwardDeliveryCurrentnessResult>;
 }
-
-export type ConversationControlResponseAuthority = ConversationOutwardDeliveryAuthority;
 
 /**
  * Re-reads the canonical Account rows immediately before provider I/O. This
@@ -2840,8 +2820,6 @@ export type ConversationOutwardDeliveryResult =
       | 'invalidRow'
       | 'rowTooLarge';
   }>;
-
-export type ConversationControlResponseDeliveryResult = ConversationOutwardDeliveryResult;
 
 export type ConversationOutwardDeliveryRecoveryResult =
   | Extract<ConversationOutwardDeliveryResult, Readonly<{ kind: 'settled' | 'settlementPending' }>>
@@ -3688,9 +3666,6 @@ export async function reconcileConversationOutwardDeliveryAttemptThroughProvider
   });
 }
 
-/** Compatibility alias; control responses use the same custody path. */
-export const deliverConversationControlResponse = deliverConversationOutwardDelivery;
-
 export function createReadyConversationOutwardDeliveryRecord(input: Readonly<{
   custodyId: string;
   revision: number;
@@ -3704,14 +3679,4 @@ export function createReadyConversationOutwardDeliveryRecord(input: Readonly<{
     obligation: input.obligation,
     custody: createReadyConversationDeliveryCustody(),
   };
-}
-
-/** Compatibility wrapper; it does not create a second custody representation. */
-export function createReadyConversationControlResponseRecord(input: Readonly<{
-  custodyId: string;
-  revision: number;
-  createdAt: number;
-  obligation: ConversationControlResponseObligation;
-}>): ConversationOutwardDeliveryRecord {
-  return createReadyConversationOutwardDeliveryRecord(input);
 }

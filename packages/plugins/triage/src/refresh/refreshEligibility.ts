@@ -30,30 +30,6 @@ import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
  */
 export const TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS = 30_000;
 
-/**
- * The furthest ahead a source-stated `retryNotBeforeMs` may push our pacing.
- *
- * This is the one owner of that bound. It lives here, at the single consumer of
- * the provider's deadline, rather than in each source: `TriageSourceFailureV1`
- * publishes an unbounded absolute instant on purpose — a source reports what its
- * provider said — and how long *we* are willing to wait on that statement is
- * this module's pacing decision, exactly like the minimum interval above. Four
- * sources previously clamped their own value with four private constants while
- * two did not, so the same skewed header parked one source and not another, and
- * a third-party source received no protection at all. Bounding it here covers
- * every source, including ones this repository does not ship.
- *
- * An hour is the ceiling every documented forge quota window fits inside
- * (GitLab approximates a differently configured period to "the nearest 60-minute
- * period"; Bitbucket publishes a one-hour rolling window), so a deadline beyond
- * it is a clock skew, a mis-scaled unit, or a rewriting intermediary rather than
- * a real window. The deadline is honoured, never bypassed — `core/CORPUS.md`
- * §4.2 requires surfacing the wait rather than overriding provider authority —
- * but it can no longer outlive a plausible window and hold the reader's own
- * **Refresh** press for days.
- */
-const TRIAGE_SOURCE_RETRY_HORIZON_MS = 60 * 60 * 1_000;
-
 /** First aggregate backoff ceiling after a provider-pacing failure. */
 const TRIAGE_REFRESH_BACKOFF_BASE_MS = 5_000;
 
@@ -209,10 +185,8 @@ export function evaluateRefreshEligibility(input: Readonly<{
  * The source's own `retryNotBeforeMs` replaces ours because the latest provider
  * statement is the authoritative one; we never attempt before an outstanding
  * deadline, so there is no case where dropping an older deadline lets a trigger
- * through early. It is bounded to `TRIAGE_SOURCE_RETRY_HORIZON_MS` on the way
- * in, so every reader of this state — the coordinator, the shell, the Composer
- * picker — sees the deadline that is actually honoured rather than a raw header
- * value one of them would have to bound again.
+ * through early. Triage preserves that absolute provider fact exactly rather
+ * than inventing a nearer horizon and retrying before the provider admitted it.
  *
  * Full jitter — a uniform draw inside the exponential ceiling rather than the
  * ceiling itself — keeps two machines observing the same failing source from
@@ -226,9 +200,7 @@ export function recordRefreshFailure(input: Readonly<{
     random: () => number;
 }>): TriageRefreshBackoffStateV1 {
     const stated = input.failure.retryNotBeforeMs ?? null;
-    const retryNotBeforeMs = stated === null
-        ? null
-        : Math.min(stated, input.nowMs + TRIAGE_SOURCE_RETRY_HORIZON_MS);
+    const retryNotBeforeMs = stated;
     if (!isProviderPacingFailure(input.failure)) {
         return {
             retryNotBeforeMs,

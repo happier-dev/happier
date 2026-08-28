@@ -4,6 +4,7 @@ import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { geminiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/descriptor.js';
+import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connectedServices/runtimeAuthAdapter.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createGeminiAgentRuntime } from './agent/runtime/factory.js';
 import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
@@ -128,7 +129,26 @@ export const GEMINI_PLUGIN = definePlugin({
       },
       factory: createGeminiAgentRuntime,
       connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: ['native_to_connected', 'connected_to_connected'],
+        },
+        fileEnvironmentUses: [{
+          purpose: 'model_upstream',
+          fileId: 'google-service-account.json',
+          environmentKey: 'GOOGLE_APPLICATION_CREDENTIALS',
+        }],
+        environmentUses: [
+          { purpose: 'model_upstream', environmentKey: 'GEMINI_API_KEY' },
+          { purpose: 'model_upstream', environmentKey: 'GOOGLE_API_KEY' },
+          { purpose: 'model_upstream', environmentKey: 'GOOGLE_GENAI_USE_VERTEXAI' },
+          { purpose: 'model_upstream', environmentKey: 'GOOGLE_CLOUD_PROJECT' },
+          { purpose: 'model_upstream', environmentKey: 'GOOGLE_CLOUD_LOCATION' },
+        ],
         stateSharingDescriptor: geminiConnectedServiceStateSharingDescriptor,
+        continuity: {
+          runtimeAuthAdapter: createGeminiConnectedServiceRuntimeAuthAdapter(),
+        },
       },
       cliSessionCommand: {
         sessionRuntimeId: 'gemini',

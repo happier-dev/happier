@@ -1,11 +1,16 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
   TriagePrepareReviewWorkspaceInputV1Schema,
+  TriageVerifyReviewWorkspaceInputV1Schema,
   type TriagePrepareReviewWorkspaceInputV1,
+  type TriageVerifyReviewWorkspaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
-import { prepareGitlabReviewWorkspaceAction } from './operations.js';
+import {
+  prepareGitlabReviewWorkspaceAction,
+  verifyGitlabReviewWorkspaceAction,
+} from './operations.js';
 import {
   createStubGitlabTransport,
   gitlabTestConfiguredInstance,
@@ -43,6 +48,25 @@ function prepareInput(
       serverId: 'server-1',
       machineId: 'machine-1',
       rootPath: '/workspaces/selected-repository',
+    },
+    ...overrides,
+  });
+}
+
+function verifyInput(
+  overrides: Partial<TriageVerifyReviewWorkspaceInputV1> = {},
+): TriageVerifyReviewWorkspaceInputV1 {
+  const prepared = prepareInput();
+  return TriageVerifyReviewWorkspaceInputV1Schema.parse({
+    v: 1,
+    instance: prepared.instance,
+    entryRef: prepared.entryRef,
+    lastKnownLocator: prepared.lastKnownLocator,
+    observed: prepared.observed,
+    workspace: prepared.workspace,
+    prepared: {
+      repositoryPath: '/workspaces/selected-repository/.happier/review',
+      pullRequest: { number: 7 },
     },
     ...overrides,
   });
@@ -224,9 +248,10 @@ describe('GitLab prepared review workspace', () => {
   it('requires an explicit workspace before it authorizes or rereads GitLab', async () => {
     const transport = createStubGitlabTransport({ respond: () => undefined });
     const execute = vi.fn();
+    const { workspace: _workspace, ...withoutWorkspace } = prepareInput();
 
     await expect(prepareGitlabReviewWorkspaceAction(
-      prepareInput({ workspace: null }),
+      withoutWorkspace,
       withMaterializer(transport.context, execute),
     )).resolves.toEqual({ kind: 'workspaceRequired' });
 
@@ -373,6 +398,41 @@ describe('GitLab prepared review workspace', () => {
     )).resolves.toEqual(expected);
   });
 
+  it('rejects a verification-shaped SCM success during initial preparation', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/workspaces/selected-repository/.happier/review',
+        sourceHeadSha: OBSERVED_HEAD,
+      },
+    }));
+
+    await expect(prepareGitlabReviewWorkspaceAction(
+      prepareInput(),
+      withMaterializer(transport.context, execute),
+    )).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+
   it('preserves generic SCM Action cancellation', async () => {
     const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
     const transport = createStubGitlabTransport({
@@ -400,6 +460,245 @@ describe('GitLab prepared review workspace', () => {
     await expect(prepareGitlabReviewWorkspaceAction(
       prepareInput(),
       withMaterializer(transport.context, execute),
+    )).rejects.toBe(cancellation);
+  });
+
+  it('projects a rejected generic SCM Action as SCM unavailability', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn(async () => { throw new Error('SCM action transport unavailable'); });
+
+    await expect(prepareGitlabReviewWorkspaceAction(
+      prepareInput(),
+      withMaterializer(transport.context, execute),
+    )).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+});
+
+describe('GitLab final review-workspace verification', () => {
+  it('verifies only after the provider reread and canonical local HEAD agree', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/workspaces/selected-repository/.happier/review',
+        sourceHeadSha: OBSERVED_HEAD,
+      },
+    }));
+    const context = withMaterializer(transport.context, execute);
+
+    await expect(verifyGitlabReviewWorkspaceAction(verifyInput(), context)).resolves.toEqual({
+      kind: 'verified',
+      pullRequest: { number: 7 },
+    });
+    expect(execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/workspaces/selected-repository',
+        displayName: 'feature/from-fork',
+        sourceTip: {
+          repository: {
+            kind: 'gitlab',
+            deployment: 'https://gitlab.com',
+            repository: 'contributor/repository',
+          },
+          cloneUrl: 'https://gitlab.com/contributor/repository.git',
+          branch: 'feature/from-fork',
+          sourceHeadSha: OBSERVED_HEAD,
+          fetchRef: 'refs/heads/feature/from-fork',
+        },
+        verification: {
+          targetPath: '/workspaces/selected-repository/.happier/review',
+        },
+      },
+      { signal: context.signal },
+    );
+  });
+
+  it('refuses when the prepared pull-request reference does not match the reread item', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn();
+
+    await expect(verifyGitlabReviewWorkspaceAction(
+      verifyInput({
+        prepared: {
+          repositoryPath: '/workspaces/selected-repository/.happier/review',
+          pullRequest: { number: 8 },
+        },
+      }),
+      withMaterializer(transport.context, execute),
+    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a local checkout whose canonical HEAD no longer matches the reread head', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/workspaces/selected-repository/.happier/review',
+        sourceHeadSha: ADVANCED_HEAD,
+      },
+    }));
+
+    await expect(verifyGitlabReviewWorkspaceAction(
+      verifyInput(),
+      withMaterializer(transport.context, execute),
+    )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+  });
+
+  it('authoritatively rereads GitLab and refuses a moved source head before local verification', async () => {
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: ADVANCED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: ADVANCED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const execute = vi.fn();
+
+    await expect(verifyGitlabReviewWorkspaceAction(
+      verifyInput(),
+      withMaterializer(transport.context, execute),
+    )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+
+    expect(transport.materializeCount()).toBe(1);
+    expect(transport.requests.map((request) => request.url))
+      .toEqual(['https://gitlab.com/api/v4/projects/3/merge_requests/7']);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('preserves cancellation from canonical local-HEAD verification', async () => {
+    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    const transport = createStubGitlabTransport({
+      respond: (request) => request.url.endsWith('/api/v4/projects/3/merge_requests/7')
+        ? {
+          status: 200,
+          body: {
+            project_id: 3,
+            iid: 7,
+            references: { full: 'maintainer/repository!7' },
+            sha: OBSERVED_HEAD,
+            diff_refs: { base_sha: OBSERVED_BASE, head_sha: OBSERVED_HEAD },
+            source_branch: 'feature/from-fork',
+            source_project: {
+              id: 17,
+              path_with_namespace: 'contributor/repository',
+              http_url_to_repo: 'https://gitlab.com/contributor/repository.git',
+            },
+          },
+        }
+        : undefined,
+    });
+    const context = withMaterializer(
+      transport.context,
+      vi.fn(async () => { throw cancellation; }),
+    );
+
+    await expect(verifyGitlabReviewWorkspaceAction(verifyInput(), context))
+      .rejects.toBe(cancellation);
+  });
+
+  it('preserves cancellation during the authoritative provider reread', async () => {
+    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    const controller = new AbortController();
+    controller.abort(cancellation);
+    const transport = createStubGitlabTransport({
+      respond: () => undefined,
+      signal: controller.signal,
+    });
+
+    await expect(verifyGitlabReviewWorkspaceAction(
+      verifyInput(),
+      withMaterializer(transport.context, vi.fn()),
     )).rejects.toBe(cancellation);
   });
 });

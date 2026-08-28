@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
     usePluginCollectionQuery,
-    usePluginUiDataClient,
+    usePluginUiDataClientOrNull,
     type PluginUiCollectionQueryResult,
 } from '@happier-dev/plugin-ui/data';
 
@@ -34,9 +34,10 @@ import {
  * is actually rendered from — is read through the same mount's Data client by
  * the host-stamped `rowId` the pager already returned.
  *
- * A mounted Plugin UI surface holds a `PluginUiHostApi` with no storage member,
- * so this is the only transport into an Account Collection from here, and it is
- * read-only: any durable write from a mounted surface needs an Action seam.
+ * This is the one paged read transport into the Account Collection. The
+ * neighboring Unlink control uses the same mount's direct Collection handle,
+ * so both read and write remain available when the Account is reachable but a
+ * daemon is not; neither path recreates provider execution in UI.
  *
  * It owns no poll, timer, watch cursor, provider request, source refresh,
  * Message scan, second entry store or alternate freshness decision.
@@ -87,7 +88,7 @@ function toQueryRows(
 function useLinkHydration(
     rows: readonly TriageSessionLinkQueryRowV1[],
 ): TriageSessionLinkHydrationMapV1 {
-    const client = usePluginUiDataClient();
+    const client = usePluginUiDataClientOrNull();
     const [hydration, setHydration] = React.useState<TriageSessionLinkHydrationMapV1>(EMPTY_HYDRATION);
 
     React.useEffect(() => {
@@ -108,7 +109,7 @@ function useLinkHydration(
         });
 
         const missing = rows.filter((row) => !hydration.has(row.rowId));
-        if (missing.length === 0) return;
+        if (missing.length === 0 || client === null) return;
 
         const links = client.collection(CORPUS_SESSION_LINKS_COLLECTION);
         const controller = new AbortController();

@@ -19,7 +19,6 @@ import {
   conversationBindingInputModesForEndpointV1,
   isConversationBindingInputModeDeliverableV1,
   type ConversationBindingInputModeV1,
-  type ConversationBindingTargetMutationV1,
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationProviderConnectionStopInputV1,
@@ -214,6 +213,21 @@ function policyError(code: string, message: string, retryable = false): PluginEr
 
 export function isChannelStateJsonRecord(value: unknown): value is ChannelStateJsonRecord {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Narrows one host-validated Channel-state Collection row without restating a
+ * record-kind decoder. Individual row-family owners still validate identity
+ * and payload semantics after this shared no-throw envelope boundary.
+ */
+export function asChannelStateRow(row: Readonly<{
+  rowId: string;
+  revision: number;
+  value: JsonValue;
+}> | null | undefined): ChannelStateRow | undefined {
+  return row !== null && row !== undefined && isChannelStateJsonRecord(row.value)
+    ? { rowId: row.rowId, revision: row.revision, value: row.value }
+    : undefined;
 }
 
 export function ownChannelStateValue(
@@ -1336,7 +1350,7 @@ export type ConversationBindingPolicyUpdateInput = Readonly<{
    * arm that needs the Automation owner's live template verification, so it is
    * refused here rather than persisted unverified.
    */
-  target?: ConversationBindingTargetMutationV1;
+  target?: ConversationBindingTargetV1;
   /**
    * Senders to withdraw from the retained audience. Revocation is decidable
    * from the retained binding alone, so it stays available while the selected
@@ -1365,7 +1379,7 @@ export type ConversationBindingPolicyUpdateInput = Readonly<{
  * rather than silently dropping a target the caller asked for.
  */
 function readAccountResolvableConversationBindingTarget(input: Readonly<{
-  requested: ConversationBindingTargetMutationV1 | undefined;
+  requested: ConversationBindingTargetV1 | undefined;
   current: ConversationBindingTargetV1;
   operation: 'channels_binding_set_enabled' | 'channels_binding_update';
 }>): ConversationBindingTargetV1 {
@@ -1445,6 +1459,16 @@ async function mutateConversationBindingPolicyInAccountCollection(input: Convers
     throw policyError(
       `${input.operation}_delete_in_progress`,
       'Binding enablement cannot change while binding deletion cleanup is in progress.',
+    );
+  }
+  if (
+    input.enabled === true
+    && !current.binding.enabled
+    && current.binding.target.kind === 'automation'
+  ) {
+    throw policyError(
+      `${input.operation}_target_verification_required`,
+      'An Automation binding can be enabled only while its target owner is reachable for current verification.',
     );
   }
   const connectionRow = await input.collection.get(

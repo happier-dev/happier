@@ -7,7 +7,15 @@ import {
   type BitbucketRepositoryRef,
   type BitbucketWorkspaceRef,
 } from './entries.js';
-import { createBitbucketFailure, type BitbucketTriageFailure } from './failures.js';
+import {
+  classifyBitbucketAbortSignal,
+  createBitbucketFailure,
+  type BitbucketTriageFailure,
+} from './failures.js';
+import {
+  advanceCursorCycleWalkV1,
+  type CursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
 import { encodeBitbucketPathSegment } from './identity.js';
 import {
   decodeBitbucketPageEnvelope,
@@ -157,7 +165,11 @@ export type BitbucketScanObservation = Readonly<{
 }>;
 
 /** The state one lane carries between scan pages: a validated provider `next`, or its seed. */
-export type BitbucketScanLaneFrontier = Readonly<{ nextUrl: string | null; ended: boolean }>;
+export type BitbucketScanLaneFrontier = Readonly<{
+  nextUrl: string | null;
+  ended: boolean;
+  cycleProbe?: CursorCycleProbeV1 | null;
+}>;
 
 export type BitbucketScanWalkFrontier = Readonly<{
   /** Rotation position within the lanes still open, in `[authored, repository]` order. */
@@ -212,6 +224,7 @@ type BitbucketWalkLane = {
   /** `true` when `url` is a provider-issued `next` rather than this lane's own seed URL. */
   advanced: boolean;
   ended: boolean;
+  cycleProbe: CursorCycleProbeV1;
 };
 
 /**
@@ -258,7 +271,7 @@ export async function scanBitbucketPullRequests(
   const isCancelled = (): boolean => input.signal?.aborted === true;
 
   if (isCancelled()) {
-    return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
+    return { ok: false, failure: classifyBitbucketAbortSignal(input.signal!) };
   }
 
   const nativePageSize = input.geometry.nativePageSize;
@@ -270,16 +283,26 @@ export async function scanBitbucketPullRequests(
     repositoryUuid: string | null,
     seedUrl: string,
     carried: BitbucketScanLaneFrontier,
-  ): BitbucketWalkLane => ({
-    routeInvolvement,
-    projectsReviewEvidence: repositoryUuid !== null,
-    repositoryUuid,
-    // An unadvanced carried lane rebuilds the seed this source built for it in the first place;
-    // that is not constructing a provider `next`, which is only ever followed verbatim.
-    url: carried.nextUrl ?? withBitbucketPageLength(seedUrl, nativePageSize),
-    advanced: carried.nextUrl !== null,
-    ended: carried.ended,
-  });
+  ): BitbucketWalkLane => {
+    const url = carried.nextUrl ?? withBitbucketPageLength(seedUrl, nativePageSize);
+    const initialized = carried.cycleProbe == null
+      ? advanceCursorCycleWalkV1(null, url)
+      : { kind: 'advanced' as const, walk: { cursor: url, probe: carried.cycleProbe } };
+    if (initialized.kind !== 'advanced') {
+      throw new Error('A new Bitbucket cursor walk cannot revisit an uninitialized cursor');
+    }
+    return {
+      routeInvolvement,
+      projectsReviewEvidence: repositoryUuid !== null,
+      repositoryUuid,
+      // An unadvanced carried lane rebuilds the seed this source built for it in the first place;
+      // that is not constructing a provider `next`, which is only ever followed verbatim.
+      url,
+      advanced: carried.nextUrl !== null,
+      ended: carried.ended,
+      cycleProbe: initialized.walk.probe,
+    };
+  };
 
   const authoredLane = seedLane('author', null, input.authoredSeedUrl, input.authored);
   let repositoryLane: BitbucketWalkLane | null = input.currentRepository === null
@@ -330,7 +353,7 @@ export async function scanBitbucketPullRequests(
 
   for (;;) {
     if (isCancelled()) {
-      return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
+      return { ok: false, failure: classifyBitbucketAbortSignal(input.signal!) };
     }
 
     // A whole native page is the smallest unit this walk can consume, so a remainder that cannot
@@ -357,34 +380,24 @@ export async function scanBitbucketPullRequests(
           repositoryPlaneSettled = true;
           continue;
         }
-        if (advance.kind === 'paused') {
-          // `paused` settles the plane for THIS call only: the listing cursor travels back in the
-          // frontier, so `walkOpen` stays true and the next page continues the enumeration.
-          //
-          // It is also this call's own page-shape fact, and the page has to report it. A workspace
-          // whose first repositories hold no open pull request produces a page with no rows at all,
-          // and a page that reported `walkFinished` there told the caller the walk was DONE while
-          // handing it a continuation — which the host's non-progress guard reads as a lane that
-          // consumed nothing and asks to be called again. That killed the lane and made the reviews
-          // behind those repositories unreachable rather than merely deferred.
-          stoppedOnBudget = true;
-          repositoryPlaneSettled = true;
-          continue;
-        }
         if (advance.kind === 'ended') {
           repositoryPlaneSettled = true;
           continue;
         }
+        const repositoryUrl = withBitbucketPageLength(
+          input.buildRepositoryLaneUrl(advance.repositoryUuid),
+          nativePageSize,
+        );
+        const initialized = advanceCursorCycleWalkV1(null, repositoryUrl);
+        if (initialized.kind !== 'advanced') throw new Error('an initial cursor cannot be revisited');
         repositoryLane = {
           routeInvolvement: null,
           projectsReviewEvidence: true,
           repositoryUuid: advance.repositoryUuid,
-          url: withBitbucketPageLength(
-            input.buildRepositoryLaneUrl(advance.repositoryUuid),
-            nativePageSize,
-          ),
+          url: repositoryUrl,
           advanced: false,
           ended: false,
+          cycleProbe: initialized.walk.probe,
         };
       }
       // `isOpen` above guarantees a lane here; the local narrowing is what the compiler needs.
@@ -447,7 +460,21 @@ export async function scanBitbucketPullRequests(
       lane.ended = true;
       continue;
     }
-    lane.url = next.url;
+    const advanced = advanceCursorCycleWalkV1(
+      { cursor: lane.url, probe: lane.cycleProbe },
+      next.url,
+    );
+    if (advanced.kind === 'revisited') {
+      // A provider cursor that names the page just consumed is not more work. Carrying it would
+      // make every later Load More replay the same rows and mint the same continuation forever.
+      // Keep this page's admitted rows, but settle the lane as unresolved rather than claiming
+      // exhaustion or fetching the same URL again.
+      lane.ended = true;
+      health.add('lane-unresolved');
+      continue;
+    }
+    lane.url = advanced.walk.cursor;
+    lane.cycleProbe = advanced.walk.probe;
     lane.advanced = true;
   }
 
@@ -456,6 +483,7 @@ export async function scanBitbucketPullRequests(
   const carriedLane = (lane: BitbucketWalkLane): BitbucketScanLaneFrontier => ({
     nextUrl: lane.advanced ? lane.url : null,
     ended: lane.ended,
+    cycleProbe: lane.cycleProbe,
   });
   // The repository stays in the frontier once entered even after its lane ends: its stable uuid is
   // how the next page finds the successor in provider list order.

@@ -1808,10 +1808,10 @@ export function createPiExternalSessionsContribution(params: Readonly<{
       const items = projectedBranch.items;
       const knownNonTranscriptPositions = projectedBranch.knownNonTranscriptPositions;
       const diagnostics = [
-        ...(page.diagnostics ?? []),
         ...(knownNonTranscriptPositions.length > 0
           ? [{
               code: 'non_transcript_record_skipped',
+              severity: 'benign' as const,
               count: knownNonTranscriptPositions.length,
               positions: knownNonTranscriptPositions.slice(0, 200),
             }]
@@ -1885,6 +1885,13 @@ export function createPiExternalSessionsContribution(params: Readonly<{
         items: emittedItems,
         nextCursor,
         boundary,
+        hasMore:
+          page.nextOffsetBytes < file.fileSize
+          || (
+            projection !== undefined
+              ? projection.nextItemIndex + emittedItems.length < items.length
+              : items.length > limit
+          ),
         ...(diagnostics.length > 0 ? { diagnostics } : {}),
       });
       return isAgentExternalSessionsResultWithinByteBudget(result, request.maxSerializedBytes)

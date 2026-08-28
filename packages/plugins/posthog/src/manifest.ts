@@ -2,7 +2,7 @@
  * The sole PostHog plugin manifest.
  *
  * It declares exactly one Triage source contribution, the three read Actions that carry
- * its roles, the two source-native detail reads behind its own body, the Connected
+ * its roles, the three source-native detail reads behind its own body, the Connected
  * Account this source may materialize, the one direct-disclosure Tier-B Composer
  * reference, and the two host grants those reads need. It declares no Composer
  * attachment, control, chip, picker, region, or whole-entry reference provider:
@@ -27,10 +27,6 @@ import {
     PosthogConfigurationDirectoryInputV1Schema,
     PosthogConfigurationDirectoryResultV1Schema,
 } from './connect/configurationContract.js';
-import {
-    PosthogCapabilityProbeInputV1Schema,
-    PosthogCapabilityProbeResultV1Schema,
-} from './connect/capabilityProbe.js';
 import {
     POSTHOG_ACTION_IDS,
     POSTHOG_API_ORIGIN_FIELD_ID,
@@ -61,11 +57,15 @@ import {
     PosthogSampledEventsResultV1Schema,
 } from './source/detail/issueEventsContract.js';
 import {
+    PosthogCodeVariablesInputV1Schema,
+    PosthogCodeVariablesResultV1Schema,
+} from './source/detail/codeVariablesContract.js';
+import {
     getPosthogSourceEntry,
     listPosthogInstances,
     readPosthogActivity,
     readPosthogConfigurationDirectory,
-    probePosthogCapability,
+    readPosthogCodeVariablesForIssue,
     readPosthogSampledEvents,
     scanPosthogSource,
 } from './source/operations.js';
@@ -103,7 +103,9 @@ const API_ORIGIN_FIELD = {
             + ' https://eu.posthog.com, https://us.posthog.com, or your self-hosted URL.',
     },
     semantic: 'connectedAccountOrigin' as const,
-    schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
+    // Canonical origin parsing/admission is host-owned. Do not add a second URL
+    // length policy at the provider declaration.
+    schema: { type: 'string' as const, minLength: 1 },
     required: true as const,
     secret: false as const,
 };
@@ -312,22 +314,6 @@ export const POSTHOG_PLUGIN = definePlugin({
             }],
             run: readPosthogConfigurationDirectory,
         },
-        [POSTHOG_ACTION_IDS.capability]: {
-            title: 'Check PostHog Error Tracking access',
-            description: 'Checks whether the selected PostHog account can access Error Tracking.',
-            execution: { target: 'daemon' },
-            scopes: ['global'],
-            surfaces: ['plugin'],
-            dangerLevel: 'safe',
-            inputSchema: PosthogCapabilityProbeInputV1Schema.jsonSchema,
-            resultSchema: PosthogCapabilityProbeResultV1Schema.jsonSchema,
-            hostAccess: [POSTHOG_CONNECTED_ACCOUNT_PURPOSE, POSTHOG_NETWORK_HOST_ACCESS_ID],
-            connectedAccountPurposeBindings: [{
-                path: 'draft.binding.account',
-                purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
-            }],
-            run: probePosthogCapability,
-        },
         [POSTHOG_ACTION_IDS.listInstances]: {
             title: 'Discover PostHog organizations',
             execution: { target: 'daemon' },
@@ -380,6 +366,19 @@ export const POSTHOG_PLUGIN = definePlugin({
             hostAccess: READ_HOST_ACCESS,
             connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
             run: readPosthogActivity,
+        },
+        [POSTHOG_ACTION_IDS.codeVariables]: {
+            title: 'Reveal captured PostHog code variables',
+            execution: { target: 'daemon' },
+            description: 'Rereads one selected occurrence and returns its captured variables after confirmation.',
+            scopes: ['global'],
+            surfaces: ['plugin'],
+            dangerLevel: 'safe',
+            inputSchema: PosthogCodeVariablesInputV1Schema.jsonSchema,
+            resultSchema: PosthogCodeVariablesResultV1Schema.jsonSchema,
+            hostAccess: READ_HOST_ACCESS,
+            connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+            run: readPosthogCodeVariablesForIssue,
         },
         [POSTHOG_ACTION_IDS.get]: {
             title: 'Read a PostHog error issue',

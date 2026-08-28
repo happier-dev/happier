@@ -1,6 +1,4 @@
 import type {
-  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
-  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
   HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
   HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
   HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
@@ -64,7 +62,6 @@ export type BitbucketApiAdapter = typeof bitbucketHostingProviderAdapter & ScmHo
     pullRequest: ScmPullRequestSummary;
     reused: boolean;
   }>>;
-  getDefaultBranch(input: ScmHostingProviderDefaultBranchInput): Promise<ScmHostingProviderDefaultBranchMetadata>;
   resolvePullRequestCheckoutReference(
     input: ScmHostingProviderPullRequestCheckoutReferenceInput
   ): Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
@@ -312,25 +309,6 @@ export function createBitbucketApiAdapter(params?: Readonly<{
         if (listedAfterDuplicate) return { pullRequest: listedAfterDuplicate, reused: true };
         throw error;
       }
-    },
-    async getDefaultBranch(input: ScmHostingProviderDefaultBranchInput) {
-      const coordinates = readBitbucketRepositoryCoordinates(input.provider);
-      const auth = await withAuth(input);
-      const raw = await requestBitbucketJson({
-        provider: input.provider,
-        fetcher,
-        auth,
-        url: bitbucketRepositoryApiUrl({ coordinates }),
-        init: { method: 'GET' },
-        signal: input.signal,
-      });
-      const mapped = mapBitbucketRepositorySummary({
-        provider: input.provider,
-        raw,
-        owner: coordinates.workspace,
-        repositoryName: coordinates.repository,
-      });
-      return { name: mapped?.defaultBranch ?? 'main' };
     },
     async resolvePullRequestCheckoutReference(input: ScmHostingProviderPullRequestCheckoutReferenceInput) {
       const pullRequest = await getPullRequest(input);

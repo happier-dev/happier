@@ -47,6 +47,7 @@ export type GitlabDetailTabReadPlaneV1 =
 export type GitlabDetailTabDeclarationV1 = Readonly<{
   id: GitlabDetailTabIdV1;
   title: string;
+  titleKey: string;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -66,6 +67,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'overview' as const,
     title: 'Overview',
+    titleKey: 'plugins.gitlab.ui.tabs.overview',
     retention: 'retain' as const,
     retainedState: 'its one reader scroll anchor only; it holds no provider read to keep',
     readPlane: 'observation' as const,
@@ -75,6 +77,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'activity' as const,
     title: 'Activity',
+    titleKey: 'plugins.gitlab.ui.tabs.activity',
     retention: 'discard' as const,
     retainedState: 'nothing: notes, the three event sources, their four independent cursors,'
       + ' the union, scroll and expansion all remount at first page',
@@ -85,6 +88,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'changes' as const,
     title: 'Changes',
+    titleKey: 'plugins.gitlab.ui.tabs.changes',
     retention: 'retain' as const,
     retainedState: 'its one vertical list viewport and file scroll anchor only; the loaded'
       + ' per-file page model, page position and errors are discarded when the panel'
@@ -96,6 +100,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'pipelines' as const,
     title: 'Pipelines',
+    titleKey: 'plugins.gitlab.ui.tabs.pipelines',
     retention: 'discard' as const,
     retainedState: 'nothing: pipeline rows, the rollup, cursors and scroll remount',
     readPlane: 'pipelines' as const,
@@ -105,6 +110,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'reviews' as const,
     title: 'Reviews',
+    titleKey: 'plugins.gitlab.ui.tabs.reviews',
     retention: 'discard' as const,
     retainedState: 'nothing: discussion rows, approval state, the root Link, reply windows,'
       + ' scroll and every draft remount from defaults',
@@ -115,6 +121,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'comments' as const,
     title: 'Comments',
+    titleKey: 'plugins.gitlab.ui.tabs.comments',
     retention: 'discard' as const,
     retainedState: 'nothing: notes, the Link, window, scroll and expansion remount',
     readPlane: 'comments' as const,
@@ -126,6 +133,7 @@ export const GITLAB_DETAIL_TABS_V1: readonly GitlabDetailTabDeclarationV1[] = Ob
   Object.freeze({
     id: 'work-sessions' as const,
     title: 'Work Sessions',
+    titleKey: 'plugins.gitlab.ui.tabs.workSessions',
     retention: 'discard' as const,
     retainedState: 'nothing; there is no provider or Session-store read to keep alive',
     readPlane: 'linkedSessions' as const,

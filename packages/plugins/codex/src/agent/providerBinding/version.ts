@@ -1,7 +1,7 @@
 import { parseCodexCliStableVersion } from '../cli/detect.js';
 
 export const CODEX_PROVIDER_BINDING_RUNTIME_RANGE_V1 = Object.freeze({
-  minInclusive: '0.144.0',
+  minInclusive: '0.147.0',
 } as const);
 
 export type CodexProviderBindingRuntimeVersionResultV1 =
@@ -21,7 +21,7 @@ export function resolveCodexProviderBindingRuntimeVersionV1(
   versionOutput: string,
 ): CodexProviderBindingRuntimeVersionResultV1 {
   const parsed = parseCodexCliStableVersion(versionOutput);
-  if (parsed?.major === 0 && parsed.minor >= 144) {
+  if (parsed && (parsed.major > 0 || (parsed.major === 0 && parsed.minor >= 147))) {
     return { ok: true, version: parsed.value };
   }
 
@@ -30,6 +30,6 @@ export function resolveCodexProviderBindingRuntimeVersionV1(
     reasonCode: 'codex_provider_runtime_unsupported',
     installedVersion: parsed?.value ?? null,
     supportedRange: CODEX_PROVIDER_BINDING_RUNTIME_RANGE_V1,
-    errorMessage: 'External providers require Codex CLI >=0.144.0. Update Codex or use its native model provider.',
+    errorMessage: 'External providers require Codex CLI >=0.147.0. Update Codex or use its native model provider.',
   };
 }

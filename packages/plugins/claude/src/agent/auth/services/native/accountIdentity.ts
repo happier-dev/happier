@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 export type ClaudeNativeAccountIdentity = Readonly<{
   providerAccountId: string | null;
   providerEmail: string | null;
@@ -28,15 +25,4 @@ export function readClaudeNativeAccountIdentity(rootConfig: unknown): ClaudeNati
     ?? readString(oauthAccount.name);
   if (!providerAccountId && !providerEmail && !accountLabel) return null;
   return { providerAccountId, providerEmail, accountLabel };
-}
-
-export async function readClaudeNativeAccountIdentityFromConfigDir(
-  claudeConfigDir: string,
-): Promise<ClaudeNativeAccountIdentity | null> {
-  try {
-    const rootConfig = JSON.parse(await readFile(join(claudeConfigDir, '.claude.json'), 'utf8')) as unknown;
-    return readClaudeNativeAccountIdentity(rootConfig);
-  } catch {
-    return null;
-  }
 }

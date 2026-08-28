@@ -2,11 +2,12 @@
  * `@happier-dev/plugins-sentry` — the Sentry Triage source vertical.
  *
  * This package owns the Sentry manifest and registration spine, the three bound
- * Triage source operations, the three source-native detail reads behind its own
+ * Triage source operations, the four source-native detail reads behind its own
  * detail body, the Connected Account runtime, the API client, route templates,
  * deployment-origin resolution, configured-instance codecs, scan pagination and
- * issue mapping. The selected Tier-B Composer evidence reference arrives with
- * its own later unit.
+ * issue mapping. Selected Tier-B Composer evidence remains fail-closed at the
+ * manifest until its full allow-listed projection has an approved representation
+ * within the public reference-result contract.
  */
 
 export * from './sentryContracts.js';
@@ -34,7 +35,6 @@ export {
   readSentryIssue,
 } from './source/detailOperations.js';
 export {
-  MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES,
   SENTRY_DETAIL_PAGE_SIZE,
   SentryIssueEventsInputV1Schema,
   SentryIssueEventsResultV1Schema,
@@ -61,7 +61,6 @@ export type {
 } from './detail/detailContracts.js';
 export {
   SENTRY_DETAIL_BOUNDS_V1,
-  SENTRY_MAX_ACTIVITY_ITEMS,
   SENTRY_MAX_EVENT_ROWS,
   SENTRY_MAX_TAG_VALUE_ROWS,
   projectSentryActivity,
@@ -146,7 +145,6 @@ export type { SentryFailureInputV1, SentrySettledResponseV1 } from './api/sentry
 export { parseSentryLinkHeader } from './api/sentryLinkHeader.js';
 export type { SentryLinkHeaderV1, SentryLinkRelationV1 } from './api/sentryLinkHeader.js';
 export {
-  SENTRY_MAX_RETRY_HINT_HORIZON_MS,
   readSentryRateLimitSnapshot,
   resolveSentryRetryNotBeforeMs,
 } from './api/sentryRateLimit.js';

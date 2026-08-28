@@ -2,6 +2,7 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 
 import {
+  asChannelStateRow,
   readConversationConnectionManagementRows,
   readConversationConnectionUpdateRow,
   readConversationIngressAttentionPage,
@@ -20,6 +21,16 @@ import {
 
 import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 const CONNECTION_ID = 'connection-frozen-old-selection';
+
+describe('asChannelStateRow', () => {
+  it('narrows the shared Collection envelope without deciding a row family', () => {
+    const row = { rowId: 'row-1', revision: 3, value: { kind: 'future-family' } } as const;
+    expect(asChannelStateRow(row)).toEqual(row);
+    expect(asChannelStateRow({ ...row, value: [] })).toBeUndefined();
+    expect(asChannelStateRow({ ...row, value: null })).toBeUndefined();
+    expect(asChannelStateRow(null)).toBeUndefined();
+  });
+});
 
 const replacementAuthority = {
   providerPluginId: 'happier.channel.example',
@@ -402,7 +413,7 @@ describe('updateConversationBindingPolicyInAccountCollection Account-resolvable 
     });
   });
 
-  it('refuses an Automation target offline because only the Automation owner can verify its template', async () => {
+  it('refuses an Automation target offline because only the Automation owner can verify current eligibility', async () => {
     const collection = accountCollection();
 
     await expect(updateConversationBindingPolicyInAccountCollection({
@@ -412,7 +423,6 @@ describe('updateConversationBindingPolicyInAccountCollection Account-resolvable 
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         policy: { resultDelivery: 'finalResult' },
       },
     })).rejects.toMatchObject({ code: 'channels_binding_update_target_not_account_resolvable' });

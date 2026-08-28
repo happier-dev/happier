@@ -63,4 +63,19 @@ describe('the canonical active configured-source read', () => {
         expect(read.rows.at(-1)?.configured.instance.sourceInstanceId)
             .toBe(`00000000-0000-4000-8000-${String(count).padStart(12, '0')}`);
     });
+
+    it('rejects a repeated Collection cursor instead of walking forever', async () => {
+        let calls = 0;
+        const sourceInstances = {
+            async query() {
+                calls += 1;
+                if (calls > 2) throw new Error('the cursor loop escaped its owner');
+                return { rows: [], nextCursor: 'same-cursor' };
+            },
+        };
+
+        await expect(readActiveConfiguredSourceRows(sourceInstances as never))
+            .rejects.toThrow('repeated continuation cursor');
+        expect(calls).toBe(2);
+    });
 });

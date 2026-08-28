@@ -40,7 +40,10 @@ import type { CorpusSavedViewV1, CorpusSavedViewsReadV1 } from '../../settings/s
 import { projectTriageCurrentUiContextV1 } from '../currentContext.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { TriageDetailHeaderView, TriageDetailRegion } from '../detail/region.js';
-import { resolveTriageSourceWorkflowSubjectV1 } from '../detail/sourceSurface.js';
+import {
+  resolveTriageSourcePrepareReviewWorkspaceOperationV1,
+  resolveTriageSourceWorkflowSubjectV1,
+} from '../detail/sourceSurface.js';
 import { TriageFilterRail } from '../filters/rail.js';
 import { planTriageFilterFacetsV1 } from '../filters/plan.js';
 import {
@@ -144,10 +147,10 @@ const EMPTY_BULK_KEYS: readonly string[] = Object.freeze([]);
  * A selection now mounts the detail region, which is what makes this a product
  * rather than a list. The composition is `core/SURFACE.md` §2.1's **stacked**
  * one: the list fills the region until a selection, and the selection replaces
- * it with the common header plus the source's own body. The split composition is
- * the same two children under a measured width, and it is the one part of §2.1
- * still missing — this surface has no measurement seam yet, and guessing a
- * desktop width is exactly what §2.1 forbids.
+ * it with the common header plus the source's own body. The split composition
+ * uses the same two children under the measured fill width below. The mount
+ * never guesses from a platform label, so switching layouts preserves the one
+ * list and one detail lifetime.
  *
  * The producer that was missing is now here: `entries/read-detail-v1` returns
  * the exact configured instance and the entry's Session links, which are the two
@@ -689,9 +692,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const facets = React.useMemo(
     () => planTriageFilterFacetsV1({
       configuredSources: window.snapshot.configuredSources,
+      ...(window.snapshot.window === undefined
+        ? {}
+        : { facetCensus: window.snapshot.window.facetCensus }),
       filters: surface.filters,
     }, text),
-    [surface.filters, text, window.snapshot.configuredSources],
+    [surface.filters, text, window.snapshot.configuredSources, window.snapshot.window],
   );
 
   /**
@@ -944,16 +950,38 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     bulkSessions.run({
       action: input.action,
       destination: input.destination,
-      entries: selected.entries.map((entry) => ({
-        ...entry,
-        workflowSubject: resolveTriageSourceWorkflowSubjectV1(
+      entries: selected.entries.map((entry) => {
+        const configured = configuredSources.sources.find(
+          (candidate) => candidate.sourceInstanceId === entry.sourceInstance.sourceInstanceId,
+        )?.configured;
+        const operation = resolveTriageSourcePrepareReviewWorkspaceOperationV1(
           surfaceContext.targetedContributions,
-          entry.entryRef,
-        ),
-      })),
+          entry.entryRef.source,
+        );
+        return {
+          ...entry,
+          workflowSubject: resolveTriageSourceWorkflowSubjectV1(
+            surfaceContext.targetedContributions,
+            entry.entryRef,
+          ),
+          ...(configured === undefined
+            || operation === undefined
+            || entry.reviewWorkspacePreparation === undefined
+            ? {}
+            : {
+                reviewWorkspace: {
+                  operation,
+                  preparation: {
+                    ...entry.reviewWorkspacePreparation,
+                    instance: configured,
+                  },
+                },
+              }),
+        };
+      }),
       unavailableKeys: selected.unavailableKeys,
     });
-  }, [bulkSessions, readSelectedBulkEntries, surfaceContext.targetedContributions]);
+  }, [bulkSessions, configuredSources.sources, readSelectedBulkEntries, surfaceContext.targetedContributions]);
 
   const visibleOrder = React.useMemo(
     () => [...rowsByKey.values()].map((hit) => ({
@@ -1346,7 +1374,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           read is simply not due yet.
         */}
         {refreshState.kind !== 'blocked' ? null : (
-          <Banner tone="info" {...readTriageRefreshPacingNotice(refreshState.reason, text)} />
+          <Banner
+            tone="info"
+            {...readTriageRefreshPacingNotice(
+              refreshState.reason,
+              refreshState.nextEligibleAtMs,
+              surfaceContext.locale,
+              text,
+            )}
+          />
         )}
 
         {/*
@@ -1448,19 +1484,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                 description={configuredSources.unavailableReason}
               />
             )}
-            {configuredSources.completeness !== 'truncated' ? null : (
-              <Banner
-                tone="info"
-                title={text(
-                  'plugins.triage.surface.sources.truncatedTitle',
-                  'More than 32 sources are configured',
-                )}
-                description={text(
-                  'plugins.triage.surface.sources.truncatedDescription',
-                  'Every configured source is shown here so you can remove it. PRs & Issues reads entries from the first 32 until the set is back within the V1 limit.',
-                )}
-              />
-            )}
             {configuredSources.notice === null ? null : (
               <Banner
                 tone="warning"
@@ -1484,6 +1507,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                     title={source.displayLabel}
                     {...(source.displayPath === undefined ? {} : { subtitle: source.displayPath })}
                     accessoryWraps
+                    accessoryOutsidePressable
                     accessory={(
                       <Button
                         title={text('plugins.triage.surface.sources.remove', 'Remove')}
@@ -1662,6 +1686,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   selectedWorkflowSubjects={selectedBulkWorkflowSubjects}
                   phase={bulkSessions.phase}
                   onRun={runBulkAction}
+                  retryable={bulkSessions.retryable}
+                  onRetry={bulkSessions.retry}
                   onCancel={bulkSessions.cancel}
                 />
               )}

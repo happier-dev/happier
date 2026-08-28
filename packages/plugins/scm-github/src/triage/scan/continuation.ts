@@ -102,15 +102,13 @@ export function decodeGithubScanContinuation(
   token: string,
   expected: Readonly<{
     buildLaneQuery: (laneId: GithubScanLaneIdV1) => string;
-    /** The maximum page limit the published scan input admits. */
-    maxScanLimit: number;
   }>,
 ): GithubScanResumeV1 | null {
   const record = decodeTriagePagingTokenV1(token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);
-  if (scanLimit === null || scanLimit > expected.maxScanLimit) return null;
+  if (scanLimit === null) return null;
   // The geometry is DERIVED, never trusted: a token claiming a wider native page than the
   // bound limit allows would raise this walk's ceiling above the admitted page size.
   const nativePageSize = githubScanNativePageSize(scanLimit);

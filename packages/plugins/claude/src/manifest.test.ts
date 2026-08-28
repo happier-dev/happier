@@ -114,7 +114,6 @@ describe('Claude plugin manifest', () => {
         capability: 'process',
         scope: expect.objectContaining({ executables: [
           { kind: 'systemTool', id: 'claude-cli' },
-          { kind: 'systemTool', id: 'macos-security' },
         ] }),
       }),
       expect.objectContaining({
@@ -123,7 +122,7 @@ describe('Claude plugin manifest', () => {
       }),
       expect.objectContaining({
         capability: 'sessions',
-        scope: { access: ['read', 'control'] },
+        scope: { access: ['read', 'write', 'control'] },
       }),
     ]));
     expect(PLUGIN_MANIFEST.hostAccess.required).toContainEqual(expect.objectContaining({

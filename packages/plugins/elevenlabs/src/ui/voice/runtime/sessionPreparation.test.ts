@@ -12,7 +12,6 @@ const mocks = {
   startHostedConversation: vi.fn(),
   completeHostedConversation: vi.fn(),
   abortHostedConversation: vi.fn(),
-  presentPaywall: vi.fn(),
 };
 
 function settings(input: Readonly<{
@@ -39,7 +38,6 @@ function createService(
   return createElevenLabsSessionPreparationService({
     providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
     projectVoiceSettings: project,
-    presentPaywall: mocks.presentPaywall,
     alert: mocks.alert,
   });
 }
@@ -73,7 +71,6 @@ describe('createElevenLabsSessionPreparationService', () => {
       headers: { 'content-type': 'application/json' },
       body: new TextEncoder().encode(JSON.stringify({ token: 'ephemeral-token' })),
     });
-    mocks.presentPaywall.mockResolvedValue({ purchased: true });
   });
 
   it('fails closed when the bundled settings owner is absent', async () => {
@@ -82,7 +79,7 @@ describe('createElevenLabsSessionPreparationService', () => {
       providerConfig: null,
     })));
     await expect(service.prepare({
-      controlSessionId: 'disabled', requestedTargetSessionId: null, retryAfterPaywall: false,
+      controlSessionId: 'disabled', requestedTargetSessionId: null,
       settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'voice_provider_settings_unavailable' } });
@@ -96,7 +93,7 @@ describe('createElevenLabsSessionPreparationService', () => {
       providerConfig: { billingMode: 'byo', agentId: 42 },
     })));
     await expect(service.prepare({
-      controlSessionId: 'invalid', requestedTargetSessionId: null, retryAfterPaywall: false,
+      controlSessionId: 'invalid', requestedTargetSessionId: null,
       settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({ kind: 'declined', failure: { reason: 'voice_provider_settings_unavailable' } });
@@ -107,7 +104,7 @@ describe('createElevenLabsSessionPreparationService', () => {
   it('fails BYO readiness closed before mint when no agent is configured', async () => {
     const service = createService(vi.fn(() => settings({ billingMode: 'byo', agentId: null })));
     await expect(service.prepare({
-      controlSessionId: 'byo', requestedTargetSessionId: null, retryAfterPaywall: false,
+      controlSessionId: 'byo', requestedTargetSessionId: null,
       settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({
@@ -127,7 +124,6 @@ describe('createElevenLabsSessionPreparationService', () => {
     await expect(service.prepare({
       controlSessionId: 'byo-no-credential',
       requestedTargetSessionId: null,
-      retryAfterPaywall: false,
       settings: {},
       credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }),
       hostedConversation: null,
@@ -148,7 +144,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     const service = createService(vi.fn(() => projected));
     const prepared = await service.prepare({
       controlSessionId: 'control-byo', initialContext: 'context', requestedTargetSessionId: null,
-      retryAfterPaywall: false, settings: {}, credentials: credentials(), hostedConversation: null,
+      settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     });
     expect(prepared).toMatchObject({ kind: 'prepared', session: { sessionConfig: { token: 'ephemeral-token' } } });
@@ -176,7 +172,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     const service = createService(vi.fn(() => projected));
     const prepared = await service.prepare({
       controlSessionId: 'control-text', initialContext: 'base', requestedTargetSessionId: null,
-      retryAfterPaywall: false, settings: {}, credentials: credentials(), hostedConversation: null,
+      settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: true,
     });
     if (prepared.kind !== 'prepared') throw new Error('expected prepared');
@@ -211,7 +207,7 @@ describe('createElevenLabsSessionPreparationService', () => {
     const projected = settings({ billingMode: 'byo', agentId: 'agent-native' });
     const service = createService(vi.fn(() => projected));
     const prepared = await service.prepare({
-      controlSessionId: 'control-native', requestedTargetSessionId: null, retryAfterPaywall: false,
+      controlSessionId: 'control-native', requestedTargetSessionId: null,
       settings: {}, credentials: credentials(), hostedConversation: null,
       signal: new AbortController().signal, platform: 'ios', textOnly: true,
     });
@@ -232,16 +228,14 @@ describe('createElevenLabsSessionPreparationService', () => {
     expect(service.isSelected({})).toBe(true);
   });
 
-  it('retries hosted mint once after a purchased paywall and preserves lease identity', async () => {
-    mocks.startHostedConversation
-      .mockResolvedValueOnce({ allowed: false, reason: 'quota_exceeded' })
-      .mockResolvedValueOnce({
-        allowed: true, token: 'hosted-token', leaseId: 'lease-hosted',
-        bindingNonce: 'nonce-hosted', expiresAtMs: 5_000,
-      });
+  it('consumes the host-owned final hosted admission without owning purchase UI or retries', async () => {
+    mocks.startHostedConversation.mockResolvedValueOnce({
+      allowed: true, token: 'hosted-token', leaseId: 'lease-hosted',
+      bindingNonce: 'nonce-hosted', expiresAtMs: 5_000,
+    });
     const service = createService(vi.fn(() => settings({ billingMode: 'happier' })));
     await expect(service.prepare({
-      controlSessionId: 'hosted', requestedTargetSessionId: 'target', retryAfterPaywall: false,
+      controlSessionId: 'hosted', requestedTargetSessionId: 'target',
       settings: {}, credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }), hostedConversation: hostedConversation(),
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({
@@ -249,14 +243,32 @@ describe('createElevenLabsSessionPreparationService', () => {
         sessionConfig: { token: 'hosted-token', leaseId: 'lease-hosted', bindingNonce: 'nonce-hosted' },
       },
     });
-    expect(mocks.presentPaywall).toHaveBeenCalledTimes(1);
-    expect(mocks.startHostedConversation).toHaveBeenCalledTimes(2);
+    expect(mocks.startHostedConversation).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['subscription_required', 'quota_exceeded'] as const)(
+    'returns the host final %s denial as a typed decline without retrying',
+    async (reason) => {
+      mocks.startHostedConversation.mockResolvedValueOnce({ allowed: false, reason });
+      const service = createService(vi.fn(() => settings({ billingMode: 'happier' })));
+      await expect(service.prepare({
+        controlSessionId: 'hosted-denied', requestedTargetSessionId: 'target',
+        settings: {}, credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }),
+        hostedConversation: hostedConversation(), signal: new AbortController().signal,
+        platform: 'web', textOnly: false,
+      })).resolves.toEqual({
+        kind: 'declined',
+        failure: { reason: `realtime_${reason}` },
+      });
+      expect(mocks.startHostedConversation).toHaveBeenCalledTimes(1);
+      expect(mocks.abortHostedConversation).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('fails hosted mode closed when bundled hosted authority is unavailable', async () => {
     const service = createService(vi.fn(() => settings({ billingMode: 'happier' })));
     await expect(service.prepare({
-      controlSessionId: 'hosted-unavailable', requestedTargetSessionId: null, retryAfterPaywall: false,
+      controlSessionId: 'hosted-unavailable', requestedTargetSessionId: null,
       settings: {}, credentials: Object.freeze({ phase: 'prepare', mediated: null, raw: null }), hostedConversation: null,
       signal: new AbortController().signal, platform: 'web', textOnly: false,
     })).resolves.toMatchObject({

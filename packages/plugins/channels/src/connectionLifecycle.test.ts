@@ -34,7 +34,7 @@ function connection(
 }
 
 describe('Conversation connection lifecycle', () => {
-  it('commits one frozen old-stop request before delete and clears it only after exact stop proof', () => {
+  it('commits one frozen old-stop request before delete without orphaning an in-progress baseline fence', () => {
     const transportOrigin = {
       serverIdentityId: 'srv_connection_lifecycle',
       materializationRef: {
@@ -80,7 +80,7 @@ describe('Conversation connection lifecycle', () => {
         enabled: false,
         deletionState: 'pendingStopReconciliation',
         overlapSafety: 'safe',
-        historyGap: null,
+        historyGap: { reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable' },
         providerReadiness: null,
         pollFailure: null,
         maximumObservationAgeMs: 60_000,
@@ -126,7 +126,7 @@ describe('Conversation connection lifecycle', () => {
         enabled: false,
         deletionState: 'finalizingDelete',
         overlapSafety: 'safe',
-        historyGap: null,
+        historyGap: { reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable' },
         providerReadiness: null,
         pollFailure: null,
         maximumObservationAgeMs: 60_000,
@@ -138,7 +138,9 @@ describe('Conversation connection lifecycle', () => {
 
   it('commits a replacement epoch and frozen old-stop custody before a transfer effect', () => {
     const transferStart = {
-      current: connection(),
+      current: connection({
+        historyGap: { reportedAt: 1_699_999_999_000, reason: 'applicationAdmissionLost' },
+      }),
       pendingOldTransportStop: {
         transportOrigin: {
           serverIdentityId: 'srv_connection_lifecycle',
@@ -201,7 +203,7 @@ describe('Conversation connection lifecycle', () => {
           overlapSafety: 'safe',
           acceptedPossibleLoss: false,
         },
-        historyGap: transferStart.replacement.historyGap,
+        historyGap: transferStart.current.historyGap,
         providerReadiness: null,
         pollFailure: null,
         maximumObservationAgeMs: 60_000,
@@ -697,7 +699,7 @@ describe('Conversation connection lifecycle', () => {
         deletionState: 'none',
         overlapSafety: 'safe',
         pendingOldTransportStop: null,
-        historyGap: null,
+        historyGap: current.historyGap,
         providerReadiness: null,
         pollFailure: null,
         maximumObservationAgeMs: 120_000,

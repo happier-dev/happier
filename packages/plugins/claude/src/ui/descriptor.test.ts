@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { CLAUDE_UI_DESCRIPTOR } from './descriptor.js';
+import { CLAUDE_UI_TRANSLATIONS } from './translations.js';
+import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'projection',
@@ -38,7 +41,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
   it('owns Claude UI projection facts including static plan/build modes', () => {
     expect(CLAUDE_UI_DESCRIPTOR).toEqual(expect.objectContaining({
       kind: 'plugin.ui.v1',
-      pluginId: 'claude',
+      pluginId: PLUGIN_MANIFEST.id,
       agentId: 'claude',
       version: 1,
       display: expect.objectContaining({
@@ -90,24 +93,24 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
               },
               terminalSecondaryAction: {
                 kind: 'openAttachedTerminal',
-                labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-                descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+                labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+                descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
               },
             },
-            {
+            expect.objectContaining({
               dialogId: 'resume_choice',
               settingMutation: {
                 settingId: 'claudeUnifiedTerminalResumeChoice',
                 allowedValues: ['resume_from_summary', 'resume_full_session'],
               },
-            },
-            {
+            }),
+            expect.objectContaining({
               dialogId: 'unrecognized_confirmation',
               terminalNotice: {
-                headerKey: 'tools.askUserQuestion.claudeDialogNotice.header',
-                questionKey: 'tools.askUserQuestion.claudeDialogNotice.question',
+                headerKey: 'tools.askUserQuestion.attachedTerminalNotice.header',
+                questionKey: 'tools.askUserQuestion.attachedTerminalNotice.question',
               },
-            },
+            }),
           ]),
         },
         externalSessions: expect.objectContaining({
@@ -160,7 +163,6 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
             },
           },
         },
-        providerBehaviorDescriptorId: 'claude.sessionProviderBehavior.v1',
         visibleMessages: {
           kind: 'session.visibleMessages.v1',
           subagentKinds: ['agent_team_member'],
@@ -191,5 +193,28 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
   it('is a data-only no-execute descriptor', () => {
     expect(collectNoExecuteViolations(CLAUDE_UI_DESCRIPTOR)).toEqual([]);
     expect(JSON.parse(JSON.stringify(CLAUDE_UI_DESCRIPTOR))).toEqual(CLAUDE_UI_DESCRIPTOR);
+  });
+
+  it('authors Session behavior through the same public grammar as an external Agent', () => {
+    expect(PluginAgentUiBehaviorContributionV2Schema.safeParse({
+      session: CLAUDE_UI_DESCRIPTOR.session,
+    }).success).toBe(true);
+  });
+
+  it('ships every teammate-details translation key in every projected locale', () => {
+    const detailsSlot = CLAUDE_UI_DESCRIPTOR.components?.slots?.find(
+      (slot) => slot.slot === 'sessionSubagents.teammateDetailsTab',
+    );
+    if (!detailsSlot || !('tab' in detailsSlot)) {
+      throw new Error('Claude teammate details slot is missing');
+    }
+    const keys = [detailsSlot.tab.titleKey, detailsSlot.tab.subtitleKey]
+      .filter((key): key is string => typeof key === 'string');
+
+    expect(Object.keys(CLAUDE_UI_TRANSLATIONS)).toHaveLength(11);
+    for (const messages of Object.values(CLAUDE_UI_TRANSLATIONS)) {
+      expect(keys.every((key) => typeof (messages as Readonly<Record<string, string>>)[key] === 'string'))
+        .toBe(true);
+    }
   });
 });

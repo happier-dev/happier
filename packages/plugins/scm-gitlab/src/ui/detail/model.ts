@@ -10,9 +10,8 @@
  *
  * What is left is what only GitLab knows: its own row-fact vocabulary and, for an issue, the
  * `Work Sessions` panel its approved composition names. Pipelines, approvals, diffs and
- * discussions are live provider reads this vertical does not perform yet, and this model
- * deliberately declares no placeholder for them: an empty tab and an unbuilt tab must not look
- * alike.
+ * discussions are mounted as live provider reads owned by their panel readers, so this snapshot
+ * model does not duplicate or cache them.
  *
  * The forge sources deliberately keep their own detail bodies. Checks, reviews, worktrees and
  * update-branch semantics genuinely differ per forge, and a shared four-forge renderer would have

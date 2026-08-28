@@ -52,10 +52,8 @@ describe('GitLab plugin manifest', () => {
   it('remains an ingestible manifest that still declares the incumbent hosting provider', () => {
     expect(ingestPluginManifestV2(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders.map(({ id }) => id)).toEqual(['gitlab']);
-    // The `authService` cut that rebinds the existing `glab` CLI pull-request
-    // path is the forge-activation unit's atomic change, not this one's.
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0])
-      .not.toHaveProperty('authService');
+      .toMatchObject({ authService: GITLAB_CONNECTED_ACCOUNT_ID });
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description)
       .toContain('GitLab.com');
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description.toLowerCase())
@@ -101,12 +99,12 @@ describe('GitLab plugin manifest', () => {
       // exact account leaf the host revalidates.
       expect(action?.connectedAccountPurposeBindings).toEqual([INSTANCE_ACCOUNT_BINDING]);
     }
-    // They are NOT source-protocol roles. The fourth bound operation is the
-    // protocol-owned prepared-workspace role; adding another would publish
-    // GitLab vocabulary into a shared contract that has no such role.
+    // They are NOT source-protocol roles. The two workspace operations below
+    // are protocol-owned roles; none of the GitLab-native detail vocabulary is
+    // published into the shared source contract.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
   });
 
   it('binds prepared-workspace materialization as the protocol-owned local write', () => {
@@ -120,6 +118,21 @@ describe('GitLab plugin manifest', () => {
       .toBe(GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace);
     expect(action).toMatchObject({
       dangerLevel: 'writesLocal',
+      surfaces: ['plugin'],
+      hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+      connectedAccountPurposeBindings: [INSTANCE_ACCOUNT_BINDING],
+    });
+  });
+
+  it('binds final workspace verification as the protocol-owned safe reread', () => {
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+    const action = actions.get(GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace);
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+
+    expect(contribution?.operations?.verifyReviewWorkspace)
+      .toBe(GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace);
+    expect(action).toMatchObject({
+      dangerLevel: 'safe',
       surfaces: ['plugin'],
       hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
       connectedAccountPurposeBindings: [INSTANCE_ACCOUNT_BINDING],

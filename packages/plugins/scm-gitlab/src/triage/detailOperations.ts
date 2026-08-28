@@ -1,5 +1,5 @@
 /**
- * The six bound source-native GitLab detail operations.
+ * The bound source-native GitLab detail operations.
  *
  * Each is the whole vertical for one Action invocation: it validates the
  * published input, admits the configured deployment through the SAME rule `scan`
@@ -20,6 +20,11 @@
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  fitActionResultPageV1,
+  fitActionResultSequenceV1,
+} from '@happier-dev/triage-sources/projection/actionResultSequence';
+import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 
 import {
   GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
@@ -33,12 +38,14 @@ import {
   GitlabDiscussionsInputV1Schema,
   GitlabNotesInputV1Schema,
   GitlabPipelinesInputV1Schema,
+  GitlabRawDiffInputV1Schema,
   type GitlabActivityEventsResultV1,
   type GitlabApprovalsResultV1,
   type GitlabChangesResultV1,
   type GitlabDiscussionsResultV1,
   type GitlabNotesResultV1,
   type GitlabPipelinesResultV1,
+  type GitlabRawDiffResultV1,
 } from './detail/contracts.js';
 import {
   decodeGitlabDetailContinuation,
@@ -52,6 +59,7 @@ import {
   readGitlabDiscussionsPage,
   readGitlabNotesPage,
   readGitlabPipelinesPage,
+  readGitlabRawDiffText,
   type GitlabDetailPagePositionV1,
   type GitlabWalkPositionV1,
 } from './detail/reads.js';
@@ -66,6 +74,11 @@ const CONTINUATION_UNREADABLE_FAILURE: TriageSourceFailureV1 = Object.freeze({
   class: 'unsupportedContract',
   code: 'gitlab-detail-continuation-unreadable',
 });
+
+type GitlabApprovalRulesResultV1 = Extract<
+  GitlabApprovalsResultV1,
+  Readonly<{ kind: 'approvals' }>
+>['rules'];
 
 function unavailable(failure: TriageSourceFailureV1): Readonly<{
   kind: 'unavailable';
@@ -107,18 +120,28 @@ type PagedShape = Readonly<{
   continuation?: string;
 }>;
 
+/** Mints the provider position once so the canonical Action-envelope fitter can admit it. */
+function mintWalkContinuation(page: GitlabWalkPositionV1, limit: number): string | undefined {
+  if (page.nextUrl === null) return undefined;
+  return encodeGitlabDetailContinuation({ nextUrl: page.nextUrl, limit }) ?? undefined;
+}
+
 /** Shapes one settled walk position into the members every paged plane shares. */
-function shapeWalkPosition(page: GitlabWalkPositionV1, limit: number): PagedShape {
-  const continuation = page.nextUrl === null
-    ? null
-    : encodeGitlabDetailContinuation({ nextUrl: page.nextUrl, limit });
+function shapeWalkPosition(
+  page: GitlabWalkPositionV1,
+  continuation: string | undefined,
+  continuationOmitted: boolean,
+): PagedShape {
   // A next page this source cannot mint a token for ends the walk, and saying so
-  // is the point: a silently dropped position reads as a finished collection.
+  // is the point. The Action fitter can also omit an oversized opaque token; that
+  // has the same honest pagination outcome without a provider-local byte ceiling.
   const incomplete = page.incomplete
-    ?? (page.nextUrl !== null && continuation === null ? 'pagination' : null);
+    ?? (page.nextUrl !== null && (continuation === undefined || continuationOmitted)
+      ? 'pagination'
+      : null);
   return Object.freeze({
     ...(incomplete === null ? {} : { incomplete }),
-    ...(continuation === null ? {} : { continuation }),
+    ...(continuation === undefined ? {} : { continuation }),
   });
 }
 
@@ -156,13 +179,19 @@ async function listGitlabNotesUnbounded(
   }, admitted.dependencies);
   if (!page.ok) return unavailable(projectGitlabSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value, request.limit);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'notes' as const,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value, request.limit),
-  });
+    rows,
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
 }
 
 /* ------------------------------------------------------------ activity events */
@@ -201,14 +230,20 @@ async function listGitlabActivityEventsUnbounded(
   }, admitted.dependencies);
   if (!page.ok) return unavailable(projectGitlabSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value, request.limit);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'activityEvents' as const,
     source: request.eventSource,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value, request.limit),
-  });
+    rows,
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
 }
 
 /* --------------------------------------------------------------- discussions */
@@ -241,13 +276,19 @@ async function listGitlabDiscussionsUnbounded(
   }, admitted.dependencies);
   if (!page.ok) return unavailable(projectGitlabSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value, request.limit);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'discussions' as const,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value, request.limit),
-  });
+    rows,
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
 }
 
 /* ----------------------------------------------------------------- approvals */
@@ -279,27 +320,71 @@ async function readGitlabApprovalsUnbounded(
   if (!read.ok) return unavailable(projectGitlabSourceFailure(read.failure));
 
   const { state, rules } = read.value;
-  return Object.freeze({
+  const shape = (
+    approvedBy: readonly string[],
+    omittedApproverCount: number,
+    rulesResult: GitlabApprovalRulesResultV1,
+    projectionTruncated: boolean,
+  ): GitlabApprovalsResultV1 => Object.freeze({
     kind: 'approvals' as const,
     ...(state.approvalsRequired === undefined ? {} : { approvalsRequired: state.approvalsRequired }),
     ...(state.approvalsLeft === undefined ? {} : { approvalsLeft: state.approvalsLeft }),
-    approvedBy: state.approvedBy,
+    approvedBy,
+    omittedApproverCount,
     ...(state.userHasApproved === undefined ? {} : { userHasApproved: state.userHasApproved }),
     ...(state.userCanApprove === undefined ? {} : { userCanApprove: state.userCanApprove }),
-    rules: rules.kind === 'available'
-      ? Object.freeze({
-        kind: 'available' as const,
-        rules: rules.rules,
-        omittedRuleCount: rules.omittedRuleCount,
-      })
-      : rules.kind === 'editionUnsupported'
-        ? Object.freeze({ kind: 'editionUnsupported' as const })
-        : Object.freeze({
-          kind: 'unavailable' as const,
-          failure: projectGitlabSourceFailure(rules.failure),
-        }),
-    projectionTruncated: rules.kind === 'available' ? rules.projectionTruncated : false,
+    rules: rulesResult,
+    projectionTruncated,
   });
+
+  if (rules.kind !== 'available') {
+    const unavailableRules: GitlabApprovalRulesResultV1 = rules.kind === 'editionUnsupported'
+      ? Object.freeze({ kind: 'editionUnsupported' as const })
+      : Object.freeze({
+        kind: 'unavailable' as const,
+        failure: projectGitlabSourceFailure(rules.failure),
+      });
+    return fitActionResultSequenceV1(state.approvedBy, (approvedBy, omittedByEnvelope) => shape(
+      approvedBy,
+      state.omittedApproverCount + omittedByEnvelope,
+      unavailableRules,
+      state.omittedApproverCount > 0 || omittedByEnvelope > 0,
+    )).result;
+  }
+
+  // Fit the two independent provider sequences without inventing a count. A
+  // single ordered sequence is important: fitting approvers against an empty
+  // rules shape and then adding rules could make the final result exceed the
+  // envelope. Approvers come first because that state exists on every tier;
+  // rule-aware detail consumes only the remaining canonical Action envelope.
+  const candidates = Object.freeze([
+    ...state.approvedBy.map((value) => Object.freeze({ kind: 'approver' as const, value })),
+    ...rules.rules.map((value) => Object.freeze({ kind: 'rule' as const, value })),
+  ]);
+  return fitActionResultSequenceV1(candidates, (included) => {
+    const approvedBy = included
+      .filter((candidate) => candidate.kind === 'approver')
+      .map((candidate) => candidate.value);
+    const fittedRules = included
+      .filter((candidate) => candidate.kind === 'rule')
+      .map((candidate) => candidate.value);
+    const omittedApproverCount = state.omittedApproverCount
+      + state.approvedBy.length - approvedBy.length;
+    const omittedRuleCount = rules.omittedRuleCount + rules.rules.length - fittedRules.length;
+    return shape(
+      approvedBy,
+      omittedApproverCount,
+      Object.freeze({
+        kind: 'available' as const,
+        rules: fittedRules,
+        omittedRuleCount,
+      }),
+      rules.projectionTruncated
+        || state.omittedApproverCount > 0
+        || omittedApproverCount > state.omittedApproverCount
+        || omittedRuleCount > rules.omittedRuleCount,
+    );
+  }).result;
 }
 
 /* ----------------------------------------------------------------- pipelines */
@@ -338,9 +423,15 @@ async function listGitlabPipelinesUnbounded(
   if (!page.ok) return unavailable(projectGitlabSourceFailure(page.failure));
 
   const { rollup, rollupPipelineId } = page.value;
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value, request.limit);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'pipelines' as const,
-    rows: page.value.rows,
+    rows,
     ...(rollup === null
       ? {}
       : {
@@ -349,10 +440,10 @@ async function listGitlabPipelinesUnbounded(
         passingCount: rollup.passingCount,
       }),
     ...(rollupPipelineId === null ? {} : { rollupPipelineId }),
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value, request.limit),
-  });
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
 }
 
 /* ------------------------------------------------------------------- changes */
@@ -390,14 +481,52 @@ async function listGitlabChangesUnbounded(
   }, admitted.dependencies);
   if (!page.ok) return unavailable(projectGitlabSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value, request.limit);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'changes' as const,
-    rows: page.value.rows,
+    rows,
     diffLimitStatus: page.value.diffLimitStatus,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value, request.limit),
-  });
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
+}
+
+/* --------------------------------------------------------------- raw diff */
+
+/**
+ * GitLab's raw diff is an explicit evidence read, never a structured fallback.
+ * The returned prefix is fitted against the real serialized Action boundary;
+ * there is no provider-independent guessed byte reserve.
+ */
+async function readGitlabRawDiffUnbounded(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GitlabRawDiffResultV1> {
+  const parsed = GitlabRawDiffInputV1Schema.safeParse(input);
+  if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+
+  const admitted = await admitGitlabItemInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    admissibleKinds: ['merge-request'],
+  }, context);
+  if (!admitted.ok) return unavailable(admitted.failure);
+
+  const raw = await readGitlabRawDiffText(admitted.route, admitted.dependencies);
+  if (!raw.ok) return unavailable(projectGitlabSourceFailure(raw.failure));
+
+  return fitActionResultTextV1(raw.value, (text, truncated) => Object.freeze({
+    kind: 'rawDiff' as const,
+    text,
+    truncated,
+  }));
 }
 
 export const listGitlabNotes = withGitlabInvocationDeadline(
@@ -423,4 +552,8 @@ export const listGitlabPipelines = withGitlabInvocationDeadline(
 export const listGitlabChanges = withGitlabInvocationDeadline(
   GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
   listGitlabChangesUnbounded,
+);
+export const readGitlabRawDiff = withGitlabInvocationDeadline(
+  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
+  readGitlabRawDiffUnbounded,
 );

@@ -2,10 +2,32 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCodexLiveAccountRuntimeIdentity,
+  resolveCodexInitialConnectedServiceRuntimeIdentity,
   type CodexConnectedServiceRuntimeIdentity,
 } from './connectedServiceRuntimeIdentity.js';
 
 describe('buildCodexLiveAccountRuntimeIdentity', () => {
+  it('composes spawn selection with host-read auth tokens without reading plugin files', () => {
+    expect(resolveCodexInitialConnectedServiceRuntimeIdentity({
+      HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{
+        kind: 'profile',
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        credentialRevision: 'csr_current',
+      }]),
+    }, {
+      idToken: null,
+      accessToken: 'access-token',
+      accountId: 'acct-work',
+      accountLabel: 'work@example.test',
+    })).toMatchObject({
+      providerAccountId: 'acct-work',
+      profileId: 'work',
+      credentialRevision: 'csr_current',
+      source: 'spawn_selection',
+    });
+  });
+
   it('fails closed when live account and current selection do not match the frozen applied identity', () => {
     const previousIdentity: CodexConnectedServiceRuntimeIdentity = {
       serviceId: 'openai-codex',

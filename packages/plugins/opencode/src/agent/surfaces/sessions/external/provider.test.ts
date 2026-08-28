@@ -28,11 +28,18 @@ describe('retained OpenCode external-session takeover leaf', () => {
         opencodeBackendMode: 'server',
       },
       targetDirectory: '/local/selected/workspace',
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       ok: true,
       value: {
         directory: '/local/selected/workspace',
-        backendModeHint: 'server',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'opencode',
+          agent: {
+            backendMode: 'server',
+            providerSessionId: 'session-1',
+          },
+        },
       },
     });
   });

@@ -17,8 +17,8 @@ describe('the GitHub Fix CI Session handoff', () => {
       },
     });
 
-    expect(seed?.prompt.text).toContain('Typecheck found 2 errors in src/pump.ts.');
-    expect(seed?.prompt.text).toContain('9f2c1a7d');
+    expect(seed?.prompt).toContain('Typecheck found 2 errors in src/pump.ts.');
+    expect(seed?.prompt).toContain('9f2c1a7d');
     expect(buildGithubFixCiSessionSeed({
       repository: 'octo-org/example-app',
       headRevision: '9f2c1a7d',
@@ -33,14 +33,14 @@ describe('the GitHub Fix CI Session handoff', () => {
   });
 
   it('reports only the host seeded settlement as success', async () => {
-    const seed = { prompt: { text: 'diagnose this log', mode: 'replace' as const } };
+    const seed = { prompt: 'diagnose this log' };
     await expect(requestGithubFixCiSession({
-      version: () => ({ methods: ['selectActionInput'] }),
-      selectActionInput: async () => ({ kind: 'serverStartDraft' }),
+      version: () => ({ methods: ['openNewSession'] }),
+      openNewSession: async () => { throw new Error('navigation unavailable'); },
     }, seed)).resolves.toEqual({ status: 'unavailable' });
     await expect(requestGithubFixCiSession({
-      version: () => ({ methods: ['selectActionInput'] }),
-      selectActionInput: async () => ({ kind: 'newSessionSeeded' }),
+      version: () => ({ methods: ['openNewSession'] }),
+      openNewSession: async () => undefined,
     }, seed)).resolves.toEqual({ status: 'seeded' });
   });
 });

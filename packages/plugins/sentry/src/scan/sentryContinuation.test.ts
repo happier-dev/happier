@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
-
 import {
   decodeSentryScanContinuation,
   encodeSentryScanContinuation,
@@ -58,8 +56,8 @@ describe('encodeSentryScanContinuation', () => {
     })).ok).toBe(false);
   });
 
-  it('rejects a scan limit outside the public page bound', () => {
-    for (const scanLimit of [0, -1, 65, 1.5]) {
+  it('rejects invalid scan geometry without imposing a local aggregate ceiling', () => {
+    for (const scanLimit of [0, -1, 1.5]) {
       expect(decodeSentryScanContinuation(JSON.stringify({
         v: 1,
         scanLimit,
@@ -72,6 +70,17 @@ describe('encodeSentryScanContinuation', () => {
         sort: 'date',
       })).ok).toBe(false);
     }
+    expect(decodeSentryScanContinuation(JSON.stringify({
+      v: 1,
+      scanLimit: 65_536,
+      nativeLimit: 100,
+      cursor: 'c',
+      probe: { cursor: 'c', stepsSince: 0, interval: 2 },
+      walkHealth: [],
+      query: '',
+      statsPeriod: '90d',
+      sort: 'date',
+    })).ok).toBe(true);
   });
 
   it('rejects a continuation whose frozen pass facts were changed', () => {
@@ -159,33 +168,20 @@ describe('encodeSentryScanContinuation', () => {
     expect(decoded.continuation.walkHealth).toEqual(['sentry-malformed-issue-row']);
   });
 
-  it('refuses a frontier the protocol paging bound cannot carry, without claiming a bad cursor', () => {
-    const fits = encodeSentryScanContinuation({
+  it('preserves a wide valid cursor and leaves size to the Action envelope', () => {
+    const token = encodeSentryScanContinuation({
       v: 1,
       scanLimit: 20,
       nativeLimit: 20,
-      cursor: 'c'.repeat(1024),
-      probe: { cursor: 'c'.repeat(1024), stepsSince: 0, interval: 2 },
-      walkHealth: [],
-      query: '',
-      statsPeriod: '90d',
-      sort: 'date',
-    });
-    expect(fits).not.toBeNull();
-
-    // Same well-formed frontier, one cursor too wide for the bounded envelope:
-    // the walk cannot be continued, which is not a statement about the cursor.
-    expect(encodeSentryScanContinuation({
-      v: 1,
-      scanLimit: 20,
-      nativeLimit: 20,
-      cursor: 'c'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1),
+      cursor: 'c'.repeat(32 * 1024),
       probe: { cursor: 'c', stepsSince: 0, interval: 2 },
       walkHealth: [],
       query: '',
       statsPeriod: '90d',
       sort: 'date',
-    })).toBeNull();
+    });
+    expect(token).not.toBeNull();
+    expect(decodeSentryScanContinuation(token ?? '').ok).toBe(true);
   });
 
   it('carries no route state, credential, host clock or durable resume fact', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 
 import {
   testkitEntryRef,
@@ -51,6 +52,7 @@ describe('reobserveTriagePostMutationRow', () => {
         }),
       },
     }));
+    const lifetime = new AbortController();
 
     const after = await reobserveTriagePostMutationRow(
       { executeAction },
@@ -62,12 +64,59 @@ describe('reobserveTriagePostMutationRow', () => {
         exhausted: true,
       }],
       INSTANCE,
+      { signal: lifetime.signal },
     );
 
-    expect(executeAction).toHaveBeenCalledTimes(1);
+    expect(executeAction).toHaveBeenCalledWith(
+      'entries/reobserve-v1',
+      expect.any(Object),
+      { signal: lifetime.signal },
+    );
     expect(after?.content?.outcome.snapshot.title).toBe('After');
     const selected = readTriageSelectedObservationV1(after ?? before)?.observation;
     expect(selected?.snapshot).toBe(after?.content?.outcome.snapshot);
     expect(selected?.locator).toBe(after?.content?.outcome.locator);
+  });
+
+  it('settles without publishing when its detail lifetime is cancelled', async () => {
+    const before = foldTriageListWindow({
+      observations: [{
+        entryRef,
+        sourceInstanceId: INSTANCE,
+        observedAtMs: 1_000,
+        outcome: testkitPresentOutcome(),
+      }],
+      lanes: [{
+        sourceInstanceId: INSTANCE,
+        source: entryRef.source,
+        health: { kind: 'walkFinished' },
+        exhausted: true,
+      }],
+      configuredSourcesStatus: 'complete',
+      activeSourceInstanceIds: [INSTANCE],
+      lens: { ...TRIAGE_LIST_DEFAULT_LENS_V1, limit: 1 },
+      assembledAtMs: 1_000,
+    }).rows[0];
+    if (before === undefined) throw new Error('fixture row missing');
+    const lifetime = new AbortController();
+    const executeAction = vi.fn(async (
+      _action: string,
+      _input: JsonValue,
+      options?: PluginCancellationOptions,
+    ) => await new Promise<never>((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
+    }));
+
+    const pending = reobserveTriagePostMutationRow(
+      { executeAction },
+      before,
+      [],
+      INSTANCE,
+      { signal: lifetime.signal },
+    );
+    lifetime.abort();
+
+    await expect(pending).resolves.toBeNull();
+    expect(executeAction).toHaveBeenCalledTimes(1);
   });
 });

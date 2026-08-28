@@ -14,17 +14,17 @@ type RunSystemToolResult =
     errorMessage: string;
   }>;
 
-function createHookContext(result: RunSystemToolResult) {
+function createSpawnTools(result: RunSystemToolResult) {
   const runSystemTool = vi.fn(async () => result);
   return {
-    context: { tools: { runSystemTool } },
+    tools: { runSystemTool },
     runSystemTool,
   };
 }
 
 describe('OhMyPi daemon spawn prerequisites', () => {
   it('denies daemon spawn with the provider-owned no-models diagnostic before shell creation', async () => {
-    const fixture = createHookContext({
+    const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
       stdout: 'No models available. Set API keys in environment variables.\n',
@@ -33,8 +33,9 @@ describe('OhMyPi daemon spawn prerequisites', () => {
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
       cwd: '/repo',
-    }, fixture.context)).resolves.toMatchObject({
-      decision: 'deny',
+      tools: fixture.tools,
+    })).resolves.toMatchObject({
+      ok: false,
       reasonCode: 'ohmypi_models_unavailable',
       errorMessage: expect.stringContaining('No models available'),
     });
@@ -48,7 +49,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
   });
 
   it('allows daemon spawn when list-models exposes at least one model', async () => {
-    const fixture = createHookContext({
+    const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
       stdout: [
@@ -60,11 +61,12 @@ describe('OhMyPi daemon spawn prerequisites', () => {
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
       cwd: '/repo',
-    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
+      tools: fixture.tools,
+    })).resolves.toEqual({ ok: true });
   });
 
   it('passes materialized runtime-selection env to the pre-spawn model probe', async () => {
-    const fixture = createHookContext({
+    const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
       stdout: [
@@ -76,14 +78,11 @@ describe('OhMyPi daemon spawn prerequisites', () => {
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
       cwd: '/repo',
-      runtimeSelection: {
-        env: {
-          OPENAI_API_KEY: 'sk-materialized',
-          EMPTY_VALUE: '',
-          NON_STRING_VALUE: 123,
-        },
+      env: {
+        OPENAI_API_KEY: 'sk-materialized',
       },
-    }, fixture.context)).resolves.toEqual({ decision: 'allow' });
+      tools: fixture.tools,
+    })).resolves.toEqual({ ok: true });
 
     expect(fixture.runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       env: {
@@ -94,7 +93,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
   });
 
   it('denies daemon spawn when list-models only exposes embedding models', async () => {
-    const fixture = createHookContext({
+    const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
       stdout: [
@@ -107,8 +106,9 @@ describe('OhMyPi daemon spawn prerequisites', () => {
 
     await expect(resolveOhMyPiDaemonSpawnPrerequisites({
       cwd: '/repo',
-    }, fixture.context)).resolves.toMatchObject({
-      decision: 'deny',
+      tools: fixture.tools,
+    })).resolves.toMatchObject({
+      ok: false,
       reasonCode: 'ohmypi_models_unavailable',
       errorMessage: expect.stringContaining('chat-capable models'),
     });

@@ -5,6 +5,13 @@
     "agents": [
       {
         "capabilities": {
+          "executionRuns": {
+            "checkpoint": false,
+            "open": [
+              "create"
+            ],
+            "stop": true
+          },
           "sessions": {
             "cancel": true,
             "delivery": [
@@ -36,6 +43,7 @@
                 "kind": "primary"
               }
             ],
+            "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
           "displayName": "Kiro CLI",

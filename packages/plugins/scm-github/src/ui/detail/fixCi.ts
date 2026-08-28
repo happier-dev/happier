@@ -1,13 +1,8 @@
 import type { GithubProjectedCheckRowV1 } from '../../triage/detail/projection.js';
 import { isGithubFailingCheckConclusion } from '../../triage/checks.js';
 
-const FIX_CI_SESSION_REQUEST = Object.freeze({
-  action: 'session.spawn_new',
-  projection: 'serverStartDraft',
-} as const);
-
 export type GithubFixCiSessionSeedV1 = Readonly<{
-  prompt: Readonly<{ text: string; mode: 'replace' }>;
+  prompt: string;
 }>;
 
 export function buildGithubFixCiSessionSeed(input: Readonly<{
@@ -18,9 +13,7 @@ export function buildGithubFixCiSessionSeed(input: Readonly<{
   const evidence = input.check.logExcerpt?.trim();
   if (!isGithubFailingCheckConclusion(input.check.conclusion) || !evidence) return null;
   return Object.freeze({
-    prompt: Object.freeze({
-      mode: 'replace' as const,
-      text: [
+    prompt: [
         `Fix the failing GitHub check “${input.check.name}” in ${input.repository}`,
         `at head ${input.headRevision}. Diagnose the evidence before changing code,`,
         'then implement and verify the smallest canonical fix.',
@@ -28,16 +21,12 @@ export function buildGithubFixCiSessionSeed(input: Readonly<{
         'Failed-check evidence:',
         evidence,
       ].join('\n'),
-    }),
   });
 }
 
 export type GithubFixCiSessionHostV1 = Readonly<{
   version(): Readonly<{ methods: readonly string[] }>;
-  selectActionInput(request: Readonly<{
-    hostAction: typeof FIX_CI_SESSION_REQUEST;
-    seed: GithubFixCiSessionSeedV1;
-  }>): Promise<unknown>;
+  openNewSession(request: GithubFixCiSessionSeedV1): Promise<void>;
 }>;
 
 export async function requestGithubFixCiSession(
@@ -50,17 +39,10 @@ export async function requestGithubFixCiSession(
   } catch {
     return { status: 'unsupported' };
   }
-  if (!methods.includes('selectActionInput')) return { status: 'unsupported' };
+  if (!methods.includes('openNewSession')) return { status: 'unsupported' };
   try {
-    const selected = await host.selectActionInput({
-      hostAction: FIX_CI_SESSION_REQUEST,
-      seed,
-    });
-    return typeof selected === 'object'
-      && selected !== null
-      && (selected as Readonly<{ kind?: unknown }>).kind === 'newSessionSeeded'
-      ? { status: 'seeded' }
-      : { status: 'unavailable' };
+    await host.openNewSession(seed);
+    return { status: 'seeded' };
   } catch {
     return { status: 'unavailable' };
   }

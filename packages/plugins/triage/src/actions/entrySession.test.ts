@@ -1,6 +1,7 @@
 import type { JsonValue, PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
+import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { activate } from '../activate.js';
@@ -35,10 +36,12 @@ import {
 } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
+    TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
     TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
     TriageStartEntrySessionInputV1Schema,
     TriageStartPullRequestReviewInputV1Schema,
 } from './entrySessionProtocol.js';
+import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
 /**
  * The registered entry point of the whole Session-start vertical.
@@ -137,6 +140,116 @@ function declaredAction(localId: string) {
     return action;
 }
 
+function formalReviewInput() {
+    return {
+        v: 1 as const,
+        sessionId: 'session-a',
+        review: {
+            instance: testkitConfiguredInstance(),
+            entryRef: START_INPUT_BASE.entryRef,
+            lastKnownLocator: START_INPUT_BASE.display.locator,
+            observed: TESTKIT_OBSERVED_REVISION,
+            workspace: TESTKIT_SELECTED_WORKSPACE,
+            repositoryPath: '/workspaces/example-review',
+            pullRequest: { number: 17 },
+        },
+        engineIds: ['engine-a', 'engine-b'],
+        instructions: 'Review the selected pull request.',
+    };
+}
+
+function createFormalReviewContext(input: Readonly<{
+    verifyResult: unknown;
+    events: string[];
+}>): PluginInvocationContext {
+    const operation = { role: 'verifyReviewWorkspace' };
+    const source = START_INPUT_BASE.entryRef.source;
+    const admitted = [{
+        contributor: {
+            pluginId: source.pluginId,
+            contributionId: source.localId,
+            immutableGenerationId: 'source-generation-1',
+        },
+        protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 },
+        descriptor: {
+            v: 1,
+            purpose: 'triage-source',
+            displayName: 'Example forge',
+            kinds: [{
+                id: START_INPUT_BASE.entryRef.kindId,
+                workflowSubject: 'pullRequest',
+                displayName: 'Pull request',
+            }],
+        },
+        operations: { listInstances: {}, scan: {}, get: {}, verifyReviewWorkspace: operation },
+        surfaces: { detail: {} },
+    } as unknown as TriageAdmittedSourceV1];
+
+    return {
+        signal: new AbortController().signal,
+        services: {
+            targetedContributions: {
+                observeForSelf: () => ({
+                    readCurrent: async () => {
+                        input.events.push('source.readCurrent');
+                        return { generation: 'generation-1', contributions: admitted };
+                    },
+                    dispose: () => { input.events.push('source.dispose'); },
+                }),
+            },
+            actions: {
+                executeAdmittedTargetedOperation: async (
+                    selectedOperation: unknown,
+                    selectedInput: unknown,
+                    options: unknown,
+                ) => {
+                    input.events.push('source.verifyReviewWorkspace');
+                    expect(selectedOperation).toBe(operation);
+                    const review = formalReviewInput().review;
+                    expect(selectedInput).toEqual({
+                        v: 1,
+                        instance: review.instance,
+                        entryRef: review.entryRef,
+                        lastKnownLocator: review.lastKnownLocator,
+                        observed: review.observed,
+                        workspace: review.workspace,
+                        prepared: {
+                            repositoryPath: review.repositoryPath,
+                            pullRequest: review.pullRequest,
+                        },
+                    });
+                    expect(options).toEqual(expect.objectContaining({
+                        expectedSelectedConnectedAccountRef:
+                            testkitConfiguredInstance().binding.account,
+                    }));
+                    return input.verifyResult;
+                },
+                execute: async (actionId: string, actionInput: unknown) => {
+                    input.events.push(actionId);
+                    expect(actionId).toBe('review.start');
+                    expect(actionInput).toEqual({
+                        sessionId: 'session-a',
+                        engineIds: ['engine-a', 'engine-b'],
+                        instructions: 'Review the selected pull request.',
+                        changeType: 'committed',
+                        base: {
+                            kind: 'commit',
+                            baseCommit: TESTKIT_OBSERVED_REVISION.baseSha,
+                        },
+                        scmPullRequestReviewScope: {
+                            kind: 'scm_pull_request_review_scope.v1',
+                            account: testkitConfiguredInstance().binding.account,
+                            pullRequest: { number: 17 },
+                            observed: TESTKIT_OBSERVED_REVISION,
+                        },
+                    });
+                    return { status: 'started' };
+                },
+            },
+        },
+    } as unknown as PluginInvocationContext;
+}
+
 describe('the Session-start Action a mounted header can actually press', () => {
     /**
      * The reachability contract. A mounted plugin surface dispatches as a
@@ -172,8 +285,9 @@ describe('the Session-start Action a mounted header can actually press', () => {
     it('sends the configured delivery before the open and reports admission as it answered', async () => {
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({
-            spawn: [spawnSuccess()],
-            send: [{ status: 'rejected', code: 'session_input_archived' }],
+            spawn: [spawnSuccess({
+                initialInput: { status: 'rejected', code: 'session_input_archived' },
+            })],
         });
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
 
@@ -209,8 +323,15 @@ describe('the Session-start Action a mounted header can actually press', () => {
             delivery: 'rejected',
         });
         expect(invoker.calls.map((call) => call.actionId))
-            .toEqual(['session.spawn_new', 'session.message.send', 'session.open']);
-        const send = invoker.callsFor('session.message.send')[0]?.input as Readonly<{
+            .toEqual(['session.spawn_new', 'session.open']);
+        const spawn = invoker.callsFor('session.spawn_new')[0]?.input as Readonly<{
+            initialInput?: Readonly<{
+                text?: string;
+                attachments?: readonly unknown[];
+            }>;
+        }>;
+        expect(spawn.initialInput?.text).toBe('Repair the failing parser test.');
+        const send = spawn.initialInput as Readonly<{
             attachments?: readonly unknown[];
         }>;
         expect(send.attachments).toHaveLength(2);
@@ -227,6 +348,20 @@ describe('the Session-start Action a mounted header can actually press', () => {
                 title: 'Only the first entry',
                 additionalEntries: [],
                 idempotencyKey: 'delivery-key-retired',
+            },
+        }).success).toBe(false);
+    });
+
+    it('rejects an unknown admission verdict masquerading as settled retry history', () => {
+        expect(TriageStartEntrySessionInputV1Schema.safeParse({
+            ...START_INPUT_BASE,
+            workspaceMode: 'reference_only',
+            destination: NEW_DESTINATION,
+            resume: {
+                phase: 'openPending',
+                sessionId: 'session-a',
+                disposition: 'created',
+                delivery: 'outcomeUnknown',
             },
         }).success).toBe(false);
     });
@@ -422,6 +557,63 @@ describe('the Session-start Action a mounted header can actually press', () => {
     });
 });
 
+describe('the registered formal Review transition', () => {
+    it('is a person-invoked daemon Action, never an automated review shortcut', () => {
+        const action = declaredAction(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+        expect(action.surfaces).toEqual(['plugin']);
+        expect(action.execution).toEqual({ target: 'daemon' });
+        expect(action.dangerLevel).toBe('writesLocal');
+    });
+
+    it('verifies the provider and prepared local HEAD immediately before one review.start', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+
+        await expect(handler(formalReviewInput(), createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            events,
+        }))).resolves.toEqual({ v: 1, status: 'started' });
+
+        expect(events).toEqual([
+            'source.readCurrent',
+            'source.dispose',
+            'source.verifyReviewWorkspace',
+            'review.start',
+        ]);
+    });
+
+    it.each([
+        ['provider revision moved', { kind: 'refused', reason: 'observedHeadMoved' }, 'revisionMismatch'],
+        ['prepared workspace moved', { kind: 'workspaceMismatch' }, 'workspaceMismatch'],
+        ['source became unavailable', { kind: 'unavailable', reason: 'account' }, 'sourceUnavailable'],
+    ] as const)('starts zero reviews when the %s', async (_label, verifyResult, reason) => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+
+        await expect(handler(formalReviewInput(), createFormalReviewContext({
+            verifyResult,
+            events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason });
+
+        expect(events).not.toContain('review.start');
+    });
+
+    it('rejects duplicate selected engines before a provider read or outward write', async () => {
+        const events: string[] = [];
+        const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+
+        await expect(handler({
+            ...formalReviewInput(),
+            engineIds: ['engine-a', 'engine-a'],
+        }, createFormalReviewContext({
+            verifyResult: { kind: 'verified', pullRequest: { number: 17 } },
+            events,
+        }))).resolves.toEqual({ v: 1, status: 'refused', reason: 'reviewRejected' });
+
+        expect(events).toEqual([]);
+    });
+});
+
 describe('the explicit unlink Action', () => {
     it('ends exactly the one relationship the user named', async () => {
         const { collections, control } = createTestkitCorpusCollections({
@@ -476,6 +668,8 @@ describe('the Session-start wire', () => {
                 entryRef: START_INPUT_BASE.entryRef,
                 lastKnownLocator: START_INPUT_BASE.display.locator,
                 observed: TESTKIT_OBSERVED_REVISION,
+                workspace: TESTKIT_SELECTED_WORKSPACE,
+                repositoryPath: '/workspaces/example-review',
                 pullRequest: { number: 17 },
             },
             engineIds,
@@ -491,7 +685,7 @@ describe('the Session-start wire', () => {
             target: { pluginId: 'happier.triage', immutableGenerationId: 'triage-generation-1' },
             point: {
                 pointId: 'sources',
-                protocol: { id: 'happier.triage.sources', version: 1 },
+                protocol: { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: 1 },
             },
             contributor: {
                 pluginId: START_INPUT_BASE.entryRef.source.pluginId,
@@ -514,7 +708,7 @@ describe('the Session-start wire', () => {
             workspace: TESTKIT_SELECTED_WORKSPACE,
         } as const;
 
-        expect(TriageStartEntrySessionInputV1Schema.safeParse({
+        const parsed = TriageStartEntrySessionInputV1Schema.safeParse({
             ...START_INPUT_BASE,
             workspaceMode: 'pull_request',
             destination: {
@@ -538,7 +732,11 @@ describe('the Session-start wire', () => {
                 input: selectedInput,
                 credentialRef: testkitConfiguredInstance().binding.account,
             },
-        }).success).toBe(true);
+        });
+        expect(
+            parsed.success,
+            parsed.success ? undefined : JSON.stringify(parsed.error, null, 2),
+        ).toBe(true);
     });
 
     it('carries an exact selected-PR workspace request only to the supplied admitted operation', async () => {
@@ -595,6 +793,8 @@ describe('the Session-start wire', () => {
                 entryRef: START_INPUT_BASE.entryRef,
                 lastKnownLocator: START_INPUT_BASE.display.locator,
                 observed: TESTKIT_OBSERVED_REVISION,
+                workspace: TESTKIT_SELECTED_WORKSPACE,
+                repositoryPath: '/workspaces/example-review',
                 pullRequest: { number: 17 },
             },
         });

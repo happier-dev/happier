@@ -6,7 +6,7 @@ import {
     type TriageGetResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
@@ -21,7 +21,7 @@ import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollecti
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { TESTKIT_LINK_DISPLAY } from '../sessions/testkit/entrySessionTestkit.test-support.js';
-import { resolveTriageEntryForDispatch } from './resolveForDispatch.js';
+import { projectTriageDispatchContext, resolveTriageEntryForDispatch } from './resolveForDispatch.js';
 
 /**
  * Fresh exact resolution immediately before an Agent dispatch
@@ -178,6 +178,22 @@ function attachment(overrides: Readonly<Record<string, unknown>> = {}) {
 }
 
 describe('resolving an attached Triage entry for dispatch', () => {
+    it('preserves every schema-admitted Tier-A fact instead of applying a second 2 KiB projection cap', () => {
+        const context = projectTriageDispatchContext({
+            entryRef: ENTRY_REF,
+            snapshot: testkitSnapshot({
+                title: 't'.repeat(512),
+                summary: 's'.repeat(512),
+                scopeLabel: 'r'.repeat(512),
+                state: { presentation: 'active', nativeLabel: 'n'.repeat(512) },
+            }),
+        });
+
+        expect(new TextEncoder().encode(context).byteLength).toBeGreaterThan(2_048);
+        expect(context).toContain(`title: ${'t'.repeat(512)}`);
+        expect(context).toContain(`summary: ${'s'.repeat(512)}`);
+    });
+
     it('reads the entry through the attached connection and returns Tier-A facts', async () => {
         const harness = createHarness();
 
@@ -355,6 +371,68 @@ describe('resolving an attached Triage entry for dispatch', () => {
         });
         await Promise.resolve();
         expect(result.attachments[0]).toMatchObject({ status: 'failed', retryable: true });
+    }, 1_000);
+
+    it('spends one deadline across every attached read rather than restarting it per attachment', async () => {
+        vi.useFakeTimers();
+        let call = 0;
+        const signals: AbortSignal[] = [];
+        let firstReadStarted!: () => void;
+        const firstRead = new Promise<void>((resolve) => {
+            firstReadStarted = resolve;
+        });
+        const harness = createHarness({
+            get: async (input, options) => {
+                if (options?.signal) signals.push(options.signal);
+                call += 1;
+                if (call === 1) {
+                    firstReadStarted();
+                    await new Promise<void>((resolve) => setTimeout(resolve, 8));
+                    return {
+                        kind: 'present',
+                        localRef: input.localRef,
+                        locator: testkitLocator(),
+                        snapshot: testkitSnapshot(),
+                        viewer: testkitViewer(),
+                    };
+                }
+                return await new Promise<TriageGetResultV1>(() => {});
+            },
+        });
+
+        try {
+            const startedAt = performance.now();
+            const resultPromise = resolveTriageEntryForDispatch({
+                attachments: [
+                    attachment({ instanceId: 'attachment-1' }),
+                    attachment({
+                        instanceId: 'attachment-2',
+                        value: {
+                            v: 1,
+                            entryRef: { ...ENTRY_REF, entryId: '43' },
+                            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_A },
+                        },
+                    }),
+                ],
+            }, { ...harness.deps, getDeadlineMs: 12 } as never);
+
+            // The first read spends 8 ms of the invocation-wide 12 ms. Running
+            // the virtual clock to settlement leaves the second read only the
+            // remaining 4 ms; a per-attachment deadline would settle at 20 ms.
+            await firstRead;
+            await vi.runAllTimersAsync();
+            const result = await resultPromise;
+
+            expect(performance.now() - startedAt).toBe(12);
+            expect(call).toBe(2);
+            expect(result.attachments).toEqual([
+                expect.objectContaining({ instanceId: 'attachment-1', status: 'failed' }),
+                expect.objectContaining({ instanceId: 'attachment-2', status: 'failed' }),
+            ]);
+            expect(signals.every((signal) => signal.aborted)).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
     }, 1_000);
 
     it('refuses a response that answers about a different entry', async () => {

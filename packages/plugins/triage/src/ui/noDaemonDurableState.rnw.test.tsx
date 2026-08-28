@@ -21,13 +21,19 @@ import {
     createTestkitCorpusCollections,
     type TestkitCorpusCollections,
 } from '../corpus/testkit/corpusCollections.test-support.js';
-import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
+import {
+    testkitEntryRef,
+    testkitLocator,
+    testkitSnapshot,
+    testkitViewer,
+} from '../corpus/testkit/observations.test-support.js';
 import {
     createTestkitAccountSettings,
     type TestkitAccountSettings,
 } from '../settings/testkit/accountSettings.test-support.js';
 import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
 import { TRIAGE_SAVED_VIEWS_SETTING_ID_V1 } from '../settings/savedViews.js';
+import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
     createActionTriageUnlinkTransport,
@@ -36,6 +42,7 @@ import {
 import type { TriageListDisplayRowV1 } from './marks/pinnedRows.js';
 import { useTriageActions } from './actions/useTriageActions.js';
 import { useTriageConfiguredSources } from './configuration/useTriageConfiguredSources.js';
+import { useTriageEntryDetail } from './detail/useTriageEntryDetail.js';
 import { useTriageDurableAccount } from './durable/accountDurableState.js';
 import { useTriagePinnedEntries } from './marks/useTriagePinnedEntries.js';
 import { useTriageSavedViews } from './views/useTriageSavedViews.js';
@@ -64,6 +71,19 @@ import { useTriageSavedViews } from './views/useTriageSavedViews.js';
 
 const PLUGIN_ID = 'happier.triage';
 const SESSION_ID = 'session-no-daemon-1';
+const DETAIL_SOURCE = Object.freeze({
+    selection: Object.freeze({
+        entryRef: testkitEntryRef(),
+        sourceInstanceId: '00000000-0000-4000-8000-000000000002',
+    }),
+    observation: Object.freeze({
+        entryRef: testkitEntryRef(),
+        observedAtMs: 1_000,
+        locator: testkitLocator(),
+        snapshot: testkitSnapshot(),
+        viewer: testkitViewer(),
+    }),
+});
 
 type DurableHarness = Readonly<{
     corpus: TestkitCorpusCollections;
@@ -142,6 +162,7 @@ const durableProbeSurface = defineUiSurface(() => {
     const views = useTriageSavedViews();
     const actions = useTriageActions();
     const sources = useTriageConfiguredSources();
+    const detail = useTriageEntryDetail(DETAIL_SOURCE);
     const [unlinked, setUnlinked] = React.useState<string>('unlink:idle');
 
     const firstPin = pins.pins[0];
@@ -180,9 +201,19 @@ const durableProbeSurface = defineUiSurface(() => {
                     ? 'sources:unavailable'
                     : `sources:[${sources.sources.map((source) => source.displayLabel).join(',')}]`}
             />
-            <Text value={`sources-completeness:${sources.completeness}`} />
             <Text value={`sources-count:${sources.sources.length}`} />
             <Text value={`sources-notice:${sources.notice?.kind ?? 'none'}`} />
+            <Text
+                value={detail?.kind === 'ready'
+                    ? `detail:ready:${detail.linkedSessions.length}:${detail.linkedSessionsNextCursor === undefined ? 'done' : 'more'}`
+                    : `detail:${detail?.kind ?? 'none'}${detail?.kind === 'refused' ? `:${detail.reason}` : ''}`}
+            />
+            <Button
+                title="probe-load-more-links"
+                onPress={() => {
+                    if (detail?.kind === 'ready') detail.loadMoreLinkedSessions();
+                }}
+            />
             <Button
                 title="probe-remove-source"
                 onPress={() => {
@@ -374,15 +405,29 @@ describe('durable Account state with no daemon reachable', () => {
         await linkEntryToSession({
             collections: harness.corpus.collections,
             entryRef,
-            identityEntryRef: entryRef,
             sessionId: SESSION_ID,
-            displayPathAtLink: 'example/repository#1',
+            display: {
+                locator: testkitLocator({ displayPath: 'example/repository#1' }),
+                scopeLabel: 'example/repository',
+            },
             nowMs: 1_000,
         });
+        const directDetail = await readTriageEntryDetail({
+            v: 1,
+            entryRef,
+            sourceInstanceId: '00000000-0000-4000-8000-000000000002',
+        }, {
+            sourceInstances: harness.corpus.collections.sourceInstances,
+            sessionLinks: harness.corpus.collections.sessionLinks,
+            readSessionSummary: async () => null,
+        });
+        expect(directDetail.kind === 'read' ? directDetail.linkedSessions : []).toHaveLength(1);
 
         const fixture = await mountProbe(harness);
         const markTag = await deriveUserMarkTag(harness.corpus.collections.userMarks, entryRef);
         expect(harness.corpus.control.userMarks.inspect(markTag)?.deleted).toBe(false);
+        await expect(fixture.getByText('detail:ready:1:done'))
+            .resolves.toEqual({ content: 'detail:ready:1:done' });
 
         await act(async () => {
             await fixture.press(await fixture.getByRole('button', { name: 'probe-unpin' }));
@@ -414,14 +459,12 @@ describe('durable Account state with no daemon reachable', () => {
         expect(harness.actionCalls).toEqual([]);
     });
 
-    it('keeps every overshoot row administratively reachable and reports truncated completeness', async () => {
+    it('keeps every configured row administratively reachable beyond the former first-page wall', async () => {
         const harness = createDurableHarness();
         for (let seed = 1; seed <= 34; seed += 1) seedConfiguredSource(harness, seed);
 
         const fixture = await mountProbe(harness);
 
-        await expect(fixture.getByText('sources-completeness:truncated')).resolves
-            .toEqual({ content: 'sources-completeness:truncated' });
         await expect(fixture.getByText('sources-count:34')).resolves
             .toEqual({ content: 'sources-count:34' });
     });

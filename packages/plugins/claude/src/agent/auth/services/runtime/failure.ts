@@ -1,23 +1,26 @@
-import { readFile } from 'node:fs/promises';
-
 import type {
     OauthCredentialRecord,
     TokenCredentialRecord,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { parseCredentialRecord } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { ExecService } from '@happier-dev/plugin-sdk/exec';
+import type {
+  AgentConnectedAccountNativeAuthCodecV1,
+  AgentConnectedAccountRuntimeAuthAdapterResultV1,
+  AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+  AgentConnectedAccountRuntimeAuthTargetV1,
+  AgentConnectedAccountRuntimeAuthVerificationInputV1,
+  AgentConnectedAccountTransitionVerificationResultV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   buildClaudeCodeCredentialPayload,
   computeClaudeCodeCredentialAccountProofFingerprint,
-  resolveClaudeCodeCredentialsFilePath,
+  parseClaudeCodeCredentialFile,
 } from '../native/credentials.js';
-import { materializeClaudeCodeNativeAuth } from '../native/materialize.js';
-import { verifyClaudeCodeNativeAuth } from '../native/verify.js';
 import {
   buildClaudeCodeNativeAuthProvenance,
-  readClaudeCodeNativeAuthProvenance,
-  writeClaudeCodeNativeAuthProvenance,
+  CLAUDE_CODE_NATIVE_AUTH_PROVENANCE_FILE_NAME,
+  parseClaudeCodeNativeAuthProvenance,
 } from '../native/provenance.js';
 import { mapClaudeRateLimitEventToUsageDetails } from './usage.js';
 
@@ -83,13 +86,9 @@ export type ClaudeConnectedServiceRuntimeFailureClassification = Readonly<{
     | null;
 }>;
 
-export type ClaudeRuntimeAuthTargetInput = Readonly<{
-  target: Readonly<{ agentId: string; targetId?: string | null }>;
-  selection: unknown;
-  targetMaterializedEnv?: Readonly<Record<string, string>> | null;
-  materializedEnv?: Readonly<Record<string, string>> | null;
-  env?: Readonly<Record<string, string>> | null;
-}>;
+export type ClaudeRuntimeAuthTargetInput = AgentConnectedAccountRuntimeAuthTargetV1;
+export type ClaudeRuntimeAuthHotApplyInput = AgentConnectedAccountRuntimeAuthHotApplyInputV1;
+export type ClaudeRuntimeAuthVerificationInput = AgentConnectedAccountRuntimeAuthVerificationInputV1;
 
 export type ClaudeRuntimeFailureInput = Readonly<{
   target: Readonly<{ agentId: string; targetId?: string | null }>;
@@ -97,57 +96,17 @@ export type ClaudeRuntimeFailureInput = Readonly<{
   selection?: unknown;
 }>;
 
-export type ClaudeRuntimeAuthAdapterResult = Readonly<Record<string, unknown>>;
+export type ClaudeRuntimeAuthAdapterResult = AgentConnectedAccountRuntimeAuthAdapterResultV1;
 
 export type ClaudeConnectedServiceAccountTransitionVerificationResult =
-  | Readonly<{
-      status: 'verified';
-      providerAccountId?: string | null;
-      activeAccountId?: string | null;
-      sharedAuthSurfaceId?: string | null;
-      proofStrength?: 'exact' | 'weak' | 'diagnostic';
-      source?: string;
-      reason?: string;
-      generationApplication?: Readonly<{
-        serviceId: string;
-        groupId: string;
-        profileId: string;
-        generation: number;
-        credentialRevision: string;
-        credentialFingerprint: string;
-      }>;
-    }>
-  | Readonly<{
-      status: 'weakly_verified';
-      providerAccountId?: string | null;
-      activeAccountId?: string | null;
-      sharedAuthSurfaceId?: string | null;
-      proofStrength?: 'exact' | 'weak' | 'diagnostic';
-      source?: string;
-      reason: string;
-    }>
-  | Readonly<{
-      status: 'mismatch';
-      expectedProviderAccountId?: string | null;
-      actualProviderAccountId?: string | null;
-      retryable: boolean;
-      reason?: string;
-    }>
-  | Readonly<{
-      status: 'unavailable';
-      retryable: boolean;
-      reason: string;
-      errorClassification?: unknown;
-    }>;
+  AgentConnectedAccountTransitionVerificationResultV1;
 
 export type ClaudeConnectedServiceRuntimeAuthAdapter = Readonly<{
-  resolveDestinationHome?(input: ClaudeRuntimeAuthTargetInput): string | null;
   classifyRuntimeAuthFailure(input: ClaudeRuntimeFailureInput): ClaudeConnectedServiceRuntimeFailureClassification | null;
   materializeActiveProfile(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeRuntimeAuthAdapterResult>;
-  canHotApply(input: ClaudeRuntimeAuthTargetInput): ClaudeRuntimeAuthAdapterResult;
-  hotApply(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeRuntimeAuthAdapterResult>;
-  recoverAfterRuntimeAuthSwitch(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeRuntimeAuthAdapterResult>;
-  verifyActiveAccount?(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeConnectedServiceAccountTransitionVerificationResult>;
+  canHotApply(input: ClaudeRuntimeAuthHotApplyInput): ClaudeRuntimeAuthAdapterResult;
+  hotApply(input: ClaudeRuntimeAuthHotApplyInput): Promise<ClaudeRuntimeAuthAdapterResult>;
+  verifyActiveAccount?(input: ClaudeRuntimeAuthVerificationInput): Promise<ClaudeConnectedServiceAccountTransitionVerificationResult>;
   probeQuota(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeRuntimeAuthAdapterResult>;
   refreshActiveProfile(input: ClaudeRuntimeAuthTargetInput): Promise<ClaudeRuntimeAuthAdapterResult>;
 }>;
@@ -203,16 +162,6 @@ function readCredentialProviderEmail(record: OauthCredentialRecord | TokenCreden
   return record.kind === 'oauth'
     ? readString(record.oauth.providerEmail)
     : readString(record.token.providerEmail);
-}
-
-function readExecRuntimeService(value: unknown): ExecService | null {
-  const record = readRecord(value);
-  return typeof record?.run === 'function'
-    && typeof record.spawn === 'function'
-    && typeof readRecord(record.clients)?.spawn === 'function'
-    && typeof readRecord(record.systemTools)?.resolve === 'function'
-    ? record as unknown as ExecService
-    : null;
 }
 
 function readMessage(error: unknown): string {
@@ -344,28 +293,6 @@ export function classifyClaudeConnectedServiceRuntimeAuthFailure(
   };
 }
 
-function readMaterializedClaudeConfigDir(input: Readonly<{
-  selection?: unknown;
-  targetMaterializedEnv?: Readonly<Record<string, string>> | null;
-  materializedEnv?: Readonly<Record<string, string>> | null;
-  env?: Readonly<Record<string, string>> | null;
-}>): string | null {
-  const selection = readRecord(input.selection);
-  const selectionTargetMaterializedEnv = readRecord(selection?.targetMaterializedEnv);
-  const selectionMaterializedEnv = readRecord(selection?.materializedEnv);
-  const selectionEnv = readRecord(selection?.env);
-  const raw =
-    readString(selectionTargetMaterializedEnv?.CLAUDE_CONFIG_DIR)
-    ?? readString(selectionMaterializedEnv?.CLAUDE_CONFIG_DIR)
-    ?? readString(selectionEnv?.CLAUDE_CONFIG_DIR)
-    ?? readString(selection?.targetMaterializedRoot)
-    ?? input.targetMaterializedEnv?.CLAUDE_CONFIG_DIR
-    ?? input.materializedEnv?.CLAUDE_CONFIG_DIR
-    ?? input.env?.CLAUDE_CONFIG_DIR
-    ?? null;
-  return readString(raw);
-}
-
 function readSelectionIds(selection: unknown): Readonly<{
   serviceId: string;
   profileId: string | null;
@@ -376,7 +303,6 @@ function readSelectionIds(selection: unknown): Readonly<{
   sourceAccountLabel: string | null;
 }> {
   const record = readRecord(selection);
-  const credential = readCredentialRecord(record?.record);
   return {
     serviceId: readString(record?.serviceId) ?? 'claude-subscription',
     profileId: readString(record?.activeProfileId ?? record?.profileId),
@@ -384,44 +310,44 @@ function readSelectionIds(selection: unknown): Readonly<{
     groupGeneration: readNonnegativeInteger(record?.groupGeneration ?? record?.generation),
     credentialRevision: readString(record?.credentialRevision),
     sourceProviderAccountId:
-      readString(record?.sourceProviderAccountId)
-      ?? readCredentialProviderAccountId(credential),
+      readString(record?.sourceProviderAccountId),
     sourceAccountLabel:
-      readString(record?.sourceAccountLabel)
-      ?? readCredentialProviderEmail(credential),
+      readString(record?.sourceAccountLabel),
   };
 }
 
-function isClaudeSubscriptionGroupOAuthSelection(selection: unknown): selection is Record<string, unknown> {
-  const record = readRecord(selection);
+function isClaudeSubscriptionGroupOAuthSelection(input: ClaudeRuntimeAuthTargetInput): boolean {
+  const record = readRecord(input.selection);
   if (!record) return false;
   const selectionServiceId = readString(record.serviceId);
-  const credential = readCredentialRecord(record?.record);
   return (
     (selectionServiceId === null || selectionServiceId === 'claude-subscription')
     && readString(record.groupId) !== null
     && readString(record.activeProfileId) !== null
     && readNonnegativeInteger(record.groupGeneration ?? record.generation) !== null
-    && credential !== null
-    && readString(credential.serviceId) === 'claude-subscription'
-    && credential.kind === 'oauth'
   );
 }
 
-async function materializedCredentialMatchesRecord(params: Readonly<{
+function parseJsonFile(files: Readonly<Record<string, Uint8Array>>, fileId: string): unknown {
+  const bytes = files[fileId];
+  if (!bytes) return null;
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+}
+
+function materializedCredentialMatchesRecord(params: Readonly<{
   record: OauthCredentialRecord | TokenCredentialRecord;
-  claudeConfigDir: string;
-}>): Promise<boolean> {
+  files: Readonly<Record<string, Uint8Array>>;
+}>): boolean {
   const built = buildClaudeCodeCredentialPayload(params.record);
   if (built.status !== 'ok') return false;
-  try {
-    const raw = JSON.parse(await readFile(resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir), 'utf8')) as unknown;
-    const actual = computeClaudeCodeCredentialAccountProofFingerprint(raw);
-    const expected = computeClaudeCodeCredentialAccountProofFingerprint(built.payload);
-    return actual !== null && actual === expected;
-  } catch {
-    return false;
-  }
+  const raw = parseJsonFile(params.files, '.credentials.json');
+  const actual = computeClaudeCodeCredentialAccountProofFingerprint(raw);
+  const expected = computeClaudeCodeCredentialAccountProofFingerprint(built.payload);
+  return actual !== null && actual === expected;
 }
 
 function buildSharedGroupVerification(params: Readonly<{
@@ -433,6 +359,23 @@ function buildSharedGroupVerification(params: Readonly<{
     credentialFingerprint: string;
   }>;
 }>) {
+  if (params.generationApplication) {
+    return {
+      status: 'verified' as const,
+      providerAccountId: readCredentialProviderAccountId(params.record),
+      activeAccountId: readCredentialProviderEmail(params.record),
+      sharedAuthSurfaceId: params.groupId,
+      proofStrength: 'exact' as const,
+      source: 'shared_group_auth_surface',
+      reason: 'claude_shared_group_auth_surface_rewritten',
+      generationApplication: {
+        serviceId: 'claude-subscription' as const,
+        groupId: params.groupId,
+        profileId: params.record.profileId,
+        ...params.generationApplication,
+      },
+    };
+  }
   return {
     status: 'weakly_verified' as const,
     providerAccountId: readCredentialProviderAccountId(params.record),
@@ -441,42 +384,37 @@ function buildSharedGroupVerification(params: Readonly<{
     proofStrength: 'weak' as const,
     source: 'shared_group_auth_surface',
     reason: 'claude_shared_group_auth_surface_rewritten',
-    ...(params.generationApplication ? {
-      status: 'verified' as const,
-      proofStrength: 'exact' as const,
-      generationApplication: {
-        serviceId: 'claude-subscription',
-        groupId: params.groupId,
-        profileId: params.record.profileId,
-        ...params.generationApplication,
-      },
-    } : {}),
   };
 }
 
-async function verifyClaudeSharedGroupApplication(params: Readonly<{
-  claudeConfigDir: string;
+function verifyClaudeSharedGroupApplication(params: Readonly<{
+  files: Readonly<Record<string, Uint8Array>>;
   record: OauthCredentialRecord | TokenCredentialRecord;
   groupId: string;
   generation: number;
   credentialRevision: string;
-}>): Promise<ClaudeConnectedServiceAccountTransitionVerificationResult> {
-  const nativeVerification = await verifyClaudeCodeNativeAuth({ claudeConfigDir: params.claudeConfigDir });
-  if (nativeVerification.status !== 'ok') {
+}>): ClaudeConnectedServiceAccountTransitionVerificationResult {
+  const files = params.files;
+  const nativeCredential = parseClaudeCodeCredentialFile(
+    parseJsonFile(files, '.credentials.json'),
+  );
+  if (nativeCredential.status !== 'ok' || !nativeCredential.hasAccessToken) {
     return {
       status: 'unavailable',
-      retryable: nativeVerification.status === 'expired',
-      reason: nativeVerification.status,
+      retryable: false,
+      reason: nativeCredential.status,
     };
   }
-  const provenance = await readClaudeCodeNativeAuthProvenance(params.claudeConfigDir);
+  const provenance = parseClaudeCodeNativeAuthProvenance(
+    parseJsonFile(files, CLAUDE_CODE_NATIVE_AUTH_PROVENANCE_FILE_NAME),
+  );
   if (
     provenance?.groupId !== params.groupId
     || provenance.credentialProfileId !== params.record.profileId
     || provenance.generation !== params.generation
     || provenance.credentialRevision !== params.credentialRevision
     || provenance.credentialFingerprint === undefined
-    || !await materializedCredentialMatchesRecord({ record: params.record, claudeConfigDir: params.claudeConfigDir })
+    || !materializedCredentialMatchesRecord({ record: params.record, files })
   ) {
     return {
       status: 'unavailable',
@@ -497,9 +435,6 @@ async function verifyClaudeSharedGroupApplication(params: Readonly<{
 
 export function createClaudeConnectedServiceRuntimeAuthAdapter(): ClaudeConnectedServiceRuntimeAuthAdapter {
   return {
-    resolveDestinationHome(input) {
-      return readMaterializedClaudeConfigDir(input);
-    },
     classifyRuntimeAuthFailure(input) {
       return classifyClaudeConnectedServiceRuntimeAuthFailure({
         ...readSelectionIds(input.selection),
@@ -510,44 +445,67 @@ export function createClaudeConnectedServiceRuntimeAuthAdapter(): ClaudeConnecte
       return { supported: false, recovery: 'restart_resume' };
     },
     canHotApply(input) {
-      const claudeConfigDir = readMaterializedClaudeConfigDir(input);
-      if (claudeConfigDir && isClaudeSubscriptionGroupOAuthSelection(input.selection)) {
+      if (input.materializeNativeAuth && isClaudeSubscriptionGroupOAuthSelection(input)) {
         return {
           supported: true,
-          mode: 'claude_subscription_shared_group_auth_surface_rewrite',
         };
       }
       return { supported: false, reason: 'hot_apply_unsupported', recovery: 'restart_resume' };
     },
     async hotApply(input) {
-      const claudeConfigDir = readMaterializedClaudeConfigDir(input);
-      if (!claudeConfigDir || !isClaudeSubscriptionGroupOAuthSelection(input.selection)) {
+      if (!input.materializeNativeAuth || !isClaudeSubscriptionGroupOAuthSelection(input)) {
         return { applied: false, reason: 'hot_apply_unsupported', recovery: 'restart_resume' };
       }
-      const selection = readRecord(input.selection)!;
-      const record = readCredentialRecord(selection.record)!;
-      const groupId = readString(selection.groupId)!;
-      const generation = readNonnegativeInteger(selection.groupGeneration ?? selection.generation);
-      const credentialRevision = readString(selection.credentialRevision);
-      const result = await materializeClaudeCodeNativeAuth({
-        exec: readExecRuntimeService(selection.exec),
-        record,
-        claudeConfigDir,
-      });
-      if (result.status !== 'materialized' || result.diagnostics.some((diagnostic) => diagnostic.severity === 'blocking')) {
+      const verification = await input.materializeNativeAuth();
+      if (verification.status !== 'verified') {
+        return { applied: false, reason: verification.reason, recovery: 'restart_resume' };
+      }
+      return {
+        applied: true,
+        reason: 'claude_shared_group_auth_surface_rewritten',
+        verification,
+      };
+    },
+    async verifyActiveAccount(input) {
+      if (!input.inspectNativeAuth) {
         return {
-          applied: false,
-          reason: result.diagnostics[0]?.code ?? 'claude_shared_group_auth_surface_materialization_failed',
-          recovery: 'restart_resume',
-          diagnostics: result.diagnostics,
+          status: 'unavailable',
+          retryable: false,
+          reason: 'missing_materialized_claude_config_dir',
         };
       }
-      if (generation === null || credentialRevision === null) {
-        return { applied: false, reason: 'claude_shared_group_auth_surface_epoch_missing', recovery: 'restart_resume' };
+      if (!isClaudeSubscriptionGroupOAuthSelection(input)) {
+        return {
+          status: 'unavailable',
+          retryable: false,
+          reason: 'claude_code_runtime_account_adoption_unproven',
+        };
+      }
+      return await input.inspectNativeAuth();
+    },
+    async probeQuota() {
+      return { status: 'unsupported' };
+    },
+    async refreshActiveProfile() {
+      return { status: 'unsupported' };
+    },
+  };
+}
+
+export function createClaudeConnectedAccountNativeAuthCodec(): AgentConnectedAccountNativeAuthCodecV1 {
+  return {
+    materialize({ credential, selection }) {
+      const record = readCredentialRecord(credential);
+      const groupId = readString(selection.groupId);
+      const generation = readNonnegativeInteger(selection.groupGeneration ?? selection.generation);
+      const credentialRevision = readString(selection.credentialRevision);
+      if (!record || record.kind !== 'oauth' || record.serviceId !== 'claude-subscription'
+        || !groupId || generation === null || !credentialRevision) {
+        throw new TypeError('Claude native auth materialization requires an OAuth group generation');
       }
       const built = buildClaudeCodeCredentialPayload(record);
       if (built.status !== 'ok') {
-        return { applied: false, reason: 'claude_shared_group_auth_surface_provenance_unavailable', recovery: 'restart_resume' };
+        throw new TypeError('Claude native auth materialization requires a supported OAuth credential');
       }
       const provenance = buildClaudeCodeNativeAuthProvenance({
         record,
@@ -556,67 +514,29 @@ export function createClaudeConnectedServiceRuntimeAuthAdapter(): ClaudeConnecte
         generation,
         credentialRevision,
       });
-      await writeClaudeCodeNativeAuthProvenance({ claudeConfigDir, provenance });
-      const verification = await verifyClaudeSharedGroupApplication({
-        claudeConfigDir,
+      const encoder = new TextEncoder();
+      return {
+        files: {
+          '.credentials.json': encoder.encode(`${JSON.stringify(built.payload)}\n`),
+          [CLAUDE_CODE_NATIVE_AUTH_PROVENANCE_FILE_NAME]: encoder.encode(`${JSON.stringify(provenance)}\n`),
+        },
+      };
+    },
+    inspect({ credential, selection, files }) {
+      const record = readCredentialRecord(credential);
+      const groupId = readString(selection.groupId);
+      const generation = readNonnegativeInteger(selection.groupGeneration ?? selection.generation);
+      const credentialRevision = readString(selection.credentialRevision);
+      if (!record || !groupId || generation === null || !credentialRevision) {
+        return { status: 'unavailable', retryable: false, reason: 'claude_shared_group_auth_surface_epoch_missing' };
+      }
+      return verifyClaudeSharedGroupApplication({
+        files,
         record,
         groupId,
         generation,
         credentialRevision,
       });
-      if (verification.status !== 'verified') {
-        return { applied: false, reason: verification.reason, recovery: 'restart_resume' };
-      }
-      return {
-        applied: true,
-        reason: 'claude_shared_group_auth_surface_rewritten',
-        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: claudeConfigDir },
-        verification,
-      };
-    },
-    async recoverAfterRuntimeAuthSwitch(input) {
-      const selection = readRecord(input.selection);
-      const restartAndResume = selection?.restartAndResume;
-      if (typeof restartAndResume !== 'function') {
-        return { recovered: false, reason: 'missing_restart_resume' };
-      }
-      await restartAndResume();
-      return { recovered: true, recovery: 'restart_resume' };
-    },
-    async verifyActiveAccount(input) {
-      const claudeConfigDir = readMaterializedClaudeConfigDir(input);
-      if (!claudeConfigDir) {
-        return {
-          status: 'unavailable',
-          retryable: false,
-          reason: 'missing_materialized_claude_config_dir',
-        };
-      }
-      if (!isClaudeSubscriptionGroupOAuthSelection(input.selection)) {
-        const verification = await verifyClaudeCodeNativeAuth({ claudeConfigDir });
-        return verification.status === 'ok'
-          ? { status: 'unavailable', retryable: true, reason: 'claude_code_runtime_account_adoption_unproven' }
-          : { status: 'unavailable', retryable: verification.status === 'expired', reason: verification.status };
-      }
-      const selection = readRecord(input.selection)!;
-      const generation = readNonnegativeInteger(selection.groupGeneration ?? selection.generation);
-      const credentialRevision = readString(selection.credentialRevision);
-      if (generation === null || credentialRevision === null) {
-        return { status: 'unavailable', retryable: true, reason: 'claude_shared_group_auth_surface_epoch_missing' };
-      }
-      return await verifyClaudeSharedGroupApplication({
-        claudeConfigDir,
-        record: readCredentialRecord(selection.record)!,
-        groupId: readString(selection.groupId)!,
-        generation,
-        credentialRevision,
-      });
-    },
-    async probeQuota() {
-      return { status: 'unsupported' };
-    },
-    async refreshActiveProfile() {
-      return { status: 'unsupported' };
     },
   };
 }

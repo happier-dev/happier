@@ -15,8 +15,7 @@
  * and two spellings of one timestamp must not compare equal.
  */
 
-import { boundGitlabText } from '../mapping/bounded.js';
-import { GITLAB_DETAIL_BOUNDS_V1 } from '../detail/projection.js';
+import { normalizeTriageSingleLineV1 } from '@happier-dev/triage-protocol/v1';
 import type { GitlabIssueStateRowV1 } from './contracts.js';
 import type { GitlabMutationSubjectV1 } from './preflight.js';
 
@@ -34,7 +33,9 @@ function readNonEmptyString(value: unknown): string | null {
 
 function readLabel(value: unknown): string | null {
   const text = readNonEmptyString(value);
-  return text === null ? null : boundGitlabText(text, GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes).text;
+  if (text === null) return null;
+  const normalized = normalizeTriageSingleLineV1(text);
+  return normalized === '' ? null : normalized;
 }
 
 function readTimestampMs(value: unknown): number | null {

@@ -6,7 +6,8 @@ import {
   TriageScanResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import currentUser from '../fixtures/currentUser.json' with { type: 'json' };
 import errorNotFound from '../fixtures/errorNotFound.json' with { type: 'json' };
@@ -17,7 +18,9 @@ import reviewPage from '../fixtures/pullRequestsReviewPage.json' with { type: 'j
 import repositoriesPage from '../fixtures/workspaceRepositoriesPage.json' with { type: 'json' };
 import workspacesPage from '../fixtures/userWorkspacesPage.json' with { type: 'json' };
 import { encodeBitbucketConfiguration } from '../instance.js';
+import { BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS } from '../apiClient.js';
 import { decodeBitbucketScanContinuation } from '../scanContinuation.js';
+import { scanBitbucketSourceAction } from './actions.js';
 import { projectBitbucketDetailOverview } from './detail.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './descriptor.js';
 import { getBitbucketSourceEntry } from './get.js';
@@ -27,9 +30,14 @@ import {
   accountRef,
   createConnectedAccountsStub,
   createHttpStub,
+  createInvocationContext,
   createRuntime,
   type StubReply,
 } from './testSupport.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const WORKSPACE_UUID = '{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}';
 const REPOSITORY_UUID = '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}';
@@ -119,7 +127,9 @@ describe('Bitbucket listInstances', () => {
     });
     const { http } = createHttpStub(routeBitbucket());
 
-    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+    const result = TriageListInstancesResultV1Schema.parse(
+      await listBitbucketSourceInstances(createRuntime(connectedAccounts, http)),
+    );
 
     expect(result.kind).toBe('complete');
     if (result.kind !== 'complete') throw new Error('expected a complete result');
@@ -173,7 +183,7 @@ describe('Bitbucket listInstances', () => {
     ))).toBe(true);
   });
 
-  it('keeps discovery incomplete-free but attributed when one workspace walk fails', async () => {
+  it('keeps a failed workspace walk attributed and refuses to call its candidate set complete', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
     });
@@ -181,16 +191,74 @@ describe('Bitbucket listInstances', () => {
       '/2.0/user/workspaces': { status: 503, body: errorNotFound },
     }));
 
-    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+    const result = TriageListInstancesResultV1Schema.parse(
+      await listBitbucketSourceInstances(createRuntime(connectedAccounts, http)),
+    );
 
-    expect(result.kind).toBe('complete');
-    if (result.kind === 'failed') return;
+    expect(result.kind).toBe('incomplete');
+    if (result.kind !== 'incomplete') return;
     expect(result.candidates).toEqual([]);
     expect(result.failures[0]?.failure).toMatchObject({ class: 'transient' });
+    expect(result.failure).toMatchObject({ class: 'transient' });
   });
 });
 
 describe('Bitbucket scan', () => {
+  it('uses one absolute deadline across successive provider requests', async () => {
+    vi.useFakeTimers();
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    let requests = 0;
+    const http = {
+      async request(input: Parameters<HttpService['request']>[0], options?: Readonly<{ signal?: AbortSignal }>) {
+        requests += 1;
+        return await new Promise<Awaited<ReturnType<HttpService['request']>>>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            const body = input.url.includes('/2.0/user')
+              ? currentUser
+              : { pagelen: 50, page: 1, values: [] };
+            resolve({
+              status: 200,
+              finalUrl: input.url,
+              headers: {},
+              body: new TextEncoder().encode(JSON.stringify(body)),
+            });
+          }, 15_000);
+          options?.signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(options.signal?.reason);
+          }, { once: true });
+        });
+      },
+      openWebSocket() {
+        throw new Error('not used');
+      },
+    } as unknown as HttpService;
+
+    let settled = false;
+    const pending = scanBitbucketSourceAction(
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 32 },
+      }),
+      createInvocationContext(connectedAccounts, http),
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await vi.advanceTimersByTimeAsync(BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS);
+    expect(settled).toBe(true);
+    const result = await pending;
+    expect(result).toEqual({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'invocation-deadline-exceeded' },
+    });
+    expect(requests).toBe(2);
+  });
+
   it('projects the authored lane and reports unavailable native lanes as partial', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
@@ -225,6 +293,98 @@ describe('Bitbucket scan', () => {
     // Every request is origin-checked and carries the invocation's own page geometry.
     expect(requests.every(({ url }) => url.startsWith('https://api.bitbucket.org/2.0/'))).toBe(true);
     expect(requests.some(({ url }) => url.includes('/pullrequests/%7B9f1c2a44'))).toBe(true);
+  });
+
+  it('settles a repeated pull-request next without minting an identical Load More continuation', async () => {
+    const route = (url: string): StubReply | undefined => {
+      if (url.includes('/2.0/user')) return { body: currentUser };
+      if (url.includes('/workspaces/') && url.includes('/pullrequests/')) {
+        return { body: { ...pageOne, next: url } };
+      }
+      return { body: { pagelen: 100, page: 1, values: [] } };
+    };
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const { http, requests } = createHttpStub(route);
+
+    const result = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      createRuntime(connectedAccounts, http),
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 32 },
+      }),
+    ));
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.observations.map((observation) => (
+      observation.kind === 'present' ? observation.localRef.entryId : observation.kind
+    ))).toEqual(['42', '41']);
+    expect(result.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
+    expect(decodeBitbucketScanContinuation(result.continuation)?.authored)
+      .toMatchObject({ nextUrl: null, ended: true });
+
+    const settled = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      createRuntime(connectedAccounts, http),
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: result.continuation },
+      }),
+    ));
+    expect(settled.kind).toBe('complete');
+    expect(settled.kind !== 'failed' && settled.evidence)
+      .toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
+    expect(requests.filter(({ url }) => url.includes('/workspaces/') && url.includes('/pullrequests/')))
+      .toHaveLength(1);
+  });
+
+  it('settles an authored A-B-A cursor cycle across Load More calls', async () => {
+    let authoredRequests = 0;
+    let firstUrl = '';
+    const route = (url: string): StubReply | undefined => {
+      if (url.includes('/2.0/user')) return { body: currentUser };
+      if (url.includes('/workspaces/') && url.includes('/pullrequests/')) {
+        authoredRequests += 1;
+        if (authoredRequests === 1) {
+          firstUrl = url;
+          return { body: { ...pageOne, next: `${url}&page=2` } };
+        }
+        return { body: { ...pageOne, next: firstUrl } };
+      }
+      return { body: { pagelen: 100, page: 1, values: [] } };
+    };
+    const { connectedAccounts } = createConnectedAccountsStub({
+      accounts: [{ accountId: 'account-1' }],
+    });
+    const { http } = createHttpStub(route);
+    const runtime = createRuntime(connectedAccounts, http);
+    const initial = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      runtime,
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 32 },
+      }),
+    ));
+    expect(initial.kind).toBe('page');
+    if (initial.kind !== 'page') return;
+
+    const cycled = TriageScanResultV1Schema.parse(await scanBitbucketSource(
+      runtime,
+      TriageScanInputV1Schema.parse({
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: initial.continuation },
+      }),
+    ));
+    expect(cycled.kind).toBe('complete');
+    expect(cycled.kind !== 'failed' && cycled.observations).toHaveLength(2);
+    expect(cycled.kind !== 'failed' && cycled.evidence)
+      .toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
+    expect(authoredRequests).toBe(2);
   });
 
   it('walks authored and per-repository review lanes to exhaustion across continuation pages', async () => {
@@ -510,7 +670,7 @@ describe('Bitbucket scan', () => {
     expect(requests).toEqual([]);
   });
 
-  it('encodes the same size Bitbucket continuation for a two-repository and a two-thousand-repository workspace', async () => {
+  it('encodes one current repository rather than the workspace inventory in its continuation', async () => {
     const repositoriesUrl = 'https://api.bitbucket.org/2.0/repositories/%7B4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44%7D';
     const repositoryUuid = (index: number) => (
       `{1a2b3c4d-5e6f-4071-8293-${String(index).padStart(12, '0')}}`
@@ -528,7 +688,7 @@ describe('Bitbucket scan', () => {
               name: `repo-${index}`,
               full_name: `example-workspace/repo-${index}`,
             })),
-            next: `${repositoriesUrl}?page=2&pagelen=100`,
+            next: `${repositoriesUrl}?page=${Number(new URL(url).searchParams.get('page') ?? '1') + 1}&pagelen=100`,
           },
         };
       }
@@ -554,7 +714,7 @@ describe('Bitbucket scan', () => {
       };
     };
 
-    const tokenBytesFor = async (repositoryCount: number): Promise<number> => {
+    const frontierFor = async (repositoryCount: number) => {
       const { connectedAccounts } = createConnectedAccountsStub({
         accounts: [{ accountId: 'account-1' }],
       });
@@ -568,14 +728,20 @@ describe('Bitbucket scan', () => {
         }),
       ));
       if (result.kind !== 'page') throw new Error(`expected a page arm, received ${result.kind}`);
-      return new TextEncoder().encode(result.continuation.token).byteLength;
+      const frontier = decodeBitbucketScanContinuation(result.continuation);
+      if (frontier === null) throw new Error('expected this source to decode its own continuation');
+      return frontier;
     };
 
     // A repository the enumeration has not entered is pending, not open: it is not part of the
     // rotation and costs the token nothing. A frontier holding one entry per workspace repository
     // would exceed the paging bound on exactly the accounts the fairness rule exists to serve, and
     // would degrade that walk to a `complete` arm it never earned.
-    expect(await tokenBytesFor(2_000)).toBe(await tokenBytesFor(2));
+    const small = await frontierFor(2);
+    const large = await frontierFor(2_000);
+    expect(small.currentRepository?.lanes).toHaveLength(1);
+    expect(large.currentRepository?.lanes).toHaveLength(1);
+    expect(Object.keys(small).sort()).toEqual(Object.keys(large).sort());
   });
 
   it('carries walk health observed on an early Bitbucket page to the page that settles the walk', async () => {

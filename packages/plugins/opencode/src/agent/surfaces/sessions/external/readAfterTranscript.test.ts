@@ -75,11 +75,13 @@ describe('readAfterOpenCodeTranscript', () => {
     expect(result.diagnostics).toEqual([
       {
         code: 'non_transcript_record_skipped',
+        severity: 'benign',
         count: 1,
         positions: [1],
       },
       {
         code: 'unsupported_record_skipped',
+        severity: 'required',
         count: 1,
         positions: [2],
       },

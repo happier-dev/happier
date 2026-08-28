@@ -11,9 +11,6 @@ import {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-    MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
-} from '../settings/savedViews.js';
 import { TriageSettingsRevisionV1Schema } from '../settings/actions.js';
 import {
     TriageListFilterSelectionV1Schema,
@@ -36,7 +33,6 @@ import {
 
 const triageViewLabel = defineProtocolString({
     minLength: 1,
-    maxLength: MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 

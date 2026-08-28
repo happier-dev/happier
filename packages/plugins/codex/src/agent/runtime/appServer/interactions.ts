@@ -5,7 +5,7 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import {
   AgentRuntimeJsonValueSchema,
-  type AgentRuntimeContext,
+  type AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   InteractionTransientAuthorQuestionV1,
@@ -21,9 +21,9 @@ import {
   type CodexApprovalOutcome,
 } from '../core/requestUserInputQuestions.js';
 
-type InteractionUi = Pick<AgentRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
+type InteractionUi = Pick<AgentSessionRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
 type SessionMcp = Pick<
-  NonNullable<AgentRuntimeContext['services']['sessions']['current']>['mcp'],
+  NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>['mcp'],
   'elicit'
 >;
 type RecordLike = Readonly<Record<string, unknown>>;

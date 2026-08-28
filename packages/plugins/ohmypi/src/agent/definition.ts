@@ -41,22 +41,4 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'default',
     allowedModes: ['default'],
   },
-  builtInAcpConfig: {
-    agentId: OH_MY_PI_AGENT_ID,
-    launcher: {
-      command: 'omp',
-      args: ['--mode', 'acp'],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: 'yes',
-    supportsModels: 'yes',
-    promptImageSupport: 'yes',
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-  },
 } as const);

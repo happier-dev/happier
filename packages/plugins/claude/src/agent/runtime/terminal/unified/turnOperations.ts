@@ -228,6 +228,7 @@ export type ClaudeUnifiedTerminalContext = ClaudePermissionContext & Readonly<{
     sessionHooks: ClaudeUnifiedSessionHooksService;
     transcripts: AgentSessionHostServices['transcripts'];
     accountUsage: ClaudeRuntimeAccountUsageService;
+    nativeHome?: AgentSessionHostServices['nativeHome'];
     toolExecution: AgentSessionHostServices['toolExecution'];
   }>;
   sessions: Readonly<{
@@ -296,7 +297,6 @@ async function reportClaudeUnifiedTerminalStopFailureRuntimeAuth(params: Readonl
     targetId: params.happierSessionId,
     reason: 'claude_unified_terminal_stop_failure_auth',
     selection: jsonSelection.data,
-    env: params.launchEnv,
     expectedCredentialRevision: selection.credentialRevision,
     refreshAttemptId: `claude-auth-refresh-${randomUUID()}`,
     classification: jsonClassification.data,

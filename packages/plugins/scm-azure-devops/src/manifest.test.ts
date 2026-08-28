@@ -25,7 +25,8 @@ describe('Azure DevOps network authority', () => {
     // `GET` serves every read and every confirming re-read. `PATCH` serves the three writes Azure
     // expresses as an update of an existing resource — complete, abandon and reactivate on the
     // pull request itself, plus a thread's status — and `POST` serves exactly one: the documented
-    // bulk additive reviewer route `request-review` uses. The host revalidates origin AND method
+    // bulk additive reviewer route `request-review` and review-thread publication use. `PUT`
+    // carries only the viewer's verdict to Azure's per-reviewer vote route. The host revalidates origin AND method
     // at dispatch, so without a verb its Action is rejected before reaching Azure and no unit test
     // below this line could see it. `DELETE` stays absent: no declared Action removes anything —
     // `request-review` never removes a reviewer — and a granted verb nothing exercises is
@@ -33,12 +34,12 @@ describe('Azure DevOps network authority', () => {
     expect(network.find((entry) => entry.id === AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID)?.scope)
       .toMatchObject({
         targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }],
-        methods: ['GET', 'PATCH', 'POST'],
+        methods: ['GET', 'PATCH', 'POST', 'PUT'],
       });
     expect(network.find((entry) => entry.id === AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID)?.scope)
       .toMatchObject({
         targets: [{ kind: 'connectedAccountOrigin', service: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID }],
-        methods: ['GET', 'PATCH', 'POST'],
+        methods: ['GET', 'PATCH', 'POST', 'PUT'],
         privateNetwork: true,
       });
   });
@@ -89,7 +90,10 @@ describe('Azure DevOps pull-request write declarations', () => {
       expect(declaration.surfaces).not.toContain('mcp');
       expect(declaration.surfaces).not.toContain('cli');
       expect(declaration.dangerLevel).not.toBe('safe');
-      expect(declaration.confirmation?.title).toBeTypeOf('string');
+      expect(declaration.confirmation?.title).toEqual({
+        key: expect.any(String),
+        fallback: expect.any(String),
+      });
     }
   });
 

@@ -20,8 +20,8 @@ describe('resolveCanonicalCodexBackendMode', () => {
     })).toBe('acp');
   });
 
-  it('prefers the canonical runtime descriptor over explicit backend mode input', () => {
-    expect(resolveCanonicalCodexBackendMode({
+  it('fails closed for the released legacy MCP spelling instead of reinterpreting it as App Server', () => {
+    expect(() => resolveCanonicalCodexBackendMode({
       codexBackendMode: 'mcp',
       runtimeDescriptorV1: {
         v: 1,
@@ -30,7 +30,18 @@ describe('resolveCanonicalCodexBackendMode', () => {
           backendMode: 'appServer',
         },
       },
-    })).toBe('appServer');
+    })).toThrow(expect.objectContaining({
+      code: 'codex_legacy_mcp_backend_mode_unsupported',
+    }));
+    expect(() => resolveCanonicalCodexBackendMode({
+      runtimeDescriptorV1: {
+        v: 1,
+        providerId: 'codex',
+        provider: { backendMode: 'mcp' },
+      },
+    })).toThrow(expect.objectContaining({
+      code: 'codex_legacy_mcp_backend_mode_unsupported',
+    }));
   });
 });
 
@@ -75,6 +86,19 @@ describe('resolveCodexBackendModeForRun', () => {
     expect(resolveCodexBackendModeForRun({
       defaultBackendMode: 'acp',
     })).toBe('acp');
+  });
+
+  it('does not let the run-settings ingress reinterpret legacy MCP as App Server', () => {
+    expect(() => resolveCodexBackendModeForRun({
+      codexBackendMode: 'mcp',
+    })).toThrow(expect.objectContaining({
+      code: 'codex_legacy_mcp_backend_mode_unsupported',
+    }));
+    expect(() => resolveCodexBackendModeForRun({
+      defaultBackendMode: 'mcp',
+    })).toThrow(expect.objectContaining({
+      code: 'codex_legacy_mcp_backend_mode_unsupported',
+    }));
   });
 });
 

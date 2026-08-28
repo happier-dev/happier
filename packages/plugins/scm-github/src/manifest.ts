@@ -19,6 +19,7 @@ import {
   GITHUB_MUTATION_DEADLINE_MS,
 } from './triage/admission.js';
 import {
+  createPluginEventAutomationSetupResultV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/plugin-sdk/events';
@@ -86,8 +87,6 @@ import {
   GithubChangedFilesResultV1Schema,
   GithubChecksInputV1Schema,
   GithubChecksResultV1Schema,
-  GithubCommentsInputV1Schema,
-  GithubCommentsResultV1Schema,
   GithubFeedbackInputV1Schema,
   GithubFeedbackResultV1Schema,
   GithubReviewsInputV1Schema,
@@ -97,7 +96,6 @@ import {
 } from './triage/detail/contracts.js';
 import {
   listGithubChangedFiles,
-  listGithubComments,
   listGithubTimeline,
   readGithubFeedback,
   readGithubChecks,
@@ -108,6 +106,8 @@ import {
   GithubIssueAssigneeAddInputV1Schema,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
+  GithubIssueCommentInputV1Schema,
+  GithubIssueCommentResultV1Schema,
   GithubIssueDeltaResultV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
@@ -120,12 +120,16 @@ import {
   GithubPullRequestMergeResultV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
   GithubPullRequestReviewPublicationResultV1Schema,
+  GithubPullRequestReviewCommentCreateInputV1Schema,
+  GithubPullRequestReviewCommentCreateResultV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
   GithubPullRequestReopenInputV1Schema,
   GithubPullRequestReviewersResultV1Schema,
   GithubPullRequestStateResultV1Schema,
   GithubPullRequestThreadResolutionInputV1Schema,
   GithubPullRequestThreadResolutionResultV1Schema,
+  GithubPullRequestThreadReplyInputV1Schema,
+  GithubPullRequestThreadReplyResultV1Schema,
   GithubPullRequestUpdateBranchInputV1Schema,
   GithubPullRequestUpdateBranchResultV1Schema,
 } from './triage/mutations/contracts.js';
@@ -135,6 +139,8 @@ import {
   addGithubPullRequestReviewersAction,
   closeGithubIssueAction,
   closeGithubPullRequestAction,
+  createGithubIssueCommentAction,
+  createGithubPullRequestReviewCommentAction,
   markGithubPullRequestReadyAction,
   mergeGithubPullRequestAction,
   publishGithubPullRequestReviewAction,
@@ -143,6 +149,7 @@ import {
   removeGithubPullRequestReviewersAction,
   reopenGithubIssueAction,
   reopenGithubPullRequestAction,
+  replyToGithubPullRequestThreadAction,
   setGithubPullRequestThreadResolutionAction,
   updateGithubPullRequestBranchAction,
 } from './triage/mutationOperations.js';
@@ -151,7 +158,9 @@ import {
   listGithubTriageInstancesOperation,
   prepareGithubTriageReviewWorkspace,
   scanGithubTriageSource,
+  verifyGithubTriageReviewWorkspace,
 } from './triage/operations.js';
+import { githubHostingProviderAdapter } from './adapter.js';
 import { githubPullRequestAdapter } from './pullRequests/authChain.js';
 import { githubRepositoryProvisioningAdapter } from './repositoryProvisioning/createRepositoryWithAuthFallback.js';
 import {
@@ -183,13 +192,13 @@ export {
 const sources = TriageSourcesContributionProtocolV1;
 
 /**
- * Every Triage read materializes the exact configured account through the same
- * purpose-scoped seam, so all three roles carry the same host access.
+ * Every Triage operation materializes the exact configured account through the
+ * same purpose-scoped seam, so all five roles carry the same host access.
  */
 const TRIAGE_READ_HOST_ACCESS = ['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE];
 
 /**
- * Both reads declare the exact account path their configured instance carries, so the
+ * Every operation with a configured instance declares its exact account path, so the
  * host binds and revalidates that leaf instead of trusting the field name. `scan` shares
  * the declaration: its published input is a two-arm union — the deliberate shape that
  * makes a mid-scan limit change unrepresentable — and every arm carries the same
@@ -326,21 +335,11 @@ const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = {
   required: ['v', 'credentialRef', 'repository'],
 } satisfies PluginJsonSchema;
 
-const GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-    sourceContractVersion: {
-      type: 'integer',
-      const: GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
-    },
-    sourceConfig: GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
-    displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-  },
-  required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-} satisfies PluginJsonSchema;
+const GITHUB_AUTOMATION_REPOSITORY_SETUP_RESULT_SCHEMA =
+  createPluginEventAutomationSetupResultV1JsonSchema(
+    GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
+    GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,
+  );
 
 const GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_INPUT_SCHEMA = {
   type: 'object',
@@ -446,7 +445,7 @@ function createGithubPlugin() {
     }, {
       id: 'automation-event-checkpoint-storage',
       capability: 'storage.account',
-      reason: 'Persist per-Automation GitHub Event source checkpoints.',
+      reason: 'Persist one GitHub Event checkpoint per authenticated Automation trigger source.',
       scope: { enabled: true },
     }],
     optional: [],
@@ -564,7 +563,20 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: prepareGithubTriageReviewWorkspace,
     },
-    // The five source-native detail planes. The published Triage roles declare
+    [GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace]: {
+      title: 'Verify a GitHub pull-request review workspace',
+      description: 'Rereads one GitHub pull request and verifies the prepared workspace still has its exact head.',
+      scopes: ['global'],
+      surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
+      dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      execution: { target: 'daemon' },
+      inputSchema: sources.operations.verifyReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: verifyGithubTriageReviewWorkspace,
+    },
+    // The six source-native detail planes. The published Triage roles declare
     // the `plugin` surface; these reads are invoked the same way, by this
     // source's own mounted detail body and by nothing else.
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
@@ -593,20 +605,6 @@ function createGithubPlugin() {
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, listGithubChangedFiles),
-    },
-    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listComments]: {
-      title: 'Read a GitHub comment page',
-      description: 'Reads one bounded page of the issue-level comment stream of one pull request'
-        + ' or issue.',
-      scopes: ['global'],
-      surfaces: ['plugin'],
-      dangerLevel: 'safe',
-      execution: { target: 'daemon' },
-      inputSchema: GithubCommentsInputV1Schema.jsonSchema,
-      resultSchema: GithubCommentsResultV1Schema.jsonSchema,
-      hostAccess: TRIAGE_READ_HOST_ACCESS,
-      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, listGithubComments),
     },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback]: {
       title: 'Read one GitHub feedback connection',
@@ -658,7 +656,7 @@ function createGithubPlugin() {
     // at all, not a widening of that gate. A mounted plugin surface always
     // dispatches as a plugin caller, so `executeContributedAction` resolves
     // `actionSurface` to `plugin` and refuses anything that does not declare it —
-    // which is why the four detail READS already declare `['plugin']`. The human
+    // which is why the six detail reads already declare `['plugin']`. The human
     // gate is untouched because it keys off `invocationSurface` ('ui' from the
     // dispatcher), a value computed separately from `actionSurface`, so host
     // confirmation still fires for every one of these writes.
@@ -784,6 +782,91 @@ function createGithubPlugin() {
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, markGithubPullRequestReadyAction),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview]: {
+      title: 'Submit this pull request review',
+      description: 'Publishes one canonical Happier review proposal and its verdict against the exact base and head revisions you are looking at.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: {
+          key: 'plugins.github.mutations.review.confirmation.title',
+          fallback: 'Submit this review?',
+        },
+        body: {
+          key: 'plugins.github.mutations.review.confirmation.body',
+          fallback: 'This publishes the selected review proposal and verdict on GitHub. If the pull request comparison moved, nothing is written.',
+        },
+        confirmLabel: {
+          key: 'plugins.github.ui.mutations.review.submit',
+          fallback: 'Submit review',
+        },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestReviewPublicationInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, publishGithubPullRequestReviewAction),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate]: {
+      title: 'Publish this pull request review comment',
+      description: 'Publishes one canonical Happier review proposal at its exact pinned GitHub diff anchor.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.title', fallback: 'Publish this review comment?' },
+        body: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.body', fallback: 'This posts the selected comment on GitHub at the exact pull request comparison you reviewed.' },
+        confirmLabel: { key: 'plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel', fallback: 'Publish comment' },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestReviewCommentCreateInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestReviewCommentCreateResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, createGithubPullRequestReviewCommentAction),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadReply]: {
+      title: 'Reply to this pull request review thread',
+      description: 'Publishes one canonical Happier proposal as a reply to the exact GitHub review thread.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.github.mutations.threadReply.confirmation.title', fallback: 'Post this thread reply?' },
+        body: { key: 'plugins.github.mutations.threadReply.confirmation.body', fallback: 'This reply becomes visible in the selected GitHub review conversation.' },
+        confirmLabel: { key: 'plugins.github.mutations.threadReply.confirmation.confirmLabel', fallback: 'Post reply' },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubPullRequestThreadReplyInputV1Schema.jsonSchema,
+      resultSchema: GithubPullRequestThreadReplyResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, replyToGithubPullRequestThreadAction),
+    },
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueComment]: {
+      title: 'Comment on this GitHub issue',
+      description: 'Publishes one canonical Happier proposal into the exact GitHub issue conversation.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.github.mutations.issueComment.confirmation.title', fallback: 'Post this issue comment?' },
+        body: { key: 'plugins.github.mutations.issueComment.confirmation.body', fallback: 'This comment becomes visible in the selected GitHub issue conversation.' },
+        confirmLabel: { key: 'plugins.github.mutations.issueComment.confirmation.confirmLabel', fallback: 'Post comment' },
+      },
+      execution: { target: 'daemon' },
+      inputSchema: GithubIssueCommentInputV1Schema.jsonSchema,
+      resultSchema: GithubIssueCommentResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, createGithubIssueCommentAction),
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch]: {
       title: 'Update this branch',
@@ -1337,8 +1420,11 @@ function createGithubPlugin() {
       },
       runtime: {
         adapter: Object.freeze({
-          ...githubPullRequestAdapter,
-          ...githubRepositoryProvisioningAdapter,
+          routing: githubHostingProviderAdapter,
+          pullRequests: githubPullRequestAdapter,
+          pullRequestCheckout: githubPullRequestAdapter,
+          repositoryPublishing: githubRepositoryProvisioningAdapter,
+          repositoryClone: githubRepositoryProvisioningAdapter,
         }),
       },
     },
@@ -1381,6 +1467,8 @@ function createGithubPlugin() {
             get: sources.operations.get.bind(GITHUB_TRIAGE_ACTION_IDS_V1.get),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
               .bind(GITHUB_TRIAGE_ACTION_IDS_V1.prepareReviewWorkspace),
+            verifyReviewWorkspace: sources.operations.verifyReviewWorkspace
+              .bind(GITHUB_TRIAGE_ACTION_IDS_V1.verifyReviewWorkspace),
           },
           surfaces: { detail: { renderer: GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1 } },
         }),

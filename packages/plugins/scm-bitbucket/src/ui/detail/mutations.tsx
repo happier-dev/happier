@@ -1,4 +1,7 @@
 import * as React from 'react';
+import type {
+  ReviewCommentPublicationPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
   Button,
@@ -8,6 +11,7 @@ import {
   Stack,
   Text,
   useExecutePluginAction,
+  useReviewCommentProposalsForEntry,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -27,6 +31,7 @@ import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/source/mutati
 import {
   BitbucketCommentResolutionResultV1Schema,
   BitbucketMutationResultV1Schema,
+  BitbucketReviewPublicationResultV1Schema,
   type BitbucketMergeStrategyV1,
 } from '../../triage/source/mutationContracts.js';
 import type { BitbucketProjectedCommentRowV1 } from '../../triage/detail/projection.js';
@@ -35,7 +40,7 @@ import type { BitbucketDetailOverviewV1 } from '../../triage/source/detail.js';
 import { useBitbucketEntryLocalRef } from './panelReaders.js';
 
 /**
- * The four Bitbucket Cloud pull-request writes, as controls a user can actually press.
+ * The Bitbucket Cloud pull-request writes, as controls a user can actually press.
  *
  * Both Actions declare `placementBindings: ['detailsPanel']`, and that declaration surfaces
  * nothing here: the only host consumer of an Action placement named `detailsPanel` is the browser
@@ -84,6 +89,18 @@ const RESOLVE_COMMENT_ACTION = Object.freeze({
 const UNRESOLVE_COMMENT_ACTION = Object.freeze({
   pluginId: BITBUCKET_PLUGIN_ID,
   localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment,
+});
+const SUBMIT_REVIEW_ACTION = Object.freeze({
+  pluginId: BITBUCKET_PLUGIN_ID,
+  localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview,
+});
+const CREATE_REVIEW_COMMENT_ACTION = Object.freeze({
+  pluginId: BITBUCKET_PLUGIN_ID,
+  localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment,
+});
+const REPLY_REVIEW_COMMENT_ACTION = Object.freeze({
+  pluginId: BITBUCKET_PLUGIN_ID,
+  localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment,
 });
 
 /**
@@ -179,6 +196,23 @@ export function bitbucketCommentWriteMayHaveChangedProviderStateV1(
     || parsed.data.kind === 'rejected'
     || parsed.data.kind === 'uncertain'
   );
+}
+
+/** Whether canonical review publication dispatched at least one possibly visible provider effect. */
+export function bitbucketReviewPublicationMayHaveChangedProviderStateV1(
+  execution: PluginActionExecution<unknown>,
+): boolean {
+  if (execution.status !== 'success') return false;
+  const parsed = BitbucketReviewPublicationResultV1Schema.safeParse(execution.result);
+  if (!parsed.success || parsed.data.kind !== 'settled') return false;
+  const verdict = parsed.data.publication.verdict;
+  const effects = [
+    ...parsed.data.publication.entries.map((entry) => entry.outcome),
+    ...('kind' in verdict
+      ? []
+      : [verdict.outcome]),
+  ];
+  return effects.some((effect) => effect.kind === 'published' || effect.kind === 'uncertain');
 }
 
 function projectSettledMutation(
@@ -287,6 +321,252 @@ function SettledMutationBanner({
   );
 }
 
+function reviewPublicationBanner(
+  execution: PluginActionExecution<unknown>,
+  text: PluginTranslate,
+): SettledMutationV1 | null {
+  const envelope = projectExecutionEnvelope(execution, text);
+  if (!isPublishedResult(envelope)) return envelope;
+  const parsed = BitbucketReviewPublicationResultV1Schema.safeParse(envelope.published);
+  if (!parsed.success) return unreadableResult(text);
+  if (parsed.data.kind === 'rejected') return {
+    tone: 'warning',
+    title: text('plugins.bitbucket.ui.mutations.review.rejected', 'Nothing was published.'),
+    detail: parsed.data.reason.replaceAll('_', ' '),
+  };
+  const verdict = parsed.data.publication.verdict;
+  const effects = [
+    ...parsed.data.publication.entries.map((entry) => entry.outcome),
+    ...('kind' in verdict
+      ? []
+      : [verdict.outcome]),
+  ];
+  const published = effects.filter((effect) => effect.kind === 'published').length;
+  const uncertain = effects.filter((effect) => effect.kind === 'uncertain').length;
+  const failed = effects.length - published - uncertain;
+  const summaryLanded = !('kind' in verdict)
+    && verdict.outcome.kind !== 'published'
+    && verdict.outcome.kind !== 'skippedPriorFailure'
+    && verdict.outcome.externalRef !== undefined;
+  const partialDetail = `${published} published · ${uncertain} uncertain · ${failed} not published`
+    + (summaryLanded ? ' · review summary visible on Bitbucket' : '');
+  return uncertain > 0
+    ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.uncertain', 'Some review effects are uncertain. Reload before trying again.'), detail: partialDetail }
+    : failed > 0
+      ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.partial', 'The review was only partly published.'), detail: partialDetail }
+      : { tone: 'success', title: text('plugins.bitbucket.ui.mutations.review.published', 'Bitbucket confirmed every review effect.'), detail: `${published} published` };
+}
+
+function bitbucketReviewPublicationTarget(
+  input: TriageDetailSurfaceInputV1,
+  subtarget: ReviewCommentPublicationPlanV1['target']['subtarget'],
+): ReviewCommentPublicationPlanV1['target'] {
+  return {
+    providerId: 'bitbucket',
+    configuredAccountId: input.instance.binding.account.accountId,
+    subtarget,
+    entryRef: {
+      sourceId: `${BITBUCKET_PLUGIN_ID}/bitbucket-forge`,
+      kindId: input.observation.entryRef.kindId,
+      collisionScope: input.observation.entryRef.collisionScope,
+      entryId: input.observation.entryRef.entryId,
+    },
+  };
+}
+
+function BitbucketReviewPublicationControls({
+  input,
+}: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
+  const localRef = useBitbucketEntryLocalRef(input);
+  const submit = useExecutePluginAction(SUBMIT_REVIEW_ACTION);
+  const create = useExecutePluginAction(CREATE_REVIEW_COMMENT_ACTION);
+  const { proposals, status } = useReviewCommentProposalsForEntry({
+    linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
+    entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
+  });
+  const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
+  const [verdict, setVerdict] = React.useState<'comment' | 'approve' | 'requestChanges'>('comment');
+  const [summary, setSummary] = React.useState('');
+  React.useEffect(() => {
+    if (status !== 'ready') return;
+    setSelectedIds((selected) => {
+      const retained = selected.filter((id) => proposals.some((proposal) => proposal.id === id));
+      return retained.length > 0 ? retained : proposals.map((proposal) => proposal.id);
+    });
+  }, [proposals, status]);
+
+  const selected = proposals.filter((proposal) => selectedIds.includes(proposal.id));
+  const revision = input.observation.snapshot.reviewRevision;
+  const entries = selected.flatMap((proposal) => typeof proposal.body !== 'string' ? [] : [{
+    happierCommentId: proposal.id,
+    expectedServerRevision: proposal.serverRevision,
+    anchor: proposal.anchor,
+    snapshot: proposal.snapshot,
+    body: proposal.body,
+  }]);
+  const trimmedSummary = summary.trim();
+  const plan: ReviewCommentPublicationPlanV1 | null = revision === undefined || trimmedSummary === ''
+    ? null
+    : {
+      target: bitbucketReviewPublicationTarget(input, null),
+      baseRevision: revision.baseSha,
+      headRevision: revision.headSha,
+      entries,
+      verdict: { kind: verdict, body: trimmedSummary },
+    };
+  const single = revision === undefined || entries.length !== 1 ? null : {
+    target: bitbucketReviewPublicationTarget(input, null),
+    baseRevision: revision.baseSha,
+    headRevision: revision.headSha,
+    entries,
+    verdict: null,
+  } satisfies ReviewCommentPublicationPlanV1;
+  const complete = (execution: PluginActionExecution<unknown>) => completeTriagePostMutationIfNeeded(
+    completeMutation, execution, bitbucketReviewPublicationMayHaveChangedProviderStateV1,
+  );
+
+  return (
+    <Stack gap="small">
+      <Text variant="label" valueKey="plugins.bitbucket.ui.mutations.review.title" fallback="Review publication" />
+      {status === 'loading' ? <Text variant="caption" tone="neutral" valueKey="plugins.bitbucket.ui.mutations.review.loadingProposals" fallback="Reading linked review proposals…" /> : null}
+      {status === 'failed' ? <Banner tone="danger" title="Review proposals are unavailable" titleKey="plugins.bitbucket.ui.mutations.review.proposalsUnavailable" /> : null}
+      {status === 'ready' && proposals.length === 0 ? <Text variant="caption" tone="neutral" valueKey="plugins.bitbucket.ui.mutations.review.noProposals" fallback="No proposed review comments are linked to this pull request." /> : null}
+      {proposals.length > 0 ? (
+        <Form.Select
+          label={text('plugins.bitbucket.ui.mutations.review.comments', 'Review comments')}
+          options={proposals.map((proposal) => ({ value: proposal.id, label: proposal.body }))}
+          value={selectedIds}
+          multiple
+          required
+          onChange={(value) => { if (Array.isArray(value)) setSelectedIds(value.filter((item): item is string => typeof item === 'string')); }}
+        />
+      ) : null}
+      <Form.Select
+        label={text('plugins.bitbucket.ui.mutations.review.verdict', 'Review verdict')}
+        value={verdict}
+        options={[
+          { value: 'comment', label: text('plugins.bitbucket.ui.mutations.review.comment', 'Comment') },
+          { value: 'approve', label: text('plugins.bitbucket.ui.mutations.review.approve', 'Approve') },
+          { value: 'requestChanges', label: text('plugins.bitbucket.ui.mutations.review.requestChanges', 'Request changes') },
+        ]}
+        onChange={(value) => {
+          if (value === 'comment' || value === 'approve' || value === 'requestChanges') {
+            setVerdict(value);
+          }
+        }}
+      />
+      <Form.TextField label={text('plugins.bitbucket.ui.mutations.review.summary', 'Review summary')} value={summary} onChange={setSummary} />
+      <Row gap="small">
+        <Button title={text('plugins.bitbucket.ui.mutations.review.submit', 'Submit review')} disabled={plan === null} busy={submit.execution.status === 'pending'} onPress={() => { if (plan !== null) void submit.execute({ v: 1, instance: input.instance, localRef, publicationPlan: plan }).then(complete); }} />
+        <Button title={text('plugins.bitbucket.ui.mutations.reviewComment.publish', 'Publish comment')} variant="secondary" disabled={single === null} busy={create.execution.status === 'pending'} onPress={() => { if (single !== null) void create.execute({ v: 1, instance: input.instance, localRef, publicationPlan: single }).then(complete); }} />
+      </Row>
+      <SettledMutationBanner settled={reviewPublicationBanner(submit.execution, text)} />
+      <SettledMutationBanner settled={reviewPublicationBanner(create.execution, text)} />
+    </Stack>
+  );
+}
+
+/** Reply publication belongs to the Comments plane and selects only provider ids rendered there. */
+export function BitbucketReviewCommentReplyControls({
+  input,
+  comments,
+}: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  comments: readonly BitbucketProjectedCommentRowV1[];
+}>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  const completeMutation = useTriagePostMutationCompletion();
+  const localRef = useBitbucketEntryLocalRef(input);
+  const reply = useExecutePluginAction(REPLY_REVIEW_COMMENT_ACTION);
+  const { proposals, status } = useReviewCommentProposalsForEntry({
+    linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
+    entry: { kind: 'pullRequest', url: input.observation.locator.webUrl },
+  });
+  const eligibleComments = React.useMemo(
+    () => comments.filter((comment) => !comment.deleted),
+    [comments],
+  );
+  const [proposalId, setProposalId] = React.useState<string | null>(null);
+  const [parentCommentId, setParentCommentId] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setProposalId((current) => proposals.some((proposal) => proposal.id === current)
+      ? current
+      : proposals[0]?.id ?? null);
+  }, [proposals]);
+  React.useEffect(() => {
+    setParentCommentId((current) => eligibleComments.some((comment) => comment.id === current)
+      ? current
+      : eligibleComments[0]?.id ?? null);
+  }, [eligibleComments]);
+  const proposal = proposals.find((candidate) => candidate.id === proposalId);
+  const entry = proposal === undefined ? null : {
+    happierCommentId: proposal.id,
+    expectedServerRevision: proposal.serverRevision,
+    anchor: proposal.anchor,
+    snapshot: proposal.snapshot,
+    body: proposal.body,
+  };
+  const plan: ReviewCommentPublicationPlanV1 | null = entry === null || parentCommentId === null
+    ? null
+    : {
+      target: bitbucketReviewPublicationTarget(input, {
+        kindId: 'review-comment',
+        targetId: parentCommentId,
+      }),
+      baseRevision: null,
+      headRevision: null,
+      entries: [entry],
+      verdict: null,
+    };
+  if (eligibleComments.length === 0) return null;
+  return (
+    <Stack gap="small">
+      <Text variant="label" valueKey="plugins.bitbucket.ui.mutations.review.replyTitle" fallback="Reply with a review proposal" />
+      {status === 'failed' ? <Banner tone="danger" title="Review proposals are unavailable" titleKey="plugins.bitbucket.ui.mutations.review.proposalsUnavailable" /> : null}
+      {proposals.length > 0 ? (
+        <Form.Select
+          label={text('plugins.bitbucket.ui.mutations.review.replyProposal', 'Reply proposal')}
+          options={proposals.map((candidate) => ({ value: candidate.id, label: candidate.body }))}
+          {...(proposalId === null ? {} : { value: proposalId })}
+          onChange={(value) => { if (typeof value === 'string') setProposalId(value); }}
+        />
+      ) : null}
+      <Form.Select
+        label={text('plugins.bitbucket.ui.mutations.review.replyComment', 'Comment to reply to')}
+        options={eligibleComments.map((comment) => ({
+          value: comment.id,
+          label: `${comment.author ?? text('plugins.bitbucket.ui.someone', 'Someone')}: ${comment.body}`,
+        }))}
+        {...(parentCommentId === null ? {} : { value: parentCommentId })}
+        onChange={(value) => { if (typeof value === 'string') setParentCommentId(value); }}
+      />
+      <Button
+        title={text('plugins.bitbucket.ui.mutations.reviewReply.publish', 'Post reply')}
+        variant="secondary"
+        disabled={plan === null}
+        busy={reply.execution.status === 'pending'}
+        onPress={() => {
+          if (plan === null || parentCommentId === null) return;
+          void reply.execute({
+            v: 1,
+            instance: input.instance,
+            localRef,
+            parentCommentId,
+            publicationPlan: plan,
+          }).then((execution) => completeTriagePostMutationIfNeeded(
+            completeMutation,
+            execution,
+            bitbucketReviewPublicationMayHaveChangedProviderStateV1,
+          ));
+        }}
+      />
+      <SettledMutationBanner settled={reviewPublicationBanner(reply.execution, text)} />
+    </Stack>
+  );
+}
+
 /**
  * The Bitbucket write controls for one mounted pull request.
  *
@@ -362,6 +642,8 @@ export function BitbucketMutationControls({
         valueKey="plugins.bitbucket.ui.mutations.title"
         fallback="Pull request actions"
       />
+      <BitbucketReviewPublicationControls input={input} />
+      <Divider />
       <Stack gap="small">
         <Form.Select
           label={text('plugins.bitbucket.ui.mutations.merge.strategy', 'Merge strategy')}

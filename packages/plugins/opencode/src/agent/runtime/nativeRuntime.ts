@@ -1,8 +1,5 @@
 import {
-  createExecutionRunHostBackendFromSessionRuntime,
   type AgentAcpRuntimeDefinition,
-  type AgentExecutionRunOpenRequest,
-  type AgentExecutionRunRuntime,
   type AgentRuntimeFactory,
   type AgentRuntimeContext,
   type AgentSessionOpenRequest,
@@ -77,7 +74,7 @@ async function openOpenCodeAcpSession(
 
 async function openOpenCodeSession(
   request: AgentSessionOpenRequest,
-  context: AgentSessionRuntimeContext,
+  context: AgentRuntimeContext,
   bindActiveSkillsReader: OpenCodeActiveSkillsReaderRegistrar,
 ): Promise<AgentSessionRuntime> {
   const prepared = await prepareOpenCodeQualifiedConnectedAccounts(request, context);
@@ -91,54 +88,42 @@ async function openOpenCodeSession(
       : await openOpenCodeServerSession(
           prepared.request,
           context,
-          context.workState,
+          (context as Partial<AgentSessionRuntimeContext>).workState,
           bindActiveSkillsReader,
         );
-    return prepared.bind(session);
+    if (prepared.isInvalidated()) {
+      await session.dispose('runtime_recovery');
+      throw new Error('OpenCode qualified Connected Account launch was invalidated while opening the runtime.');
+    }
+    const boundSession = prepared.bind(session);
+    return {
+      ...boundSession,
+      runtimeCapabilities: {
+        ...boundSession.runtimeCapabilities,
+        localControl: mode === 'server'
+          ? {
+            supported: true,
+            topology: 'shared',
+            attachStrategy: 'provider_attach',
+            remoteWritable: true,
+          }
+          : null,
+        sessionCapabilities: {
+          ...boundSession.runtimeCapabilities?.sessionCapabilities,
+          sessionListing: 'supported',
+          sessionFork: {
+            conversation: 'supported',
+            fromMessage: mode === 'server' ? 'supported' : 'unsupported',
+            ...(mode === 'acp' ? { protocol: 'acp' as const } : {}),
+          },
+          sessionRollback: { conversation: 'unsupported' },
+        },
+      },
+    };
   } catch (error) {
     await prepared.dispose();
     throw error;
   }
-}
-
-async function openOpenCodeExecutionRun(
-  request: AgentExecutionRunOpenRequest,
-  context: AgentRuntimeContext,
-): Promise<AgentExecutionRunRuntime> {
-  if (request.kind !== 'create') {
-    throw new Error(`OpenCode execution runs do not support ${request.kind}.`);
-  }
-  const sessionRequest = {
-    kind: 'create',
-    sessionId: request.runId,
-    cwd: request.cwd,
-    ...(request.launchEnvironment
-      ? { launchEnvironment: request.launchEnvironment }
-      : {}),
-    ...(request.configuration ? { configuration: request.configuration } : {}),
-    ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
-  } as const;
-  return await createExecutionRunHostBackendFromSessionRuntime({
-    request,
-    openSession: async () => {
-      const prepared = await prepareOpenCodeQualifiedConnectedAccounts(sessionRequest, context);
-      try {
-        if (prepared.isInvalidated()) {
-          throw new Error('OpenCode qualified Connected Account launch was invalidated before opening the runtime.');
-        }
-        const session = readOpenCodeNativeMode(prepared.request) === 'acp'
-          ? await openOpenCodeAcpSession(prepared.request, context)
-          : await openOpenCodeServerSession(prepared.request, context);
-        return prepared.bind(session);
-      } catch (error) {
-        await prepared.dispose();
-        throw error;
-      }
-    },
-    readCheckpointId: (event) => event.kind === 'provider-session-id'
-      ? event.providerSessionId
-      : null,
-  });
 }
 
 export const createOpenCodeAgentRuntime: AgentRuntimeFactory = () => {
@@ -153,7 +138,6 @@ export const createOpenCodeAgentRuntime: AgentRuntimeFactory = () => {
         controlsOwner.bindActiveSkillsReader,
       ),
     },
-    executionRuns: { open: openOpenCodeExecutionRun },
     surfaces: {
       handoff: openCodeHandoffSurface,
       fork: {

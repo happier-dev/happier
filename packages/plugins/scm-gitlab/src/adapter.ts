@@ -2,10 +2,9 @@ import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting'
 import type {
   HostingProviderCompareUrlInput as ScmHostingProviderCompareUrlInput,
   HostingProviderRemoteDetectionInput as ScmHostingProviderRemoteDetectionInput,
-  HostingProviderRuntimeAdapter as ScmHostingProviderRuntimeAdapter,
+  HostingProviderRoutingCapability as ScmHostingProviderRoutingCapability,
 } from '@happier-dev/plugin-sdk/scm/hosting';
 
-import { gitlabCliPullRequestAdapter } from './pullRequests/index.js';
 import { GITLAB_PLUGIN_ID } from './triage/contribution.js';
 import { encodeCompareRef, parseScmRemoteUrl, stripTrailingSlash } from './remoteUrl.js';
 
@@ -20,7 +19,7 @@ export const GITLAB_URL_SAFETY = Object.freeze({
   allowedOrigins: Object.freeze(GITLAB_REMOTE_HOST_MATCHERS.exactHosts.map((host) => `https://${host}`)),
 });
 
-export type GitlabScmHostingProviderAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
+export type GitlabScmHostingProviderAdapter = ScmHostingProviderRoutingCapability & Readonly<{
   detectRemote(input: ScmHostingProviderRemoteDetectionInput): ScmHostingProviderRef | null;
   buildCompareUrl(input: ScmHostingProviderCompareUrlInput): string | null;
 }>;
@@ -78,7 +77,6 @@ export function createGitlabScmHostingProviderAdapter(
     ?? createExactHostMatcher(options?.exactHosts ?? GITLAB_REMOTE_HOST_MATCHERS.exactHosts);
 
   return Object.freeze({
-    ...gitlabCliPullRequestAdapter,
     detectRemote(input: ScmHostingProviderRemoteDetectionInput) {
       const parsed = parseScmRemoteUrl(input.remoteUrl);
       if (!parsed || !matchesHost(parsed.host)) return null;

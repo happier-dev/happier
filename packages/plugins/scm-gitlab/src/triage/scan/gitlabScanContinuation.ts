@@ -18,9 +18,11 @@
  * field check on the way back in stay here.
  */
 
-import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 import {
-  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
+  admitForgeRequestUrl,
+  readCursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
+import {
   decodeTriagePagingTokenV1,
   encodeTriagePagingTokenV1,
   type TriageScanContinuationV1,
@@ -62,6 +64,7 @@ export function encodeGitlabScanContinuation(
       key: laneKey(lane.request),
       nextUrl: lane.nextUrl,
       ended: lane.ended,
+      cycleProbe: { ...lane.cycleProbe },
     })),
   });
   return token === null ? null : { v: 1, token };
@@ -105,14 +108,11 @@ export function decodeGitlabScanContinuation(
   const record = decodeTriagePagingTokenV1(input.continuation.token);
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
-  // The geometry is re-DERIVED, not adopted. `scanLimit` is bounded by the same
-  // ceiling the protocol admits on the initial arm, and the page size must be the one
-  // this source would itself have chosen for that limit. Accepting the token's own
-  // numbers made the walk's geometry a property of untrusted bytes: a token naming
-  // `scanLimit: 6400` bought one call a hundred provider pages against a result that
-  // can carry at most `MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1` rows.
+  // The geometry is re-DERIVED, not adopted. The positive scan limit is the one
+  // this invocation originally received, and the native size must still be the
+  // one this source derives from it.
   const scanLimit = readCount(record.scanLimit, 1);
-  if (scanLimit === null || scanLimit > MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1) return null;
+  if (scanLimit === null) return null;
   const nativePageSize = readCount(record.nativePageSize, 1);
   if (nativePageSize === null || nativePageSize !== deriveGitlabNativePageSize(scanLimit)) {
     return null;
@@ -170,7 +170,16 @@ function readLanes(
     // the binding's credential at another host and answer the user's list from it.
     const nextUrl = admitForgeRequestUrl(record.nextUrl, input.origin.normalized);
     if (nextUrl === null) return null;
-    lanes.push({ request, nextUrl, ended: record.ended });
+    const cycleProbe = readCursorCycleProbeV1(record.cycleProbe);
+    if (cycleProbe === null) return null;
+    const admittedProbeCursor = admitForgeRequestUrl(cycleProbe.cursor, input.origin.normalized);
+    if (admittedProbeCursor === null) return null;
+    lanes.push({
+      request,
+      nextUrl,
+      ended: record.ended,
+      cycleProbe: Object.freeze({ ...cycleProbe, cursor: admittedProbeCursor }),
+    });
   }
   return lanes;
 }

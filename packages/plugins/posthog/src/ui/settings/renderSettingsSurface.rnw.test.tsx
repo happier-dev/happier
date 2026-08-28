@@ -33,7 +33,6 @@ const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
 let configuredScanWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
 let configuredDetailWindow: unknown = { kind: 'relative', durationMs: 2_592_000_000 };
-let capabilityResult: () => Promise<JsonValue> = async () => ({ kind: 'available' });
 type ConfigurationRequest = Readonly<{
   kind?: string;
   organizationUuid?: string;
@@ -43,8 +42,8 @@ let configurationResult: ((input: Readonly<{
   request: ConfigurationRequest;
   signal: AbortSignal;
 }>) => Promise<JsonValue>) | null = null;
-const ORGANIZATIONS_NEXT = 'https://eu.posthog.com/api/organizations/?limit=754&offset=754';
-const ENVIRONMENTS_NEXT = 'https://eu.posthog.com/api/organizations/00000000-0000-4000-8000-0000000000a1/projects/?limit=754&offset=754';
+const ORGANIZATIONS_NEXT = 'https://eu.posthog.com/api/organizations/?limit=100&offset=100';
+const ENVIRONMENTS_NEXT = 'https://eu.posthog.com/api/organizations/00000000-0000-4000-8000-0000000000a1/projects/?limit=100&offset=100';
 
 async function executeAction(
   { action, input, signal }: Readonly<{ action: unknown; input: unknown; signal: AbortSignal }>,
@@ -124,7 +123,6 @@ async function executeAction(
       ...(request.page?.kind === 'continuation' ? {} : { next: ORGANIZATIONS_NEXT }),
     };
   }
-  if (ref.localId === POSTHOG_ACTION_IDS.capability) return await capabilityResult();
   if (ref.localId === 'sources/administer-v1') {
     return { kind: 'active', sourceInstanceId: '11111111-1111-4111-8111-111111111111' };
   }
@@ -157,7 +155,6 @@ afterEach(async () => {
   recorded.splice(0);
   configuredScanWindow = { kind: 'relative', durationMs: 2_592_000_000 };
   configuredDetailWindow = { kind: 'relative', durationMs: 2_592_000_000 };
-  capabilityResult = async () => ({ kind: 'available' });
   configurationResult = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -197,7 +194,7 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
     ))).toBe(false);
   });
 
-  it('checks the selected Error Tracking capability before it administers the draft', async () => {
+  it('administers the draft without a provider read and leaves materialization to refresh', async () => {
     const page = await mountSettings();
     await act(async () => {
       await page.press(await page.getByRole('button', {
@@ -210,39 +207,8 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
     const actionIds = recorded.map((entry) => (
       entry.action as Readonly<{ localId?: string }>
     ).localId);
-    expect(actionIds.indexOf(POSTHOG_ACTION_IDS.capability)).toBeGreaterThan(-1);
-    expect(actionIds.indexOf('sources/administer-v1'))
-      .toBeGreaterThan(actionIds.indexOf(POSTHOG_ACTION_IDS.capability));
-  });
-
-  it('does not administer a draft when a capability check settles after the editor unmounts', async () => {
-    let release!: (value: JsonValue) => void;
-    capabilityResult = async () => await new Promise<JsonValue>((resolve) => {
-      release = resolve;
-    });
-    const page = await mountSettings();
-    await act(async () => {
-      await page.press(await page.getByRole('button', {
-        name: 'Add Example organization to PRs & Issues',
-      }));
-    });
-    const save = await page.findByRole('button', { name: 'Save PostHog configuration' });
-    await act(async () => {
-      await page.press(save);
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await page.press(await page.getByRole('button', { name: 'Cancel' }));
-    });
-    await act(async () => {
-      release({ kind: 'available' });
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(recorded.some((entry) => (
-      (entry.action as Readonly<{ localId?: string }>).localId === 'sources/administer-v1'
-    ))).toBe(false);
+    expect(actionIds).not.toContain('posthog/capability');
+    expect(actionIds).toContain('sources/administer-v1');
   });
 
   it('preserves exact scan and detail windows when an exact configuration is edited', async () => {
@@ -275,11 +241,11 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
     await act(async () => {
       await page.press(await page.findByRole('button', { name: 'Save PostHog configuration' }));
     });
-    const capability = recorded.find((entry) => (
-      (entry.action as Readonly<{ localId?: string }>).localId === POSTHOG_ACTION_IDS.capability
+    const administration = recorded.find((entry) => (
+      (entry.action as Readonly<{ localId?: string }>).localId === 'sources/administer-v1'
     ));
     const token = (
-      capability?.input as Readonly<{
+      administration?.input as Readonly<{
         draft?: Readonly<{ configuration?: Readonly<{ token?: string }> }>;
       }>
     )?.draft?.configuration?.token;

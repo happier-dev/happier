@@ -101,6 +101,7 @@ import type {
 import {
   useSentrySelectedEvent,
   type SentrySelectedEventControllerV1,
+  type SentrySelectedEventReadV1,
 } from './detail/selectedEventController.js';
 import {
   SENTRY_DEFAULT_DETAIL_TAB_V1,
@@ -239,6 +240,7 @@ function SelectedOccurrenceSummary({
           : 'Showing {selection}, recorded {when}.'}
         values={{ selection: selectionLabel(controller), when: when ?? '' }}
       />
+      <SelectedEventRefreshNotice read={read} />
       {/*
         * Overview is the default tab and renders the exception value and the
         * innermost app frame below, so it owes its reader the same disclosure
@@ -274,6 +276,34 @@ function SelectedOccurrenceSummary({
         onPress={controller.refresh}
       />
     </Stack>
+  );
+}
+
+/**
+ * Honest last-known-good state for a same-selection refresh.
+ *
+ * The controller, not this renderer, decides whether a projection is safe to
+ * retain. A selection or detail-identity change clears it synchronously; only
+ * refreshing the exact same occurrence can reach this inline notice.
+ */
+function SelectedEventRefreshNotice({
+  read,
+}: Readonly<{ read: SentrySelectedEventReadV1 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
+  if (read.kind !== 'success' || read.refresh === null) return null;
+  return (
+    <Banner
+      tone={read.refresh.kind === 'loading' ? 'neutral' : 'warning'}
+      title={read.refresh.kind === 'loading'
+        ? text('plugins.sentry.ui.readingOccurrence', 'Reading one occurrence of this issue')
+        : text('plugins.sentry.ui.lastObservation', 'Showing the last observation')}
+      description={read.refresh.kind === 'loading'
+        ? text('plugins.sentry.ui.lastObservation', 'Showing the last observation')
+        : failureDescription(
+            read.refresh.failure,
+            text('plugins.sentry.ui.readFailed', 'Sentry could not complete this read.'),
+          )}
+    />
   );
 }
 
@@ -345,20 +375,20 @@ function LiveSummary({
   const entries: readonly MetadataEntry[] = [
     ...(value.eventCount === undefined
       ? []
-      : [{ label: 'Events', value: `~${value.eventCount}` }]),
+      : [{ label: text('plugins.sentry.ui.metadata.events', 'Events'), value: `~${value.eventCount}` }]),
     ...(value.userCount === undefined
       ? []
-      : [{ label: 'Users', value: `~${formatNumber(locale, value.userCount, 'compact')}` }]),
+      : [{ label: text('plugins.sentry.ui.metadata.users', 'Users'), value: `~${formatNumber(locale, value.userCount, 'compact')}` }]),
     ...(value.firstSeenAtMs === undefined
       ? []
       : [{
-        label: 'First seen',
+        label: text('plugins.sentry.ui.metadata.firstSeen', 'First seen'),
         value: formatTimestamp(locale, value.firstSeenAtMs, 'relative', nowMs),
       }]),
     ...(value.lastSeenAtMs === undefined
       ? []
       : [{
-        label: 'Last seen',
+        label: text('plugins.sentry.ui.metadata.lastSeen', 'Last seen'),
         value: formatTimestamp(locale, value.lastSeenAtMs, 'relative', nowMs),
       }]),
   ];
@@ -613,6 +643,25 @@ function OverviewPanel({
   nowMs: number;
   onOpenStackTrace: () => void;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const factLabel = (field: SentryDetailFieldV1): string => {
+    switch (field.id) {
+      case 'issue-category': return text('plugins.sentry.ui.fact.issue-category', field.label);
+      case 'issue-type': return text('plugins.sentry.ui.fact.issue-type', field.label);
+      case 'level': return text('plugins.sentry.ui.fact.level', field.label);
+      case 'culprit': return text('plugins.sentry.ui.fact.culprit', field.label);
+      case 'unhandled': return text('plugins.sentry.ui.fact.unhandled', field.label);
+      case 'project': return text('plugins.sentry.ui.fact.project', field.label);
+      case 'events': return text('plugins.sentry.ui.fact.events', field.label);
+      case 'users': return text('plugins.sentry.ui.fact.users', field.label);
+      case 'last-seen': return text('plugins.sentry.ui.fact.last-seen', field.label);
+      case 'first-seen': return text('plugins.sentry.ui.fact.first-seen', field.label);
+      case 'assignee': return text('plugins.sentry.ui.fact.assignee', field.label);
+      case 'priority': return text('plugins.sentry.ui.fact.priority', field.label);
+      case 'last-release': return text('plugins.sentry.ui.fact.last-release', field.label);
+      default: return field.label;
+    }
+  };
   // The tag distribution is Tier B and belongs to this panel alone, so it is read here rather
   // than at the detail root: leaving Overview discards every value it held.
   const distribution = useSentryTagDistribution(input);
@@ -624,7 +673,7 @@ function OverviewPanel({
   const entries: readonly MetadataEntry[] = overview.fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status') return [];
     const value = fieldValueText(field, locale, nowMs);
-    return value === null ? [] : [{ label: field.label, value }];
+    return value === null ? [] : [{ label: factLabel(field), value }];
   });
 
   return (
@@ -635,7 +684,7 @@ function OverviewPanel({
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${field.label}: ${field.value}`} />
+              <Status key={field.id} tone={field.tone} label={`${factLabel(field)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -658,7 +707,7 @@ function OverviewPanel({
               fallback="Read only in this detail body:"
             />
             <Row gap="small">
-              {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
+              {pendingFields.map((field) => <Badge key={field.id} value={factLabel(field)} />)}
             </Row>
           </Stack>
         )}
@@ -686,13 +735,13 @@ function OverviewPanel({
           titleKey="plugins.sentry.ui.observation"
           entries={[
             {
-              label: 'Observed',
+              label: text('plugins.sentry.ui.metadata.observed', 'Observed'),
               value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
             },
             ...(overview.sourceUpdatedAtMs === null
               ? []
               : [{
-                label: 'Sentry last changed',
+                label: text('plugins.sentry.ui.metadata.lastChanged', 'Sentry last changed'),
                 value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
               }]),
           ]}
@@ -712,29 +761,19 @@ function OverviewPanel({
  * already requested, the walk ends WITHOUT reaching the end of the collection —
  * and saying nothing would present a truncated list as a complete one.
  *
- * The fourth reason is this side's own: the provider's cursor is intact and the
- * walk is open, but the position itself is wider than the bounded page token can
- * carry. Blaming Sentry for that would be a different and false claim, so it gets
- * its own sentence. It says the POSITION is too long rather than that the walk
- * grew too long, because the walk's own cycle evidence is a fixed two cursors
- * (`api/sentryCursorCycle.ts`) and no amount of paging can widen it — the
- * sentence that said otherwise described a ceiling this build no longer has.
+ * `continuationUnavailable` is this side's own serialization failure rather
+ * than provider cursor evidence. The generic stopped-short sentence is still
+ * accurate for it and avoids inventing a provider fault or a size ceiling.
  */
 function incompleteDescription(
   incomplete: SentryDetailIncompleteReasonV1 | null,
 ): Readonly<{ key: string; fallback: string }> | null {
   if (incomplete === null) return null;
-  return incomplete === 'continuationUnavailable'
-    ? {
-      key: 'plugins.sentry.ui.walkStoppedShort.continuation',
-      fallback: 'This list stops here: Sentry’s next page position is longer than this'
-        + ' build can carry forward.',
-    }
-    : {
-      key: 'plugins.sentry.ui.walkStoppedShort',
-      fallback: 'Sentry offered the next page in a form this build will not follow, so this'
-        + ' list stops here.',
-    };
+  return {
+    key: 'plugins.sentry.ui.walkStoppedShort',
+    fallback: 'Sentry offered the next page in a form this build will not follow, so this'
+      + ' list stops here.',
+  };
 }
 
 
@@ -842,11 +881,11 @@ function ActivatedOccurrenceDetail({
   const userEntries: readonly MetadataEntry[] = user === null
     ? []
     : [
-      ...(user.id === null ? [] : [{ label: 'Id', value: user.id }]),
-      ...(user.name === null ? [] : [{ label: 'Name', value: user.name }]),
-      ...(user.username === null ? [] : [{ label: 'Username', value: user.username }]),
-      ...(user.email === null ? [] : [{ label: 'Email', value: user.email }]),
-      ...(user.ipAddress === null ? [] : [{ label: 'IP address', value: user.ipAddress }]),
+      ...(user.id === null ? [] : [{ label: text('plugins.sentry.ui.metadata.id', 'Id'), value: user.id }]),
+      ...(user.name === null ? [] : [{ label: text('plugins.sentry.ui.metadata.name', 'Name'), value: user.name }]),
+      ...(user.username === null ? [] : [{ label: text('plugins.sentry.ui.metadata.username', 'Username'), value: user.username }]),
+      ...(user.email === null ? [] : [{ label: text('plugins.sentry.ui.metadata.email', 'Email'), value: user.email }]),
+      ...(user.ipAddress === null ? [] : [{ label: text('plugins.sentry.ui.metadata.ipAddress', 'IP address'), value: user.ipAddress }]),
     ];
 
   return (
@@ -855,6 +894,7 @@ function ActivatedOccurrenceDetail({
       {projection.title === ''
         ? <Text variant="label" valueKey="plugins.sentry.ui.selectedOccurrence" fallback="Selected occurrence" />
         : <Text variant="label" value={projection.title} />}
+      <SelectedEventRefreshNotice read={read} />
       <RedactionNotice projection={projection} />
       {projection.tags.length === 0
         ? null
@@ -981,37 +1021,15 @@ function OccurrencesPanel({
 
 /* ------------------------------------------------------------------ Stack Trace */
 
-function FrameList({
-  frames,
-  showSystemFrames,
-}: Readonly<{
-  frames: readonly SentryFrameV1[];
-  showSystemFrames: boolean;
-}>): React.ReactElement {
-  const shown = showSystemFrames ? frames : frames.filter((frame) => frame.inApp);
-  if (shown.length === 0) {
-    return (
-      <EmptyState
-        title="No application frames"
-        titleKey="plugins.sentry.ui.noApplicationFrames"
-        description="Every frame in this section came from outside your own code."
-        descriptionKey="plugins.sentry.ui.noApplicationFrames.description"
-      />
-    );
-  }
-  return (
-    <ItemGroup accessibilityLabel="Frames in this section, in the order Sentry recorded them" accessibilityLabelKey="plugins.sentry.ui.framesLabel">
-      {shown.map((frame, index) => (
-        <Item
-          key={`${String(index)}:${frame.filename ?? ''}:${String(frame.lineNo ?? 0)}`}
-          title={frameLabel(frame)}
-          {...(frame.contextLine === null ? {} : { subtitle: frame.contextLine })}
-          {...(frame.inApp ? {} : { detail: 'system' })}
-        />
-      ))}
-    </ItemGroup>
-  );
-}
+type SentryTraceListRowV1 =
+  | Readonly<{ key: string; kind: 'frame'; frame: SentryFrameV1 }>
+  | Readonly<{
+      key: string;
+      kind: 'breadcrumb';
+      title: string;
+      level: string | null;
+      timestampMs: number | null;
+    }>;
 
 /**
  * The full trace of the one selected occurrence.
@@ -1049,77 +1067,128 @@ function StackTracePanel({
   const when = projection.dateCreatedMs === null
     ? null
     : formatTimestamp(locale, projection.dateCreatedMs, 'absolute', nowMs);
+  const traceListSections = [
+    ...traceSections.map((section, sectionIndex) => ({
+      key: `${section.kind}:${String(sectionIndex)}`,
+      title: section.kind === 'exception'
+        ? `${section.type}: ${section.value}`
+        : text('plugins.sentry.ui.tab.stackTrace', 'Stack Trace'),
+      data: section.frames.flatMap((frame, frameIndex): readonly SentryTraceListRowV1[] => (
+        !showSystemFrames && !frame.inApp
+          ? []
+          : [{
+              // Section identity is part of the row key because List's one
+              // flattened navigation/window owner requires collection-wide keys.
+              key: `${section.kind}:${String(sectionIndex)}:${String(frameIndex)}:${frame.filename ?? ''}:${String(frame.lineNo ?? 0)}`,
+              kind: 'frame',
+              frame,
+            }]
+      )),
+    })),
+    ...breadcrumbs.map((section, sectionIndex) => ({
+      key: `breadcrumbs:${String(sectionIndex)}`,
+      title: text('plugins.sentry.ui.breadcrumbs', 'Breadcrumbs'),
+      data: section.kind !== 'breadcrumbs'
+        ? []
+        : section.entries.map((crumb, crumbIndex): SentryTraceListRowV1 => ({
+            key: `breadcrumbs:${String(sectionIndex)}:${String(crumbIndex)}:${crumb.category ?? ''}`,
+            kind: 'breadcrumb',
+            title: crumb.message ?? crumb.category
+              ?? text('plugins.sentry.ui.breadcrumbs', 'Breadcrumbs'),
+            level: crumb.level,
+            timestampMs: crumb.timestampMs,
+          })),
+    })),
+  ];
+  const displayedFrameCount = traceSections.reduce(
+    (count, section) => count + section.frames.filter(
+      (frame) => showSystemFrames || frame.inApp,
+    ).length,
+    0,
+  );
 
   return (
-    <ScrollArea>
-      <Stack gap="large">
-        <Text
-          variant="caption"
-          tone="neutral"
-          valueKey={when === null
-            ? 'plugins.sentry.ui.selectionIdentity'
-            : 'plugins.sentry.ui.selectionIdentityRecorded'}
-          fallback={when === null
-            ? 'This is {selection}.'
-            : 'This is {selection}, recorded {when}.'}
+    <List
+      accessibilityLabel="Stack Trace"
+      accessibilityLabelKey="plugins.sentry.ui.tab.stackTrace"
+      sections={traceListSections}
+      keyForItem={(row) => row.key}
+      header={(
+        <Stack gap="large">
+          <Text
+            variant="caption"
+            tone="neutral"
+            valueKey={when === null
+              ? 'plugins.sentry.ui.selectionIdentity'
+              : 'plugins.sentry.ui.selectionIdentityRecorded'}
+            fallback={when === null
+              ? 'This is {selection}.'
+              : 'This is {selection}, recorded {when}.'}
           values={{ selection: selectionLabel(controller), when: when ?? '' }}
-        />
-        <RedactionNotice projection={projection} />
-        <Row gap="small">
-          <Button
-            title={showSystemFrames
-              ? text('plugins.sentry.ui.hideSystemFrames', 'Hide system frames')
-              : text('plugins.sentry.ui.showSystemFrames', 'Show system frames')}
-            variant="secondary"
-            onPress={() => {
-              setShowSystemFrames((current) => !current);
-            }}
           />
-        </Row>
-        {traceSections.map((section, index) => (
-          <Stack key={`${section.kind}:${String(index)}`} gap="small">
-            {section.kind !== 'exception'
-              ? null
-              : <Text variant="body">{`${section.type}: ${section.value}`}</Text>}
-            <FrameList frames={section.frames} showSystemFrames={showSystemFrames} />
-          </Stack>
-        ))}
-        {projection.omitted.frames === 0
-          ? null
-          : (
-            <Text
-              variant="caption"
-              tone="neutral"
-              valueKey="plugins.sentry.ui.framesOmitted"
-              fallback="{count} outer frame(s) are not shown. The frames nearest the failure are kept."
-              values={{ count: projection.omitted.frames }}
+          <SelectedEventRefreshNotice read={read} />
+          <RedactionNotice projection={projection} />
+          <Row gap="small">
+            <Button
+              title={showSystemFrames
+                ? text('plugins.sentry.ui.hideSystemFrames', 'Hide system frames')
+                : text('plugins.sentry.ui.showSystemFrames', 'Show system frames')}
+              variant="secondary"
+              onPress={() => {
+                setShowSystemFrames((current) => !current);
+              }}
             />
-          )}
-        {breadcrumbs.map((section, index) => (
-          <Stack key={`breadcrumbs:${String(index)}`} gap="small">
-            <Text valueKey="plugins.sentry.ui.breadcrumbs" fallback="Breadcrumbs" variant="label" />
-            <ItemGroup accessibilityLabel="Breadcrumbs Sentry recorded before this occurrence" accessibilityLabelKey="plugins.sentry.ui.breadcrumbsLabel">
-              {section.kind !== 'breadcrumbs' ? null : section.entries.map((crumb, crumbIndex) => (
-                <Item
-                  key={`${String(crumbIndex)}:${crumb.category ?? ''}`}
-                  title={crumb.message ?? crumb.category
-                    ?? text('plugins.sentry.ui.breadcrumbs', 'Breadcrumbs')}
-                  {...(crumb.level === null ? {} : { subtitle: crumb.level })}
-                  {...(crumb.timestampMs === null
-                    ? {}
-                    : { detail: formatTimestamp(locale, crumb.timestampMs, 'relative', nowMs) })}
-                />
-              ))}
-            </ItemGroup>
-          </Stack>
-        ))}
-        {messages.map((section, index) => (
-          section.kind !== 'message'
+          </Row>
+          {displayedFrameCount === 0
+            ? (
+              <EmptyState
+                title="No application frames"
+                titleKey="plugins.sentry.ui.noApplicationFrames"
+                description="Every frame in this section came from outside your own code."
+                descriptionKey="plugins.sentry.ui.noApplicationFrames.description"
+              />
+            )
+            : null}
+        </Stack>
+      )}
+      renderItem={(row) => row.kind === 'frame'
+        ? (
+          <Item
+            title={frameLabel(row.frame)}
+            {...(row.frame.contextLine === null ? {} : { subtitle: row.frame.contextLine })}
+            {...(row.frame.inApp ? {} : { detail: 'system' })}
+          />
+        )
+        : (
+          <Item
+            title={row.title}
+            {...(row.level === null ? {} : { subtitle: row.level })}
+            {...(row.timestampMs === null
+              ? {}
+              : { detail: formatTimestamp(locale, row.timestampMs, 'relative', nowMs) })}
+          />
+        )}
+      footer={(
+        <Stack gap="large">
+          {projection.omitted.frames === 0
             ? null
-            : <Text key={`message:${String(index)}`} variant="body">{section.formatted}</Text>
-        ))}
-      </Stack>
-    </ScrollArea>
+            : (
+              <Text
+                variant="caption"
+                tone="neutral"
+                valueKey="plugins.sentry.ui.framesOmitted"
+                fallback="{count} outer frame(s) are not shown. The frames nearest the failure are kept."
+                values={{ count: projection.omitted.frames }}
+              />
+            )}
+          {messages.map((section, index) => (
+            section.kind !== 'message'
+              ? null
+              : <Text key={`message:${String(index)}`} variant="body">{section.formatted}</Text>
+          ))}
+        </Stack>
+      )}
+    />
   );
 }
 
@@ -1134,13 +1203,14 @@ function ReleasePanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const rows = [
     ...(summary.firstRelease === undefined
       ? []
-      : [{ label: 'First seen in', release: summary.firstRelease }]),
+      : [{ label: text('plugins.sentry.ui.metadata.firstSeenIn', 'First seen in'), release: summary.firstRelease }]),
     ...(summary.lastRelease === undefined
       ? []
-      : [{ label: 'Last seen in', release: summary.lastRelease }]),
+      : [{ label: text('plugins.sentry.ui.metadata.lastSeenIn', 'Last seen in'), release: summary.lastRelease }]),
   ];
 
   return (

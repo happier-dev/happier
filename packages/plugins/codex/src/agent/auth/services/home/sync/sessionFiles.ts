@@ -1,9 +1,6 @@
 import { basename, isAbsolute, join } from 'node:path';
 
-import {
-  findCodexRolloutFileByIdSync,
-  isMatchingCodexRolloutFileName,
-} from '../../../../rollout/discovery/sessionFileSearch.js';
+import { isMatchingCodexRolloutFileName } from '../../../../rollout/discovery/sessionFileSearch.js';
 
 export type CodexSessionImportRoot = Readonly<{
   sourceRoot: string;
@@ -29,12 +26,6 @@ const CODEX_IMPORTABLE_SESSION_HOME_ENTRIES = Object.freeze([
 
 const CODEX_ROLLOUT_RESUME_ID_PATTERN =
   /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
 
 function readNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -94,22 +85,4 @@ export function isCodexCandidatePersistedSessionFileForResume(params: Readonly<{
   vendorResumeId: string;
 }>): boolean {
   return isMatchingCodexRolloutFileName(basename(params.candidatePath), params.vendorResumeId);
-}
-
-export function resolveCodexConnectedServiceCandidatePersistedSessionFile(params: Readonly<{
-  metadata: unknown;
-  codexHome: string;
-}>): string | null {
-  const metadata = readRecord(params.metadata);
-  if (!metadata) return null;
-  if (metadata.codexBackendMode !== 'appServer') return null;
-  const vendorResumeId = normalizeCodexVendorResumeId(metadata.codexSessionId);
-  if (!vendorResumeId) return null;
-  const codexHome = readNonEmptyString(params.codexHome);
-  if (!codexHome) return null;
-
-  return findCodexRolloutFileByIdSync({
-    sessionsRoot: join(codexHome, 'sessions'),
-    vendorResumeId,
-  });
 }

@@ -18,10 +18,16 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
+import {
+  createBoundedInvocation,
+  type CursorCycleWalkV1,
+} from '@happier-dev/triage-sources/runtime';
+import {
+  fitActionResultPageV1,
+  fitActionResultSequenceV1,
+} from '@happier-dev/triage-sources/projection/actionResultSequence';
 
 import { createSentryApiClient } from '../api/sentryApiClient.js';
-import type { SentryCursorWalkV1 } from '../api/sentryCursorCycle.js';
 import { SENTRY_FAILURE_CODES } from '../sentryContracts.js';
 import {
   SentryIssueEventsInputV1Schema,
@@ -43,6 +49,10 @@ import {
   type SentryNextPageV1,
 } from '../detail/detailReads.js';
 import type { SentryDetailIncompleteReasonV1 } from '../ui/detail/panelState.js';
+import type {
+  SentryEventProjectionV1,
+  SentryEventSectionV1,
+} from '../privacy/sentryEventProjection.js';
 
 import { toTriageFailure } from './observation.js';
 import { admitSentryEntryInvocation } from './operations.js';
@@ -51,6 +61,177 @@ const CONTINUATION_UNREADABLE = Object.freeze({
   class: 'unsupportedContract' as const,
   code: SENTRY_FAILURE_CODES.paginationCursorMalformed,
 });
+
+type SentryEventActionResultV1 = Extract<SentryReadEventResultV1, { kind: 'event' }>;
+
+function eventResult(projection: SentryEventProjectionV1): SentryEventActionResultV1 {
+  return Object.freeze({ kind: 'event' as const, projection: Object.freeze(projection) });
+}
+
+function fitSentryReadIssueResult(
+  value: Exclude<SentryReadIssueResultV1, { kind: 'unavailable' }>,
+): SentryReadIssueResultV1 {
+  if (value.kind === 'tags') {
+    return fitActionResultSequenceV1(value.tags, (tags, omittedCount) => Object.freeze({
+      ...value,
+      tags: Object.freeze([...tags]),
+      omittedTagCount: value.omittedTagCount + omittedCount,
+      projectionTruncated: value.projectionTruncated || omittedCount > 0,
+    })).result;
+  }
+  if (value.kind === 'activity' && value.activity.status === 'available') {
+    const activity = value.activity;
+    return fitActionResultSequenceV1(activity.items, (items, omittedCount) => Object.freeze({
+      ...value,
+      activity: Object.freeze({
+        ...activity,
+        items: Object.freeze([...items]),
+        omittedItemCount: activity.omittedItemCount + omittedCount,
+        projectionTruncated: activity.projectionTruncated || omittedCount > 0,
+      }),
+    })).result;
+  }
+  return value;
+}
+
+/**
+ * Fits the complete selected-event result against the one real byte resource.
+ *
+ * The order is deliberate: disclosure evidence is admitted before the content it
+ * qualifies, then sections and tags are added in provider order. Every candidate
+ * is measured as the complete final Action result accumulated so far, so nested
+ * fitting cannot later overflow when sibling fields are combined. There is no
+ * source-local count or byte budget.
+ */
+export function fitSentryEventResult(projection: SentryEventProjectionV1): SentryEventActionResultV1 {
+  let current: SentryEventProjectionV1 = Object.freeze({
+    ...projection,
+    sections: Object.freeze([]),
+    tags: Object.freeze([]),
+    redactions: Object.freeze([]),
+    sensitivePaths: Object.freeze([]),
+  });
+
+  const fittedRedactions = fitActionResultSequenceV1(
+    projection.redactions,
+    (redactions, omittedCount) => eventResult(Object.freeze({
+      ...current,
+      redactions: Object.freeze([...redactions]),
+      projectionTruncated: current.projectionTruncated || omittedCount > 0,
+      omitted: Object.freeze({
+        ...current.omitted,
+        redactions: projection.omitted.redactions + omittedCount,
+      }),
+    })),
+  );
+  current = fittedRedactions.result.projection;
+
+  const fittedSensitivePaths = fitActionResultSequenceV1(
+    projection.sensitivePaths,
+    (sensitivePaths, omittedCount) => eventResult(Object.freeze({
+      ...current,
+      sensitivePaths: Object.freeze([...sensitivePaths]),
+      projectionTruncated: current.projectionTruncated || omittedCount > 0,
+      omitted: Object.freeze({
+        ...current.omitted,
+        sensitivePaths: projection.omitted.sensitivePaths + omittedCount,
+      }),
+    })),
+  );
+  current = fittedSensitivePaths.result.projection;
+
+  for (const section of projection.sections) {
+    const before = current;
+    if (section.kind === 'exception' || section.kind === 'stacktrace') {
+      try {
+        const fitted = fitActionResultSequenceV1(section.frames, (frames, omittedCount) => {
+          const fittedSection: SentryEventSectionV1 = Object.freeze({
+            ...section,
+            frames: Object.freeze([...frames]),
+          });
+          return eventResult(Object.freeze({
+            ...before,
+            sections: Object.freeze([...before.sections, fittedSection]),
+            projectionTruncated: before.projectionTruncated || omittedCount > 0,
+            omitted: Object.freeze({
+              ...before.omitted,
+              frames: before.omitted.frames + omittedCount,
+            }),
+          }));
+        });
+        current = fitted.result.projection;
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        current = Object.freeze({
+          ...before,
+          projectionTruncated: true,
+          omitted: Object.freeze({ ...before.omitted, sections: before.omitted.sections + 1 }),
+        });
+      }
+      continue;
+    }
+    if (section.kind === 'breadcrumbs') {
+      try {
+        const fitted = fitActionResultSequenceV1(section.entries, (entries, omittedCount) => {
+          const fittedSection: SentryEventSectionV1 = Object.freeze({
+            ...section,
+            entries: Object.freeze([...entries]),
+          });
+          return eventResult(Object.freeze({
+            ...before,
+            sections: Object.freeze([...before.sections, fittedSection]),
+            projectionTruncated: before.projectionTruncated || omittedCount > 0,
+            omitted: Object.freeze({
+              ...before.omitted,
+              breadcrumbs: before.omitted.breadcrumbs + omittedCount,
+            }),
+          }));
+        });
+        current = fitted.result.projection;
+      } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        current = Object.freeze({
+          ...before,
+          projectionTruncated: true,
+          omitted: Object.freeze({ ...before.omitted, sections: before.omitted.sections + 1 }),
+        });
+      }
+      continue;
+    }
+    try {
+      current = fitActionResultSequenceV1([section], (sections, omittedCount) => eventResult(Object.freeze({
+        ...before,
+        sections: Object.freeze([...before.sections, ...sections]),
+        projectionTruncated: before.projectionTruncated || omittedCount > 0,
+        omitted: Object.freeze({
+          ...before.omitted,
+          sections: before.omitted.sections + omittedCount,
+        }),
+      }))).result.projection;
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      current = Object.freeze({
+        ...before,
+        projectionTruncated: true,
+        omitted: Object.freeze({ ...before.omitted, sections: before.omitted.sections + 1 }),
+      });
+    }
+  }
+
+  const fittedTags = fitActionResultSequenceV1(
+    projection.tags,
+    (tags, omittedCount) => eventResult(Object.freeze({
+      ...current,
+      tags: Object.freeze([...tags]),
+      projectionTruncated: current.projectionTruncated || omittedCount > 0,
+      omitted: Object.freeze({
+        ...current.omitted,
+        tags: projection.omitted.tags + omittedCount,
+      }),
+    })),
+  );
+  return fittedTags.result;
+}
 
 /**
  * How long one mounted detail read may take before this source stops waiting.
@@ -75,7 +256,7 @@ export const SENTRY_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
 function resolveWalkPosition(
   continuation: string | undefined,
   limit: number,
-): Readonly<{ ok: true; position: SentryCursorWalkV1 | null }> | Readonly<{ ok: false }> {
+): Readonly<{ ok: true; position: CursorCycleWalkV1 | null }> | Readonly<{ ok: false }> {
   if (continuation === undefined) {
     return Object.freeze({ ok: true as const, position: null });
   }
@@ -107,10 +288,10 @@ function projectWalkPosition(
     limit,
     probe: nextPage.walk.probe,
   });
-  // The walk is open and the provider's cursor is intact; the frontier simply
-  // does not fit the bounded token, so this page is the last one this panel can
-  // ask for. Calling that a malformed cursor would blame the provider for a
-  // bound this side owns.
+  // The walk is open and the provider's cursor is intact; this source simply
+  // failed to serialize the frontier, so this page is the last one this panel
+  // can ask for. Calling that a malformed cursor would blame the provider for a
+  // failure this side owns.
   return continuation === null
     ? { incomplete: 'continuationUnavailable' as const }
     : { continuation };
@@ -161,7 +342,7 @@ export async function readSentryIssue(
         failure: toTriageFailure(read.failure),
       });
     }
-    return read.value;
+    return fitSentryReadIssueResult(read.value);
   } finally {
     bounded.dispose();
   }
@@ -216,13 +397,22 @@ export async function listSentryIssueEvents(
       });
     }
 
-    return Object.freeze({
-      kind: 'events' as const,
-      rows: page.value.rows,
-      omittedRowCount: page.value.omittedRowCount,
-      projectionTruncated: page.value.projectionTruncated,
-      ...projectWalkPosition(page.value.nextPage, parsed.limit),
-    });
+    const position = projectWalkPosition(page.value.nextPage, parsed.limit);
+    return fitActionResultPageV1(
+      page.value.rows,
+      position.continuation,
+      (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
+        kind: 'events' as const,
+        rows: Object.freeze([...rows]),
+        omittedRowCount: page.value.omittedRowCount + omittedCount,
+        projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
+        ...(continuationOmitted
+          ? { incomplete: 'continuationUnavailable' as const }
+          : continuation === undefined
+            ? position
+            : { continuation }),
+      }),
+    ).result;
   } finally {
     bounded.dispose();
   }
@@ -278,14 +468,23 @@ export async function listSentryTagValues(
       });
     }
 
-    return Object.freeze({
-      kind: 'tagValues' as const,
-      tagKey: parsed.tagKey,
-      rows: page.value.rows,
-      omittedRowCount: page.value.omittedRowCount,
-      projectionTruncated: page.value.projectionTruncated,
-      ...projectWalkPosition(page.value.nextPage, parsed.limit),
-    });
+    const position = projectWalkPosition(page.value.nextPage, parsed.limit);
+    return fitActionResultPageV1(
+      page.value.rows,
+      position.continuation,
+      (rows, omittedCount, continuation, continuationOmitted) => Object.freeze({
+        kind: 'tagValues' as const,
+        tagKey: parsed.tagKey,
+        rows: Object.freeze([...rows]),
+        omittedRowCount: page.value.omittedRowCount + omittedCount,
+        projectionTruncated: page.value.projectionTruncated || omittedCount > 0,
+        ...(continuationOmitted
+          ? { incomplete: 'continuationUnavailable' as const }
+          : continuation === undefined
+            ? position
+            : { continuation }),
+      }),
+    ).result;
   } finally {
     bounded.dispose();
   }
@@ -338,7 +537,7 @@ export async function readSentryEvent(
         failure: toTriageFailure(read.failure),
       });
     }
-    return Object.freeze({ kind: 'event' as const, projection: read.value });
+    return fitSentryEventResult(read.value);
   } finally {
     bounded.dispose();
   }

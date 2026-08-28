@@ -71,9 +71,14 @@ function routeSegments(route: AzureDevOpsRoute): readonly string[] {
         ...pullRequestSubResource(route),
         'threads',
         ...(route.threadId === undefined ? [] : [String(route.threadId)]),
+        ...(route.comments === true ? ['comments'] : []),
       ];
     case 'reviewers':
-      return [...pullRequestSubResource(route), 'reviewers'];
+      return [
+        ...pullRequestSubResource(route),
+        'reviewers',
+        ...(route.reviewerId === undefined ? [] : [route.reviewerId]),
+      ];
     case 'statuses':
       return [...pullRequestSubResource(route), 'statuses'];
     case 'policyEvaluations':
@@ -91,9 +96,10 @@ function routeSegments(route: AzureDevOpsRoute): readonly string[] {
  * above. The segments are encoded by the one builder, so the casing survives verbatim.
  */
 function pullRequestSubResource(
-  route: Readonly<{ repositoryId: string; pullRequestId: number }>,
+  route: Readonly<{ project?: string; repositoryId: string; pullRequestId: number }>,
 ): readonly string[] {
   return [
+    ...(route.project === undefined ? [] : [route.project]),
     API_ROOT_SEGMENT,
     GIT_AREA_SEGMENT,
     REPOSITORIES_SEGMENT,

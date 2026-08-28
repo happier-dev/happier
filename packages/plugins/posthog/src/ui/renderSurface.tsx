@@ -47,6 +47,7 @@ import {
     useSurfaceContext,
     useTabPanelActivity,
     type MetadataEntry,
+    type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import {
     TriageDetailSurfaceInputV1Schema,
@@ -80,6 +81,7 @@ import {
     usePosthogOccurrenceController,
     type PosthogOccurrenceControllerV1,
 } from './detail/occurrenceController.js';
+import { usePosthogCodeVariablesController } from './detail/codeVariablesController.js';
 import {
     posthogAffectedSessionRows,
     posthogOccurrenceRows,
@@ -169,6 +171,23 @@ function useLiveEntry(input: TriageDetailSurfaceInputV1, signal: AbortSignal): L
     return live;
 }
 
+function posthogFactLabel(field: PosthogDetailFieldV1, text: PluginTranslate): string {
+    switch (field.id) {
+        case 'posthog/occurrences': return text('plugins.posthog.ui.fact.occurrences', field.label);
+        case 'posthog/last-seen': return text('plugins.posthog.ui.fact.last-seen', field.label);
+        case 'posthog/function': return text('plugins.posthog.ui.fact.function', field.label);
+        case 'posthog/top-frame': return text('plugins.posthog.ui.fact.top-frame', field.label);
+        case 'posthog/release': return text('plugins.posthog.ui.fact.release', field.label);
+        case 'posthog/users': return text('plugins.posthog.ui.fact.users', field.label);
+        case 'posthog/sessions': return text('plugins.posthog.ui.fact.sessions', field.label);
+        case 'posthog/source': return text('plugins.posthog.ui.fact.source', field.label);
+        case 'posthog/library': return text('plugins.posthog.ui.fact.library', field.label);
+        case 'posthog/first-seen': return text('plugins.posthog.ui.fact.first-seen', field.label);
+        case 'posthog/severity': return text('plugins.posthog.ui.fact.severity', field.label);
+        default: return field.label;
+    }
+}
+
 function OverviewPanel({
     model,
     locale,
@@ -178,6 +197,7 @@ function OverviewPanel({
     locale: string;
     nowMs: number;
 }>): React.ReactElement {
+    const text = usePluginTranslation();
     const projected = useActiveDerivation(() => {
         const statusFields = model.body.fields.filter(
             (field): field is Extract<PosthogDetailFieldV1, { kind: 'status' }> => (
@@ -188,11 +208,11 @@ function OverviewPanel({
         const entries: readonly MetadataEntry[] = model.body.fields.flatMap((field) => {
             if (field.kind === 'pending' || field.kind === 'status') return [];
             const value = fieldValueText(field, locale, nowMs);
-            return value === null ? [] : [{ label: field.label, value }];
+            return value === null ? [] : [{ label: posthogFactLabel(field, text), value }];
         });
         const disclosures = model.body.fields.flatMap(
             (field) => (field.kind === 'number' && field.disclosure !== null
-                ? [{ id: field.id, label: field.label, disclosure: field.disclosure }]
+                ? [{ id: field.id, label: posthogFactLabel(field, text), disclosure: field.disclosure }]
                 : []),
         );
         return { statusFields, pendingFields, entries, disclosures };
@@ -231,7 +251,7 @@ function OverviewPanel({
                                 <Status
                                     key={field.id}
                                     tone={field.tone}
-                                    label={`${field.label}: ${field.value}`}
+                                    label={`${posthogFactLabel(field, text)}: ${field.value}`}
                                 />
                             ))}
                         </Row>
@@ -263,7 +283,7 @@ function OverviewPanel({
                             />
                             <Row gap="small">
                                 {projected.pendingFields.map((field) => (
-                                    <Badge key={field.id} value={field.label} />
+                                    <Badge key={field.id} value={posthogFactLabel(field, text)} />
                                 ))}
                             </Row>
                         </Stack>
@@ -285,7 +305,7 @@ function OverviewPanel({
                     titleKey="plugins.posthog.ui.observation"
                     entries={[
                         {
-                            label: 'Observed',
+                            label: text('plugins.posthog.ui.metadata.observed', 'Observed'),
                             value: formatTimestamp(
                                 locale,
                                 model.body.appliedObservedAtMs,
@@ -296,7 +316,7 @@ function OverviewPanel({
                         ...(model.body.sourceUpdatedAtMs === null
                             ? []
                             : [{
-                                label: 'PostHog last saw',
+                                label: text('plugins.posthog.ui.metadata.lastSaw', 'PostHog last saw'),
                                 value: formatTimestamp(
                                     locale,
                                     model.body.sourceUpdatedAtMs,
@@ -448,6 +468,7 @@ function SelectedEvidenceDisclosure({
     return (
         <Button
             title="Add selected occurrence to message"
+            titleKey="plugins.posthog.ui.addSelectedOccurrence"
             variant="secondary"
             onPress={() => {
                 void disclosure.disclose(async (signal) => {
@@ -476,6 +497,7 @@ function StackTracePanel({
     input: TriageDetailSurfaceInputV1;
     controller: PosthogOccurrenceControllerV1;
 }>): React.ReactElement {
+    const codeVariables = usePosthogCodeVariablesController(input, controller);
     const trace = useActiveDerivation(
         () => posthogStackTrace(controller.selectedEvent),
         [controller.selectedEvent],
@@ -510,18 +532,78 @@ function StackTracePanel({
                         fallback="This stack belongs to one sampled occurrence, not to the latest one. {application} application frame(s), {other} other frame(s)."
                         values={{ application: trace.appFrameCount, other: trace.otherFrameCount }}
                     />
-                    {trace.truncated
-                        ? (
-                            <Banner
-                                tone="neutral"
-                                title="This stack was shortened"
-                                titleKey="plugins.posthog.ui.stackShortened"
-                                description="Open the occurrence in PostHog to read every frame."
-                                descriptionKey="plugins.posthog.ui.stackShortened.description"
-                            />
-                        )
-                        : null}
                     <SelectedEvidenceDisclosure input={input} controller={controller} />
+                    {!codeVariables.available
+                        ? null
+                        : codeVariables.state.kind === 'confirming'
+                            ? (
+                                <Stack gap="small">
+                                    <Banner
+                                        tone="warning"
+                                        title="Reveal sensitive captured variables?"
+                                        titleKey="plugins.posthog.ui.codeVariables.confirmTitle"
+                                        description="Captured local variables can contain credentials, tokens, personal data, and request bodies. They stay in this Stack trace panel and are discarded when you leave it."
+                                        descriptionKey="plugins.posthog.ui.codeVariables.confirmDescription"
+                                    />
+                                    <Row gap="small">
+                                        <Button
+                                            title="Reveal captured variables"
+                                            titleKey="plugins.posthog.ui.codeVariables.reveal"
+                                            variant="primary"
+                                            onPress={codeVariables.confirm}
+                                        />
+                                        <Button
+                                            title="Cancel"
+                                            titleKey="plugins.posthog.ui.settings.cancel"
+                                            variant="secondary"
+                                            onPress={codeVariables.cancel}
+                                        />
+                                    </Row>
+                                </Stack>
+                            )
+                            : codeVariables.state.kind === 'loading'
+                                ? (
+                                    <Button
+                                        title="Revealing captured variables"
+                                        titleKey="plugins.posthog.ui.codeVariables.loading"
+                                        variant="secondary"
+                                        busy
+                                        onPress={() => {}}
+                                    />
+                                )
+                                : codeVariables.state.kind === 'revealed'
+                                    ? (
+                                        <Stack gap="small">
+                                            <Banner
+                                                tone="warning"
+                                                title="Captured variables"
+                                                titleKey="plugins.posthog.ui.codeVariables.title"
+                                                description={codeVariables.state.truncated
+                                                    ? 'The provider response exceeded the Action envelope, so the visible value was shortened.'
+                                                    : 'These values are visible only in this Stack trace panel and are discarded when you leave it.'}
+                                                descriptionKey={codeVariables.state.truncated
+                                                    ? 'plugins.posthog.ui.codeVariables.truncated'
+                                                    : 'plugins.posthog.ui.codeVariables.discardNotice'}
+                                            />
+                                            <Text value={codeVariables.state.variablesText} />
+                                        </Stack>
+                                    )
+                                    : codeVariables.state.kind === 'unavailable'
+                                        ? (
+                                            <ErrorState
+                                                title="Captured variables are unavailable"
+                                                titleKey="plugins.posthog.ui.codeVariables.unavailable"
+                                                description={codeVariables.state.failure.code}
+                                            />
+                                        )
+                                        : (
+                                            <Button
+                                                title="Reveal captured variables"
+                                                titleKey="plugins.posthog.ui.codeVariables.reveal"
+                                                variant="secondary"
+                                                onPress={codeVariables.requestReveal}
+                                            />
+                                        )}
                 </Stack>
             )}
             empty={(
@@ -548,6 +630,7 @@ function AffectedSessionsPanel({
 }: Readonly<{
     controller: PosthogOccurrenceControllerV1;
 }>): React.ReactElement {
+    const text = usePluginTranslation();
     const rows = useActiveDerivation(
         () => posthogAffectedSessionRows(controller.state.rows),
         [controller.state.rows],
@@ -581,9 +664,13 @@ function AffectedSessionsPanel({
             )}
             renderItem={(row) => (
                 <Item
-                    title={row.sessionId}
+                    title={text('plugins.posthog.ui.sampledSession', 'Sampled session')}
                     {...(row.url === null ? {} : { subtitle: row.url })}
-                    detail={`${String(row.occurrenceCount)} sampled occurrence(s)`}
+                    detail={text(
+                        'plugins.posthog.ui.sampledOccurrences',
+                        '{count} sampled occurrence(s)',
+                        { count: row.occurrenceCount },
+                    )}
                 />
             )}
         />
@@ -788,6 +875,7 @@ function PosthogDetailBody({
     signal,
 }: Readonly<{ input: TriageDetailSurfaceInputV1; signal: AbortSignal }>): React.ReactElement {
     const { locale } = useSurfaceContext();
+    const text = usePluginTranslation();
     const [tab, setTab] = React.useState<PosthogDetailTabIdV1>('overview');
     // One render-time read, passed down as data, so no child owns a hidden clock.
     const nowMs = Date.now();
@@ -827,13 +915,13 @@ function PosthogDetailBody({
                         .find((candidate) => candidate.id === next);
                     if (declared !== undefined) setTab(declared.id);
                 }}
-                ariaLabel="PostHog issue detail"
+                ariaLabel={text('plugins.posthog.ui.tabsLabel', 'PostHog issue detail')}
             >
                 {POSTHOG_DETAIL_TABS_V1.map((declaration) => (
                     <Tabs.Item
                         key={declaration.id}
                         value={declaration.id}
-                        title={declaration.title}
+                        title={text(declaration.titleKey, declaration.title)}
                         // Stated, never inherited: the shared primitive would otherwise
                         // discard a panel this source means to keep.
                         retention={declaration.retention}

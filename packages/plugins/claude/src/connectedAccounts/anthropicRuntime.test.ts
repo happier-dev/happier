@@ -28,6 +28,7 @@ describe('Anthropic API-key Connected Account', () => {
       },
       hooks: { register() { return { dispose() {} }; } },
       mcp: { registerDiscoverySource() { return { dispose() {} }; } },
+      actions: { register() { return { dispose() {} }; } },
       connectedAccounts: {
         register(id: string, runtime: PluginConnectedAccountRuntime) {
           registrations.push({ id, runtime });
@@ -74,6 +75,7 @@ describe('Anthropic API-key Connected Account', () => {
       },
       hooks: { register() { return { dispose() {} }; } },
       mcp: { registerDiscoverySource() { return { dispose() {} }; } },
+      actions: { register() { return { dispose() {} }; } },
       connectedAccounts: {
         register(id: string, runtime: PluginConnectedAccountRuntime) {
           registrations.push({ id, runtime });

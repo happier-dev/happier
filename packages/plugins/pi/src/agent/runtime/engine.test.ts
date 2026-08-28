@@ -36,8 +36,14 @@ describe('Pi Agent runtime', () => {
     mocks.preparePiQualifiedConnectedAccounts.mockReset();
   });
 
+  it('does not publish usage recovery without a provider-owned readiness fact', () => {
+    const runtime = createPiAgentRuntime();
+    expect(runtime.sessions.usageLimitRecovery).toBeUndefined();
+  });
+
   it('interprets its bounded descriptor session file for an external resume', async () => {
     const sessionFile = '/home/lee/.pi/agent/sessions/workspace-a/pi-shared.jsonl';
+    const models = { bind: vi.fn(() => ({ dispose: vi.fn() })) };
     const runtime = createRuntime();
     mocks.createPiRuntimeOperations.mockResolvedValue(runtime);
     mocks.preparePiQualifiedConnectedAccounts.mockResolvedValue({
@@ -60,14 +66,56 @@ describe('Pi Agent runtime', () => {
     } as unknown as AgentSessionOpenRequest, {
       signal: new AbortController().signal,
       services: { logger: {} },
-      session: { id: 'happier-session-1', services: {} },
+      session: { id: 'happier-session-1', services: { models } },
       workState: { publish: vi.fn() },
     } as unknown as AgentSessionRuntimeContext);
 
     expect(mocks.createPiRuntimeOperations).toHaveBeenCalledWith(
       expect.objectContaining({
+        models,
         resumeSessionId: sessionFile,
       }),
     );
+  });
+
+  it('applies the host-resolved configuration when opening a Session', async () => {
+    const models = { bind: vi.fn(() => ({ dispose: vi.fn() })) };
+    const updateConfiguration = vi.fn(async () => ({
+      status: 'applied' as const,
+      changed: ['model', 'permissionIntent'] as const,
+    }));
+    const runtime = {
+      ...createRuntime(),
+      updateConfiguration,
+    };
+    mocks.createPiRuntimeOperations.mockResolvedValue(runtime);
+    mocks.preparePiQualifiedConnectedAccounts.mockResolvedValue({
+      launchEnvironment: { values: {}, unset: [] },
+      isInvalidated: () => false,
+      bind: (value: AgentSessionRuntime) => value,
+      dispose: async () => undefined,
+    });
+    const configuration = {
+      mode: { value: null, updatedAtMs: 0 },
+      model: { value: 'anthropic/claude-sonnet-4-6', updatedAtMs: 1 },
+      permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
+      options: {},
+    } as const;
+    const request = {
+      kind: 'create',
+      sessionId: 'pi-configured-session',
+      cwd: '/workspace',
+      configuration,
+    } satisfies AgentSessionOpenRequest;
+
+    const session = await createPiAgentRuntime().sessions.open(request, {
+      signal: new AbortController().signal,
+      services: { logger: {} },
+      session: { id: 'pi-configured-session', services: { models } },
+      workState: { publish: vi.fn() },
+    } as unknown as AgentSessionRuntimeContext);
+
+    expect(updateConfiguration).toHaveBeenCalledWith(configuration);
+    await session.dispose();
   });
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
@@ -19,6 +20,7 @@ function window(overrides: Partial<TriageListWindowV1> = {}): TriageListWindowV1
     v: 1,
     rows: [],
     lanes: [],
+    facetCensus: { types: [], scopes: [], coverage: 'complete' },
     coverage: 'complete',
     assembledAtMs: 1_760_000_000_000,
     ...overrides,
@@ -81,7 +83,7 @@ describe('resolveTriageListShellState', () => {
   it('gives each pacing reason its own words rather than one generic wait', () => {
     const reasons = ['minimumInterval', 'sourceRetryDeadline', 'failureBackoff'] as const;
     const descriptions = reasons.map(
-      (reason) => readTriageRefreshPacingNotice(reason).description,
+      (reason) => readTriageRefreshPacingNotice(reason, 9_000, 'en-US').description,
     );
 
     // Three different refusals: "read a moment ago", "the source asked us to
@@ -89,6 +91,21 @@ describe('resolveTriageListShellState', () => {
     // one shared sentence would hide which of them is happening.
     expect(new Set(descriptions).size).toBe(reasons.length);
     expect(descriptions.every((description) => description.length > 0)).toBe(true);
+  });
+
+  it('shows the coordinator deadline as the exact retry time', () => {
+    const retryAtMs = Date.parse('2026-08-28T14:30:00.000Z');
+    const notice = readTriageRefreshPacingNotice(
+      'sourceRetryDeadline',
+      retryAtMs,
+      'en-US',
+    );
+
+    // SURFACE §6.1 requires the source-owned deadline to reach the reader. The
+    // shell must present that value, not re-derive another retry estimate.
+    expect(notice.description).toContain(
+      formatTriageTimestampV1('en-US', retryAtMs, 'absolute', retryAtMs),
+    );
   });
 
   it('keeps durable user state its own reachability answer', () => {

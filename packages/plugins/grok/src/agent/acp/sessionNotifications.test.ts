@@ -5,6 +5,10 @@ import {
   projectGrokWorkflowUpdate,
 } from './sessionNotifications.js';
 
+type GrokSessionNotificationObserverContext = Parameters<
+  typeof createGrokSessionNotificationObserver
+>[0]['context'];
+
 describe('Grok session notifications', () => {
   it('projects the complete workflow update and rejects an older provider revision', async () => {
     const now = 1_000_000;
@@ -69,13 +73,13 @@ describe('Grok session notifications', () => {
         session: { services: { workflowActivity: { publishHeadlines } } },
         workState: { publisher: vi.fn(() => ({ publish: vi.fn() })) },
         services: {
-          logger: { warn: vi.fn(), debug: vi.fn() },
+          logger: { warn: vi.fn() },
           sessions: {
             current: { upsertSystemRecord, readSystemRecord: vi.fn(async () => null) },
             subagents: { observe: vi.fn() },
           },
         },
-      } as never,
+      } satisfies GrokSessionNotificationObserverContext,
       now: () => now,
     });
     const extensionContext = { providerSessionId: 'session-1', signal: new AbortController().signal } as never;
@@ -100,10 +104,10 @@ describe('Grok session notifications', () => {
         session: { services: { workflowActivity: { publishHeadlines: vi.fn() } } },
         workState: { publisher: vi.fn(() => ({ publish })) },
         services: {
-          logger: { warn: vi.fn(), debug: vi.fn() },
+          logger: { warn: vi.fn() },
           sessions: { current: null, subagents: { observe } },
         },
-      } as never,
+      } satisfies GrokSessionNotificationObserverContext,
       now: () => 2_000,
     });
     const extensionContext = { providerSessionId: 'parent', signal: new AbortController().signal } as never;

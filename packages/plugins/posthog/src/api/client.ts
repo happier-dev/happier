@@ -88,6 +88,11 @@ export type PosthogResult<T> =
 export type PosthogBodyParser<T> = (body: unknown) => T | null;
 
 export interface PosthogApiClient {
+    /**
+     * Admits a provider-returned absolute URL against this client's exact materialized
+     * origin without issuing a request or materializing a credential.
+     */
+    admitProviderUrl(absoluteUrl: string): string | null;
     requestJson<T>(
         request: PosthogJsonRequest,
         parse: PosthogBodyParser<T>,
@@ -161,6 +166,9 @@ export function createPosthogApiClient(
 ): PosthogApiClient {
     const { origin, materializeHeaders, transport } = dependencies;
     const now = dependencies.now ?? Date.now;
+    const admitProviderUrl = (absoluteUrl: string): string | null => (
+        admitForgeRequestUrl(absoluteUrl, origin as string)
+    );
 
     async function send<T>(
         url: string,
@@ -257,6 +265,7 @@ export function createPosthogApiClient(
     }
 
     return {
+        admitProviderUrl,
         async requestJson(request, parse, options) {
             return await send(
                 buildUrl(origin, request.path, request.query),
@@ -270,7 +279,7 @@ export function createPosthogApiClient(
             // every forge, so it has one owner. PostHog's own origin comparison was
             // a weaker second copy of it: it admitted userinfo and a fragment,
             // because `URL.origin` carries neither.
-            const admitted = admitForgeRequestUrl(absoluteUrl, origin as string);
+            const admitted = admitProviderUrl(absoluteUrl);
             if (admitted === null) {
                 return { ok: false, failure: { kind: 'originMismatch' } };
             }

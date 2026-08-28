@@ -16,6 +16,7 @@ const issueCommentPayload = {
     user: { id: 99, login: 'octocat', type: 'User' },
   },
 };
+const defaultReceivedAtMs = Date.parse('2026-08-10T12:10:00Z');
 
 describe('GitHub webhook normalization', () => {
   it('parses a verified delivery exactly once and exposes one top-level pull-request discussion comment', () => {
@@ -26,6 +27,7 @@ describe('GitHub webhook normalization', () => {
       rawBody,
       eventType: 'issue_comment',
       providerDeliveryId: 'delivery-abc',
+      receivedAtMs: defaultReceivedAtMs,
       parseJson,
     });
 
@@ -50,6 +52,7 @@ describe('GitHub webhook normalization', () => {
       rawBody: new TextEncoder().encode(JSON.stringify(issueCommentPayload)),
       eventType: 'pull_request_review_comment',
       providerDeliveryId: 'delivery-inline',
+      receivedAtMs: defaultReceivedAtMs,
     });
 
     expect(normalized).toMatchObject({
@@ -59,11 +62,14 @@ describe('GitHub webhook normalization', () => {
   });
 
   it('normalizes a verified repository push into the exact Automation Event payload and delivery identity', () => {
+    const receivedAtMs = Date.parse('2026-08-10T12:02:03Z');
     const parseJson = vi.fn(() => ({
       ref: 'refs/heads/main',
       before: 'a'.repeat(40),
       after: 'b'.repeat(40),
-      head_commit: { timestamp: '2026-08-10T12:01:02Z' },
+      // Commit authorship is not the provider push occurrence time and may be
+      // arbitrarily old after a rebase or cherry-pick.
+      head_commit: { timestamp: '2020-01-02T03:04:05Z' },
       repository: { id: 77, full_name: 'acme/widgets' },
       sender: { id: 99, login: 'octocat', type: 'User' },
     }));
@@ -73,6 +79,7 @@ describe('GitHub webhook normalization', () => {
       rawBody,
       eventType: 'push',
       providerDeliveryId: 'delivery-push',
+      receivedAtMs,
       parseJson,
     });
 
@@ -88,13 +95,44 @@ describe('GitHub webhook normalization', () => {
         },
         sourceInstanceId: 'github:repository:77',
         occurrenceId: 'github:repository:77:delivery:delivery-push',
-        occurredAtMs: Date.parse('2026-08-10T12:01:02Z'),
+        occurredAtMs: receivedAtMs,
         payload: {
           repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
           ref: 'refs/heads/main',
           before: 'a'.repeat(40),
           after: 'b'.repeat(40),
         },
+      },
+    });
+  });
+
+  it('normalizes a ref-deletion push without a head commit', () => {
+    const receivedAtMs = Date.parse('2026-08-10T12:02:03Z');
+    const normalized = normalizeGithubWebhookDelivery({
+      rawBody: new TextEncoder().encode(JSON.stringify({
+        ref: 'refs/heads/retired',
+        before: 'a'.repeat(40),
+        after: '0'.repeat(40),
+        deleted: true,
+        head_commit: null,
+        repository: { id: 77, full_name: 'acme/widgets' },
+      })),
+      eventType: 'push',
+      providerDeliveryId: 'delivery-delete',
+      receivedAtMs,
+    });
+
+    expect(normalized.automationEvent).toMatchObject({
+      eventRef: {
+        pluginId: 'happier.scm.forge.github',
+        localId: 'automation/repository-pushed-v1',
+      },
+      occurrenceId: 'github:repository:77:delivery:delivery-delete',
+      occurredAtMs: receivedAtMs,
+      payload: {
+        ref: 'refs/heads/retired',
+        before: 'a'.repeat(40),
+        after: '0'.repeat(40),
       },
     });
   });
@@ -113,6 +151,7 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'issues',
       providerDeliveryId: 'delivery-issue-opened',
+      receivedAtMs: defaultReceivedAtMs,
     });
     const pullRequestOpened = normalizeGithubWebhookDelivery({
       rawBody: new TextEncoder().encode(JSON.stringify({
@@ -128,6 +167,7 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'pull_request',
       providerDeliveryId: 'delivery-pr-opened',
+      receivedAtMs: defaultReceivedAtMs,
     });
     const pullRequestMerged = normalizeGithubWebhookDelivery({
       rawBody: new TextEncoder().encode(JSON.stringify({
@@ -143,6 +183,7 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'pull_request',
       providerDeliveryId: 'delivery-pr-merged',
+      receivedAtMs: defaultReceivedAtMs,
     });
 
     expect(issueOpened.automationEvent).toMatchObject({
@@ -151,6 +192,7 @@ describe('GitHub webhook normalization', () => {
         localId: 'automation/issue-opened-v1',
       },
       occurrenceId: 'github:repository:77:delivery:delivery-issue-opened',
+      occurredAtMs: Date.parse('2026-08-10T12:03:04Z'),
       payload: {
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         issue: { id: '123', number: 12, title: 'Document exact delivery scope' },
@@ -162,6 +204,7 @@ describe('GitHub webhook normalization', () => {
         localId: 'automation/pull-request-opened-v1',
       },
       occurrenceId: 'github:repository:77:delivery:delivery-pr-opened',
+      occurredAtMs: Date.parse('2026-08-10T12:04:05Z'),
       payload: {
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         pullRequest: { id: '455', number: 33, title: 'Add semantic GitHub Events' },
@@ -173,10 +216,36 @@ describe('GitHub webhook normalization', () => {
         localId: 'automation/pull-request-merged-v1',
       },
       occurrenceId: 'github:repository:77:delivery:delivery-pr-merged',
+      occurredAtMs: Date.parse('2026-08-10T12:05:06Z'),
       payload: {
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         pullRequest: { id: '456', number: 34, mergeCommitSha: 'c'.repeat(40) },
       },
+    });
+  });
+
+  it('ignores a closed but unmerged pull request without requiring a merge timestamp', () => {
+    const normalized = normalizeGithubWebhookDelivery({
+      rawBody: new TextEncoder().encode(JSON.stringify({
+        action: 'closed',
+        repository: { id: 77, full_name: 'acme/widgets' },
+        pull_request: {
+          id: 457,
+          number: 35,
+          merged: false,
+          merged_at: null,
+          merge_commit_sha: null,
+        },
+      })),
+      eventType: 'pull_request',
+      providerDeliveryId: 'delivery-pr-closed-unmerged',
+      receivedAtMs: defaultReceivedAtMs,
+    });
+
+    expect(normalized).toMatchObject({
+      providerDeliveryId: 'delivery-pr-closed-unmerged',
+      eventType: 'pull_request',
+      automationEvent: null,
     });
   });
 
@@ -191,6 +260,7 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'issue_comment',
       providerDeliveryId: 'delivery-organization',
+      receivedAtMs: defaultReceivedAtMs,
     });
     const missingTypeComment = normalizeGithubWebhookDelivery({
       rawBody: new TextEncoder().encode(JSON.stringify({
@@ -202,6 +272,7 @@ describe('GitHub webhook normalization', () => {
       })),
       eventType: 'issue_comment',
       providerDeliveryId: 'delivery-missing-type',
+      receivedAtMs: defaultReceivedAtMs,
     });
 
     expect(organizationComment.comment?.actor.kind).toBe('unsupported');

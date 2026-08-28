@@ -1,3 +1,5 @@
+import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+
 import { readBitbucketApiUrl, type BitbucketTriageApiClient } from '../apiClient.js';
 import {
   readBitbucketCommentResolution,
@@ -48,6 +50,50 @@ export type BitbucketWriteOutcomeV1 =
     failure: BitbucketTriageFailure;
   }>
   | Readonly<{ kind: 'failed'; failure: BitbucketTriageFailure }>;
+
+export type BitbucketMergeTaskStatusOutcomeV1 =
+  | Readonly<{ kind: 'pending' }>
+  | Readonly<{ kind: 'succeeded' }>
+  | Readonly<{ kind: 'rejected'; failure: BitbucketTriageFailure }>
+  | Readonly<{ kind: 'failed'; failure: BitbucketTriageFailure }>;
+
+/**
+ * Reads the one provider-issued merge task location once.
+ *
+ * The Action owns whether and when to call this. This provider leaf only decodes Bitbucket's
+ * documented PENDING/SUCCESS envelope and its success-status error envelope; it does not poll,
+ * sleep, retry, or infer completion from the task payload's embedded pull request.
+ */
+export async function readBitbucketMergeTaskStatus(input: Readonly<{
+  client: BitbucketTriageApiClient;
+  statusUrl: string;
+  signal?: AbortSignal;
+}>): Promise<BitbucketMergeTaskStatusOutcomeV1> {
+  const response = await input.client.requestJson({
+    url: input.statusUrl,
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+  });
+  if (!response.ok) return { kind: 'failed', failure: response.failure };
+  if (typeof response.body !== 'object' || response.body === null || Array.isArray(response.body)) {
+    return {
+      kind: 'failed',
+      failure: createBitbucketFailure('unsupportedContract', 'merge-task-status-undecodable'),
+    };
+  }
+  const body = response.body as Readonly<Record<string, unknown>>;
+  if (body.task_status === 'PENDING') return { kind: 'pending' };
+  if (body.task_status === 'SUCCESS') return { kind: 'succeeded' };
+  if (body.type === 'error' && typeof body.error === 'object' && body.error !== null) {
+    return {
+      kind: 'rejected',
+      failure: createBitbucketFailure('unknown', 'merge-task-rejected'),
+    };
+  }
+  return {
+    kind: 'failed',
+    failure: createBitbucketFailure('unsupportedContract', 'merge-task-status-undecodable'),
+  };
+}
 
 /**
  * Bitbucket's two documented terminal merge refusals.
@@ -103,12 +149,12 @@ export async function mergeBitbucketPullRequest(
 
   if (response.status !== 202) return { kind: 'succeeded' };
 
-  // A queued merge is only pollable through the location Bitbucket issued for it, and that
+  // A queued merge's task status is readable only through the location Bitbucket issued, and that
   // location receives the materialized credential — so it passes the same origin gate every other
   // forge-supplied URL passes. A `202` without one, or with one pointing somewhere else, is not a
   // response this source will act on: it will not guess where the merge went.
   const statusUrl = readBitbucketApiUrl(
-    response.headers['location'] ?? response.headers['Location'],
+    readTriageResponseHeaderV1(response.headers, 'location'),
   );
   if (statusUrl === null) {
     return {

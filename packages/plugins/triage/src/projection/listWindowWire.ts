@@ -20,10 +20,18 @@ import type { TriageListRowV1, TriageListWindowV1 } from './listWindow.js';
 
 type WireRows = TriageListEntriesResultV1['window']['rows'];
 type WireRow = WireRows[number];
+type WireObservation = WireRow['observation'];
 
 function byInstanceIdAscending(left: string, right: string): number {
     if (left === right) return 0;
     return left < right ? -1 : 1;
+}
+
+/** Strip process-local fold evidence before publishing one observation. */
+function toWireObservation(observation: ProjectedObservationV1): WireObservation {
+    if (observation.outcome.kind !== 'present') return observation;
+    const { nativeRevision: _nativeRevision, ...outcome } = observation.outcome;
+    return { ...observation, outcome };
 }
 
 /**
@@ -88,7 +96,8 @@ function otherObservations(
     const attention = attentionInstanceId === undefined || attentionInstanceId === renderedInstanceId
         ? undefined
         : byConnection.get(attentionInstanceId);
-    return attention === undefined ? rest : [attention, ...rest];
+    const ordered = attention === undefined ? rest : [attention, ...rest];
+    return ordered.map(toWireObservation);
 }
 
 /** Project one assembled window's rows onto the list Action's wire. */
@@ -111,7 +120,7 @@ export function toTriageListWireRows(window: TriageListWindowV1): WireRows {
             },
             ...(row.attention === null ? {} : { attention: row.attention }),
             selected: row.selected,
-            observation,
+            observation: toWireObservation(observation),
             otherObservations: otherObservations(row, byConnection, observation.sourceInstanceId),
             observedByCount: byConnection.size,
         });

@@ -17,7 +17,6 @@ import {
 
 import {
     MAX_TRIAGE_LIST_SOURCE_BATCH_V1,
-    triageListRowBudgetV1,
     type TriageListEntriesInputV1,
     type TriageListEntriesResultV1,
 } from '../actions/listEntriesProtocol.js';
@@ -151,14 +150,12 @@ export type TriageListLoadMoreV1 =
      * the window `partial` with nothing to page: reading the coverage claim as
      * the offer published `available`, and every press then deepened the mount
      * by one and re-read page ONE of the connections that did answer — the same
-     * rows again, deduped away against the same retained page, until the mount
-     * ceiling. Nothing new was ever reachable that way. The reader is told the
+     * rows again, deduped away against the same retained page. Nothing new was
+     * ever reachable that way. The reader is told the
      * list is incomplete instead, and **Refresh** is the control that can
      * actually change it.
      */
-    | Readonly<{ kind: 'unresumable' }>
-    /** This mount holds as many windows as it may. */
-    | Readonly<{ kind: 'atCeiling' }>;
+    | Readonly<{ kind: 'unresumable' }>;
 
 export type TriageListWindowStoreV1 = Readonly<{
     getSnapshot(): TriageListWindowSnapshotV1;
@@ -246,35 +243,6 @@ const UNREADABLE_IN_THIS_PASS_V1: TriageListWindowErrorV1 = Object.freeze({
     code: 'source_unavailable',
     message: 'The source could not be read in this pass.',
 });
-
-/**
- * The reference workload one mount's projection window is designed against.
- *
- * `core/SURFACE.md` §9: "2,000 mixed entries paged into one mount's projection
- * window". It is a product statement, quoted rather than chosen here, and it is
- * the only input the ceiling below has that is not already derived.
- */
-const TRIAGE_LIST_REFERENCE_WORKLOAD_ENTRIES_V1 = 2_000;
-
-/**
- * The most bounded windows one mount may append.
- *
- * It is the depth at which the reference workload above is reachable, and it is
- * derived from the explicit per-invocation row cap. Continuations do not reduce
- * that cap: strict JSON Action admission has no aggregate byte quota.
- *
- * Past the ceiling the reader is told the mount is full instead of being
- * offered a control that would keep growing a process-local page without end;
- * nothing about it is durable, and a fresh mount starts at one window.
- *
- * It bounds the process-local projection retained by this mount. Refresh does
- * not pay this depth again: it discards the frontier set and reads page one
- * once, while each Load More advances the retained set by one bounded page.
- */
-export const MAX_TRIAGE_MOUNTED_WINDOWS_V1 = Math.ceil(
-    TRIAGE_LIST_REFERENCE_WORKLOAD_ENTRIES_V1
-    / triageListRowBudgetV1(MAX_TRIAGE_LIST_SOURCE_BATCH_V1),
-);
 
 export function createTriageListWindowStore(deps: Readonly<{
     readEntries: TriageListWindowReaderV1;
@@ -485,7 +453,6 @@ export function createTriageListWindowStore(deps: Readonly<{
         // with no lane holding a frontier the press would re-read page one and
         // deliver rows the merge already holds.
         if (!anyLaneHoldsFrontier()) return Object.freeze({ kind: 'unresumable' });
-        if (windowsRequested >= MAX_TRIAGE_MOUNTED_WINDOWS_V1) return Object.freeze({ kind: 'atCeiling' });
         return Object.freeze({ kind: 'available' });
     }
 
@@ -714,6 +681,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         configuredSourcesStatus: 'complete';
     }>> {
         const all: TriageListEntriesResultV1['configuredSources'][number][] = [];
+        const seenCursors = new Set<string>();
         let cursor: string | undefined;
         do {
             const result = await deps.readEntries(configuredSourcePageInput(cursor));
@@ -727,6 +695,10 @@ export function createTriageListWindowStore(deps: Readonly<{
                 if (result.configuredSourcesNextCursor === undefined) {
                     throw new Error('Configured-source enumeration truncated without a continuation cursor.');
                 }
+                if (seenCursors.has(result.configuredSourcesNextCursor)) {
+                    throw new Error('Configured-source enumeration returned a repeated continuation cursor.');
+                }
+                seenCursors.add(result.configuredSourcesNextCursor);
                 cursor = result.configuredSourcesNextCursor;
             }
         } while (cursor !== undefined);
@@ -892,7 +864,12 @@ export function createTriageListWindowStore(deps: Readonly<{
             const laneObservations = admitted.get(sourceInstanceId) ?? [];
             lanes.set(sourceInstanceId, {
                 lane,
-                observations: activeCycleReplacesGeneration || lane.exhausted
+                // A terminal page finishes the walk after the frontier this
+                // mounted generation already retained. It replaces an older
+                // generation on Refresh/reacquisition, but an append must keep
+                // the earlier pages and add the terminal one before publishing
+                // the now-complete window.
+                observations: activeCycleReplacesGeneration || (lane.exhausted && !activeCycleIsAppend)
                     ? laneObservations
                     : retainObservations(lanes.get(sourceInstanceId)?.observations ?? [], laneObservations),
                 error: null,
@@ -1159,14 +1136,14 @@ export function createTriageListWindowStore(deps: Readonly<{
             rebuild();
             publish();
         }
-        const refusals = request.blocked.map((entry) => triageRefreshPacingBlock(entry.reason));
-
         if (!isCurrent()) return;
         // A cycle in which every requested connection was refused read no
         // provider at all. Stamping it would extend the fresh window without a
-        // read, and publishing nothing would leave the reader believing the
-        // Refresh they pressed happened.
-        const askedNobody = refusals.length > 0 && refusals.every((refusal) => refusal !== null);
+        // read. A mixed request is not that cycle: at least one connection did
+        // run, so its admitted answers and continuation progress must settle as
+        // a real refresh rather than being relabelled as a no-op merely because
+        // another connection was paced.
+        const askedNobody = request.startedSourceInstanceIds.length === 0;
         if (!askedNobody) lastCycleCompletedAtMs = deps.nowMs();
         if (
             activeCycleReplacesGeneration
@@ -1242,7 +1219,6 @@ export function createTriageListWindowStore(deps: Readonly<{
                 // The published arm and this gate read the same fact, so a row
                 // can never offer a press this refuses.
                 if (!anyLaneHoldsFrontier()) return Promise.resolve();
-                if (windowsRequested >= MAX_TRIAGE_MOUNTED_WINDOWS_V1) return Promise.resolve();
                 windowsRequested += 1;
             }
             appending = true;

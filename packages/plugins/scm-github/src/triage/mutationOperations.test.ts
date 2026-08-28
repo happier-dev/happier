@@ -18,12 +18,15 @@ import {
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
   GithubIssueDeltaResultV1Schema,
+  GithubIssueCommentResultV1Schema,
   GithubPullRequestMarkReadyResultV1Schema,
   GithubPullRequestMergeResultV1Schema,
   GithubPullRequestReviewersResultV1Schema,
   GithubPullRequestReviewPublicationResultV1Schema,
+  GithubPullRequestReviewCommentCreateResultV1Schema,
   GithubPullRequestStateResultV1Schema,
   GithubPullRequestThreadResolutionResultV1Schema,
+  GithubPullRequestThreadReplyResultV1Schema,
   GithubPullRequestUpdateBranchResultV1Schema,
 } from './mutations/contracts.js';
 import {
@@ -32,6 +35,8 @@ import {
   addGithubPullRequestReviewersAction,
   closeGithubIssueAction,
   closeGithubPullRequestAction,
+  createGithubIssueCommentAction,
+  createGithubPullRequestReviewCommentAction,
   markGithubPullRequestReadyAction,
   mergeGithubPullRequestAction,
   removeGithubIssueAssigneesAction,
@@ -40,6 +45,7 @@ import {
   publishGithubPullRequestReviewAction,
   reopenGithubIssueAction,
   reopenGithubPullRequestAction,
+  replyToGithubPullRequestThreadAction,
   setGithubPullRequestThreadResolutionAction,
   updateGithubPullRequestBranchAction,
 } from './mutationOperations.js';
@@ -66,7 +72,12 @@ import {
 
 const REPOSITORY_KEY = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
 const OBSERVED_HEAD = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
+const OBSERVED_BASE = '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e';
 const ADVANCED_HEAD = '0011223344556677889900aabbccddeeff001122';
+const ADVANCED_BASE = 'ffeeddccbbaa0099887766554433221100ffeedd';
+const REVIEW_COMMENT_ID = 'review-comment-1';
+const VERDICT_CORRELATION_ID = 'A'.repeat(43);
+const COMMENT_CORRELATION_ID = 'B'.repeat(43);
 
 const CONFIGURED_ACCOUNT: ConnectedAccountRef = Object.freeze({
   service: Object.freeze({ pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' }),
@@ -127,6 +138,7 @@ type PullRequestShape = Readonly<{
   state?: 'open' | 'closed';
   merged?: boolean;
   headSha?: string;
+  baseSha?: string;
   draft?: boolean;
 }>;
 
@@ -144,6 +156,10 @@ function pullRequestBody(shape: PullRequestShape = {}): Readonly<Record<string, 
       ...(GITHUB_PULL_REQUEST_RESPONSE.head as Readonly<Record<string, unknown>>),
       sha: shape.headSha ?? OBSERVED_HEAD,
     }),
+    base: Object.freeze({
+      ...(GITHUB_PULL_REQUEST_RESPONSE.base as Readonly<Record<string, unknown>>),
+      sha: shape.baseSha ?? OBSERVED_BASE,
+    }),
   });
 }
 
@@ -157,6 +173,7 @@ const REVIEWERS_PATH = `${PULL_REQUEST_PATH}/requested_reviewers`;
 const REVIEWS_PATH = `${PULL_REQUEST_PATH}/reviews`;
 const UPDATE_BRANCH_PATH = `${PULL_REQUEST_PATH}/update-branch`;
 const GRAPHQL_PATH = '/graphql';
+const REVIEW_THREAD_ID = 'PRRT_kwDOExample';
 
 /** GitHub's own node id for the fixture pull request, as REST publishes it. */
 const PULL_REQUEST_NODE_ID = GITHUB_PULL_REQUEST_RESPONSE.node_id as string;
@@ -185,10 +202,16 @@ function transportFor(input: Readonly<{
   reviewerReads?: readonly Readonly<Record<string, unknown>>[];
   /** Answers, in order, the review-publication baseline and confirming reads. */
   reviewPublicationReads?: readonly unknown[][];
+  reviewCommentPublicationReads?: readonly unknown[][];
+  threadPublicationReads?: readonly unknown[][];
+  claimDisposition?: 'dispatch' | 'reconcile';
 }>) {
   let read = 0;
   let reviewerRead = 0;
   let reviewPublicationRead = 0;
+  let reviewCommentPublicationRead = 0;
+  let threadPublicationRead = 0;
+  const claimedPlans: unknown[] = [];
   /**
    * `write: new Error(...)` states that the boundary recorded the request and
    * then lost its answer, which is a rejected request rather than a response
@@ -198,7 +221,24 @@ function transportFor(input: Readonly<{
     if (input.write instanceof Error) throw input.write;
     return input.write ?? fallback;
   };
-  return createStubGithubTransport({
+  const stub = createStubGithubTransport({
+    executeAction: async (actionId, actionInput) => {
+      expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
+      claimedPlans.push(actionInput);
+      const plan = actionInput as Readonly<Record<string, unknown>>;
+      const entries = Array.isArray(plan.entries) ? plan.entries : [];
+      return {
+        disposition: input.claimDisposition ?? 'dispatch',
+        publicationPlanId: 'C'.repeat(43),
+        entries: entries.map((entry, index) => ({
+          happierCommentId: (entry as Readonly<Record<string, unknown>>).happierCommentId,
+          publicationCorrelationId: String.fromCharCode(66 + index).repeat(43),
+        })),
+        verdict: plan.verdict === null
+          ? null
+          : { publicationCorrelationId: VERDICT_CORRELATION_ID },
+      };
+    },
     respond: (request: RecordedGithubRequest): StubHttpResponse | undefined => {
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && path === PULL_REQUEST_PATH) {
@@ -229,6 +269,50 @@ function transportFor(input: Readonly<{
         });
       }
       if (request.method === 'POST' && path === GRAPHQL_PATH) {
+        const graphql = readRecordedJsonBody(request) as Readonly<Record<string, unknown>>;
+        const query = typeof graphql.query === 'string' ? graphql.query : '';
+        if (query.includes('GithubReviewThreadPublicationComments')) {
+          const pages = input.threadPublicationReads ?? [[]];
+          const nodes = pages[Math.min(threadPublicationRead, pages.length - 1)];
+          threadPublicationRead += 1;
+          return json({
+            data: {
+              node: {
+                __typename: 'PullRequestReviewThread',
+                id: REVIEW_THREAD_ID,
+                isResolved: false,
+                pullRequest: {
+                  number: 1284,
+                  repository: { name: GITHUB_FIXTURE_REPOSITORY, owner: { login: GITHUB_FIXTURE_OWNER } },
+                },
+                comments: {
+                  nodes,
+                  pageInfo: { hasPreviousPage: false, startCursor: null },
+                },
+              },
+            },
+          });
+        }
+        if (query.includes('GithubReviewThread(')) {
+          return json({
+            data: {
+              node: {
+                __typename: 'PullRequestReviewThread',
+                id: REVIEW_THREAD_ID,
+                isResolved: false,
+                pullRequest: {
+                  number: 1284,
+                  repository: { name: GITHUB_FIXTURE_REPOSITORY, owner: { login: GITHUB_FIXTURE_OWNER } },
+                },
+              },
+            },
+          });
+        }
+        if (query.includes('GithubReplyToReviewThread')) {
+          return writeAnswer(json({
+            data: { addPullRequestReviewThreadReply: { comment: { id: 'thread-comment', body: '' } } },
+          }));
+        }
         return writeAnswer(json({
           data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } },
         }));
@@ -245,6 +329,12 @@ function transportFor(input: Readonly<{
         reviewPublicationRead += 1;
         return json(body);
       }
+      if (request.method === 'GET' && path === `${PULL_REQUEST_PATH}/comments`) {
+        const pages = input.reviewCommentPublicationReads ?? [[]];
+        const body = pages[Math.min(reviewCommentPublicationRead, pages.length - 1)];
+        reviewCommentPublicationRead += 1;
+        return json(body);
+      }
       if ((request.method === 'POST' || request.method === 'DELETE')
         && path === REVIEWERS_PATH) {
         if (input.write instanceof Error) throw input.write;
@@ -254,37 +344,97 @@ function transportFor(input: Readonly<{
         if (input.write instanceof Error) throw input.write;
         return input.write ?? json({ id: 991, state: 'APPROVED' }, 201);
       }
+      if (request.method === 'POST' && path === `${PULL_REQUEST_PATH}/comments`) {
+        return writeAnswer(json({ id: 992 }, 201));
+      }
       return undefined;
     },
   });
+  return Object.freeze({ ...stub, claimedPlans });
 }
 
 /* ---------------------------------------------------------- review publication */
 
 describe('GitHub pull-request review publication', () => {
+  const publicationEntry = Object.freeze({
+    happierCommentId: REVIEW_COMMENT_ID,
+    expectedServerRevision: 3,
+    anchor: Object.freeze({ kind: 'line', filePath: 'src/index.ts', line: 12, side: 'after' }),
+    snapshot: Object.freeze({
+      kind: 'text', selectedLines: ['return ready;'], beforeContext: [], afterContext: [],
+      selectedLinesHash: 'selected', contextWindowHash: 'context', capturedAt: 1,
+      fileLength: 20, source: 'committed', isUncommitted: false, isUntracked: false,
+      truncated: false, hasBidiControls: false, likelyMinified: false,
+      diffContext: Object.freeze({ side: 'after', baseSha: OBSERVED_BASE, headSha: OBSERVED_HEAD }),
+    }),
+    body: 'Explain why this is safe.',
+  });
+
+  function publicationPlan(overrides: Readonly<Record<string, unknown>> = {}) {
+    return {
+      target: {
+        providerId: 'github',
+        configuredAccountId: CONFIGURED_ACCOUNT.accountId,
+        subtarget: null,
+        entryRef: {
+          sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
+          kindId: PULL_REQUEST_REF.kindId,
+          collisionScope: PULL_REQUEST_REF.collisionScope,
+          entryId: PULL_REQUEST_REF.entryId,
+        },
+      },
+      baseRevision: OBSERVED_BASE,
+      headRevision: OBSERVED_HEAD,
+      entries: [publicationEntry],
+      verdict: { kind: 'approve', body: 'The implementation is ready to merge.' },
+      ...overrides,
+    };
+  }
+
   function publicationInput(overrides: Readonly<Record<string, unknown>> = {}) {
     return {
       v: 1,
       instance: configuredInstance(),
       localRef: PULL_REQUEST_REF,
       routingToken: REPOSITORY_KEY,
-      headRevision: OBSERVED_HEAD,
-      verdict: 'approve',
-      summary: 'The implementation is ready to merge.',
+      publicationPlan: publicationPlan(),
       ...overrides,
     };
   }
 
+  function reviewRecord(body: string, id = 991) {
+    return {
+      id, commit_id: OBSERVED_HEAD, state: 'APPROVED', body,
+      user: { login: 'octocat' }, submitted_at: '2026-08-13T10:00:00Z',
+    };
+  }
+
+  function commentRecord(body: string, id = 992) {
+    return { id, body };
+  }
+
   it('submits summary and verdict atomically at the observed head, then returns the authoritative detail', async () => {
-    const stub = transportFor({ reads: [pullRequestBody(), pullRequestBody()] });
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      reviewPublicationReads: [[reviewRecord(
+        `Review\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      )]],
+      reviewCommentPublicationReads: [[commentRecord(
+        `Comment\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      )]],
+    });
 
     const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
       await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
     );
 
-    expect(result.kind).toBe('applied');
-    if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
-    expect(result.observation.kind).toBe('present');
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.observation?.kind).toBe('present');
+    expect(result.publication.entries[0]?.outcome).toEqual({ kind: 'published', externalRef: '992' });
+    expect(result.publication.verdict).toMatchObject({
+      outcome: { kind: 'published', externalRef: '991' },
+    });
     expect(entryReads(stub)).toHaveLength(2);
     const dispatched = writes(stub);
     expect(dispatched).toHaveLength(1);
@@ -293,8 +443,11 @@ describe('GitHub pull-request review publication', () => {
     expect(readRecordedJsonBody(dispatched[0] as RecordedGithubRequest)).toEqual({
       commit_id: OBSERVED_HEAD,
       event: 'APPROVE',
-      body: 'The implementation is ready to merge.',
-      comments: [],
+      body: `The implementation is ready to merge.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      comments: [{
+        path: 'src/index.ts', line: 12, side: 'RIGHT',
+        body: `Explain why this is safe.\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      }],
     });
   });
 
@@ -309,7 +462,147 @@ describe('GitHub pull-request review publication', () => {
     if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
     expect(result.reason).toBe('head_advanced');
     expect(result.observation?.kind).toBe('present');
+    expect(stub.claimedPlans).toHaveLength(0);
     expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('rejects a moved observed base before claiming dispatch or writing', async () => {
+    const stub = transportFor({ reads: [pullRequestBody({ baseSha: ADVANCED_BASE })] });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('base_advanced');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('reconciles a prior canonical claim by exact marker and issues no second write', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      claimDisposition: 'reconcile',
+      reviewPublicationReads: [[reviewRecord(
+        `Different visible text\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      )]],
+      reviewCommentPublicationReads: [[commentRecord(
+        `Different comment text\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      )]],
+    });
+
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome.kind).toBe('published');
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('publishes an ordinary verdict-only review without inventing a comment identity', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      reviewPublicationReads: [[reviewRecord(
+        `Looks good.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      )]],
+    });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({
+          entries: [],
+          verdict: { kind: 'approve', body: 'Looks good.' },
+        }),
+      }), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries).toEqual([]);
+    expect(result.publication.verdict).toMatchObject({
+      outcome: { kind: 'published', externalRef: '991' },
+    });
+    expect(readRecordedJsonBody(writes(stub)[0] as RecordedGithubRequest)).toEqual({
+      commit_id: OBSERVED_HEAD,
+      event: 'APPROVE',
+      body: `Looks good.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      comments: [],
+    });
+  });
+
+  it('refuses a diff-less review entry without a verdict before durable claim', async () => {
+    const { diffContext: _diffContext, ...summarySnapshot } = publicationEntry.snapshot;
+    const summaryEntry = {
+      ...publicationEntry,
+      anchor: { kind: 'folder', folderPath: 'src' },
+      snapshot: summarySnapshot,
+    };
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({ entries: [summaryEntry], verdict: null }),
+      }), stub.context),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('unsupported_anchor');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.requests.some((request) => request.method === 'POST')).toBe(false);
+  });
+
+  it('folds a diff-less entry and marker into the verdict and shares its external review ref', async () => {
+    const { diffContext: _diffContext, ...summarySnapshot } = publicationEntry.snapshot;
+    const summaryEntry = {
+      ...publicationEntry,
+      anchor: { kind: 'folder', folderPath: 'src' },
+      snapshot: summarySnapshot,
+      body: 'The project-level concern is resolved.',
+    };
+    const reviewBody = `Ready.\n\nThe project-level concern is resolved.\n\n`
+      + `<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->\n\n`
+      + `<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`;
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      reviewPublicationReads: [[reviewRecord(reviewBody)]],
+    });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({
+          entries: [summaryEntry],
+          verdict: { kind: 'approve', body: 'Ready.' },
+        }),
+      }), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome).toEqual({ kind: 'published', externalRef: '991' });
+    expect(result.publication.verdict).toMatchObject({ outcome: { kind: 'published', externalRef: '991' } });
+    expect(readRecordedJsonBody(writes(stub)[0] as RecordedGithubRequest)).toMatchObject({
+      body: reviewBody,
+      comments: [],
+    });
+  });
+
+  it('preserves a marker-confirmed comment when a 4xx response leaves the verdict uncertain', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: json({ message: 'Validation Failed' }, 422),
+      reviewCommentPublicationReads: [[commentRecord(
+        `Comment landed\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      )]],
+    });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome).toEqual({
+      kind: 'published', externalRef: '992',
+    });
+    expect(result.publication.verdict).toMatchObject({ outcome: { kind: 'uncertain' } });
+    expect(result.failure?.code).toBe('github_unprocessable');
+    expect(writes(stub)).toHaveLength(1);
   });
 
   it('reports uncertainty when GitHub accepted the one submission but the authoritative reread fails', async () => {
@@ -320,13 +613,16 @@ describe('GitHub pull-request review publication', () => {
     });
 
     const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
-      await publishGithubPullRequestReviewAction(
-        publicationInput({ verdict: 'requestChanges' }),
-        stub.context,
-      ),
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({
+          verdict: { kind: 'requestChanges', body: 'Please revise.' },
+        }),
+      }), stub.context),
     );
 
-    expect(result.kind).toBe('uncertain');
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome.kind).toBe('uncertain');
     expect(writes(stub)).toHaveLength(1);
   });
 
@@ -340,8 +636,9 @@ describe('GitHub pull-request review publication', () => {
       await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
     );
 
-    expect(result.kind).toBe('uncertain');
-    if (result.kind !== 'uncertain') throw new Error(`expected uncertain, got ${result.kind}`);
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.failure?.code).toBe('github_server_error');
     expect(result.observation?.kind).toBe('present');
     expect(writes(stub)).toHaveLength(1);
   });
@@ -349,17 +646,12 @@ describe('GitHub pull-request review publication', () => {
   it('confirms an answer-lost submission from a new authoritative review and never writes twice', async () => {
     const stub = transportFor({
       reads: [pullRequestBody(), pullRequestBody()],
-      reviewPublicationReads: [
-        [],
-        [{
-          id: 991,
-          commit_id: OBSERVED_HEAD,
-          state: 'APPROVED',
-          body: 'The implementation is ready to merge.',
-          user: { login: 'octocat' },
-          submitted_at: '2026-08-13T10:00:00Z',
-        }],
-      ],
+      reviewPublicationReads: [[reviewRecord(
+        `The implementation is ready to merge.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION_ID} -->`,
+      )]],
+      reviewCommentPublicationReads: [[commentRecord(
+        `Explain why this is safe.\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      )]],
       // The boundary records the POST and then loses its answer. The source must
       // reconcile that one attempt; issuing another POST would duplicate the review.
       write: new Error('socket closed after request dispatch'),
@@ -369,16 +661,18 @@ describe('GitHub pull-request review publication', () => {
       await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
     );
 
-    expect(result.kind).toBe('applied');
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome.kind).toBe('published');
     expect(writes(stub)).toHaveLength(1);
     expect(stub.requests.filter((request) => request.method === 'GET'
-      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(2);
+      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(1);
   });
 
   it('keeps an answer-lost submission uncertain when the authoritative review read cannot decide', async () => {
     const stub = transportFor({
       reads: [pullRequestBody()],
-      reviewPublicationReads: [[], [{}]],
+      reviewPublicationReads: [[{}]],
       write: new Error('socket closed after request dispatch'),
     });
 
@@ -386,26 +680,288 @@ describe('GitHub pull-request review publication', () => {
       await publishGithubPullRequestReviewAction(publicationInput(), stub.context),
     );
 
-    expect(result.kind).toBe('uncertain');
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome.kind).toBe('uncertain');
+    expect(result.failure?.code).toBe('github_request_failed');
     expect(writes(stub)).toHaveLength(1);
     expect(stub.requests.filter((request) => request.method === 'GET'
-      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(2);
+      && new URL(request.url).pathname === REVIEWS_PATH)).toHaveLength(1);
   });
 
-  it('rejects inline anchors the source cannot currently project instead of guessing positions', async () => {
+  it('rejects unsupported anchors before claiming dispatch instead of guessing positions', async () => {
     const stub = transportFor({ reads: [pullRequestBody()] });
+    const unsupported = {
+      ...publicationEntry,
+      anchor: { kind: 'hunk', filePath: 'src/index.ts', hunkId: 'hunk-1' },
+    };
 
     const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
       await publishGithubPullRequestReviewAction(
-        publicationInput({ comments: [{ path: 'src/index.ts', line: 12, body: 'Explain this.' }] }),
+        publicationInput({ publicationPlan: publicationPlan({ entries: [unsupported] }) }),
         stub.context,
       ),
     );
 
     expect(result.kind).toBe('rejected');
     if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('unsupported_anchor');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('rejects a stale per-comment diff snapshot before claiming or writing', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const stale = {
+      ...publicationEntry,
+      snapshot: {
+        ...publicationEntry.snapshot,
+        diffContext: { ...publicationEntry.snapshot.diffContext, baseSha: ADVANCED_BASE },
+      },
+    };
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(
+        publicationInput({ publicationPlan: publicationPlan({ entries: [stale] }) }),
+        stub.context,
+      ),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('unsupported_anchor');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('rejects an inner target from a different configured account before admission', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({
+          target: {
+            ...publicationPlan().target,
+            configuredAccountId: 'different-account',
+          },
+        }),
+      }), stub.context),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
     expect(result.reason).toBe('invalid_input');
+    expect(stub.claimedPlans).toHaveLength(0);
     expect(stub.requests).toHaveLength(0);
+  });
+
+  it.each([
+    ['provider', { providerId: 'gitlab' }],
+    ['source', { entryRef: { ...publicationPlan().target.entryRef, sourceId: 'wrong/source' } }],
+    ['kind', { entryRef: { ...publicationPlan().target.entryRef, kindId: 'issue' } }],
+    ['collision scope', {
+      entryRef: { ...publicationPlan().target.entryRef, collisionScope: 'github:different' },
+    }],
+    ['entry id', { entryRef: { ...publicationPlan().target.entryRef, entryId: '9999' } }],
+  ])('rejects a mismatched inner %s before admission or claim', async (_label, targetPatch) => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const target = publicationPlan().target;
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({
+        publicationPlan: publicationPlan({
+          target: {
+            ...target,
+            ...targetPatch,
+          },
+        }),
+      }), stub.context),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('invalid_input');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('rejects a malformed canonical publication plan before admission or claim', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(
+        publicationInput({ publicationPlan: { target: null } }),
+        stub.context,
+      ),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('invalid_input');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('projects an exact multi-line range into GitHub singleRequest comments', async () => {
+    const rangeEntry = {
+      ...publicationEntry,
+      anchor: { kind: 'range', filePath: 'src/index.ts', startLine: 9, endLine: 12, side: 'before' },
+      snapshot: {
+        ...publicationEntry.snapshot,
+        diffContext: { ...publicationEntry.snapshot.diffContext, side: 'before' },
+      },
+    };
+    const stub = transportFor({ reads: [pullRequestBody(), pullRequestBody()] });
+    await publishGithubPullRequestReviewAction(publicationInput({
+      publicationPlan: publicationPlan({ entries: [rangeEntry] }),
+    }), stub.context);
+    expect(readRecordedJsonBody(writes(stub)[0] as RecordedGithubRequest)).toMatchObject({
+      comments: [{
+        path: 'src/index.ts', start_line: 9, start_side: 'LEFT', line: 12, side: 'LEFT',
+      }],
+    });
+  });
+
+  function standaloneInput(planOverrides: Readonly<Record<string, unknown>> = {}) {
+    return publicationInput({
+      publicationPlan: publicationPlan({
+        entries: [publicationEntry],
+        verdict: null,
+        ...planOverrides,
+      }),
+    });
+  }
+
+  it('publishes one canonical proposal as a standalone pinned review comment', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      reviewCommentPublicationReads: [[commentRecord(
+        `Landed\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      )]],
+    });
+    const result = GithubPullRequestReviewCommentCreateResultV1Schema.parse(
+      await createGithubPullRequestReviewCommentAction(standaloneInput(), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome).toEqual({ kind: 'published', externalRef: '992' });
+    const dispatched = stub.requests.find((request) => request.method === 'POST'
+      && new URL(request.url).pathname === `${PULL_REQUEST_PATH}/comments`);
+    expect(dispatched).toBeDefined();
+    expect(readRecordedJsonBody(dispatched!)).toEqual({
+      path: 'src/index.ts',
+      line: 12,
+      side: 'RIGHT',
+      body: `Explain why this is safe.\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      commit_id: OBSERVED_HEAD,
+    });
+  });
+
+  it('refuses a moved standalone comment base before claim or write', async () => {
+    const stub = transportFor({ reads: [pullRequestBody({ baseSha: ADVANCED_BASE })] });
+    const result = GithubPullRequestReviewCommentCreateResultV1Schema.parse(
+      await createGithubPullRequestReviewCommentAction(standaloneInput(), stub.context),
+    );
+    expect(result.kind).toBe('rejected');
+    if (result.kind !== 'rejected') throw new Error(`expected rejected, got ${result.kind}`);
+    expect(result.reason).toBe('base_advanced');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.requests.some((request) => request.method === 'POST')).toBe(false);
+  });
+
+  it('rejects plural or verdict-bearing standalone comment plans at Action admission', async () => {
+    for (const publicationPlanOverride of [
+      publicationPlan({ entries: [publicationEntry, { ...publicationEntry, happierCommentId: 'second' }], verdict: null }),
+      publicationPlan({ entries: [publicationEntry], verdict: { kind: 'comment', body: 'Summary' } }),
+    ]) {
+      const stub = transportFor({ reads: [pullRequestBody()] });
+      const result = GithubPullRequestReviewCommentCreateResultV1Schema.parse(
+        await createGithubPullRequestReviewCommentAction(
+          publicationInput({ publicationPlan: publicationPlanOverride }), stub.context,
+        ),
+      );
+      expect(result.kind).toBe('rejected');
+      expect(stub.claimedPlans).toHaveLength(0);
+      expect(stub.requests).toHaveLength(0);
+    }
+  });
+
+  function threadReplyInput(planOverrides: Readonly<Record<string, unknown>> = {}) {
+    return publicationInput({
+      threadId: REVIEW_THREAD_ID,
+      publicationPlan: publicationPlan({
+        target: { ...publicationPlan().target, subtarget: { kindId: 'review-thread', targetId: REVIEW_THREAD_ID } },
+        baseRevision: null,
+        headRevision: null,
+        entries: [publicationEntry],
+        verdict: null,
+        ...planOverrides,
+      }),
+    });
+  }
+
+  it('publishes and reconciles one reply inside the exact GraphQL review thread', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      threadPublicationReads: [[{
+        id: 'thread-comment',
+        body: `Reply\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      }]],
+    });
+    const result = GithubPullRequestThreadReplyResultV1Schema.parse(
+      await replyToGithubPullRequestThreadAction(threadReplyInput(), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome).toEqual({
+      kind: 'published', externalRef: 'thread-comment',
+    });
+    const reply = stub.requests.find((request) => request.method === 'POST'
+      && String((readRecordedJsonBody(request) as Readonly<Record<string, unknown>>).query)
+        .includes('GithubReplyToReviewThread'));
+    expect(reply).toBeDefined();
+    expect(readRecordedJsonBody(reply!)).toMatchObject({
+      variables: {
+        threadId: REVIEW_THREAD_ID,
+        body: `Explain why this is safe.\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      },
+    });
+  });
+
+  it('rejects a reply whose canonical subtarget names a different thread before any call', async () => {
+    const stub = transportFor({ reads: [pullRequestBody()] });
+    const result = GithubPullRequestThreadReplyResultV1Schema.parse(
+      await replyToGithubPullRequestThreadAction(threadReplyInput({
+        target: {
+          ...publicationPlan().target,
+          subtarget: { kindId: 'review-thread', targetId: 'another-thread' },
+        },
+      }), stub.context),
+    );
+    expect(result.kind).toBe('rejected');
+    expect(stub.claimedPlans).toHaveLength(0);
+    expect(stub.requests).toHaveLength(0);
+  });
+
+  it('reports a definite GraphQL reply rejection as failed, but answer loss as uncertain', async () => {
+    const rejected = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: json({ data: null, errors: [{ message: 'Forbidden', type: 'FORBIDDEN' }] }),
+    });
+    const rejectedResult = GithubPullRequestThreadReplyResultV1Schema.parse(
+      await replyToGithubPullRequestThreadAction(threadReplyInput(), rejected.context),
+    );
+    expect(rejectedResult.kind).toBe('settled');
+    if (rejectedResult.kind !== 'settled') throw new Error('expected settled rejection');
+    expect(rejectedResult.publication.entries[0]?.outcome.kind).toBe('failed');
+
+    const lost = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: new Error('reply answer lost'),
+      threadPublicationReads: [[]],
+    });
+    const lostResult = GithubPullRequestThreadReplyResultV1Schema.parse(
+      await replyToGithubPullRequestThreadAction(threadReplyInput(), lost.context),
+    );
+    expect(lostResult.kind).toBe('settled');
+    if (lostResult.kind !== 'settled') throw new Error('expected settled ambiguity');
+    expect(lostResult.publication.entries[0]?.outcome.kind).toBe('uncertain');
+    const replyWrites = lost.requests.filter((request) => request.method === 'POST'
+      && String((readRecordedJsonBody(request) as Readonly<Record<string, unknown>>).query)
+        .includes('GithubReplyToReviewThread'));
+    expect(replyWrites).toHaveLength(1);
   });
 });
 
@@ -970,6 +1526,27 @@ describe('GitHub pull-request update branch', () => {
     expect(writes(stub)).toHaveLength(1);
   });
 
+  it('preserves the server failure when the exact reread cannot prove an update landed', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: json({ message: 'Internal Server Error' }, 503),
+    });
+
+    const result = GithubPullRequestUpdateBranchResultV1Schema.parse(
+      await updateGithubPullRequestBranchAction(
+        stateInput({ headRevision: OBSERVED_HEAD }),
+        stub.context,
+      ),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'uncertain',
+      failure: { class: 'transient', code: 'github_server_error' },
+    });
+    expect(entryReads(stub)).toHaveLength(2);
+    expect(writes(stub)).toHaveLength(1);
+  });
+
   it('maps a 422 whose head did not move to the classified provider failure', async () => {
     const stub = transportFor({
       reads: [pullRequestBody(), pullRequestBody()],
@@ -1425,10 +2002,28 @@ function issueBody(shape: IssueShape = {}): Readonly<Record<string, unknown>> {
 /** Answers the issue reads every issue write performs, in order. */
 function issueTransportFor(input: Readonly<{
   reads: readonly Readonly<Record<string, unknown>>[];
-  write?: StubHttpResponse;
+  write?: StubHttpResponse | Error;
+  commentReads?: readonly unknown[][];
 }>) {
   let read = 0;
-  return createStubGithubTransport({
+  let commentRead = 0;
+  const claimedPlans: unknown[] = [];
+  const stub = createStubGithubTransport({
+    executeAction: async (actionId, actionInput) => {
+      expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
+      claimedPlans.push(actionInput);
+      const plan = actionInput as Readonly<Record<string, unknown>>;
+      const entry = (plan.entries as readonly Readonly<Record<string, unknown>>[])[0]!;
+      return {
+        disposition: 'dispatch',
+        publicationPlanId: 'C'.repeat(43),
+        entries: [{
+          happierCommentId: entry.happierCommentId,
+          publicationCorrelationId: COMMENT_CORRELATION_ID,
+        }],
+        verdict: null,
+      };
+    },
     respond: (request: RecordedGithubRequest): StubHttpResponse | undefined => {
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && path === ISSUE_PATH) {
@@ -1439,13 +2034,123 @@ function issueTransportFor(input: Readonly<{
       if (request.method === 'GET' && path === REPOSITORY_PATH) {
         return json(GITHUB_REPOSITORY_RESPONSE);
       }
+      if (request.method === 'GET' && path === `${ISSUE_PATH}/comments`) {
+        const pages = input.commentReads ?? [[]];
+        const body = pages[Math.min(commentRead, pages.length - 1)];
+        commentRead += 1;
+        return json(body);
+      }
       if (request.method !== 'GET' && path.startsWith(ISSUE_PATH)) {
+        if (input.write instanceof Error) throw input.write;
         return input.write ?? json(input.reads[input.reads.length - 1]);
       }
       return undefined;
     },
   });
+  return Object.freeze({ ...stub, claimedPlans });
 }
+
+function issuePublicationInput(planOverrides: Readonly<Record<string, unknown>> = {}) {
+  return issueInput({
+    publicationPlan: {
+      target: {
+        providerId: 'github',
+        configuredAccountId: CONFIGURED_ACCOUNT.accountId,
+        subtarget: null,
+        entryRef: {
+          sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
+          kindId: ISSUE_REF.kindId,
+          collisionScope: ISSUE_REF.collisionScope,
+          entryId: ISSUE_REF.entryId,
+        },
+      },
+      baseRevision: null,
+      headRevision: null,
+      entries: [{
+        happierCommentId: REVIEW_COMMENT_ID,
+        expectedServerRevision: 3,
+        anchor: { kind: 'file', filePath: 'README.md' },
+        snapshot: {
+          kind: 'text', selectedLines: ['Context'], beforeContext: [], afterContext: [],
+          selectedLinesHash: 'selected', contextWindowHash: 'context', capturedAt: 1,
+          fileLength: 1, source: 'committed', isUncommitted: false, isUntracked: false,
+          truncated: false, hasBidiControls: false, likelyMinified: false,
+        },
+        body: 'Please clarify this issue.',
+      }],
+      verdict: null,
+      ...planOverrides,
+    },
+  });
+}
+
+describe('GitHub issue comment publication', () => {
+  it('publishes one canonical proposal and confirms its exact issue marker', async () => {
+    const stub = issueTransportFor({
+      reads: [issueBody(), issueBody()],
+      commentReads: [[{
+        id: 701,
+        body: `Landed\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+      }]],
+    });
+    const result = GithubIssueCommentResultV1Schema.parse(
+      await createGithubIssueCommentAction(issuePublicationInput(), stub.context),
+    );
+    expect(result.kind).toBe('settled');
+    if (result.kind !== 'settled') throw new Error(`expected settled, got ${result.kind}`);
+    expect(result.publication.entries[0]?.outcome).toEqual({ kind: 'published', externalRef: '701' });
+    const posted = stub.requests.find((request) => request.method === 'POST'
+      && new URL(request.url).pathname === `${ISSUE_PATH}/comments`);
+    expect(readRecordedJsonBody(posted!)).toEqual({
+      body: `Please clarify this issue.\n\n<!-- happier-review-comment:v1:${COMMENT_CORRELATION_ID} -->`,
+    });
+  });
+
+  it('rejects a mismatched issue target and plural plans before admission or claim', async () => {
+    const one = (
+      issuePublicationInput() as Readonly<Record<string, unknown>>
+    ).publicationPlan as Readonly<Record<string, unknown>>;
+    for (const publicationPlan of [
+      { ...one, target: { ...(one.target as object), subtarget: { kindId: 'review-comment', targetId: 'other' } } },
+      { ...one, entries: [...(one.entries as readonly unknown[]), { ...(one.entries as readonly object[])[0], happierCommentId: 'second' }] },
+    ]) {
+      const stub = issueTransportFor({ reads: [issueBody()] });
+      const result = GithubIssueCommentResultV1Schema.parse(
+        await createGithubIssueCommentAction(issueInput({ publicationPlan }), stub.context),
+      );
+      expect(result.kind).toBe('rejected');
+      expect(stub.claimedPlans).toHaveLength(0);
+      expect(stub.requests).toHaveLength(0);
+    }
+  });
+
+  it('distinguishes a definite issue rejection from an answer-lost write', async () => {
+    const rejected = issueTransportFor({
+      reads: [issueBody(), issueBody()],
+      write: json({ message: 'Validation Failed' }, 422),
+    });
+    const rejectedResult = GithubIssueCommentResultV1Schema.parse(
+      await createGithubIssueCommentAction(issuePublicationInput(), rejected.context),
+    );
+    expect(rejectedResult.kind).toBe('settled');
+    if (rejectedResult.kind !== 'settled') throw new Error('expected settled rejection');
+    expect(rejectedResult.publication.entries[0]?.outcome.kind).toBe('failed');
+
+    const lost = issueTransportFor({
+      reads: [issueBody(), issueBody()],
+      write: new Error('comment answer lost'),
+      commentReads: [[]],
+    });
+    const lostResult = GithubIssueCommentResultV1Schema.parse(
+      await createGithubIssueCommentAction(issuePublicationInput(), lost.context),
+    );
+    expect(lostResult.kind).toBe('settled');
+    if (lostResult.kind !== 'settled') throw new Error('expected settled ambiguity');
+    expect(lostResult.publication.entries[0]?.outcome.kind).toBe('uncertain');
+    expect(lost.requests.filter((request) => request.method === 'POST'
+      && new URL(request.url).pathname === `${ISSUE_PATH}/comments`)).toHaveLength(1);
+  });
+});
 
 describe('GitHub issue close and reopen', () => {
   it('closes an open issue with the caller’s explicit reason and confirms it', async () => {

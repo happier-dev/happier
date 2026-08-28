@@ -22,6 +22,7 @@
 
 import {
   requestGitlabJson,
+  requestGitlabText,
   type GitlabAuthorizedInvocation,
   type GitlabHttpFetcher,
 } from '../http/gitlabClient.js';
@@ -52,6 +53,7 @@ import {
   buildGitlabApprovalRulesUrl,
   buildGitlabApprovalsUrl,
   buildGitlabDiffsUrl,
+  buildGitlabRawDiffsUrl,
   buildGitlabDiscussionsUrl,
   buildGitlabMergeRequestPipelinesUrl,
   buildGitlabNotesUrl,
@@ -245,6 +247,33 @@ export async function readGitlabChangesPage(
   });
 }
 
+/**
+ * Reads GitLab's explicit raw-evidence resource without interpreting its text.
+ * It shares the canonical origin/auth/status/cancellation path with JSON reads.
+ */
+export async function readGitlabRawDiffText(
+  route: GitlabDetailRouteInputV1,
+  dependencies: GitlabDetailReadDependenciesV1,
+): Promise<GitlabDetailReadResultV1<string>> {
+  let url: string;
+  try {
+    url = buildGitlabRawDiffsUrl(route);
+  } catch {
+    return failed(REQUEST_INVALID);
+  }
+  const result = await requestGitlabText({
+    invocation: dependencies.invocation,
+    url,
+    accept: 'text/plain',
+    fetcher: dependencies.fetcher,
+    signal: dependencies.signal,
+    nowMs: dependencies.nowMs,
+  });
+  return result.kind === 'failed'
+    ? failed(result.failure)
+    : succeeded(result.response.bodyText);
+}
+
 /* ----------------------------------------------------------------- pipelines */
 
 export type GitlabPipelinesReadV1 = GitlabDetailPageV1<GitlabProjectedPipelineRowV1> & Readonly<{
@@ -252,6 +281,47 @@ export type GitlabPipelinesReadV1 = GitlabDetailPageV1<GitlabProjectedPipelineRo
   rollup: GitlabPipelineRollupV1 | null;
   rollupPipelineId: string | null;
 }>;
+
+async function readCompleteGitlabPipelineRollup(
+  firstUrl: string,
+  dependencies: GitlabDetailReadDependenciesV1,
+): Promise<GitlabPipelineRollupV1 | null> {
+  let url = firstUrl;
+  const visited = new Set<string>();
+  let failingCount = 0;
+  let runningCount = 0;
+  let passingCount = 0;
+
+  while (!visited.has(url)) {
+    visited.add(url);
+    const jobs = await requestGitlabJson({
+      invocation: dependencies.invocation,
+      url,
+      fetcher: dependencies.fetcher,
+      signal: dependencies.signal,
+      nowMs: dependencies.nowMs,
+    });
+    if (jobs.kind === 'failed') return null;
+
+    const pageRollup = projectGitlabPipelineRollup(jobs.response.body);
+    if (pageRollup === null) return null;
+    failingCount += pageRollup.failingCount;
+    runningCount += pageRollup.runningCount;
+    passingCount += pageRollup.passingCount;
+
+    const next = selectGitlabNextPageUrl(
+      jobs.response.headers,
+      dependencies.invocation.origin.normalized,
+    );
+    if (next.kind === 'end') {
+      return Object.freeze({ failingCount, runningCount, passingCount });
+    }
+    if (next.kind === 'refused' || visited.has(next.url)) return null;
+    url = next.url;
+  }
+
+  return null;
+}
 
 /**
  * One page of the merge request's pipelines, plus the newest pipeline's rollup.
@@ -302,14 +372,7 @@ export async function readGitlabPipelinesPage(
     return succeeded(Object.freeze({ ...page.value, rollup: null, rollupPipelineId: null }));
   }
 
-  const jobs = await requestGitlabJson({
-    invocation: dependencies.invocation,
-    url: jobsUrl,
-    fetcher: dependencies.fetcher,
-    signal: dependencies.signal,
-    nowMs: dependencies.nowMs,
-  });
-  const rollup = jobs.kind === 'ok' ? projectGitlabPipelineRollup(jobs.response.body) : null;
+  const rollup = await readCompleteGitlabPipelineRollup(jobsUrl, dependencies);
   return succeeded(Object.freeze({
     ...page.value,
     rollup,

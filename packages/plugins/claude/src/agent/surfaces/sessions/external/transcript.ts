@@ -714,8 +714,14 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
     items: ReturnType<typeof projectClaudeJsonlLineToDirectMessages>;
     nextCursor: string | null;
     truncated: boolean;
+    hasMore?: boolean;
     readAfterOutcome?: 'already_current' | 'gap_or_cursor_expired' | 'source_replaced' | 'source_unavailable';
-    diagnostics?: readonly Readonly<{ code: string; count: number; positions: readonly number[] }>[];
+    diagnostics?: readonly Readonly<{
+        code: string;
+        severity: 'benign' | 'required';
+        count: number;
+        positions: readonly number[];
+    }>[];
 }>> {
     throwIfAborted(params.signal);
     const resolved = await resolveClaudeJsonlSessionFile({
@@ -843,11 +849,6 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
                 maxItems: maxItems - items.length,
             });
             const mapped = projected.items;
-            if (projected.disposition === 'known_non_transcript') {
-                knownNonTranscriptPositions.push(line.startOffsetBytes);
-            } else if (projected.disposition === 'unsupported') {
-                unsupportedPositions.push(line.startOffsetBytes);
-            }
             if (items.length + mapped.length > maxItems) break;
             const proposedItems = [...items, ...mapped];
             const proposedNextOffsetBytes = read.items[index + 1]?.startOffsetBytes
@@ -860,6 +861,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
                     sourceGeneration: forwardSourceGeneration,
                 }),
                 truncated: false,
+                hasMore: proposedNextOffsetBytes < read.nextOffsetBytes,
             };
             if (!params.resultBudget.fits(proposed)) {
                 if (items.length === 0) {
@@ -868,6 +870,11 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
                     );
                 }
                 break;
+            }
+            if (projected.disposition === 'known_non_transcript') {
+                knownNonTranscriptPositions.push(line.startOffsetBytes);
+            } else if (projected.disposition === 'unsupported') {
+                unsupportedPositions.push(line.startOffsetBytes);
             }
             items.splice(0, items.length, ...proposedItems);
             nextOffsetBytes = proposedNextOffsetBytes;
@@ -888,10 +895,14 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             };
         }
         const diagnostics = [
-            ...(read.diagnostics ?? []),
+            ...(read.diagnostics ?? []).map((diagnostic) => ({
+                ...diagnostic,
+                severity: 'required' as const,
+            })),
             ...(knownNonTranscriptPositions.length > 0
                 ? [{
                     code: 'non_transcript_record_skipped',
+                    severity: 'benign' as const,
                     count: knownNonTranscriptPositions.length,
                     positions: knownNonTranscriptPositions.slice(0, 200),
                 }]
@@ -899,6 +910,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             ...(unsupportedPositions.length > 0
                 ? [{
                     code: 'unsupported_record_skipped',
+                    severity: 'required' as const,
                     count: unsupportedPositions.length,
                     positions: unsupportedPositions.slice(0, 200),
                 }]
@@ -908,6 +920,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
             items,
             nextCursor,
             truncated: false,
+            hasMore: nextOffsetBytes < read.nextOffsetBytes,
             ...(diagnostics.length > 0 ? { diagnostics } : {}),
         };
         if (!params.resultBudget.fits(result)) {
@@ -955,10 +968,14 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
         };
     }
     const diagnostics = [
-        ...(read.diagnostics ?? []),
+        ...(read.diagnostics ?? []).map((diagnostic) => ({
+            ...diagnostic,
+            severity: 'required' as const,
+        })),
         ...(knownNonTranscriptPositions.length > 0
             ? [{
                 code: 'non_transcript_record_skipped',
+                severity: 'benign' as const,
                 count: knownNonTranscriptPositions.length,
                 positions: knownNonTranscriptPositions.slice(0, 200),
             }]
@@ -966,6 +983,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
         ...(unsupportedPositions.length > 0
             ? [{
                 code: 'unsupported_record_skipped',
+                severity: 'required' as const,
                 count: unsupportedPositions.length,
                 positions: unsupportedPositions.slice(0, 200),
             }]
@@ -975,6 +993,7 @@ export async function readAfterClaudeExternalSessionTranscript(params: Readonly<
         items: projectedItems,
         nextCursor,
         truncated: false,
+        hasMore: false,
         ...(diagnostics.length > 0 ? { diagnostics } : {}),
     };
 }

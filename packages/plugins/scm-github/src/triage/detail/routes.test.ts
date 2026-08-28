@@ -7,7 +7,6 @@ import {
   GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
   GITHUB_MAX_DETAIL_PAGE_SIZE_V1,
   buildGithubChangedFilesUrl,
-  buildGithubIssueCommentsUrl,
   buildGithubPullRequestUrl,
   buildGithubTimelineUrl,
   readGithubValidatedPageNumber,
@@ -23,11 +22,9 @@ describe('GitHub detail route templates', () => {
       .toBe('https://api.github.com/repos/octo-org/example-app/issues/1284/timeline?per_page=50&page=1');
   });
 
-  it('addresses changed files, comments and the pull request itself', () => {
+  it('addresses changed files and the pull request itself', () => {
     expect(buildGithubChangedFilesUrl({ route: ROUTE, entryNumber: '1284', perPage: 100, page: 2 }))
       .toBe('https://api.github.com/repos/octo-org/example-app/pulls/1284/files?per_page=100&page=2');
-    expect(buildGithubIssueCommentsUrl({ route: ROUTE, entryNumber: '7', perPage: 30, page: 1 }))
-      .toBe('https://api.github.com/repos/octo-org/example-app/issues/7/comments?per_page=30&page=1');
     expect(buildGithubPullRequestUrl({ route: ROUTE, entryNumber: '1284' }))
       .toBe('https://api.github.com/repos/octo-org/example-app/pulls/1284');
   });
@@ -64,6 +61,17 @@ describe('GitHub detail route templates', () => {
     expect(readGithubValidatedPageNumber(advertised)).toBe(2);
     expect(buildGithubTimelineUrl({ route: ROUTE, entryNumber: '1284', perPage: 50, page: 2 }))
       .toBe(advertised);
+  });
+
+  it('rejects a follow-up link that does not advance the provider page', () => {
+    const requested = buildGithubTimelineUrl({
+      route: ROUTE,
+      entryNumber: '1284',
+      perPage: 50,
+      page: 2,
+    });
+    expect(validateGithubFollowUpPageUrl(requested, requested)).toBeNull();
+    expect(validateGithubFollowUpPageUrl(requested.replace('page=2', 'page=1'), requested)).toBeNull();
   });
 
   it('sizes the changed-file page so the documented ceiling lands on a page boundary', () => {

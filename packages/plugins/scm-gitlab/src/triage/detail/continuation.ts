@@ -25,15 +25,6 @@ import { admitForgeRequestUrl } from '@happier-dev/triage-sources/runtime';
 
 import type { GitlabConfiguredOrigin } from '../origin.js';
 
-/**
- * The largest continuation this source mints or accepts, in UTF-8 bytes.
- *
- * It holds one provider URL plus two small integers. GitLab keyset cursors are
- * long, so the bound is generous; an unexpectedly longer value is refused at the
- * boundary rather than carried into panel state.
- */
-export const MAX_GITLAB_DETAIL_CONTINUATION_UTF8_BYTES_V1 = 2_048;
-
 const CONTINUATION_VERSION = 1;
 
 export type GitlabDetailFrontierV1 = Readonly<{
@@ -48,14 +39,11 @@ export function encodeGitlabDetailContinuation(
   frontier: Omit<GitlabDetailFrontierV1, 'v'>,
 ): string | null {
   if (!Number.isSafeInteger(frontier.limit) || frontier.limit < 1) return null;
-  const token = JSON.stringify({
+  return JSON.stringify({
     v: CONTINUATION_VERSION,
     nextUrl: frontier.nextUrl,
     limit: frontier.limit,
   });
-  return new TextEncoder().encode(token).length > MAX_GITLAB_DETAIL_CONTINUATION_UTF8_BYTES_V1
-    ? null
-    : token;
 }
 
 /**
@@ -70,10 +58,6 @@ export function decodeGitlabDetailContinuation(input: Readonly<{
   origin: GitlabConfiguredOrigin;
   limit: number;
 }>): GitlabDetailFrontierV1 | null {
-  if (new TextEncoder().encode(input.token).length
-    > MAX_GITLAB_DETAIL_CONTINUATION_UTF8_BYTES_V1) {
-    return null;
-  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(input.token);

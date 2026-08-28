@@ -1,6 +1,13 @@
 import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
+import {
+    MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1,
+    MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
@@ -17,9 +24,14 @@ import {
 } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
+import { findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
-import { createTriageReadConfiguredSourceInstancesActionHandler } from './readConfiguredSourceInstances.js';
+import {
+    createTriageReadConfiguredSourceInstancesActionHandler,
+    fitTriageConfiguredSourceInstancesResult,
+    readTriageConfiguredSourceInstances,
+} from './readConfiguredSourceInstances.js';
 
 /**
  * The read half of caller-bound source administration.
@@ -254,5 +266,56 @@ describe('the caller-scoped configured-instance read', () => {
         if (result.kind !== 'read') return;
         expect(result.instances).toHaveLength(34);
         expect(result.status).toBe('complete');
+    });
+
+    it('reports the tail omitted only when whole configured records reach the Action envelope', () => {
+        const recordCount = Math.floor(
+            EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES
+                / ((MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1
+                    + MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1
+                    + MAX_TRIAGE_TEXT_UTF8_BYTES_V1 * 2) * 2),
+        ) + 1;
+        const configurationToken = '\\'.repeat(MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1);
+        const localInstanceKey = '\\'.repeat(MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1);
+        const displayText = '\\'.repeat(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+        const records = Array.from({ length: recordCount }, (_unused, index) => ({
+            v: 1 as const,
+            lifecycle: 'retired' as const,
+            configured: {
+                ...configuredInstance(FORGE, index + 1),
+                localInstanceKey,
+                configuration: { v: 1 as const, token: configurationToken },
+                locator: { v: 1 as const, displayLabel: displayText, displayPath: displayText },
+            },
+        }));
+
+        const result = TriageReadConfiguredSourceInstancesResultV1Schema.parse(
+            fitTriageConfiguredSourceInstancesResult(records),
+        );
+        expect(result.kind).toBe('read');
+        if (result.kind !== 'read') return;
+        expect(result.status).toBe('truncated');
+        expect(result.instances.length).toBeGreaterThan(0);
+        expect(result.instances.length).toBeLessThan(records.length);
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    }, 30_000);
+
+    it('settles a repeated Collection cursor instead of walking forever', async () => {
+        let calls = 0;
+        const sourceInstances = {
+            query: async () => {
+                calls += 1;
+                return { rows: [], nextCursor: 'same-cursor' };
+            },
+        } as never;
+        await expect(readTriageConfiguredSourceInstances(FORGE, {
+            sourceInstances,
+        })).rejects.toThrow('repeated continuation cursor');
+        expect(calls).toBe(2);
+
+        calls = 0;
+        await expect(findConfiguredSourceInstanceRow(sourceInstances, instanceId(1)))
+            .rejects.toThrow('repeated continuation cursor');
+        expect(calls).toBe(2);
     });
 });

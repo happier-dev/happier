@@ -193,6 +193,19 @@ describe('the mounted GitLab merge-request writes', () => {
     expect(recorded.at(-1)).toEqual({ action: 'session.open', input: { sessionId: 'session-1' } });
   });
 
+  it('keeps an opaque linked Session id out of visible and accessible copy', async () => {
+    const detail = await mountDetail(launchInput({
+      kindId: 'issue',
+      nativeRevision: '2026-08-12T09:00:00.000Z',
+      linkedSessions: [{ sessionId: 'opaque-session-id' }],
+    }));
+    await act(async () => { await detail.press(await detail.getByRole('tab', { name: 'Work Sessions' })); });
+
+    await expect(detail.queryByText('Untitled session')).resolves.toBeDefined();
+    await expect(detail.queryByRole('button', { name: 'Open session' })).resolves.toBeDefined();
+    await expect(detail.queryByText('opaque-session-id')).resolves.toBeUndefined();
+  });
+
   it('sends the merge pinned to the exact commit the reader was shown', async () => {
     nextResult = { kind: 'merged', item: { ...STATE_ROW, state: 'merged' } } as JsonValue;
     const detail = await mountDetail();

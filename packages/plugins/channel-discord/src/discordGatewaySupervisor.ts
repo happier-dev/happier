@@ -29,7 +29,9 @@ import {
 } from './discordGatewayWorker.js';
 import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
+  DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
+  DISCORD_PLUGIN_ID,
 } from './discordPluginConstants.js';
 
 const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
@@ -354,6 +356,17 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
     snapshot: ConversationProviderConnectionReconciliationSnapshotV1,
     context: PluginInvocationContext,
   ): Promise<void> => {
+    const caller = context.caller;
+    if (
+      caller?.kind !== 'plugin'
+      || caller.pluginId !== DISCORD_PLUGIN_ID
+      || caller.contribution.id !== DISCORD_GATEWAY_BACKGROUND_SERVICE_ID
+      || caller.contribution.qualifiedId
+        !== `${DISCORD_PLUGIN_ID}/backgroundServices/${DISCORD_GATEWAY_BACKGROUND_SERVICE_ID}`
+      || caller.originSurface !== 'background'
+    ) {
+      throw new Error('Discord Gateway worker attempts may only be started by the Gateway supervisor.');
+    }
     const entry = workers.get(snapshot.connectionId);
     if (
       !entry

@@ -30,10 +30,4 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: null,
     allowedModes: [],
   },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'GROK_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-  },
 });

@@ -1,5 +1,5 @@
 import type { CodexConnectedServiceRefreshSelection } from '../../auth/services/runtime/auth/application.js';
-import { readCodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
+import type { CodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
 import { createHash } from 'node:crypto';
 
 const HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY = 'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON';
@@ -118,12 +118,12 @@ export function resolveCodexConnectedServiceRefreshSelectionFromEnv(
 
 export function resolveCodexInitialConnectedServiceRuntimeIdentity(
   env: Readonly<Record<string, string | undefined>>,
+  authTokens: CodexEnvironmentAuthTokens | null,
 ): CodexConnectedServiceRuntimeIdentity | null {
   const selection = resolveCodexConnectedServiceRefreshSelectionFromEnv(env);
   if (!selection) return null;
 
-  const authTokens = readCodexEnvironmentAuthTokens(env);
-  if (!authTokens.accountId) return null;
+  if (!authTokens?.accountId) return null;
   const credentialFingerprint = computeCodexAccessTokenFingerprint(authTokens.accessToken ?? authTokens.idToken);
   const credentialRevision = resolveCodexConnectedServiceCredentialRevisionFromEnv(env);
 

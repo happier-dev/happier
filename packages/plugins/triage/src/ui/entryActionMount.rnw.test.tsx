@@ -4,8 +4,10 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
+    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageConfiguredSourceInstanceV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageScanResultV1,
@@ -16,7 +18,10 @@ import {
     TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
     TriageReadActionsResultV1Schema,
 } from '../actions/actionsCatalogProtocol.js';
-import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
+import {
+    TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
+    TriageReadEntryDetailResultV1Schema,
+} from '../actions/entryDetailProtocol.js';
 import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
     TriageStartEntrySessionInputV1Schema,
@@ -43,6 +48,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { triageActionImmediateRefusalV1 } from './header/useEntrySessionStart.js';
 
@@ -76,8 +82,26 @@ const ENTRY_REF = Object.freeze({
     entryId: '17',
 });
 
+const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
+    point: {
+        pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+        protocol: {
+            id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+            version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+        },
+    },
+    contributor: {
+        pluginId: SOURCE.pluginId,
+        contributionId: SOURCE.localId,
+        immutableGenerationId: 'generation-1',
+    },
+    role: 'prepareReviewWorkspace',
+    action: { pluginId: SOURCE.pluginId, localId: 'prepare-review-workspace' },
+});
+
 /**
- * The source's own declared descriptor, as the detail read carries it back.
+ * The source's own declared descriptor, as this mount's targeted snapshot
+ * carries it.
  *
  * `workflowSubject` reaches the controls only through this. The entry's kind is
  * the source's word, never a guess from the row, and the section is
@@ -169,12 +193,18 @@ type Harness = Readonly<{
     setBackends: (backends: readonly unknown[]) => void;
     /** Typed start outcomes returned in order; the last one is then retained. */
     setStartResults: (results: readonly unknown[]) => void;
+    /** Whether this fixture publishes the complete formal-review producer chain. */
+    formalReviewReady: boolean;
+    /** Every chooser engine-list request reached through this physical mount. */
+    reviewEngineListRequests: readonly unknown[];
 }>;
 
-function createHarness(): Harness {
+function createHarness(options: Readonly<{ formalReviewReady?: boolean }> = {}): Harness {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     const startRequests: TriageStartEntrySessionInputV1[] = [];
+    const reviewEngineListRequests: unknown[] = [];
+    const formalReviewReady = options.formalReviewReady === true;
     let draftSettles = true;
     let registry: Readonly<{ items: readonly unknown[]; truncated: boolean }> = {
         items: [],
@@ -213,7 +243,16 @@ function createHarness(): Harness {
             kind: 'present',
             localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
             locator: testkitLocator(),
-            snapshot: testkitSnapshot({ title: ENTRY_TITLE }),
+            snapshot: testkitSnapshot({
+                title: ENTRY_TITLE,
+                ...(formalReviewReady ? {
+                    reviewRevision: {
+                        baseSha: 'a'.repeat(40),
+                        headSha: 'b'.repeat(40),
+                        nativeRevision: 'revision-1',
+                    },
+                } : {}),
+            }),
             viewer: testkitViewer(),
             sourceUpdatedAtMs: 3_000,
             repository: REPOSITORY,
@@ -232,17 +271,25 @@ function createHarness(): Harness {
         if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) {
             // The descriptor is what the offered controls are chosen from; the
             // instance is the one the window selected for this row.
-            return {
+            return TriageReadEntryDetailResultV1Schema.parse({
                 kind: 'read',
                 instance: configuredInstance(),
                 linkedSessions: [],
-                linkedSessionsHasMore: false,
-                sourceDescriptor: DESCRIPTOR,
-            };
+            });
         }
         if (action === 'projects.list') return registry;
         if (action === 'sessions.spawn.profiles.list') return { items: profiles };
         if (action === 'agents.backends.list') return { items: backends };
+        if (action === 'prompts.invocation.resolve') {
+            return { status: 'resolved', text: 'Review the exact selected pull request.' };
+        }
+        if (action === 'review.engines.list') {
+            reviewEngineListRequests.push(request.input);
+            return {
+                sessionId: 'session-review',
+                items: [{ engineId: 'codex', label: 'Codex', enabled: true }],
+            };
+        }
         // Only a test that PINS a catalogue answers here; otherwise the read
         // fails exactly as it did before and the mount shows the shipped seed.
         if (action === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 && actions !== null) {
@@ -251,10 +298,11 @@ function createHarness(): Harness {
         if (action === TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1) {
             // Admitted by the Action's own published input schema, so a request
             // the wire would reject cannot be recorded as one that left.
-            startRequests.push(TriageStartEntrySessionInputV1Schema.parse(request.input));
-            const result = startResults[Math.min(startResultIndex, startResults.length - 1)];
+            const startInput = TriageStartEntrySessionInputV1Schema.parse(request.input);
+            startRequests.push(startInput);
+            const scripted = startResults[Math.min(startResultIndex, startResults.length - 1)];
             startResultIndex += 1;
-            return result;
+            return typeof scripted === 'function' ? scripted(startInput) : scripted;
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
@@ -294,6 +342,10 @@ function createHarness(): Harness {
             startResults = next;
             startResultIndex = 0;
         },
+        formalReviewReady,
+        get reviewEngineListRequests() {
+            return reviewEngineListRequests;
+        },
     };
 }
 
@@ -307,6 +359,7 @@ let draftSeeds: unknown[] = [];
 let newSessionSeeds: unknown[] = [];
 
 async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -317,16 +370,65 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                 generation: 'triage-action-mount',
             },
             surface: renderShellSurface,
-            surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            surfaceContext: createSurfaceContextFixture({
+                targetedContributions: {
+                    target: {
+                        pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+                        immutableGenerationId: 'target-generation-1',
+                    },
+                    points: [{
+                        pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+                        protocols: [{
+                            protocol: {
+                                id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+                                version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+                            },
+                            contributions: [{
+                                contributor: {
+                                    pluginId: SOURCE.pluginId,
+                                    contributionId: SOURCE.localId,
+                                    immutableGenerationId: 'generation-1',
+                                },
+                                protocol: {
+                                    id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+                                    version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+                                },
+                                descriptor: DESCRIPTOR,
+                                operations: harness.formalReviewReady
+                                    ? [PREPARE_REVIEW_WORKSPACE_OPERATION]
+                                    : [],
+                                surfaces: [],
+                            }],
+                        }],
+                    }],
+                },
+            }),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) =>
                     await harness.executeAction({ action, input }) as never,
                 selectActionInput: async ({ request }) => {
-                    if ('seed' in request) {
-                        newSessionSeeds.push(request.seed);
-                        return { kind: 'newSessionSeeded' } as never;
+                    if ('operation' in request) {
+                        const operation = request.operation;
+                        return {
+                            kind: 'submitted',
+                            action: operation.action,
+                            input: request.draft ?? {},
+                            selection: {
+                                target: {
+                                    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+                                    immutableGenerationId: 'target-generation-1',
+                                },
+                                point: operation.point,
+                                contributor: operation.contributor,
+                            },
+                            connectedAccount: {
+                                kind: 'selected',
+                                fieldPath: 'instance.binding.account',
+                                ref: configuredInstance().binding.account,
+                            },
+                        } as never;
                     }
                     draftsOpened += 1;
                     draftSeeds.push(request.draft);
@@ -334,12 +436,17 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
                         ? { kind: 'serverStartDraft', draft: SETTLED_DRAFT } as never
                         : { kind: 'cancelled' } as never;
                 },
+                openNewSession: async ({ request }) => {
+                    newSessionSeeds.push(request);
+                },
                 replacePageLocation: ({ subPath }) => subPath,
             },
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return fixture;
 }
 
@@ -353,8 +460,8 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => {
         await shell.press(await shell.getByRole('option', { name: ENTRY_TITLE }));
     });
-    // The detail read settles a turn after the press, and the descriptor it
-    // carries is what the offered controls are chosen from.
+    // The detail read settles a turn after the press. Offered controls use the
+    // exact descriptor already stamped on this physical mount.
     await settle();
 }
 
@@ -496,7 +603,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.startRequests).toHaveLength(2);
         const [first, retry] = harness.startRequests;
         expect(retry?.destination).toEqual(first?.destination);
-        expect(retry?.resume).toBeUndefined();
+        expect(retry?.resume).toEqual({ phase: 'creationPending' });
     }, 15_000);
 
     it('retries an unknown mounted delivery with the same creation and delivery identities', async () => {
@@ -539,8 +646,51 @@ describe('the entry action controls on the mounted detail header', () => {
         const [first, retry] = harness.startRequests;
         expect(retry?.destination).toEqual(first?.destination);
         expect(retry?.delivery?.idempotencyKey).toBe(first?.delivery?.idempotencyKey);
-        expect(retry?.resume?.phase).toBe('openPending');
-        expect(retry?.resume?.sessionId).toBe('session-a');
+        expect(retry?.resume).toEqual({ phase: 'creationPending' });
+    }, 15_000);
+
+    it('carries a settled spawn delivery through a mounted open retry', async () => {
+        const harness = createHarness();
+        harness.setActions([{
+            actionId: 'send',
+            label: 'Send',
+            enabled: true,
+            appliesTo: ['pullRequest', 'issue', 'errorIssue'],
+            profileId: null,
+            workspaceMode: 'reference_only',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'send' },
+        }]);
+        harness.setStartResults([
+            {
+                v: 1,
+                type: 'openPending',
+                sessionId: 'session-a',
+                disposition: 'created',
+                delivery: 'accepted',
+            },
+            {
+                v: 1,
+                type: 'opened',
+                sessionId: 'session-a',
+                disposition: 'created',
+                delivery: 'accepted',
+            },
+        ]);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        const send = await shell.getByRole('button', { name: 'Send' });
+        await act(async () => { await shell.press(send); });
+        await settle();
+        await act(async () => { await shell.press(send); });
+        await settle();
+
+        expect(harness.startRequests).toHaveLength(2);
+        expect(harness.startRequests[1]?.resume).toMatchObject({
+            phase: 'openPending',
+            sessionId: 'session-a',
+            delivery: 'accepted',
+        });
     }, 15_000);
 
     it('starts a repository session in the project the reader settled on', async () => {
@@ -862,24 +1012,114 @@ describe('the entry action controls on the mounted detail header', () => {
         await expect(shell.getByRole('button', { name: 'Configured catalogue loaded' }))
             .resolves.toBeDefined();
 
-        // The `reviewStart` arm is unavailable BEFORE anything is created: no
-        // control is offered, no creation key is spent, and the host's New
-        // Session surface is never opened. `review.start` scopes to exact
-        // commits in a source-prepared worktree, and those producers are not
-        // complete in current bytes.
+        // The formal arm is excluded because its declared `repository` mode
+        // cannot satisfy its pull-request workspace requirement. There is no
+        // blanket formal-review refusal anymore: a correctly configured
+        // `pull_request` arm is admitted by the current producer chain.
         await expect(shell.queryByRole('button', { name: 'Fix' })).resolves.toBeUndefined();
         expect(harness.startRequests).toEqual([]);
         expect(draftsOpened).toBe(0);
         expect(triageActionImmediateRefusalV1({
             target: { kind: 'reviewStart', promptInvocationId: null },
             workspaceMode: 'repository',
-        })).toBe('reviewStartUnsupported');
+            appliesTo: ['pullRequest'],
+        })).toBe('preparedWorkspaceUnsupported');
 
         // The agent arm, under the label that says "review", starts normally.
         await pressAction(shell, 'Run code review');
         expect(harness.startRequests).toHaveLength(1);
         expect(harness.startRequests[0]?.workspaceMode).toBe('repository');
     });
+
+    it('carries an admitted selected-PR preparation into the mounted review chooser', async () => {
+        const harness = createHarness({ formalReviewReady: true });
+        harness.setActions([{
+            actionId: 'formal-review',
+            label: 'Formal review',
+            enabled: true,
+            appliesTo: ['pullRequest'],
+            profileId: null,
+            workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
+        }]);
+        harness.setRegistry({
+            items: [projectRow({ rootPath: '/workspaces/example' })],
+            truncated: false,
+        });
+        harness.setStartResults([(input: TriageStartEntrySessionInputV1) => {
+            if (input.destination.kind !== 'new'
+                || input.destination.materialization.kind !== 'reviewWorkspace'
+                || input.destination.materialization.request.workspace === null) {
+                throw new Error('expected a selected review workspace request');
+            }
+            const request = input.destination.materialization.request;
+            return {
+                v: 1,
+                type: 'linked',
+                sessionId: 'session-review',
+                disposition: 'created',
+                delivery: 'notRequested',
+                finalOpen: 'deferred',
+                review: {
+                    instance: request.instance,
+                    entryRef: request.entryRef,
+                    lastKnownLocator: request.lastKnownLocator,
+                    observed: request.observed,
+                    workspace: request.workspace,
+                    repositoryPath: '/workspaces/example-review',
+                    pullRequest: { number: 17 },
+                },
+            };
+        }]);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        const review = await shell.findByRole('button', {
+            name: 'Formal review',
+        });
+        await act(async () => { await shell.press(review); });
+        await settle();
+
+        await expect.poll(
+            () => harness.reviewEngineListRequests.length,
+            { timeout: 60_000 },
+        ).toBe(1);
+        await settle();
+        await expect(shell.getByRole('checkbox', { name: 'Codex' })).resolves.toBeDefined();
+        expect(harness.startRequests).toHaveLength(1);
+        expect(harness.startRequests[0]).toMatchObject({
+            workspaceMode: 'pull_request',
+            finalOpen: 'deferred',
+            destination: {
+                kind: 'new',
+                materialization: {
+                    kind: 'reviewWorkspace',
+                    request: {
+                        entryRef: ENTRY_REF,
+                        workflowSubject: 'pullRequest',
+                        observed: {
+                            baseSha: 'a'.repeat(40),
+                            headSha: 'b'.repeat(40),
+                            nativeRevision: 'revision-1',
+                        },
+                        workspace: {
+                            serverId: 'server-a',
+                            machineId: 'machine-a',
+                            rootPath: '/workspaces/example',
+                        },
+                    },
+                },
+            },
+            prepareReviewWorkspaceSelection: {
+                selection: {
+                    contributor: PREPARE_REVIEW_WORKSPACE_OPERATION.contributor,
+                    point: PREPARE_REVIEW_WORKSPACE_OPERATION.point,
+                },
+                credentialRef: configuredInstance().binding.account,
+            },
+        });
+        expect(harness.reviewEngineListRequests).toEqual([{ sessionId: 'session-review' }]);
+    }, 60_000);
 
     it('does not launch directly from a registry that admitted it was partial', async () => {
         const harness = createHarness();
@@ -910,5 +1150,89 @@ describe('the entry action controls on the mounted detail header', () => {
         const destination = harness.startRequests[0]?.destination;
         expect(destination?.kind === 'new' ? destination.spawn.executionTarget : null)
             .toEqual({ serverId: 'server-a', machineId: 'machine-a' });
+    });
+
+    it('retains the resolved review instructions when a pending formal start is resumed', async () => {
+        const harness = createHarness({ formalReviewReady: true });
+        harness.setActions([{
+            actionId: 'formal-review',
+            label: 'Formal review',
+            enabled: true,
+            appliesTo: ['pullRequest'],
+            profileId: null,
+            workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
+        }]);
+        harness.setRegistry({
+            items: [projectRow({ rootPath: '/workspaces/example' })],
+            truncated: false,
+        });
+        harness.setStartResults([
+            {
+                v: 1,
+                type: 'linkPending',
+                sessionId: 'session-review',
+                disposition: 'created',
+                preparedReviewWorkspace: {
+                    repositoryPath: '/workspaces/example-review',
+                    branch: 'review/pr-17',
+                    created: true,
+                    pullRequest: { number: 17 },
+                    currentness: { kind: 'currentAtObservedHead' },
+                },
+            },
+            (input: TriageStartEntrySessionInputV1) => {
+                if (input.destination.kind !== 'new'
+                    || input.destination.materialization.kind !== 'reviewWorkspace'
+                    || input.destination.materialization.request.workspace === null) {
+                    throw new Error('expected the retained selected review workspace request');
+                }
+                const request = input.destination.materialization.request;
+                return {
+                    v: 1,
+                    type: 'linked',
+                    sessionId: 'session-review',
+                    disposition: 'created',
+                    delivery: 'notRequested',
+                    finalOpen: 'deferred',
+                    review: {
+                        instance: request.instance,
+                        entryRef: request.entryRef,
+                        lastKnownLocator: request.lastKnownLocator,
+                        observed: request.observed,
+                        workspace: request.workspace,
+                        repositoryPath: '/workspaces/example-review',
+                        pullRequest: { number: 17 },
+                    },
+                };
+            },
+        ]);
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        const review = await shell.findByRole('button', {
+            name: 'Formal review',
+        });
+        await act(async () => { await shell.press(review); });
+        await settle();
+        await act(async () => { await shell.press(review); });
+        await settle();
+
+        expect(harness.startRequests).toHaveLength(2);
+        expect(harness.startRequests[1]?.resume).toMatchObject({
+            phase: 'linkPending',
+            sessionId: 'session-review',
+            preparedReviewWorkspace: {
+                repositoryPath: '/workspaces/example-review',
+                currentness: { kind: 'currentAtObservedHead' },
+            },
+        });
+        expect('prepareReviewWorkspaceSelection' in (harness.startRequests[1] ?? {})).toBe(false);
+        await expect.poll(
+            () => harness.reviewEngineListRequests.length,
+            { timeout: 60_000 },
+        ).toBe(1);
+        await settle();
+        await expect(shell.getByRole('checkbox', { name: 'Codex' })).resolves.toBeDefined();
     });
 });

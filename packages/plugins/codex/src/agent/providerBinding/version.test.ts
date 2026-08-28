@@ -6,31 +6,7 @@ import {
 } from './version.js';
 
 describe('Codex provider-binding runtime version', () => {
-  it('accepts stable Codex releases from the 0.144 minimum, including the managed 0.147 line', () => {
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.144.0')).toEqual({
-      ok: true,
-      version: '0.144.0',
-    });
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.144.9')).toEqual({
-      ok: true,
-      version: '0.144.9',
-    });
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.145.0')).toEqual({
-      ok: true,
-      version: '0.145.0',
-    });
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.145.9')).toEqual({
-      ok: true,
-      version: '0.145.9',
-    });
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.146.0')).toEqual({
-      ok: true,
-      version: '0.146.0',
-    });
-    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.146.1')).toEqual({
-      ok: true,
-      version: '0.146.1',
-    });
+  it('accepts stable Codex releases from the validated managed 0.147 contract with no arbitrary upper cap', () => {
     expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.147.0')).toEqual({
       ok: true,
       version: '0.147.0',
@@ -39,15 +15,23 @@ describe('Codex provider-binding runtime version', () => {
       ok: true,
       version: '0.147.9',
     });
+    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 0.200.0')).toEqual({
+      ok: true,
+      version: '0.200.0',
+    });
+    expect(resolveCodexProviderBindingRuntimeVersionV1('codex-cli 1.0.0')).toEqual({
+      ok: true,
+      version: '1.0.0',
+    });
     expect(CODEX_PROVIDER_BINDING_RUNTIME_RANGE_V1).toEqual({
-      minInclusive: '0.144.0',
+      minInclusive: '0.147.0',
     });
   });
 
   it('fails closed for a stable version below the minimum or an invalid version shape', () => {
     for (const versionOutput of [
-      'codex-cli 0.143.9',
-      'codex-cli 0.144.0-alpha.1',
+      'codex-cli 0.146.9',
+      'codex-cli 0.147.0-alpha.1',
       'not-a-version',
       '',
     ]) {

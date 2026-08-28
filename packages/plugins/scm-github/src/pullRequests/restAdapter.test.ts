@@ -218,7 +218,7 @@ describe('GitHub REST pull request adapter', () => {
     expect(requests).toEqual([]);
   });
 
-  it('resolves default branch and checkout reference metadata without checkout orchestration', async () => {
+  it('resolves checkout reference metadata without checkout orchestration', async () => {
     const mod = await import('./restAdapter.js').catch(() => null);
     expect(mod).not.toBeNull();
     if (!mod) return;
@@ -226,12 +226,6 @@ describe('GitHub REST pull request adapter', () => {
     const adapter = mod.createGithubRestAdapter({
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token', profileKey: 'github:work' }),
       fetcher: async (url: string) => {
-        if (url === 'https://api.github.com/repos/happier-dev/happier') {
-          return jsonResponse({
-            default_branch: 'main',
-            default_branch_ref: { sha: 'base-sha' },
-          });
-        }
         return jsonResponse({
           number: 12,
           title: 'Checkout metadata only',
@@ -243,10 +237,6 @@ describe('GitHub REST pull request adapter', () => {
       },
     });
 
-    await expect(adapter.getDefaultBranch({ provider: githubProvider })).resolves.toEqual({
-      name: 'main',
-      sha: 'base-sha',
-    });
     await expect(adapter.resolvePullRequestCheckoutReference({
       provider: githubProvider,
       reference: { number: 12 },

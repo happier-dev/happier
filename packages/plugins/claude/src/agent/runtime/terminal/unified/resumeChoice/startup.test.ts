@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
+import {
+  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE as PROTOCOL_CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+} from '@happier-dev/protocol/agents/claude';
 
 import {
   createEventsFixture,
@@ -7,6 +9,7 @@ import {
   createTerminalHostFixture,
 } from '../../../engine.testkit.js';
 import { parseClaudeScreenState } from '../screenState.js';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '../constants.js';
 import { createFakeControlPort } from '../tuiControls/fakeControlPort.js';
 import { createClaudeUnifiedResumeChoiceStartupHandler } from './startup.js';
 import { CLAUDE_UNIFIED_RESUME_CHOICE_QUESTION } from './types.js';
@@ -97,6 +100,11 @@ function pendingDecisionUntilAbort<T>(signal: AbortSignal | undefined): Promise<
 }
 
 describe('createClaudeUnifiedResumeChoiceStartupHandler', () => {
+  it('keeps the plugin-owned dialog source equal to the host Protocol discriminant', () => {
+    expect(CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE)
+      .toBe(PROTOCOL_CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE);
+  });
+
   it('answers an orphan effort dialog toward the configured target', async () => {
     const port = createFakeControlPort({ captures: [EFFORT_HIGH_DIALOG, IDLE_COMPOSER] });
     const handler = createClaudeUnifiedResumeChoiceStartupHandler({

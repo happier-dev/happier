@@ -1,3 +1,5 @@
+import type { AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -32,13 +34,12 @@ function exactTarget(selectionValue: unknown) {
   } : null;
 }
 
-export function createGeminiConnectedServiceRuntimeAuthAdapter() {
+export function createGeminiConnectedServiceRuntimeAuthAdapter(): AgentConnectedAccountRuntimeAuthAdapterV1 {
   return {
     classifyRuntimeAuthFailure() { return null; },
     async materializeActiveProfile() { return { supported: true }; },
     canHotApply() { return { supported: false, recovery: 'restart_rematerialize' }; },
     async hotApply() { return { applied: false, reason: 'hot_apply_unsupported' }; },
-    async recoverAfterRuntimeAuthSwitch() { return { recovered: false, recovery: 'restart_rematerialize' }; },
     async verifyActiveAccount() {
       return { status: 'unavailable' as const, retryable: true, reason: 'gemini_provider_outcome_pending' };
     },

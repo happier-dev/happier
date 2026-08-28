@@ -22,6 +22,7 @@ import {
 } from '../../corpus/testkit/observations.test-support.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1, TRIAGE_SHELL_LIST_REGION_TEST_ID_V1 } from './root.js';
 
 /**
@@ -135,6 +136,7 @@ async function executeAction(action: string): Promise<JsonValue> {
 const mounted: PluginUiTestkit[] = [];
 
 async function mountShell(textScale = 1): Promise<PluginUiTestkit> {
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -153,7 +155,7 @@ async function mountShell(textScale = 1): Promise<PluginUiTestkit> {
                 },
                 textScale,
             }),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action }) => await executeAction(action),
@@ -162,7 +164,9 @@ async function mountShell(textScale = 1): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return fixture;
 }
 

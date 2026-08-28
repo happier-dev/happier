@@ -5,10 +5,11 @@ import {
   type ConversationNormalizedIngressV1,
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
+  admitCheckpointedPluginEventObservationV1,
+  createPluginEventAutomationSetupResultV1JsonSchema,
   PluginEventAutomationSetupResultV1Schema,
   type PluginEventAutomationSetupResultV1,
 } from '@happier-dev/plugin-sdk/events';
@@ -61,21 +62,11 @@ export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_INPUT_SCHEMA = {
   required: ['credentialRef', 'chatId'],
 } as const satisfies PluginJsonSchema;
 
-export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    v: { type: 'integer', const: 1 },
-    sourceInstanceId: { type: 'string', minLength: 1, maxLength: 512 },
-    sourceContractVersion: {
-      type: 'integer',
-      const: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
-    },
-    sourceConfig: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
-    displayLabel: { type: 'string', minLength: 1, maxLength: 256 },
-  },
-  required: ['v', 'sourceInstanceId', 'sourceContractVersion', 'sourceConfig', 'displayLabel'],
-} as const satisfies PluginJsonSchema;
+export const TELEGRAM_AUTOMATION_MESSAGE_SETUP_RESULT_SCHEMA =
+  createPluginEventAutomationSetupResultV1JsonSchema(
+    TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
+  );
 
 type TelegramAutomationSourceConfig = Readonly<{ botId: string; chatId: string }>;
 
@@ -142,47 +133,6 @@ export function createTelegramAutomationEventCandidate(input: Readonly<{
   };
 }
 
-type SourcesListResult = PluginActionResultById['automation.event.sources.list'];
-type SourceDefinition = Extract<SourcesListResult, Readonly<{ kind: 'page' }>>['definitions'][number];
-type AdmitInput = PluginActionInputById['automation.event.admit'];
-
-async function readCurrentSourceDefinitions(
-  context: PluginInvocationContext,
-): Promise<readonly SourceDefinition[] | null> {
-  const definitions: SourceDefinition[] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-  let revision: string | null = null;
-  for (;;) {
-    context.signal.throwIfAborted();
-    const request: PluginActionInputById['automation.event.sources.list'] = {
-      transport: { kind: 'checkpointedPull' },
-      ...(cursor === undefined ? {} : { cursor }),
-    };
-    let result: SourcesListResult;
-    try {
-      result = await context.services.actions.execute(
-        'automation.event.sources.list',
-        request,
-        { signal: context.signal },
-      );
-    } catch (error) {
-      if (context.signal.aborted) throw error;
-      return null;
-    }
-    context.signal.throwIfAborted();
-    if (result.kind !== 'page' || (revision !== null && result.revision !== revision)) {
-      return null;
-    }
-    revision ??= result.revision;
-    definitions.push(...result.definitions);
-    if (result.nextCursor === null) return definitions;
-    if (seenCursors.has(result.nextCursor)) return null;
-    seenCursors.add(result.nextCursor);
-    cursor = result.nextCursor;
-  }
-}
-
 /**
  * Stateless bridge for a frozen Channels Event obligation. It only resolves
  * current matching Automation definitions and invokes their host admission;
@@ -194,41 +144,16 @@ export async function admitTelegramAutomationEvent(
 ): Promise<ConversationProviderAutomationEventAdmitResultV1> {
   assertTelegramChannelsCoreCaller(context);
   const request = ConversationProviderAutomationEventAdmitInputV1Schema.parse(input);
-  const definitions = await readCurrentSourceDefinitions(context);
-  if (definitions === null) return { kind: 'unsettled' };
-  const matchingDefinitions = definitions.filter((definition) => (
-    definition.eventRef.pluginId === request.candidate.eventRef.pluginId
-    && definition.eventRef.localId === request.candidate.eventRef.localId
-    && definition.sourceInstanceId === request.candidate.sourceInstanceId
-    && definition.sourceContractVersion === request.candidate.sourceContractVersion
-  ));
-  if (matchingDefinitions.length === 0) return { kind: 'checkpointSafe' };
-  const admitInput: AdmitInput = {
+  return admitCheckpointedPluginEventObservationV1({
     eventRef: request.candidate.eventRef,
+    sourceInstanceId: request.candidate.sourceInstanceId,
+    sourceContractVersion: request.candidate.sourceContractVersion,
     occurrenceId: request.occurrenceId,
     occurredAt: request.occurredAt,
     observationReceivedAt: request.observationReceivedAt,
+    observedDelta: request.observedDelta,
     payload: request.candidate.payload,
-    definitions: matchingDefinitions.map((definition) => ({
-      automationId: definition.automationId,
-      templateVersion: definition.templateVersion,
-      sourceSelectorId: definition.sourceSelectorId,
-    })),
-  };
-  try {
-    const admitted = await context.services.actions.execute(
-      'automation.event.admit',
-      admitInput,
-      { signal: context.signal },
-    );
-    context.signal.throwIfAborted();
-    return admitted.results.every((result) => result.checkpointSafe)
-      ? { kind: 'checkpointSafe' }
-      : { kind: 'unsettled' };
-  } catch (error) {
-    if (context.signal.aborted) throw error;
-    return { kind: 'unsettled' };
-  }
+  }, context);
 }
 
 export function throwTelegramAutomationSetupInvalid(): never {

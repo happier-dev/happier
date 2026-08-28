@@ -3,10 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type {
-  AgentExecutionRunOpenRequest,
-  AgentRuntimeContext,
   AgentRuntimeFactoryContext,
-  AgentSessionControlContext,
   AgentSessionRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -17,7 +14,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import {
   PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
@@ -141,6 +137,11 @@ function createContext(
     agent: { id: 'pi' },
     protocols: { acp: { open: async () => { throw new Error('Pi is not ACP'); } } },
   };
+  const sessionServices = {
+    models: {
+      bind: vi.fn(() => ({ dispose() {} })),
+    },
+  };
   return {
     factory: {
       plugin: common.plugin,
@@ -149,15 +150,28 @@ function createContext(
     } as AgentRuntimeFactoryContext,
     session: {
       ...common,
-      session: { id: sessionId },
+      session: { id: sessionId, services: sessionServices },
       workState: {},
     } as AgentSessionRuntimeContext,
-    execution: common as AgentRuntimeContext,
   };
 }
 
 async function waitForWrittenCount(capture: Capture, count: number): Promise<void> {
   await vi.waitFor(() => expect(capture.written).toHaveLength(count));
+}
+
+async function waitForWrittenType(capture: Capture, type: string): Promise<number> {
+  let index = -1;
+  await vi.waitFor(() => {
+    index = capture.written.findIndex((entry) => (
+      typeof entry === 'object'
+      && entry !== null
+      && !Array.isArray(entry)
+      && (entry as { type?: unknown }).type === type
+    ));
+    expect(index).toBeGreaterThanOrEqual(0);
+  });
+  return index;
 }
 
 async function ack(capture: Capture, index: number, data?: JsonValue): Promise<void> {
@@ -166,18 +180,6 @@ async function ack(capture: Capture, index: number, data?: JsonValue): Promise<v
   await capture.listener?.({
     type: 'response', id: command.id, command: command.type, success: true,
     ...(data === undefined ? {} : { data }),
-  });
-}
-
-async function reject(capture: Capture, index: number, error: string): Promise<void> {
-  const command = capture.written[index] as { id?: unknown; type?: unknown };
-  if (typeof command.id !== 'string' || typeof command.type !== 'string') throw new Error('missing Pi command');
-  await capture.listener?.({
-    type: 'response',
-    id: command.id,
-    command: command.type,
-    success: false,
-    error,
   });
 }
 
@@ -226,7 +228,7 @@ describe('activate', () => {
       module: { activate },
     });
     try {
-      expect(activation.registration('agents', 'pi')?.connectedAccountLaunch).toEqual({
+      expect(activation.registration('agents', 'pi')?.connectedAccountLaunch).toMatchObject({
         requestAuthUses: [{
           purpose: 'anthropic-model-request',
           materialization: {
@@ -248,17 +250,26 @@ describe('activate', () => {
             mode: 'materialized_home',
             secretEntries: ['auth.json'],
           },
+          nativeHome: {
+            environmentKey: 'PI_CODING_AGENT_DIR',
+            defaultRelativePath: '.pi/agent',
+          },
         }),
+        continuity: {
+          runtimeAuthAdapter: expect.objectContaining({
+            classifyRuntimeAuthFailure: expect.any(Function),
+          }),
+          verifyResumeReachable: expect.any(Function),
+        },
       });
       expect(activation.registration('agents', 'pi')?.connectedAccountLaunch?.stateSharingDescriptor)
         .not.toHaveProperty('providerId');
-      expect(PI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
     } finally {
       await activation.dispose();
     }
   });
 
-  it('registers native Pi session and execution-run factories with no V1 compatibility fallback', async () => {
+  it('registers the native Pi Session factory and leaves finite Run derivation to the host', async () => {
     const activation = await createPluginTestkit({
       manifest: PLUGIN_MANIFEST,
       module: { activate },
@@ -311,177 +322,46 @@ describe('activate', () => {
     const runtime = await registration.factory(context.factory);
     expect(runtime.sessions).toEqual({
       open: expect.any(Function),
-      usageLimitRecovery: { execute: expect.any(Function) },
+      usageLimitRecovery: undefined,
     });
-    for (const activity of ['active', 'inactive'] as const) {
-      const controlContext = {
-        signal: context.factory.signal,
-        session: {
-          id: 'pi-host-session-1',
-          cwd: '/tmp/pi-workspace',
-          activity,
-          connectedAccounts: [],
-        },
-      } as unknown as AgentSessionControlContext;
-      await expect(runtime.sessions.usageLimitRecovery?.execute(
-        { kind: 'checkNow' },
-        controlContext,
-      )).resolves.toEqual({
-        status: 'waiting',
-        retryAfterMs: 600_000,
-      });
-      await expect(runtime.sessions.usageLimitRecovery?.execute(
-        { kind: 'consumeResetCredit', issueFingerprint: 'quota-1' },
-        controlContext,
-      )).resolves.toMatchObject({
-        status: 'unsupported',
-        diagnostic: { code: 'pi_reset_credit_unsupported' },
-      });
-    }
-    expect(runtime.executionRuns).toEqual({ open: expect.any(Function) });
+    expect(runtime.executionRuns).toBeUndefined();
     await activation.dispose();
   });
 
-  it('projects an exact acknowledged execution-run abort as one cancelled terminal', async () => {
+  it('routes an exact Session cancellation request to Pi abort', async () => {
     const capture: Capture = { specs: [], written: [] };
-    const context = createContext(capture, 'pi-execution-cancel');
+    const context = createContext(capture, 'pi-session-cancel');
     const runtime = await createPiRuntime(context.factory);
-    const opening = runtime.executionRuns!.open({
+    const session = await runtime.sessions!.open({
       kind: 'create',
-      runId: 'pi-execution-cancel',
+      sessionId: 'pi-session-cancel',
       cwd: '/tmp/pi-workspace',
-      profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
+    }, context.session);
+
+    const sending = session.send({
+      inputIds: ['pi-session-cancel-input'],
       input: { text: 'Run until cancelled.' },
-    }, context.execution);
-    await waitForWrittenCount(capture, 1);
-    await ack(capture, 0, { sessionId: 'pi-execution-cancel-provider' });
-    await waitForWrittenCount(capture, 2);
-    await ack(capture, 1);
-    const executionRun = await opening;
-    const events: Array<Parameters<Parameters<typeof executionRun.watch>[0]>[0]> = [];
-    executionRun.watch((event) => events.push(event));
-    expect(events).toEqual([
-      expect.objectContaining({
-        kind: 'run-start',
-        runId: 'pi-execution-cancel',
-      }),
-    ]);
-
-    const stop = executionRun.stop();
-    await waitForWrittenCount(capture, 3);
-    expect(capture.written[2]).toEqual(expect.objectContaining({ type: 'abort' }));
-    await capture.listener?.({ type: 'agent_end', willRetry: false });
-    expect(events).toHaveLength(1);
-    await ack(capture, 2);
-
-    await expect(stop).resolves.toEqual({ status: 'requested' });
-    expect(events).toEqual([
-      expect.objectContaining({
-        kind: 'run-start',
-        runId: 'pi-execution-cancel',
-      }),
-      expect.objectContaining({
-        kind: 'run-cancelled',
-        runId: 'pi-execution-cancel',
-      }),
-    ]);
-    await capture.listener?.({ type: 'agent_end', willRetry: false });
-    expect(events.filter((event) => event.kind === 'run-cancelled')).toHaveLength(1);
-    await executionRun.dispose();
-  });
-
-  it('replays output and terminal events received before execution-run open resolves', async () => {
-    const capture: Capture = { specs: [], written: [] };
-    const context = createContext(capture, 'pi-execution-early-terminal');
-    const runtime = await createPiRuntime(context.factory);
-    const opening = runtime.executionRuns!.open({
-      kind: 'create',
-      runId: 'pi-execution-early-terminal',
-      cwd: '/tmp/pi-workspace',
-      profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
-      input: { text: 'Complete before the host subscribes.' },
-    }, context.execution);
-    await waitForWrittenCount(capture, 1);
-    await ack(capture, 0, { sessionId: 'pi-execution-early-terminal-provider' });
-    await waitForWrittenCount(capture, 2);
-    await capture.listener?.({
-      type: 'message_update',
-      assistantMessageEvent: { type: 'text_delta', delta: 'early output' },
-      message: { role: 'assistant', content: [{ type: 'text', text: 'early output' }] },
+      delivery: { kind: 'newTurn', turnId: 'pi-session-cancel-turn' },
     });
-    await capture.listener?.({ type: 'agent_end', willRetry: false });
-    await ack(capture, 1);
+    const stateIndex = await waitForWrittenType(capture, 'get_state');
+    await ack(capture, stateIndex, { sessionId: 'pi-session-cancel-provider' });
+    const promptIndex = await waitForWrittenType(capture, 'prompt');
+    await ack(capture, promptIndex);
+    await expect(sending).resolves.toEqual({ status: 'admitted' });
 
-    const executionRun = await opening;
-    const events: Array<Parameters<Parameters<typeof executionRun.watch>[0]>[0]> = [];
-    executionRun.watch((event) => events.push(event));
-    expect(events).toEqual([
-      expect.objectContaining({ kind: 'run-start' }),
-      expect.objectContaining({ kind: 'output-delta', text: 'early output' }),
-      expect.objectContaining({ kind: 'run-complete' }),
-    ]);
-    await executionRun.dispose();
+    const cancelling = session.cancel!({
+      turnId: 'pi-session-cancel-turn',
+      reason: 'user',
+    });
+    const abortIndex = await waitForWrittenType(capture, 'abort');
+    await ack(capture, abortIndex);
+
+    await expect(cancelling).resolves.toEqual({
+      status: 'requested',
+      turnId: 'pi-session-cancel-turn',
+    });
+    await session.dispose();
   });
-
-  it('publishes a terminal failure when the initial execution-run prompt is rejected', async () => {
-    const capture: Capture = { specs: [], written: [] };
-    const context = createContext(capture, 'pi-execution-rejected');
-    const runtime = await createPiRuntime(context.factory);
-    const opening = runtime.executionRuns!.open({
-      kind: 'create',
-      runId: 'pi-execution-rejected',
-      cwd: '/tmp/pi-workspace',
-      profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
-      input: { text: 'Reject this prompt.' },
-    }, context.execution);
-    await waitForWrittenCount(capture, 1);
-    await ack(capture, 0, { sessionId: 'pi-execution-rejected-provider' });
-    await waitForWrittenCount(capture, 2);
-    await reject(capture, 1, 'Prompt was not acknowledged');
-
-    const executionRun = await opening;
-    const events: Array<Parameters<Parameters<typeof executionRun.watch>[0]>[0]> = [];
-    executionRun.watch((event) => events.push(event));
-    expect(events).toEqual([
-      expect.objectContaining({ kind: 'run-start' }),
-      expect.objectContaining({
-        kind: 'run-failed',
-        diagnostic: expect.objectContaining({
-          code: 'pi_provider_session_error',
-          message: 'Pi provider rejected the prompt before acceptance: Prompt was not acknowledged',
-        }),
-      }),
-    ]);
-    await executionRun.dispose();
-  });
-
-  it.each(['resume', 'fork'] as const)(
-    'rejects undeclared execution-run %s before opening a Pi process',
-    async (kind) => {
-      const capture: Capture = { specs: [], written: [] };
-      const context = createContext(capture, `pi-execution-${kind}`);
-      const runtime = await createPiRuntime(context.factory);
-      const request = (kind === 'resume'
-        ? {
-            kind,
-            runId: 'pi-execution-resume',
-            cwd: '/tmp/pi-workspace',
-            profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
-            checkpointId: 'checkpoint-1',
-          }
-        : {
-            kind,
-            runId: 'pi-execution-fork',
-            cwd: '/tmp/pi-workspace',
-            profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
-            sourceRunId: 'pi-source-run',
-          }) satisfies AgentExecutionRunOpenRequest;
-
-      await expect(runtime.executionRuns!.open(request, context.execution))
-        .rejects.toThrow(`Pi execution runs do not support ${kind}`);
-      expect(capture.specs).toEqual([]);
-    },
-  );
 
   it('opens Pi through public services and compacts once with canonical events', async () => {
     const capture: Capture = { specs: [], written: [] };
@@ -567,7 +447,10 @@ describe('activate', () => {
         ...context.session,
         session: {
           ...context.session.session,
-          services: { happierTools: { resolveNativeBridge } },
+          services: {
+            ...context.session.session.services,
+            happierTools: { resolveNativeBridge },
+          },
         },
       } as unknown as AgentSessionRuntimeContext;
       const runtime = await createPiRuntime(context.factory);
@@ -719,6 +602,9 @@ describe('activate', () => {
             CI: '1',
           },
           unsetEnvKeys: [
+            'GEMINI_API_KEY',
+            'OPENROUTER_API_KEY',
+            'KIMI_API_KEY',
             PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
             PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
           ],
@@ -726,7 +612,6 @@ describe('activate', () => {
       });
       await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe(
         `${JSON.stringify({
-          openrouter: { type: 'api_key', key: 'pre-existing-provider-key' },
           openai: { type: 'api_key', key: 'sk-openai-public' },
           anthropic: { type: 'api_key', key: 'sk-anthropic-public' },
         }, null, 2)}\n`,
@@ -893,7 +778,10 @@ describe('activate', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-pi-public-setup-token-'));
     const agentDir = join(root, 'pi-agent-dir');
     await mkdir(agentDir, { recursive: true });
-    await writeFile(join(agentDir, 'auth.json'), '{}\n');
+    await writeFile(join(agentDir, 'auth.json'), `${JSON.stringify({
+      anthropic: { type: 'api_key', key: 'stale-anthropic-secret' },
+      openrouter: { type: 'api_key', key: 'stale-openrouter-secret' },
+    }, null, 2)}\n`);
     const connectedAccounts: ConnectedAccountsFixture = {
       getBinding: vi.fn(async (purpose: string) => {
         if (purpose === 'anthropic-model-request') {
@@ -938,6 +826,8 @@ describe('activate', () => {
           values: {
             PI_CODING_AGENT_DIR: agentDir,
             [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(root, 'request-auth.json'),
+            ANTHROPIC_API_KEY: 'ambient-anthropic-sentinel',
+            OPENROUTER_API_KEY: 'ambient-openrouter-sentinel',
           },
           unset: ['ANTHROPIC_API_KEY'],
         },
@@ -959,13 +849,94 @@ describe('activate', () => {
           env: expect.objectContaining({ ANTHROPIC_API_KEY: 'claude-setup-token-public' }),
         },
       });
-      expect(capture.specs[0]?.launch).not.toHaveProperty('unsetEnvKeys');
+      expect(capture.specs[0]?.launch.unsetEnvKeys).toEqual(expect.arrayContaining([
+        'OPENAI_API_KEY',
+        'GEMINI_API_KEY',
+        'OPENROUTER_API_KEY',
+        'KIMI_API_KEY',
+      ]));
+      expect(capture.specs[0]?.launch.unsetEnvKeys).not.toContain('ANTHROPIC_API_KEY');
       expect(JSON.stringify(capture.specs[0])).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+      expect(JSON.stringify(capture.specs[0])).not.toContain('ambient-anthropic-sentinel');
+      expect(JSON.stringify(capture.specs[0])).not.toContain('ambient-openrouter-sentinel');
+      expect(JSON.stringify(capture.specs[0])).not.toContain('stale-anthropic-secret');
+      expect(JSON.stringify(capture.specs[0])).not.toContain('stale-openrouter-secret');
       await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe(
         `${JSON.stringify({
           anthropic: { type: 'api_key', key: 'claude-setup-token-public' },
         }, null, 2)}\n`,
       );
+      const requestAuthSource = await readFile(
+        join(agentDir, 'extensions', 'happier-pi-request-auth.js'),
+        'utf8',
+      );
+      expect(requestAuthSource).toContain('openai-codex-model-request');
+      expect(requestAuthSource).not.toContain('anthropic-model-request');
+      await session.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('clears stale direct auth and ambient keys for a request-auth-only launch', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-pi-request-auth-only-'));
+    const agentDir = join(root, 'pi-agent-dir');
+    await mkdir(agentDir, { recursive: true });
+    await writeFile(join(agentDir, 'auth.json'), `${JSON.stringify({
+      openai: { type: 'api_key', key: 'stale-openai-sentinel' },
+      anthropic: { type: 'api_key', key: 'stale-anthropic-sentinel' },
+    }, null, 2)}\n`);
+    const account = {
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+      accountId: 'codex-request-auth-account',
+    } as const;
+    const connectedAccounts: ConnectedAccountsFixture = {
+      getBinding: vi.fn(async (purpose: string) => purpose === 'openai-codex-model-request'
+        ? {
+            purpose,
+            service: account.service,
+            account,
+            target: { kind: 'account' as const, displayName: 'Codex OAuth' },
+          }
+        : null),
+      materialize: vi.fn(),
+      requestSelection: vi.fn(),
+      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => void) => {
+        listener({ kind: 'resync' });
+        return { dispose() {} };
+      }),
+    };
+    const capture: Capture = { specs: [], written: [] };
+    const context = createContext(capture, 'pi-request-auth-only', connectedAccounts);
+    const runtime = await createPiRuntime(context.factory);
+    try {
+      const session = await runtime.sessions!.open({
+        kind: 'create',
+        sessionId: 'pi-request-auth-only',
+        cwd: '/tmp/pi-workspace',
+        launchEnvironment: {
+          values: {
+            PI_CODING_AGENT_DIR: agentDir,
+            [PI_REQUEST_AUTH_CAPABILITY_PATH_ENV]: join(root, 'request-auth.json'),
+            OPENAI_API_KEY: 'ambient-openai-sentinel',
+            ANTHROPIC_API_KEY: 'ambient-anthropic-sentinel',
+          },
+          unset: [],
+        },
+      }, context.session);
+
+      expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+      expect(capture.specs[0]?.launch.unsetEnvKeys).toEqual(expect.arrayContaining([
+        'OPENAI_API_KEY',
+        'ANTHROPIC_API_KEY',
+        'GEMINI_API_KEY',
+        'OPENROUTER_API_KEY',
+        'KIMI_API_KEY',
+      ]));
+      const projected = JSON.stringify(capture.specs[0]);
+      expect(projected).not.toContain('ambient-openai-sentinel');
+      expect(projected).not.toContain('ambient-anthropic-sentinel');
+      await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe('{}\n');
       const requestAuthSource = await readFile(
         join(agentDir, 'extensions', 'happier-pi-request-auth.js'),
         'utf8',
@@ -1068,7 +1039,15 @@ describe('activate', () => {
         ],
       ]);
       expect(capture.specs[0]).toMatchObject({
-        launch: { env: expect.objectContaining({ OPENAI_API_KEY: 'sk-openai-mixed' }) },
+        launch: {
+          env: expect.objectContaining({ OPENAI_API_KEY: 'sk-openai-mixed' }),
+          unsetEnvKeys: expect.arrayContaining([
+            'ANTHROPIC_API_KEY',
+            'OPENROUTER_API_KEY',
+            'GEMINI_API_KEY',
+            'KIMI_API_KEY',
+          ]),
+        },
       });
       await expect(readFile(join(agentDir, 'auth.json'), 'utf8')).resolves.toBe(
         `${JSON.stringify({ openai: { type: 'api_key', key: 'sk-openai-mixed' } }, null, 2)}\n`,
@@ -1275,40 +1254,5 @@ describe('activate', () => {
     expect(JSON.stringify(capture.specs)).not.toContain('UNRELATED_SECRET');
     expect(JSON.stringify(capture.specs)).not.toContain('must-not-reach-pi');
     await session.dispose();
-
-    const executionCapture: Capture = { specs: [], written: [] };
-    const executionContext = createContext(executionCapture, 'pi-execution-run-environment');
-    const executionRuntime = await createPiRuntime(executionContext.factory);
-    const executionRunPromise = executionRuntime.executionRuns!.open({
-      kind: 'create',
-      runId: 'pi-execution-run-environment',
-      cwd: '/tmp/pi-workspace',
-      profile: { pluginId: 'happier.agent.pi', localId: 'pi' },
-      input: { text: 'Check the workspace.' },
-      launchEnvironment: {
-        values: preferences?.environmentVariables as Readonly<Record<string, string>>,
-        unset: preferences?.unsetEnvironmentVariables as readonly string[],
-      },
-    }, executionContext.execution);
-    await waitForWrittenCount(executionCapture, 1);
-    await ack(executionCapture, 0, { sessionId: 'pi-execution-provider-session' });
-    await waitForWrittenCount(executionCapture, 2);
-    await ack(executionCapture, 1);
-    await executionCapture.listener?.({ type: 'agent_start' });
-    const executionRun = await executionRunPromise;
-    expect(executionCapture.specs).toEqual([expect.objectContaining({
-      launch: expect.objectContaining({
-        env: expect.objectContaining({
-          OPENAI_API_KEY: 'fixture-openai-key',
-          PI_CODING_AGENT_DIR: '/isolated/pi-agent-dir',
-          HOME: '/isolated/home',
-          XDG_CONFIG_HOME: '/isolated/xdg',
-          USERPROFILE: 'C:\\isolated\\home',
-        }),
-        unsetEnvKeys: ['ANTHROPIC_API_KEY'],
-      }),
-    })]);
-    expect(JSON.stringify(executionCapture.specs)).not.toContain('UNRELATED_SECRET');
-    await executionRun.dispose();
   });
 });

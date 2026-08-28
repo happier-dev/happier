@@ -766,15 +766,20 @@ function mapReadAfterOutcome(
         items: outcome.items,
         nextCursor: outcome.nextCursor,
         boundary: outcome.items.at(-1)?.id ?? outcome.nextCursor,
+        hasMore: outcome.hasMore,
         ...(outcome.sourceDiagnostics
           || outcome.skippedPositions
           || outcome.nonTranscriptPositions
           ? {
               diagnostics: [
-                ...(outcome.sourceDiagnostics ?? []),
+                ...(outcome.sourceDiagnostics ?? []).map((diagnostic) => ({
+                  ...diagnostic,
+                  severity: 'required' as const,
+                })),
                 ...(outcome.nonTranscriptPositions
                   ? [{
                       code: 'non_transcript_record_skipped',
+                      severity: 'benign' as const,
                       count: outcome.nonTranscriptPositions.length,
                       positions: outcome.nonTranscriptPositions.slice(0, 200),
                     }]
@@ -782,6 +787,7 @@ function mapReadAfterOutcome(
                 ...(outcome.skippedPositions
                   ? [{
                       code: 'unsupported_record_skipped',
+                      severity: 'required' as const,
                       count: outcome.skippedPositions.length,
                       positions: outcome.skippedPositions.slice(0, 200),
                     }]

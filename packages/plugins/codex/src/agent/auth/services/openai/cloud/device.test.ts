@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
-import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '../../../../../connectedAccounts/openAiCodexProfile.js';
 
 import {
   authenticateCodexDevice,

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -16,7 +16,7 @@ import { BITBUCKET_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/source/mutati
 import { renderSurface } from '../renderSurface.js';
 
 /**
- * The four Bitbucket Cloud pull-request writes, as a user can actually reach them.
+ * The Bitbucket Cloud pull-request writes, as a user can actually reach them.
  *
  * Every Action is declared `surfaces: ['ui', 'plugin']` with `placementBindings: ['detailsPanel']`.
  * `plugin` is what makes it reachable at all — a mounted plugin surface dispatches as a plugin
@@ -97,6 +97,28 @@ async function mountDetail(
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
+          if (action === 'reviews.comments.list') {
+            const revision = FIXTURE.detailInput.observation.snapshot.reviewRevision;
+            if (revision === undefined) throw new Error('fixture must expose a review revision');
+            return {
+              items: [{
+                id: 'review-comment-1',
+                body: 'Please keep this invariant explicit.',
+                serverRevision: 3,
+                anchor: { kind: 'line', filePath: 'src/index.ts', line: 12, side: 'after' },
+                snapshot: {
+                  kind: 'text', selectedLines: ['return ready;'], beforeContext: [], afterContext: [],
+                  selectedLinesHash: 'selected-hash', contextWindowHash: 'context-hash', capturedAt: 1,
+                  fileLength: 20, source: 'committed', commitSha: revision.headSha,
+                  isUncommitted: false, isUntracked: false, truncated: false,
+                  hasBidiControls: false, likelyMinified: false,
+                  diffContext: { side: 'after', baseSha: revision.baseSha, headSha: revision.headSha },
+                },
+                linkedRefs: [{ kind: 'pullRequest', url: FIXTURE.detailInput.observation.locator.webUrl }],
+              }],
+              cursor: null,
+            } as JsonValue;
+          }
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           return readResults[localId] ?? nextResult;
         },
@@ -124,21 +146,76 @@ function recordedWrites(): { action: unknown; input: unknown }[] {
 }
 
 describe('the mounted Bitbucket Cloud pull-request writes', () => {
+  it('mounts all three canonical Reviews publication controls in their semantic planes', async () => {
+    readResults = {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]: commentsResult([
+        { id: '9001', resolution: 'unresolved' },
+      ]),
+    };
+    const detail = await mountDetail({
+      ...FIXTURE.detailInput,
+      linkedSessions: [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    } as unknown as JsonValue);
+
+    await expect(detail.getByRole('button', { name: 'Submit review' })).resolves.toBeDefined();
+    await expect(detail.getByRole('button', { name: 'Publish comment' })).resolves.toMatchObject({
+      state: { disabled: false },
+    });
+    await expect(detail.getByRole('option', { name: 'Please keep this invariant explicit.' }))
+      .resolves.toMatchObject({ state: { selected: true } });
+    await detail.press(await detail.getByRole('button', { name: 'Publish comment' }));
+    expect(recordedWrites()).toHaveLength(1);
+    expect(recordedWrites()[0]).toMatchObject({
+      action: {
+        pluginId: BITBUCKET_PLUGIN_ID,
+        localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment,
+      },
+      input: {
+        publicationPlan: {
+          target: { providerId: 'bitbucket', subtarget: null },
+          entries: [{ happierCommentId: 'review-comment-1', expectedServerRevision: 3 }],
+          verdict: null,
+        },
+      },
+    });
+    await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    await expect(detail.getByRole('option', { name: 'Reviewer: Please rename this' }))
+      .resolves.toMatchObject({ state: { selected: true } });
+    await expect(detail.getByRole('button', { name: 'Post reply' })).resolves.toMatchObject({
+      state: { disabled: false },
+    });
+    await detail.press(await detail.getByRole('button', { name: 'Post reply' }));
+    expect(recordedWrites().at(-1)).toMatchObject({
+      action: {
+        pluginId: BITBUCKET_PLUGIN_ID,
+        localId: BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment,
+      },
+      input: {
+        parentCommentId: '9001',
+        publicationPlan: {
+          target: { subtarget: { kindId: 'review-comment', targetId: '9001' } },
+        },
+      },
+    });
+  });
+
   it('hands an applied write to the target-owned re-observation seam', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail();
 
     await detail.press(await detail.getByRole('button', { name: 'Decline' }));
-
     expect(completedMutations).toBe(1);
   });
 
   it('hands an unknown dispatch outcome to the target-owned re-observation seam', async () => {
     const detail = await mountDetail();
-    nextActionError = Object.assign(
-      new Error('The Action timed out after dispatch.'),
-      { code: 'timeout' },
-    );
+    // The semantic host preserves canonical Plugin errors across the wire. A plain Error is
+    // intentionally collapsed to `internal_error`, so use the same timeout fact the real Action
+    // client produces after dispatch.
+    nextActionError = new PluginError({
+      code: 'timeout',
+      message: 'The Action timed out after dispatch.',
+    });
 
     await detail.press(await detail.getByRole('button', { name: 'Decline' }));
 

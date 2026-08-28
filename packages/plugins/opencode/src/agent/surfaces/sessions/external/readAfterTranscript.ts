@@ -74,7 +74,13 @@ export type OpenCodeExternalReadAfterOutcome =
       items: readonly AgentExternalSessionTranscriptItem[];
       nextCursor: string;
       boundary: string;
-      diagnostics?: readonly Readonly<{ code: string; count: number; positions: readonly number[] }>[];
+      hasMore: boolean;
+      diagnostics?: readonly Readonly<{
+        code: string;
+        severity: 'benign' | 'required';
+        count: number;
+        positions: readonly number[];
+      }>[];
     }>
   | Readonly<{ outcome: 'gap_or_cursor_expired' }>
   | Readonly<{ outcome: 'source_replaced' }>
@@ -200,10 +206,12 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
         items: [],
         nextCursor,
         boundary: newestReadMessageId ?? `index:${page.nextIndex}`,
+        hasMore: page.truncated,
         diagnostics: [
           ...(knownNonTranscriptPositions.length > 0
             ? [{
                 code: 'non_transcript_record_skipped',
+                severity: 'benign' as const,
                 count: knownNonTranscriptPositions.length,
                 positions: knownNonTranscriptPositions.slice(0, 200),
               }]
@@ -211,6 +219,7 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
           ...(unsupportedPositions.length > 0
             ? [{
                 code: 'unsupported_record_skipped',
+                severity: 'required' as const,
                 count: unsupportedPositions.length,
                 positions: unsupportedPositions.slice(0, 200),
               }]
@@ -223,12 +232,14 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
       items: page.items,
       nextCursor,
       boundary: page.items.at(-1)!.id,
+      hasMore: page.truncated,
       ...(knownNonTranscriptPositions.length > 0 || unsupportedPositions.length > 0
         ? {
             diagnostics: [
               ...(knownNonTranscriptPositions.length > 0
                 ? [{
                     code: 'non_transcript_record_skipped',
+                    severity: 'benign' as const,
                     count: knownNonTranscriptPositions.length,
                     positions: knownNonTranscriptPositions.slice(0, 200),
                   }]
@@ -236,6 +247,7 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
               ...(unsupportedPositions.length > 0
                 ? [{
                     code: 'unsupported_record_skipped',
+                    severity: 'required' as const,
                     count: unsupportedPositions.length,
                     positions: unsupportedPositions.slice(0, 200),
                   }]

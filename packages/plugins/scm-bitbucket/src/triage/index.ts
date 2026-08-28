@@ -27,7 +27,6 @@ export {
   type BitbucketRateLimitTelemetry,
 } from './bitbucketRateLimit.js';
 export {
-  MAX_BITBUCKET_TEXT_UTF8_BYTES,
   decodeBitbucketPullRequestRow,
   decodeBitbucketRepositoryRow,
   decodeBitbucketWorkspaceAccessRow,
@@ -65,7 +64,6 @@ export {
   type BitbucketPageGeometry,
 } from './pagination.js';
 export {
-  BITBUCKET_REPOSITORY_REQUESTS_PER_SCAN_PAGE,
   createBitbucketRepositoryEnumerator,
   type BitbucketRepositoryAdvance,
   type BitbucketRepositoryEnumerator,
@@ -104,7 +102,6 @@ export {
   type BitbucketWorkspaceListOutcome,
 } from './pullRequests.js';
 export {
-  BITBUCKET_COLLECTION_PAGE_CEILING,
   walkBitbucketCollection,
   type BitbucketCollectionOutcome,
 } from './collection.js';

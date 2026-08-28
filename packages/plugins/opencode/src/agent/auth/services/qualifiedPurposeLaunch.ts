@@ -88,8 +88,8 @@ function readExactEnvironmentValue(
   if (keys.some((candidate) => candidate !== key)) {
     throw new Error(`OpenCode ${purpose} returned an unrequested environment materialization`);
   }
-  const value = materialized.env[key]?.trim() ?? '';
-  if (!value) {
+  const value = materialized.env[key] ?? '';
+  if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`OpenCode ${purpose} did not materialize ${key}`);
   }
   return value;
@@ -148,6 +148,16 @@ export async function prepareOpenCodeQualifiedConnectedAccounts(
   request: AgentSessionOpenRequest,
   context: AgentRuntimeContext,
 ): Promise<PreparedOpenCodeQualifiedConnectedAccounts> {
+  // A Provider binding is the complete model credential authority. Selected
+  // native OpenCode accounts must not be consulted or merged into that launch.
+  if (request.providerBinding !== undefined) {
+    return Object.freeze({
+      request,
+      isInvalidated: () => context.signal?.aborted === true,
+      bind: (session) => session,
+      async dispose() {},
+    });
+  }
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
   let invalidated = false;
   let invalidationHandler: (() => Promise<void>) | null = null;
@@ -280,7 +290,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts(
 
     return Object.freeze({
       request: preparedRequest,
-      isInvalidated: () => invalidated,
+      isInvalidated: () => invalidated || context.signal?.aborted === true,
       bind(session) {
         let sessionDisposed = false;
         const preparedSession: AgentSessionRuntime = {

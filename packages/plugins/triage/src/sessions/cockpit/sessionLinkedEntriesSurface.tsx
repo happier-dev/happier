@@ -141,6 +141,7 @@ function LinkedEntryRow(props: Readonly<{
                     ),
                 }
                 : {})}
+            accessoryOutsidePressable
             accessory={entryRef === null ? undefined : (
                 <Button
                     titleKey="plugins.triage.sessionLinks.unlink"

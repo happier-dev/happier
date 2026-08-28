@@ -1,4 +1,11 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  formatReviewCommentPublicationMarkerV1,
+  matchReviewCommentPublicationMarkerV1,
+  validateReviewCommentPublicationResultAgainstPlanV1,
+  type ReviewCommentClaimPublicationDispatchResponseV1,
+  type ReviewCommentPublicationPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 
 import type {
   GithubApiMethodV1,
@@ -18,10 +25,14 @@ import {
   createGithubRepositoryReader,
   type GithubRepositoryReaderV1,
 } from '../repositories.js';
+import { readGithubIssueCommentPublicationRecords } from '../reviews.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
 
 import type { GithubIssueCloseReasonV1 } from './contracts.js';
-import type { GithubMutationDependenciesV1 } from './pullRequest.js';
+import {
+  type GithubMutationDependenciesV1,
+  type GithubPullRequestReviewPublicationOutcomeV1,
+} from './pullRequest.js';
 
 /**
  * The GitHub issue writes: the two state transitions and the four exact deltas.
@@ -193,6 +204,134 @@ function alreadySatisfied(current: Current & Readonly<{ ok: true }>): Applied {
     effect: 'alreadySatisfied' as const,
     observation: current.observation,
   });
+}
+
+/** Publishes one canonical Reviews proposal into one issue conversation. */
+export async function publishGithubIssueComment(
+  input: Readonly<{
+    localRef: GithubTriageEntryLocalRefV1;
+    route: GithubRepositoryRouteV1;
+    publicationPlan: ReviewCommentPublicationPlanV1;
+    claimPublicationDispatch: () => Promise<ReviewCommentClaimPublicationDispatchResponseV1>;
+  }>,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<GithubPullRequestReviewPublicationOutcomeV1> {
+  const repositories = openResolver(dependencies);
+  const current = reduce(await readGithubIssue(input.localRef, input.route, repositories, dependencies));
+  if (!current.ok) {
+    return Object.freeze({ kind: 'rejected' as const, reason: 'admission_failed' as const, failure: current.failure });
+  }
+  const entry = input.publicationPlan.entries[0];
+  if (input.publicationPlan.entries.length !== 1 || entry === undefined
+    || input.publicationPlan.verdict !== null
+    || input.publicationPlan.baseRevision !== null
+    || input.publicationPlan.headRevision !== null
+  ) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'unsupported_anchor' as const,
+      observation: current.observation,
+    });
+  }
+  let claim: ReviewCommentClaimPublicationDispatchResponseV1;
+  try {
+    claim = await input.claimPublicationDispatch();
+  } catch {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const correlation = claim.entries[0];
+  if (correlation === undefined) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'dispatch_claim_failed' as const,
+      observation: current.observation,
+    });
+  }
+  const marker = formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId);
+  const reconcile = async (
+    dispatchFailure?: TriageSourceFailureV1,
+  ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const comments = await readGithubIssueCommentPublicationRecords({
+      route: input.route,
+      number: input.localRef.entryId,
+    }, dependencies);
+    const matched = comments.failure === null && !comments.incomplete
+      ? matchReviewCommentPublicationMarkerV1(
+        comments.comments.map((comment) => ({ externalRef: comment.providerId, body: comment.body })),
+        marker,
+      )
+      : { kind: 'absent' as const };
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(
+      input.publicationPlan,
+      claim,
+      {
+        publicationPlanId: claim.publicationPlanId,
+        entries: [{
+          happierCommentId: entry.happierCommentId,
+          publicationCorrelationId: correlation.publicationCorrelationId,
+          outcome: matched.kind !== 'unique'
+            ? { kind: 'uncertain' }
+            : { kind: 'published', externalRef: matched.externalRef },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    );
+    const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+    return Object.freeze({
+      kind: 'settled' as const,
+      publication,
+      ...(confirmed.ok ? { observation: confirmed.observation } : {}),
+      ...(dispatchFailure !== undefined
+        ? { failure: dispatchFailure }
+        : comments.failure !== null
+          ? { failure: toTriageFailure(comments.failure) }
+          : !confirmed.ok
+            ? { failure: confirmed.failure }
+            : {}),
+    });
+  };
+  const rejectedPublication = async (
+    failure: TriageSourceFailureV1,
+  ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const publication = validateReviewCommentPublicationResultAgainstPlanV1(
+      input.publicationPlan,
+      claim,
+      {
+        publicationPlanId: claim.publicationPlanId,
+        entries: [{
+          happierCommentId: entry.happierCommentId,
+          publicationCorrelationId: correlation.publicationCorrelationId,
+          outcome: { kind: 'failed', code: failure.code },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    );
+    const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
+    return Object.freeze({
+      kind: 'settled' as const,
+      publication,
+      ...(confirmed.ok ? { observation: confirmed.observation } : {}),
+      failure,
+    });
+  };
+  if (claim.disposition === 'reconcile') return await reconcile();
+  const written = await send(dependencies, {
+    url: issueUrl(input.route, input.localRef.entryId, 'comments'),
+    method: 'POST',
+    body: { body: `${entry.body}\n\n${marker}` },
+  });
+  if (!written.ok) return await reconcile(written.failure);
+  const failure = !isGithubSuccessStatus(written.response.status)
+    ? toTriageFailure(classifyGithubResponseFailure(written.response, dependencies.now()))
+    : undefined;
+  if (failure !== undefined && !isGithubWriteResponseAmbiguous(written.response)) {
+    return await rejectedPublication(failure);
+  }
+  return await reconcile(failure);
 }
 
 /* --------------------------------------------------------------- close/reopen */

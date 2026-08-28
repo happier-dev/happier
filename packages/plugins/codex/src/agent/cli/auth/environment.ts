@@ -1,9 +1,3 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
-
-import { expandHomePath } from '@happier-dev/plugin-sdk/fs';
-
 type CodexEnvironmentEnv = Readonly<Record<string, string | undefined>>;
 
 export type CodexEnvironmentAuthTokens = Readonly<{
@@ -31,15 +25,6 @@ export function resolveCodexApiKeyAuthMethodId(
   if (codexApiKey) return 'codex-api-key';
 
   return undefined;
-}
-
-function readJsonFileSafe(path: string): unknown | null {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as unknown;
-  } catch {
-    return null;
-  }
 }
 
 function decodeJwtEmail(token: string | null | undefined): string | null {
@@ -101,29 +86,7 @@ function hasUsableJwtLifetime(token: string | null): boolean {
   return expMs === null || expMs > Date.now();
 }
 
-function resolveAuthBaseHomeDir(env: CodexEnvironmentEnv): string {
-  const envHome = process.platform === 'win32'
-    ? (env.USERPROFILE || env.HOME)
-    : env.HOME;
-  const trimmed = typeof envHome === 'string' ? envHome.trim() : '';
-  return trimmed.length > 0 ? trimmed : homedir();
-}
-
-function resolveCodexAuthHomeDir(env: CodexEnvironmentEnv): string {
-  const rawCodexHome = typeof env.CODEX_HOME === 'string' ? env.CODEX_HOME.trim() : '';
-  if (rawCodexHome) {
-    return resolve(expandHomePath(rawCodexHome, resolveAuthBaseHomeDir(env)));
-  }
-  return resolve(join(resolveAuthBaseHomeDir(env), '.codex'));
-}
-
-function readCodexAuthFileTokens(env: CodexEnvironmentEnv): Readonly<{
-  idToken: string | null;
-  accessToken: string | null;
-  accountId: string | null;
-  accountLabel: string | null;
-}> {
-  const parsed = readJsonFileSafe(join(resolveCodexAuthHomeDir(env), 'auth.json'));
+export function readCodexAuthTokensFromJson(parsed: unknown): CodexEnvironmentAuthTokens {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { idToken: null, accessToken: null, accountId: null, accountLabel: null };
   }
@@ -150,8 +113,4 @@ function readCodexAuthFileTokens(env: CodexEnvironmentEnv): Readonly<{
       : null,
     accountLabel: hasUsableToken ? (decodeJwtEmail(idToken) ?? decodeJwtEmail(accessToken)) : null,
   };
-}
-
-export function readCodexEnvironmentAuthTokens(env: CodexEnvironmentEnv = process.env): CodexEnvironmentAuthTokens {
-  return readCodexAuthFileTokens(env);
 }

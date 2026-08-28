@@ -35,13 +35,6 @@ export {
 } from './candidate.js';
 export type { PosthogEvidenceCandidateInput } from './candidate.js';
 
-/**
- * The event projection's maximum is deliberately much larger than one Composer
- * reference context. Eight frames per exception keeps a selected stack excerpt under
- * the public reference-result ceiling while preserving both app and non-app evidence.
- */
-const MAX_EVIDENCE_FRAMES_PER_EXCEPTION = 8;
-
 function unavailableEvidence(reason: string): PluginError {
     return new PluginError({
         code: 'posthog/evidence-unavailable',
@@ -71,7 +64,12 @@ function selectedEvidenceContext(event: PosthogProjectedIssueEvent): string {
             ? 'Exception'
             : `Exception ${exception.type}`;
         lines.push(exception.value === undefined ? identity : `${identity}: ${exception.value}`);
-        for (const frame of exception.frames.slice(0, MAX_EVIDENCE_FRAMES_PER_EXCEPTION)) {
+        // The event projector already owns the provider-to-product bound. Cutting
+        // the selected event again here would make this resolver a second,
+        // undocumented projection owner and silently change what the person chose.
+        // The host's public reference-result schema remains the atomic admission
+        // boundary for the complete rendered selection.
+        for (const frame of exception.frames) {
             const location = frameLocation(frame);
             const label = frame.function ?? location ?? 'Unnamed frame';
             lines.push(location === null || location === label

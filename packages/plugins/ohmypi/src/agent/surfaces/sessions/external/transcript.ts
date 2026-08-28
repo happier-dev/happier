@@ -576,6 +576,7 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
 }>): Promise<OhMyPiRawTranscriptPage & Readonly<{
   diagnostics?: readonly Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     positions: readonly number[];
   }>[];
@@ -752,7 +753,14 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
       ...(nextItemStartIndex !== undefined ? { itemStartIndex: nextItemStartIndex } : {}),
     }),
     truncated: stoppedForOutputBound || read.truncated,
-    ...(read.diagnostics?.length ? { diagnostics: read.diagnostics } : {}),
+    ...(read.diagnostics?.length
+      ? {
+          diagnostics: read.diagnostics.map((diagnostic) => ({
+            ...diagnostic,
+            severity: 'required' as const,
+          })),
+        }
+      : {}),
     ...(skippedRecords.length > 0 ? { skippedRecords } : {}),
   };
 }

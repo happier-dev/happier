@@ -17,16 +17,14 @@
  */
 
 import {
+  MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  MAX_TRIAGE_ROW_FACTS_V1,
+  MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1,
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-  SENTRY_MAX_IDENTIFIER_UTF8_BYTES,
-  SENTRY_MAX_ROW_FACTS,
-  SENTRY_MAX_ROW_FACT_VALUE_UTF8_BYTES,
-  SENTRY_MAX_TEXT_UTF8_BYTES,
-  type SentryFailureV1,
-} from '../sentryContracts.js';
+import type { SentryFailureV1 } from '../sentryContracts.js';
 
 import {
   resolveSentryInvokedScope,
@@ -149,7 +147,7 @@ function textFact(value: string | null): Readonly<{
   truncated: boolean;
 }> {
   if (value === null) return { value: null, truncated: false };
-  const bounded = projectTriageDisplayTextV1(value, SENTRY_MAX_ROW_FACT_VALUE_UTF8_BYTES);
+  const bounded = projectTriageDisplayTextV1(value, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
   if (bounded.value.length === 0) return { value: null, truncated: false };
   return { value: { kind: 'text', text: bounded.value }, truncated: bounded.truncated };
 }
@@ -159,7 +157,7 @@ function readAssignee(value: unknown): SentryFactValueV1 | null {
   const displayName = readString(value.name) ?? readString(value.id);
   if (displayName === null) return null;
   const actorKind = value.type === 'team' ? 'team' : 'user';
-  const bounded = projectTriageDisplayTextV1(displayName, SENTRY_MAX_ROW_FACT_VALUE_UTF8_BYTES);
+  const bounded = projectTriageDisplayTextV1(displayName, MAX_TRIAGE_ROW_FACT_VALUE_UTF8_BYTES_V1);
   if (bounded.value.length === 0) return null;
   return { kind: 'actor', displayName: bounded.value, actorKind };
 }
@@ -196,7 +194,7 @@ export function mapSentryIssueForInvokedInstance(
   const entryId = readString(raw.id);
   if (
     entryId === null
-    || encoder.encode(entryId).byteLength > SENTRY_MAX_IDENTIFIER_UTF8_BYTES
+    || encoder.encode(entryId).byteLength > MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1
   ) {
     return MALFORMED;
   }
@@ -208,7 +206,7 @@ export function mapSentryIssueForInvokedInstance(
   // is the fallback when nothing survives — the issue stays visible either way.
   const title = projectTriageDisplayTextV1(
     readString(raw.title) ?? entryId,
-    SENTRY_MAX_TEXT_UTF8_BYTES,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   );
   truncated ||= title.truncated;
 
@@ -298,17 +296,17 @@ export function mapSentryIssueForInvokedInstance(
     value: SentryFactValueV1;
   } => candidate.value !== null);
   const facts: readonly SentryRowFactV1[] = Object.freeze(
-    present.slice(0, SENTRY_MAX_ROW_FACTS).map((candidate) => Object.freeze({
+    present.slice(0, MAX_TRIAGE_ROW_FACTS_V1).map((candidate) => Object.freeze({
       id: candidate.id,
       importance: candidate.importance,
       value: Object.freeze(candidate.value),
     })),
   );
-  truncated ||= present.length > SENTRY_MAX_ROW_FACTS;
+  truncated ||= present.length > MAX_TRIAGE_ROW_FACTS_V1;
 
   const scopeLabel = projectTriageDisplayTextV1(
     projectName ?? projectSlug ?? input.organizationSlug ?? input.configured.organizationId,
-    SENTRY_MAX_TEXT_UTF8_BYTES,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   );
   truncated ||= scopeLabel.truncated;
 

@@ -2,11 +2,9 @@ import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import {
     raceWithTimeout,
     throwIfAborted,
-    type RaceWithTimeoutResult,
 } from '@happier-dev/plugin-sdk/async';
 import {
     normalizeTriageSingleLineV1,
-    truncateTriageUtf8V1,
     type TriageConfiguredSourceInstanceV1,
     type TriageEntryRefV1,
     type TriageGetInputV1,
@@ -54,18 +52,6 @@ import { parseTriageComposerEntryAttachmentValue } from './attachmentValue.js';
  * evidence. It never touches a pin: `corpus/marks/setPinned.ts` is the single
  * `user-marks` writer.
  */
-
-/**
- * The context budget for one entry.
- *
- * The platform ceiling is 16 KiB per resolution, which is far more than the
- * Tier-A facts of one entry can honestly fill; a bound near the real content
- * keeps eight attached entries from crowding out the user's own prose. It is
- * derived from the source contract rather than guessed: title, summary and
- * scope are each bounded at `MAX_TRIAGE_TEXT_UTF8_BYTES_V1` (512 bytes), and
- * this leaves room for all three plus the identity line.
- */
-export const MAX_TRIAGE_DISPATCH_CONTEXT_UTF8_BYTES_V1 = 2048;
 
 /**
  * The host-created `get` handle, taken from the admitted contribution itself
@@ -154,7 +140,7 @@ export function projectTriageDispatchContext(input: Readonly<{
     // last hop before model-visible text and normalizing is cheap insurance
     // against a line break turning one fact into two.
     const projected = lines.map(normalizeTriageSingleLineV1).join('\n');
-    return truncateTriageUtf8V1(projected, MAX_TRIAGE_DISPATCH_CONTEXT_UTF8_BYTES_V1).value;
+    return projected;
 }
 function blocked(
     instanceId: string,
@@ -208,28 +194,48 @@ export async function resolveTriageEntryForDispatch(
     deps: TriageEntryDispatchDepsV1,
 ): Promise<TriageEntryDispatchResultV1> {
     throwIfAborted(deps.signal);
-    const options: PluginCancellationOptions | undefined = deps.signal ? { signal: deps.signal } : undefined;
-    const [configured, admitted] = await Promise.all([
-        readActiveConfiguredInstances(deps),
-        deps.readAdmittedSources(options),
-    ]);
-    throwIfAborted(deps.signal);
-    const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
+    const deadline = new AbortController();
+    const signal = deps.signal === undefined
+        ? deadline.signal
+        : AbortSignal.any([deps.signal, deadline.signal]);
+    const options: PluginCancellationOptions = { signal };
+    const invocation = (async (): Promise<TriageEntryDispatchResultV1> => {
+        const [configured, admitted] = await Promise.all([
+            readActiveConfiguredInstances({ ...deps, signal }),
+            deps.readAdmittedSources(options),
+        ]);
+        throwIfAborted(signal);
+        const admittedByQualifiedId = indexTriageAdmittedSourcesV1(admitted);
 
-    const attachments: TriageEntryDispatchOutcomeV1[] = [];
-    for (const attachment of request.attachments) {
-        throwIfAborted(deps.signal);
-        attachments.push(await resolveOne(attachment, {
-            configured,
-            admittedByQualifiedId,
-            executeGet: deps.executeGet,
-            sessionLinks: deps.sessionLinks,
-            options,
-            callerSignal: deps.signal,
-            getDeadlineMs: deps.getDeadlineMs ?? TRIAGE_DISPATCH_GET_DEADLINE_MS,
-        }));
-    }
-    return { attachments };
+        const attachments: TriageEntryDispatchOutcomeV1[] = [];
+        for (const attachment of request.attachments) {
+            throwIfAborted(signal);
+            attachments.push(await resolveOne(attachment, {
+                configured,
+                admittedByQualifiedId,
+                executeGet: deps.executeGet,
+                sessionLinks: deps.sessionLinks,
+                options,
+            }));
+        }
+        return { attachments };
+    })();
+    const settled = await raceWithTimeout(
+        invocation,
+        deps.getDeadlineMs ?? TRIAGE_DISPATCH_GET_DEADLINE_MS,
+    );
+    deadline.abort();
+    throwIfAborted(deps.signal);
+    if (settled.type === 'resolved') return settled.value;
+    if (settled.type === 'rejected') throw settled.error;
+    return {
+        attachments: request.attachments.map((attachment) => blocked(
+            attachment.instanceId,
+            'failed',
+            true,
+            'This entry could not be read.',
+        )),
+    };
 }
 
 async function resolveOne(
@@ -240,8 +246,6 @@ async function resolveOne(
         executeGet: TriageAdmittedGetExecutorV1;
         sessionLinks: CorpusCollectionsV1['sessionLinks'];
         options: PluginCancellationOptions | undefined;
-        callerSignal: AbortSignal | undefined;
-        getDeadlineMs: number;
     }>,
 ): Promise<TriageEntryDispatchOutcomeV1> {
     const parsed = parseTriageComposerEntryAttachmentValue(attachment.value);
@@ -280,47 +284,28 @@ async function resolveOne(
     //    resolver is not the parser of a source's own opaque token, so it never
     //    rewrites, shortens or re-derives one. An absent hint stays absent
     //    rather than becoming an empty locator the source would interpret.
-    const deadline = new AbortController();
-    const getOptions: PluginCancellationOptions = {
-        signal: context.callerSignal === undefined
-            ? deadline.signal
-            : AbortSignal.any([context.callerSignal, deadline.signal]),
-    };
-    let settled: RaceWithTimeoutResult<TriageGetResultV1>;
+    let observation: TriageGetResultV1;
     try {
-        settled = await raceWithTimeout(
-            context.executeGet(
-                contribution.operations.get,
-                {
-                    v: 1,
-                    instance,
-                    localRef: {
-                        kindId: entryRef.kindId,
-                        collisionScope: entryRef.collisionScope,
-                        entryId: entryRef.entryId,
-                    },
-                    ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
+        observation = await context.executeGet(
+            contribution.operations.get,
+            {
+                v: 1,
+                instance,
+                localRef: {
+                    kindId: entryRef.kindId,
+                    collisionScope: entryRef.collisionScope,
+                    entryId: entryRef.entryId,
                 },
-                getOptions,
-            ),
-            context.getDeadlineMs,
+                ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
+            },
+            context.options,
         );
-    } catch (error) {
-        // A synchronous invocation failure has the same caller-visible path as
-        // a rejected source read.
-        settled = { type: 'rejected', error };
-    } finally {
-        deadline.abort();
-    }
-
-    throwIfAborted(context.callerSignal);
-    if (settled.type === 'timeout' || settled.type === 'rejected') {
+    } catch {
         // An invocation that never produced an observation is a failure of the
         // read, not a conclusion about the entry — it is retryable precisely
         // because nothing was learned.
         return blocked(attachment.instanceId, 'failed', true, 'This entry could not be read.');
     }
-    const observation = settled.value;
 
     // 4. Typed outcomes only. Nothing here rebinds, follows or repairs.
     //

@@ -41,11 +41,9 @@ export type SentryReadStateV1<T> =
  * Why a Sentry detail walk stopped before the end of its collection.
  *
  * The first three are a page Sentry advertised in a form this build will not
- * follow. The last is this side's own bound: the walk is open and the provider's
- * cursor is intact, but that cursor is wider than the bounded continuation can
- * carry, so this page is the last one the panel can ask for. It is a fact about
- * one provider position, never about how far the walk has come — the walk's own
- * cycle evidence is a fixed two cursors (`api/sentryCursorCycle.ts`). None of them is a statement that the collection ended —
+ * follow. The last is this side's own serialization failure: the walk is open
+ * and the provider's cursor is intact, but this source could not mint the next
+ * continuation. None of them is a statement that the collection ended —
  * presenting any of them as a finished walk is what makes a truncated list
  * indistinguishable from a complete one.
  */

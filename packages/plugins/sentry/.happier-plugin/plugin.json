@@ -898,7 +898,7 @@
                       "const": "initial"
                     },
                     "limit": {
-                      "maximum": 64,
+                      "maximum": 9007199254740991,
                       "minimum": 1,
                       "type": "integer"
                     }
@@ -1097,7 +1097,7 @@
                           "minLength": 1,
                           "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 4096
+                          "x-happier-max-utf8-bytes": 40350
                         },
                         "v": {
                           "const": 1
@@ -1145,7 +1145,7 @@
                       "minLength": 1,
                       "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
-                      "x-happier-max-utf8-bytes": 4096
+                      "x-happier-max-utf8-bytes": 40350
                     },
                     "v": {
                       "const": 1
@@ -1895,7 +1895,6 @@
                       }
                     ]
                   },
-                  "maxItems": 64,
                   "type": "array"
                 }
               },
@@ -2648,7 +2647,6 @@
                       }
                     ]
                   },
-                  "maxItems": 64,
                   "type": "array"
                 }
               },
@@ -2979,6 +2977,7 @@
               "properties": {
                 "eventCount": {
                   "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
                   "x-happier-max-utf8-bytes": 512
                 },
@@ -2997,6 +2996,7 @@
                     },
                     "version": {
                       "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 512
                     }
@@ -3029,6 +3029,7 @@
                     },
                     "version": {
                       "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 512
                     }
@@ -3045,8 +3046,9 @@
                 },
                 "nativeStateLabel": {
                   "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
-                  "x-happier-max-utf8-bytes": 128
+                  "x-happier-max-utf8-bytes": 512
                 },
                 "statePresentation": {
                   "anyOf": [
@@ -3106,13 +3108,15 @@
                     "properties": {
                       "key": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 128
                       },
                       "name": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "x-happier-max-utf8-bytes": 512
                       },
                       "topValues": {
                         "items": {
@@ -3135,6 +3139,7 @@
                             },
                             "name": {
                               "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 512
                             },
@@ -3143,6 +3148,7 @@
                             },
                             "value": {
                               "minLength": 1,
+                              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                               "type": "string",
                               "x-happier-max-utf8-bytes": 512
                             }
@@ -3152,7 +3158,6 @@
                           ],
                           "type": "object"
                         },
-                        "maxItems": 8,
                         "type": "array"
                       },
                       "totalValues": {
@@ -3170,7 +3175,6 @@
                     ],
                     "type": "object"
                   },
-                  "maxItems": 32,
                   "type": "array"
                 }
               },
@@ -3196,8 +3200,9 @@
                             "properties": {
                               "actor": {
                                 "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 128
+                                "x-happier-max-utf8-bytes": 512
                               },
                               "atMs": {
                                 "maximum": 9007199254740991,
@@ -3206,6 +3211,7 @@
                               },
                               "id": {
                                 "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 128
                               },
@@ -3214,8 +3220,9 @@
                               },
                               "type": {
                                 "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 128
+                                "x-happier-max-utf8-bytes": 512
                               }
                             },
                             "required": [
@@ -3224,7 +3231,6 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 100,
                           "type": "array"
                         },
                         "malformedItemCount": {
@@ -3380,8 +3386,7 @@
           "properties": {
             "continuation": {
               "minLength": 1,
-              "type": "string",
-              "x-happier-max-utf8-bytes": 512
+              "type": "string"
             },
             "instance": {
               "additionalProperties": false,
@@ -3601,8 +3606,7 @@
               "properties": {
                 "continuation": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 512
+                  "type": "string"
                 },
                 "incomplete": {
                   "anyOf": [
@@ -3649,26 +3653,31 @@
                       },
                       "culprit": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       },
                       "eventId": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 128
                       },
                       "headline": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       },
                       "location": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       },
                       "message": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       },
@@ -4000,6 +4009,7 @@
                   "properties": {
                     "eventId": {
                       "minLength": 1,
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 128
                     },
@@ -4043,6 +4053,7 @@
                       "anyOf": [
                         {
                           "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 512
                         },
@@ -4064,6 +4075,7 @@
                       ]
                     },
                     "eventId": {
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                       "type": "string",
                       "x-happier-max-utf8-bytes": 128
                     },
@@ -4071,6 +4083,7 @@
                       "anyOf": [
                         {
                           "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
                           "x-happier-max-utf8-bytes": 512
                         },
@@ -4080,8 +4093,17 @@
                       ]
                     },
                     "message": {
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 512
+                      "anyOf": [
+                        {
+                          "const": ""
+                        },
+                        {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 512
+                        }
+                      ]
                     },
                     "omitted": {
                       "additionalProperties": false,
@@ -4096,7 +4118,17 @@
                           "minimum": 0,
                           "type": "integer"
                         },
+                        "redactions": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
                         "sections": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "sensitivePaths": {
                           "maximum": 9007199254740991,
                           "minimum": 0,
                           "type": "integer"
@@ -4111,7 +4143,9 @@
                         "sections",
                         "frames",
                         "breadcrumbs",
-                        "tags"
+                        "tags",
+                        "redactions",
+                        "sensitivePaths"
                       ],
                       "type": "object"
                     },
@@ -4119,8 +4153,9 @@
                       "anyOf": [
                         {
                           "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                           "type": "string",
-                          "x-happier-max-utf8-bytes": 128
+                          "x-happier-max-utf8-bytes": 512
                         },
                         {
                           "const": null
@@ -4143,8 +4178,9 @@
                         "properties": {
                           "path": {
                             "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 128
+                            "x-happier-max-utf8-bytes": 512
                           },
                           "reason": {
                             "anyOf": [
@@ -4163,7 +4199,6 @@
                         ],
                         "type": "object"
                       },
-                      "maxItems": 384,
                       "type": "array"
                     },
                     "sections": {
@@ -4192,6 +4227,7 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 512
                                         },
@@ -4204,8 +4240,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 384
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4216,8 +4253,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 128
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4263,19 +4301,36 @@
                                   ],
                                   "type": "object"
                                 },
-                                "maxItems": 40,
                                 "type": "array"
                               },
                               "kind": {
                                 "const": "exception"
                               },
                               "type": {
-                                "type": "string",
-                                "x-happier-max-utf8-bytes": 128
+                                "anyOf": [
+                                  {
+                                    "const": ""
+                                  },
+                                  {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 512
+                                  }
+                                ]
                               },
                               "value": {
-                                "type": "string",
-                                "x-happier-max-utf8-bytes": 512
+                                "anyOf": [
+                                  {
+                                    "const": ""
+                                  },
+                                  {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 512
+                                  }
+                                ]
                               }
                             },
                             "required": [
@@ -4309,6 +4364,7 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 512
                                         },
@@ -4321,8 +4377,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 384
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4333,8 +4390,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 128
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4380,7 +4438,6 @@
                                   ],
                                   "type": "object"
                                 },
-                                "maxItems": 40,
                                 "type": "array"
                               },
                               "kind": {
@@ -4404,8 +4461,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 128
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4416,8 +4474,9 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
-                                          "x-happier-max-utf8-bytes": 128
+                                          "x-happier-max-utf8-bytes": 512
                                         },
                                         {
                                           "const": null
@@ -4428,6 +4487,7 @@
                                       "anyOf": [
                                         {
                                           "minLength": 1,
+                                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                           "type": "string",
                                           "x-happier-max-utf8-bytes": 512
                                         },
@@ -4457,7 +4517,6 @@
                                   ],
                                   "type": "object"
                                 },
-                                "maxItems": 32,
                                 "type": "array"
                               },
                               "kind": {
@@ -4475,6 +4534,7 @@
                             "properties": {
                               "formatted": {
                                 "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
                                 "x-happier-max-utf8-bytes": 512
                               },
@@ -4493,8 +4553,9 @@
                             "properties": {
                               "entryType": {
                                 "minLength": 1,
+                                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                 "type": "string",
-                                "x-happier-max-utf8-bytes": 128
+                                "x-happier-max-utf8-bytes": 512
                               },
                               "kind": {
                                 "const": "unsupported"
@@ -4508,16 +4569,15 @@
                           }
                         ]
                       },
-                      "maxItems": 6,
                       "type": "array"
                     },
                     "sensitivePaths": {
                       "items": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
-                        "x-happier-max-utf8-bytes": 128
+                        "x-happier-max-utf8-bytes": 512
                       },
-                      "maxItems": 128,
                       "type": "array"
                     },
                     "tags": {
@@ -4526,11 +4586,13 @@
                         "properties": {
                           "key": {
                             "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
-                            "x-happier-max-utf8-bytes": 128
+                            "x-happier-max-utf8-bytes": 512
                           },
                           "value": {
                             "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                             "type": "string",
                             "x-happier-max-utf8-bytes": 512
                           }
@@ -4541,12 +4603,20 @@
                         ],
                         "type": "object"
                       },
-                      "maxItems": 24,
                       "type": "array"
                     },
                     "title": {
-                      "type": "string",
-                      "x-happier-max-utf8-bytes": 512
+                      "anyOf": [
+                        {
+                          "const": ""
+                        },
+                        {
+                          "minLength": 1,
+                          "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                          "type": "string",
+                          "x-happier-max-utf8-bytes": 512
+                        }
+                      ]
                     },
                     "user": {
                       "anyOf": [
@@ -4557,6 +4627,7 @@
                               "anyOf": [
                                 {
                                   "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 512
                                 },
@@ -4569,6 +4640,7 @@
                               "anyOf": [
                                 {
                                   "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 128
                                 },
@@ -4581,6 +4653,7 @@
                               "anyOf": [
                                 {
                                   "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 128
                                 },
@@ -4593,6 +4666,7 @@
                               "anyOf": [
                                 {
                                   "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 512
                                 },
@@ -4605,6 +4679,7 @@
                               "anyOf": [
                                 {
                                   "minLength": 1,
+                                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                                   "type": "string",
                                   "x-happier-max-utf8-bytes": 512
                                 },
@@ -4750,8 +4825,7 @@
           "properties": {
             "continuation": {
               "minLength": 1,
-              "type": "string",
-              "x-happier-max-utf8-bytes": 512
+              "type": "string"
             },
             "instance": {
               "additionalProperties": false,
@@ -4953,6 +5027,7 @@
             },
             "tagKey": {
               "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
               "type": "string",
               "x-happier-max-utf8-bytes": 200
             },
@@ -4977,8 +5052,7 @@
               "properties": {
                 "continuation": {
                   "minLength": 1,
-                  "type": "string",
-                  "x-happier-max-utf8-bytes": 512
+                  "type": "string"
                 },
                 "incomplete": {
                   "anyOf": [
@@ -5035,6 +5109,7 @@
                       },
                       "name": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       },
@@ -5043,6 +5118,7 @@
                       },
                       "value": {
                         "minLength": 1,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                         "type": "string",
                         "x-happier-max-utf8-bytes": 512
                       }
@@ -5057,6 +5133,7 @@
                 },
                 "tagKey": {
                   "minLength": 1,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
                   "type": "string",
                   "x-happier-max-utf8-bytes": 128
                 }
@@ -6209,8 +6286,7 @@
                     "id": "origin",
                     "required": true,
                     "schema": {
-                      "maxLength": 2048,
-                      "minLength": 8,
+                      "minLength": 1,
                       "type": "string"
                     },
                     "secret": false,
@@ -6424,6 +6500,19 @@
             "plugins.sentry.ui.eventUser": "Event user",
             "plugins.sentry.ui.eventsLabel": "Events Sentry retained for this issue",
             "plugins.sentry.ui.eventsUnavailable": "Retained events are unavailable",
+            "plugins.sentry.ui.fact.assignee": "Assignee",
+            "plugins.sentry.ui.fact.culprit": "Culprit",
+            "plugins.sentry.ui.fact.events": "Events",
+            "plugins.sentry.ui.fact.first-seen": "First seen",
+            "plugins.sentry.ui.fact.issue-category": "Category",
+            "plugins.sentry.ui.fact.issue-type": "Type",
+            "plugins.sentry.ui.fact.last-release": "Last release",
+            "plugins.sentry.ui.fact.last-seen": "Last seen",
+            "plugins.sentry.ui.fact.level": "Level",
+            "plugins.sentry.ui.fact.priority": "Priority",
+            "plugins.sentry.ui.fact.project": "Project",
+            "plugins.sentry.ui.fact.unhandled": "Handling",
+            "plugins.sentry.ui.fact.users": "Users",
             "plugins.sentry.ui.facts": "Facts",
             "plugins.sentry.ui.framesLabel": "Frames in this section, in the order Sentry recorded them",
             "plugins.sentry.ui.framesOmitted": "{count} outer frame(s) are not shown. The frames nearest the failure are kept.",
@@ -6434,6 +6523,19 @@
             "plugins.sentry.ui.lastObservation": "Showing the last observation",
             "plugins.sentry.ui.loadMoreEvents": "Load more retained events",
             "plugins.sentry.ui.loadMoreValues": "Load more values",
+            "plugins.sentry.ui.metadata.email": "Email",
+            "plugins.sentry.ui.metadata.events": "Events",
+            "plugins.sentry.ui.metadata.firstSeen": "First seen",
+            "plugins.sentry.ui.metadata.firstSeenIn": "First seen in",
+            "plugins.sentry.ui.metadata.id": "Id",
+            "plugins.sentry.ui.metadata.ipAddress": "IP address",
+            "plugins.sentry.ui.metadata.lastChanged": "Sentry last changed",
+            "plugins.sentry.ui.metadata.lastSeen": "Last seen",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Last seen in",
+            "plugins.sentry.ui.metadata.name": "Name",
+            "plugins.sentry.ui.metadata.observed": "Observed",
+            "plugins.sentry.ui.metadata.username": "Username",
+            "plugins.sentry.ui.metadata.users": "Users",
             "plugins.sentry.ui.noActivity": "No recorded activity",
             "plugins.sentry.ui.noActivity.description": "Sentry has recorded no changes to this issue.",
             "plugins.sentry.ui.noApplicationFrames": "No application frames",
@@ -6493,8 +6595,7 @@
             "plugins.sentry.ui.valuesRead": "{count} value(s) read.",
             "plugins.sentry.ui.valuesRedacted": "Sentry redacted some values",
             "plugins.sentry.ui.valuesRedacted.description": "{count} value(s) were already scrubbed by this organization’s own Sentry rules.",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry offered the next page in a form this build will not follow, so this list stops here.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "This list stops here: Sentry’s next page position is longer than this build can carry forward."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry offered the next page in a form this build will not follow, so this list stops here."
           }
         },
         {
@@ -6526,6 +6627,19 @@
             "plugins.sentry.ui.eventUser": "Пользователь события",
             "plugins.sentry.ui.eventsLabel": "События, сохраненные Sentry для этого вопроса",
             "plugins.sentry.ui.eventsUnavailable": "Сохраненные события недоступны",
+            "plugins.sentry.ui.fact.assignee": "Исполнитель",
+            "plugins.sentry.ui.fact.culprit": "Источник",
+            "plugins.sentry.ui.fact.events": "События",
+            "plugins.sentry.ui.fact.first-seen": "Впервые замечено",
+            "plugins.sentry.ui.fact.issue-category": "Категория",
+            "plugins.sentry.ui.fact.issue-type": "Тип",
+            "plugins.sentry.ui.fact.last-release": "Последний релиз",
+            "plugins.sentry.ui.fact.last-seen": "Последний раз замечено",
+            "plugins.sentry.ui.fact.level": "Уровень",
+            "plugins.sentry.ui.fact.priority": "Приоритет",
+            "plugins.sentry.ui.fact.project": "Проект",
+            "plugins.sentry.ui.fact.unhandled": "Обработка",
+            "plugins.sentry.ui.fact.users": "Пользователи",
             "plugins.sentry.ui.facts": "Факты",
             "plugins.sentry.ui.framesLabel": "Кадры в этом разделе, в порядке, в котором Sentry их записал",
             "plugins.sentry.ui.framesOmitted": "Не показано внешних кадров: {count}. Сохранены кадры, ближайшие к ошибке.",
@@ -6536,6 +6650,19 @@
             "plugins.sentry.ui.lastObservation": "Показывает последнюю наблюдение",
             "plugins.sentry.ui.loadMoreEvents": "Загрузить больше сохраненных событий",
             "plugins.sentry.ui.loadMoreValues": "Загрузить больше значений",
+            "plugins.sentry.ui.metadata.email": "Эл. почта",
+            "plugins.sentry.ui.metadata.events": "События",
+            "plugins.sentry.ui.metadata.firstSeen": "Впервые замечено",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Впервые замечено в",
+            "plugins.sentry.ui.metadata.id": "Идентификатор",
+            "plugins.sentry.ui.metadata.ipAddress": "IP-адрес",
+            "plugins.sentry.ui.metadata.lastChanged": "Последнее изменение в Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Последний раз замечено",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Последний раз замечено в",
+            "plugins.sentry.ui.metadata.name": "Имя",
+            "plugins.sentry.ui.metadata.observed": "Наблюдалось",
+            "plugins.sentry.ui.metadata.username": "Имя пользователя",
+            "plugins.sentry.ui.metadata.users": "Пользователи",
             "plugins.sentry.ui.noActivity": "Нет записанной активности",
             "plugins.sentry.ui.noActivity.description": "Sentry не сделал изменений в этом вопросе.",
             "plugins.sentry.ui.noApplicationFrames": "Нет кадров приложения",
@@ -6595,8 +6722,7 @@
             "plugins.sentry.ui.valuesRead": "Прочитано значений: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry скрыл некоторые значения",
             "plugins.sentry.ui.valuesRedacted.description": "Правила Sentry этой организации уже скрыли значений: {count}.",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry предложил следующую страницу в форме, которую эта сборка не станет использовать, поэтому список заканчивается здесь.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "Список заканчивается здесь: позиция следующей страницы Sentry длиннее, чем эта сборка может перенести дальше."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry предложил следующую страницу в форме, которую эта сборка не станет использовать, поэтому список заканчивается здесь."
           }
         },
         {
@@ -6628,6 +6754,19 @@
             "plugins.sentry.ui.eventUser": "Użytkownik wydarzenia",
             "plugins.sentry.ui.eventsLabel": "Wydarzenia Sentry utrzymywane dla tej kwestii",
             "plugins.sentry.ui.eventsUnavailable": "Utrzymywane wydarzenia nie są dostępne",
+            "plugins.sentry.ui.fact.assignee": "Przypisany",
+            "plugins.sentry.ui.fact.culprit": "Źródło",
+            "plugins.sentry.ui.fact.events": "Zdarzenia",
+            "plugins.sentry.ui.fact.first-seen": "Pierwsze wystąpienie",
+            "plugins.sentry.ui.fact.issue-category": "Kategoria",
+            "plugins.sentry.ui.fact.issue-type": "Typ",
+            "plugins.sentry.ui.fact.last-release": "Ostatnie wydanie",
+            "plugins.sentry.ui.fact.last-seen": "Ostatnie wystąpienie",
+            "plugins.sentry.ui.fact.level": "Poziom",
+            "plugins.sentry.ui.fact.priority": "Priorytet",
+            "plugins.sentry.ui.fact.project": "Projekt",
+            "plugins.sentry.ui.fact.unhandled": "Obsługa",
+            "plugins.sentry.ui.fact.users": "Użytkownicy",
             "plugins.sentry.ui.facts": "Fakty",
             "plugins.sentry.ui.framesLabel": "Klatki w tej sekcji, w kolejności, w jakiej Sentry je zarejestrował",
             "plugins.sentry.ui.framesOmitted": "Nie pokazano zewnętrznych ramek: {count}. Zachowano ramki najbliższe awarii.",
@@ -6638,6 +6777,19 @@
             "plugins.sentry.ui.lastObservation": "Pokaż ostatni obserwacja",
             "plugins.sentry.ui.loadMoreEvents": "Załaduj więcej utrzymywanych wydarzeń",
             "plugins.sentry.ui.loadMoreValues": "Załaduj więcej wartości",
+            "plugins.sentry.ui.metadata.email": "E-mail",
+            "plugins.sentry.ui.metadata.events": "Zdarzenia",
+            "plugins.sentry.ui.metadata.firstSeen": "Pierwsze wystąpienie",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Pierwsze wystąpienie w",
+            "plugins.sentry.ui.metadata.id": "Identyfikator",
+            "plugins.sentry.ui.metadata.ipAddress": "Adres IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Ostatnia zmiana w Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Ostatnie wystąpienie",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Ostatnie wystąpienie w",
+            "plugins.sentry.ui.metadata.name": "Nazwa",
+            "plugins.sentry.ui.metadata.observed": "Zaobserwowano",
+            "plugins.sentry.ui.metadata.username": "Nazwa użytkownika",
+            "plugins.sentry.ui.metadata.users": "Użytkownicy",
             "plugins.sentry.ui.noActivity": "Brak nagranych aktywności",
             "plugins.sentry.ui.noActivity.description": "Sentry nie wprowadził żadnych zmian w tej wątku",
             "plugins.sentry.ui.noApplicationFrames": "Nie ma klatek aplikacji",
@@ -6661,7 +6813,7 @@
             "plugins.sentry.ui.readingOccurrence": "Odczytanie jednej obserwacji tej kwestii",
             "plugins.sentry.ui.readingSelectedOccurrence": "Odczytanie tej obserwacji",
             "plugins.sentry.ui.readingTagValues": "Odczytywanie wartości {tag}",
-            "plugins.sentry.ui.readingTags": "Odczytanie etykiety tej kwestii PostHog",
+            "plugins.sentry.ui.readingTags": "Odczytywanie etykiet tej kwestii z Sentry",
             "plugins.sentry.ui.recordsNotShown": "Nie udało się wyświetlić rekordów: {count}.",
             "plugins.sentry.ui.releaseEvidence.description": "Sentry podaje te wydania bezpośrednio w zgłoszeniu; niczego nie wywnioskowano tutaj z historii wdrożeń.",
             "plugins.sentry.ui.releasesLabel": "Wersje, które ta wątki Sentry są związane z",
@@ -6697,8 +6849,7 @@
             "plugins.sentry.ui.valuesRead": "Odczytane wartości: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ukrył niektóre wartości",
             "plugins.sentry.ui.valuesRedacted.description": "Reguły Sentry tej organizacji ukryły już {count} wartości.",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry wskazał kolejną stronę w formie, której ta wersja nie użyje, więc lista kończy się w tym miejscu.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "Lista kończy się w tym miejscu: pozycja następnej strony Sentry jest dłuższa, niż ta wersja może przenieść dalej."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry wskazał kolejną stronę w formie, której ta wersja nie użyje, więc lista kończy się w tym miejscu."
           }
         },
         {
@@ -6730,6 +6881,19 @@
             "plugins.sentry.ui.eventUser": "Usuario del evento",
             "plugins.sentry.ui.eventsLabel": "Eventos de Sentry retendidos para esta incidencia",
             "plugins.sentry.ui.eventsUnavailable": "Los eventos retendidos no están disponibles",
+            "plugins.sentry.ui.fact.assignee": "Responsable",
+            "plugins.sentry.ui.fact.culprit": "Culpable",
+            "plugins.sentry.ui.fact.events": "Eventos",
+            "plugins.sentry.ui.fact.first-seen": "Visto por primera vez",
+            "plugins.sentry.ui.fact.issue-category": "Categoría",
+            "plugins.sentry.ui.fact.issue-type": "Tipo",
+            "plugins.sentry.ui.fact.last-release": "Última versión",
+            "plugins.sentry.ui.fact.last-seen": "Visto por última vez",
+            "plugins.sentry.ui.fact.level": "Nivel",
+            "plugins.sentry.ui.fact.priority": "Prioridad",
+            "plugins.sentry.ui.fact.project": "Proyecto",
+            "plugins.sentry.ui.fact.unhandled": "Tratamiento",
+            "plugins.sentry.ui.fact.users": "Usuarios",
             "plugins.sentry.ui.facts": "Hechos",
             "plugins.sentry.ui.framesLabel": "Los marcos en esta sección, en el orden en que los registró Sentry",
             "plugins.sentry.ui.framesOmitted": "No se muestran {count} marco(s) exteriores. Se conservan los marcos más próximos al fallo.",
@@ -6740,6 +6904,19 @@
             "plugins.sentry.ui.lastObservation": "Mostrando la última observación",
             "plugins.sentry.ui.loadMoreEvents": "Cargar más eventos retendidos",
             "plugins.sentry.ui.loadMoreValues": "Cargar más valores",
+            "plugins.sentry.ui.metadata.email": "Correo electrónico",
+            "plugins.sentry.ui.metadata.events": "Eventos",
+            "plugins.sentry.ui.metadata.firstSeen": "Visto por primera vez",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Visto por primera vez en",
+            "plugins.sentry.ui.metadata.id": "Id.",
+            "plugins.sentry.ui.metadata.ipAddress": "Dirección IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Último cambio en Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Visto por última vez",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Visto por última vez en",
+            "plugins.sentry.ui.metadata.name": "Nombre",
+            "plugins.sentry.ui.metadata.observed": "Observado",
+            "plugins.sentry.ui.metadata.username": "Nombre de usuario",
+            "plugins.sentry.ui.metadata.users": "Usuarios",
             "plugins.sentry.ui.noActivity": "No hay actividad registrada",
             "plugins.sentry.ui.noActivity.description": "Sentry no ha registrado cambios en esta incidencia.",
             "plugins.sentry.ui.noApplicationFrames": "No se están mostrando marcos de la aplicación",
@@ -6763,7 +6940,7 @@
             "plugins.sentry.ui.readingOccurrence": "Leyendo una ocurrencia de esta incidencia",
             "plugins.sentry.ui.readingSelectedOccurrence": "Leyendo esta ocurrencia",
             "plugins.sentry.ui.readingTagValues": "Leyendo valores de {tag}",
-            "plugins.sentry.ui.readingTags": "Leyendo las etiquetas de esta incidencia de PostHog",
+            "plugins.sentry.ui.readingTags": "Leyendo las etiquetas de esta incidencia de Sentry",
             "plugins.sentry.ui.recordsNotShown": "No se pudieron mostrar {count} registro(s).",
             "plugins.sentry.ui.releaseEvidence.description": "Sentry indica estas versiones en la propia incidencia; aquí no se infiere nada del historial de despliegues.",
             "plugins.sentry.ui.releasesLabel": "Lanzamientos con los que está asociada esta incidencia de Sentry",
@@ -6799,8 +6976,7 @@
             "plugins.sentry.ui.valuesRead": "Valores leídos: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ocultó algunos valores",
             "plugins.sentry.ui.valuesRedacted.description": "Las reglas de Sentry de esta organización ya ocultaron {count} valor(es).",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry ofreció la página siguiente en un formato que esta versión no seguirá, así que la lista termina aquí.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "La lista termina aquí: la posición de la página siguiente de Sentry es más larga de lo que esta versión puede transportar."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ofreció la página siguiente en un formato que esta versión no seguirá, así que la lista termina aquí."
           }
         },
         {
@@ -6832,6 +7008,19 @@
             "plugins.sentry.ui.eventUser": "Utilisateur de l'événement",
             "plugins.sentry.ui.eventsLabel": "Événements conservés par Sentry pour cette anomalie",
             "plugins.sentry.ui.eventsUnavailable": "Les événements conservés ne sont pas disponibles",
+            "plugins.sentry.ui.fact.assignee": "Assigné à",
+            "plugins.sentry.ui.fact.culprit": "Responsable",
+            "plugins.sentry.ui.fact.events": "Événements",
+            "plugins.sentry.ui.fact.first-seen": "Première occurrence",
+            "plugins.sentry.ui.fact.issue-category": "Catégorie",
+            "plugins.sentry.ui.fact.issue-type": "Type",
+            "plugins.sentry.ui.fact.last-release": "Dernière version",
+            "plugins.sentry.ui.fact.last-seen": "Dernière occurrence",
+            "plugins.sentry.ui.fact.level": "Niveau",
+            "plugins.sentry.ui.fact.priority": "Priorité",
+            "plugins.sentry.ui.fact.project": "Projet",
+            "plugins.sentry.ui.fact.unhandled": "Traitement",
+            "plugins.sentry.ui.fact.users": "Utilisateurs",
             "plugins.sentry.ui.facts": "Faits",
             "plugins.sentry.ui.framesLabel": "Les trames de cette section, dans l'ordre dans lequel Sentry les a enregistrées",
             "plugins.sentry.ui.framesOmitted": "{count} cadre(s) extérieur(s) ne sont pas affichés. Les cadres les plus proches de l’échec sont conservés.",
@@ -6842,6 +7031,19 @@
             "plugins.sentry.ui.lastObservation": "Montrant la dernière observation",
             "plugins.sentry.ui.loadMoreEvents": "Charger plus d'événements conservés",
             "plugins.sentry.ui.loadMoreValues": "Charger plus de valeurs",
+            "plugins.sentry.ui.metadata.email": "E-mail",
+            "plugins.sentry.ui.metadata.events": "Événements",
+            "plugins.sentry.ui.metadata.firstSeen": "Première occurrence",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Première occurrence dans",
+            "plugins.sentry.ui.metadata.id": "Identifiant",
+            "plugins.sentry.ui.metadata.ipAddress": "Adresse IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Dernière modification dans Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Dernière occurrence",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Dernière occurrence dans",
+            "plugins.sentry.ui.metadata.name": "Nom",
+            "plugins.sentry.ui.metadata.observed": "Observé",
+            "plugins.sentry.ui.metadata.username": "Nom d’utilisateur",
+            "plugins.sentry.ui.metadata.users": "Utilisateurs",
             "plugins.sentry.ui.noActivity": "Aucune activité enregistrée",
             "plugins.sentry.ui.noActivity.description": "Sentry n'a enregistré aucune modification à ce problème.",
             "plugins.sentry.ui.noApplicationFrames": "Aucune trame d'application",
@@ -6901,8 +7103,7 @@
             "plugins.sentry.ui.valuesRead": "Valeurs lues : {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry a masqué certaines valeurs",
             "plugins.sentry.ui.valuesRedacted.description": "Les règles Sentry de cette organisation ont déjà masqué {count} valeur(s).",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry a proposé la page suivante sous une forme que cette version ne suivra pas ; la liste s’arrête donc ici.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "La liste s’arrête ici : la position de la page suivante de Sentry est plus longue que ce que cette version peut transmettre."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry a proposé la page suivante sous une forme que cette version ne suivra pas ; la liste s’arrête donc ici."
           }
         },
         {
@@ -6934,6 +7135,19 @@
             "plugins.sentry.ui.eventUser": "L'utente dell'evento",
             "plugins.sentry.ui.eventsLabel": "Eventi di Sentry mantenuti per questa questione",
             "plugins.sentry.ui.eventsUnavailable": "Gli eventi mantenuti non sono disponibili",
+            "plugins.sentry.ui.fact.assignee": "Assegnatario",
+            "plugins.sentry.ui.fact.culprit": "Responsabile",
+            "plugins.sentry.ui.fact.events": "Eventi",
+            "plugins.sentry.ui.fact.first-seen": "Prima occorrenza",
+            "plugins.sentry.ui.fact.issue-category": "Categoria",
+            "plugins.sentry.ui.fact.issue-type": "Tipo",
+            "plugins.sentry.ui.fact.last-release": "Ultima versione",
+            "plugins.sentry.ui.fact.last-seen": "Ultima occorrenza",
+            "plugins.sentry.ui.fact.level": "Livello",
+            "plugins.sentry.ui.fact.priority": "Priorità",
+            "plugins.sentry.ui.fact.project": "Progetto",
+            "plugins.sentry.ui.fact.unhandled": "Gestione",
+            "plugins.sentry.ui.fact.users": "Utenti",
             "plugins.sentry.ui.facts": "Fatti",
             "plugins.sentry.ui.framesLabel": "Cornici in questa sezione, nell'ordine in cui Sentry le ha registrate",
             "plugins.sentry.ui.framesOmitted": "{count} frame esterno/i non sono mostrati. Vengono mantenuti i frame più vicini all’errore.",
@@ -6944,6 +7158,19 @@
             "plugins.sentry.ui.lastObservation": "Most recent osservazione",
             "plugins.sentry.ui.loadMoreEvents": "Carica di più eventi mantenuti",
             "plugins.sentry.ui.loadMoreValues": "Carica di più valori",
+            "plugins.sentry.ui.metadata.email": "E-mail",
+            "plugins.sentry.ui.metadata.events": "Eventi",
+            "plugins.sentry.ui.metadata.firstSeen": "Prima occorrenza",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Prima occorrenza in",
+            "plugins.sentry.ui.metadata.id": "ID",
+            "plugins.sentry.ui.metadata.ipAddress": "Indirizzo IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Ultima modifica in Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Ultima occorrenza",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Ultima occorrenza in",
+            "plugins.sentry.ui.metadata.name": "Nome",
+            "plugins.sentry.ui.metadata.observed": "Osservato",
+            "plugins.sentry.ui.metadata.username": "Nome utente",
+            "plugins.sentry.ui.metadata.users": "Utenti",
             "plugins.sentry.ui.noActivity": "Nessuna attività registrata",
             "plugins.sentry.ui.noActivity.description": "Sentry non ha registrato alcuna modifica a questo problema.",
             "plugins.sentry.ui.noApplicationFrames": "Nessuna cornice dell'applicazione",
@@ -7003,8 +7230,7 @@
             "plugins.sentry.ui.valuesRead": "Valori letti: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ha nascosto alcuni valori",
             "plugins.sentry.ui.valuesRedacted.description": "Le regole Sentry di questa organizzazione hanno già nascosto {count} valori.",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry ha proposto la pagina successiva in una forma che questa build non seguirà, quindi l’elenco si ferma qui.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "L’elenco si ferma qui: la posizione della pagina successiva di Sentry è più lunga di quanto questa build possa portare avanti."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ha proposto la pagina successiva in una forma che questa build non seguirà, quindi l’elenco si ferma qui."
           }
         },
         {
@@ -7036,6 +7262,19 @@
             "plugins.sentry.ui.eventUser": "Usuário do evento",
             "plugins.sentry.ui.eventsLabel": "Os eventos do Sentry retenidos para esta questão",
             "plugins.sentry.ui.eventsUnavailable": "Os eventos retenidos não estão disponíveis",
+            "plugins.sentry.ui.fact.assignee": "Responsável",
+            "plugins.sentry.ui.fact.culprit": "Culpado",
+            "plugins.sentry.ui.fact.events": "Eventos",
+            "plugins.sentry.ui.fact.first-seen": "Visto pela primeira vez",
+            "plugins.sentry.ui.fact.issue-category": "Categoria",
+            "plugins.sentry.ui.fact.issue-type": "Tipo",
+            "plugins.sentry.ui.fact.last-release": "Última versão",
+            "plugins.sentry.ui.fact.last-seen": "Visto pela última vez",
+            "plugins.sentry.ui.fact.level": "Nível",
+            "plugins.sentry.ui.fact.priority": "Prioridade",
+            "plugins.sentry.ui.fact.project": "Projeto",
+            "plugins.sentry.ui.fact.unhandled": "Tratamento",
+            "plugins.sentry.ui.fact.users": "Utilizadores",
             "plugins.sentry.ui.facts": "Fatos",
             "plugins.sentry.ui.framesLabel": "Estruturas nesta seção, na ordem em que o Sentry as registrou",
             "plugins.sentry.ui.framesOmitted": "{count} quadro(s) externo(s) não são mostrados. Os quadros mais próximos da falha são mantidos.",
@@ -7046,6 +7285,19 @@
             "plugins.sentry.ui.lastObservation": "Mostrando a última observação",
             "plugins.sentry.ui.loadMoreEvents": "Carregar mais eventos retenidos",
             "plugins.sentry.ui.loadMoreValues": "Carregar mais valores",
+            "plugins.sentry.ui.metadata.email": "E-mail",
+            "plugins.sentry.ui.metadata.events": "Eventos",
+            "plugins.sentry.ui.metadata.firstSeen": "Visto pela primeira vez",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Visto pela primeira vez em",
+            "plugins.sentry.ui.metadata.id": "ID",
+            "plugins.sentry.ui.metadata.ipAddress": "Endereço IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Última alteração no Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Visto pela última vez",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Visto pela última vez em",
+            "plugins.sentry.ui.metadata.name": "Nome",
+            "plugins.sentry.ui.metadata.observed": "Observado",
+            "plugins.sentry.ui.metadata.username": "Nome de utilizador",
+            "plugins.sentry.ui.metadata.users": "Utilizadores",
             "plugins.sentry.ui.noActivity": "Nenhuma atividade registrada",
             "plugins.sentry.ui.noActivity.description": "O Sentry não registrou nenhuma alteração nesta questão.",
             "plugins.sentry.ui.noApplicationFrames": "Nenhuma estrutura de aplicação",
@@ -7105,8 +7357,7 @@
             "plugins.sentry.ui.valuesRead": "Valores lidos: {count}.",
             "plugins.sentry.ui.valuesRedacted": "O Sentry ocultou alguns valores",
             "plugins.sentry.ui.valuesRedacted.description": "As regras do Sentry desta organização já ocultaram {count} valor(es).",
-            "plugins.sentry.ui.walkStoppedShort": "O Sentry indicou a página seguinte numa forma que esta compilação não vai seguir, por isso a lista termina aqui.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "A lista termina aqui: a posição da página seguinte do Sentry é maior do que esta compilação consegue transportar."
+            "plugins.sentry.ui.walkStoppedShort": "O Sentry indicou a página seguinte numa forma que esta compilação não vai seguir, por isso a lista termina aqui."
           }
         },
         {
@@ -7138,6 +7389,19 @@
             "plugins.sentry.ui.eventUser": "Usuari de l'esdeveniment",
             "plugins.sentry.ui.eventsLabel": "Esdreveniments retenuts que Sentry ha conservat per a aquest problema",
             "plugins.sentry.ui.eventsUnavailable": "Esdreveniments retenuts no estan disponibles",
+            "plugins.sentry.ui.fact.assignee": "Assignatari",
+            "plugins.sentry.ui.fact.culprit": "Causant",
+            "plugins.sentry.ui.fact.events": "Esdeveniments",
+            "plugins.sentry.ui.fact.first-seen": "Vist per primera vegada",
+            "plugins.sentry.ui.fact.issue-category": "Categoria",
+            "plugins.sentry.ui.fact.issue-type": "Tipus",
+            "plugins.sentry.ui.fact.last-release": "Última versió",
+            "plugins.sentry.ui.fact.last-seen": "Vist per última vegada",
+            "plugins.sentry.ui.fact.level": "Nivell",
+            "plugins.sentry.ui.fact.priority": "Prioritat",
+            "plugins.sentry.ui.fact.project": "Projecte",
+            "plugins.sentry.ui.fact.unhandled": "Gestió",
+            "plugins.sentry.ui.fact.users": "Usuaris",
             "plugins.sentry.ui.facts": "Fets",
             "plugins.sentry.ui.framesLabel": "Marcs d'aquesta secció, en l'ordre en què Sentry els va registrar",
             "plugins.sentry.ui.framesOmitted": "No es mostren {count} marc(s) exterior(s). Es conserven els marcs més propers a l’error.",
@@ -7148,6 +7412,19 @@
             "plugins.sentry.ui.lastObservation": "Mostrant l'última observació",
             "plugins.sentry.ui.loadMoreEvents": "Carrega més esdeveniments retenuts",
             "plugins.sentry.ui.loadMoreValues": "Carrega més valors",
+            "plugins.sentry.ui.metadata.email": "Correu electrònic",
+            "plugins.sentry.ui.metadata.events": "Esdeveniments",
+            "plugins.sentry.ui.metadata.firstSeen": "Vist per primera vegada",
+            "plugins.sentry.ui.metadata.firstSeenIn": "Vist per primera vegada a",
+            "plugins.sentry.ui.metadata.id": "Identificador",
+            "plugins.sentry.ui.metadata.ipAddress": "Adreça IP",
+            "plugins.sentry.ui.metadata.lastChanged": "Últim canvi a Sentry",
+            "plugins.sentry.ui.metadata.lastSeen": "Vist per última vegada",
+            "plugins.sentry.ui.metadata.lastSeenIn": "Vist per última vegada a",
+            "plugins.sentry.ui.metadata.name": "Nom",
+            "plugins.sentry.ui.metadata.observed": "Observat",
+            "plugins.sentry.ui.metadata.username": "Nom d’usuari",
+            "plugins.sentry.ui.metadata.users": "Usuaris",
             "plugins.sentry.ui.noActivity": "No hi ha activitat registrada",
             "plugins.sentry.ui.noActivity.description": "Sentry no ha registrat cap canvi a aquesta informació.",
             "plugins.sentry.ui.noApplicationFrames": "No hi ha marcs d'aplicació",
@@ -7207,8 +7484,7 @@
             "plugins.sentry.ui.valuesRead": "Valors llegits: {count}.",
             "plugins.sentry.ui.valuesRedacted": "Sentry ha ocultat alguns valors",
             "plugins.sentry.ui.valuesRedacted.description": "Les regles de Sentry d’aquesta organització ja han ocultat {count} valor(s).",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry ha ofert la pàgina següent en una forma que aquesta versió no seguirà, de manera que la llista s’atura aquí.",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "La llista s’atura aquí: la posició de la pàgina següent de Sentry és més llarga del que aquesta versió pot transportar."
+            "plugins.sentry.ui.walkStoppedShort": "Sentry ha ofert la pàgina següent en una forma que aquesta versió no seguirà, de manera que la llista s’atura aquí."
           }
         },
         {
@@ -7240,6 +7516,19 @@
             "plugins.sentry.ui.eventUser": "事件用户",
             "plugins.sentry.ui.eventsLabel": "Sentry保留的此问题事件",
             "plugins.sentry.ui.eventsUnavailable": "保留事件不可用",
+            "plugins.sentry.ui.fact.assignee": "负责人",
+            "plugins.sentry.ui.fact.culprit": "责任位置",
+            "plugins.sentry.ui.fact.events": "事件",
+            "plugins.sentry.ui.fact.first-seen": "首次出现",
+            "plugins.sentry.ui.fact.issue-category": "类别",
+            "plugins.sentry.ui.fact.issue-type": "类型",
+            "plugins.sentry.ui.fact.last-release": "上一版本",
+            "plugins.sentry.ui.fact.last-seen": "最后出现",
+            "plugins.sentry.ui.fact.level": "级别",
+            "plugins.sentry.ui.fact.priority": "优先级",
+            "plugins.sentry.ui.fact.project": "项目",
+            "plugins.sentry.ui.fact.unhandled": "处理方式",
+            "plugins.sentry.ui.fact.users": "用户",
             "plugins.sentry.ui.facts": "事实",
             "plugins.sentry.ui.framesLabel": "按Sentry记录的顺序显示本部分中的每一帧",
             "plugins.sentry.ui.framesOmitted": "未显示 {count} 个外层帧。保留了最接近故障的帧。",
@@ -7250,6 +7539,19 @@
             "plugins.sentry.ui.lastObservation": "显示最近的观察",
             "plugins.sentry.ui.loadMoreEvents": "加载更多保留事件",
             "plugins.sentry.ui.loadMoreValues": "加载更多值",
+            "plugins.sentry.ui.metadata.email": "电子邮件",
+            "plugins.sentry.ui.metadata.events": "事件",
+            "plugins.sentry.ui.metadata.firstSeen": "首次出现",
+            "plugins.sentry.ui.metadata.firstSeenIn": "首次出现于",
+            "plugins.sentry.ui.metadata.id": "标识符",
+            "plugins.sentry.ui.metadata.ipAddress": "IP 地址",
+            "plugins.sentry.ui.metadata.lastChanged": "Sentry 上次更改",
+            "plugins.sentry.ui.metadata.lastSeen": "最后出现",
+            "plugins.sentry.ui.metadata.lastSeenIn": "最后出现于",
+            "plugins.sentry.ui.metadata.name": "姓名",
+            "plugins.sentry.ui.metadata.observed": "观察时间",
+            "plugins.sentry.ui.metadata.username": "用户名",
+            "plugins.sentry.ui.metadata.users": "用户",
             "plugins.sentry.ui.noActivity": "没有记录的活动",
             "plugins.sentry.ui.noActivity.description": "Sentry未记录此问题的任何更改。",
             "plugins.sentry.ui.noApplicationFrames": "没有应用程序框架",
@@ -7309,8 +7611,7 @@
             "plugins.sentry.ui.valuesRead": "已读取 {count} 个值。",
             "plugins.sentry.ui.valuesRedacted": "Sentry 隐去了部分值",
             "plugins.sentry.ui.valuesRedacted.description": "此组织的 Sentry 规则已隐去 {count} 个值。",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry 给出的下一页格式为此版本不会跟进的形式，因此列表到此为止。",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "列表到此为止：Sentry 的下一页位置超出了此版本可以继续传递的长度。"
+            "plugins.sentry.ui.walkStoppedShort": "Sentry 给出的下一页格式为此版本不会跟进的形式，因此列表到此为止。"
           }
         },
         {
@@ -7342,16 +7643,42 @@
             "plugins.sentry.ui.eventUser": "事件用戶",
             "plugins.sentry.ui.eventsLabel": "Sentry 保留的事件",
             "plugins.sentry.ui.eventsUnavailable": "保留的事件不可用",
+            "plugins.sentry.ui.fact.assignee": "負責人",
+            "plugins.sentry.ui.fact.culprit": "肇因位置",
+            "plugins.sentry.ui.fact.events": "事件",
+            "plugins.sentry.ui.fact.first-seen": "首次出現",
+            "plugins.sentry.ui.fact.issue-category": "類別",
+            "plugins.sentry.ui.fact.issue-type": "類型",
+            "plugins.sentry.ui.fact.last-release": "上一版本",
+            "plugins.sentry.ui.fact.last-seen": "最後出現",
+            "plugins.sentry.ui.fact.level": "層級",
+            "plugins.sentry.ui.fact.priority": "優先順序",
+            "plugins.sentry.ui.fact.project": "專案",
+            "plugins.sentry.ui.fact.unhandled": "處理方式",
+            "plugins.sentry.ui.fact.users": "使用者",
             "plugins.sentry.ui.facts": "事實",
             "plugins.sentry.ui.framesLabel": "Sentry 記錄的本部分框架，依序排列",
             "plugins.sentry.ui.framesOmitted": "未顯示 {count} 個外層框架。保留了最接近失敗的框架。",
             "plugins.sentry.ui.hideSystemFrames": "隱藏系統框架",
             "plugins.sentry.ui.hideUserDetails": "隱藏事件使用者詳細資料",
             "plugins.sentry.ui.invalidInput": "這個問題無法顯示",
-            "plugins.sentry.ui.invalidInput.description": "Triage 提供的詳細輸入，此 Azure DevOps 版本無法接受。",
+            "plugins.sentry.ui.invalidInput.description": "Triage 提供的詳細輸入，此 Sentry 版本無法接受。",
             "plugins.sentry.ui.lastObservation": "顯示最近一次的觀察",
             "plugins.sentry.ui.loadMoreEvents": "載入更多保留的事件",
             "plugins.sentry.ui.loadMoreValues": "載入更多值",
+            "plugins.sentry.ui.metadata.email": "電子郵件",
+            "plugins.sentry.ui.metadata.events": "事件",
+            "plugins.sentry.ui.metadata.firstSeen": "首次出現",
+            "plugins.sentry.ui.metadata.firstSeenIn": "首次出現於",
+            "plugins.sentry.ui.metadata.id": "識別碼",
+            "plugins.sentry.ui.metadata.ipAddress": "IP 位址",
+            "plugins.sentry.ui.metadata.lastChanged": "Sentry 上次變更",
+            "plugins.sentry.ui.metadata.lastSeen": "最後出現",
+            "plugins.sentry.ui.metadata.lastSeenIn": "最後出現於",
+            "plugins.sentry.ui.metadata.name": "名稱",
+            "plugins.sentry.ui.metadata.observed": "觀察時間",
+            "plugins.sentry.ui.metadata.username": "使用者名稱",
+            "plugins.sentry.ui.metadata.users": "使用者",
             "plugins.sentry.ui.noActivity": "沒有記錄的活動",
             "plugins.sentry.ui.noActivity.description": "Sentry 無法記錄此問題的任何變更。",
             "plugins.sentry.ui.noApplicationFrames": "未顯示任何應用程式框架",
@@ -7411,8 +7738,7 @@
             "plugins.sentry.ui.valuesRead": "已讀取 {count} 個值。",
             "plugins.sentry.ui.valuesRedacted": "Sentry 隱去了部分值",
             "plugins.sentry.ui.valuesRedacted.description": "此組織的 Sentry 規則已隱去 {count} 個值。",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry 提供的下一頁格式為此版本不會跟進的形式，因此清單到此為止。",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "清單到此為止：Sentry 的下一頁位置超出了此版本能夠繼續帶往下一頁的長度。"
+            "plugins.sentry.ui.walkStoppedShort": "Sentry 提供的下一頁格式為此版本不會跟進的形式，因此清單到此為止。"
           }
         },
         {
@@ -7444,6 +7770,19 @@
             "plugins.sentry.ui.eventUser": "イベントユーザー",
             "plugins.sentry.ui.eventsLabel": "Sentryがこの問題のために保有したイベント",
             "plugins.sentry.ui.eventsUnavailable": "保有されたイベントが利用できません",
+            "plugins.sentry.ui.fact.assignee": "担当者",
+            "plugins.sentry.ui.fact.culprit": "原因箇所",
+            "plugins.sentry.ui.fact.events": "イベント",
+            "plugins.sentry.ui.fact.first-seen": "初回確認",
+            "plugins.sentry.ui.fact.issue-category": "カテゴリ",
+            "plugins.sentry.ui.fact.issue-type": "タイプ",
+            "plugins.sentry.ui.fact.last-release": "最終リリース",
+            "plugins.sentry.ui.fact.last-seen": "最終確認",
+            "plugins.sentry.ui.fact.level": "レベル",
+            "plugins.sentry.ui.fact.priority": "優先度",
+            "plugins.sentry.ui.fact.project": "プロジェクト",
+            "plugins.sentry.ui.fact.unhandled": "処理",
+            "plugins.sentry.ui.fact.users": "ユーザー",
             "plugins.sentry.ui.facts": "事実",
             "plugins.sentry.ui.framesLabel": "Sentryが記録した順にこのセクションのフレーム",
             "plugins.sentry.ui.framesOmitted": "{count} 個の外側フレームは表示されません。障害に最も近いフレームを保持しています。",
@@ -7454,6 +7793,19 @@
             "plugins.sentry.ui.lastObservation": "最後の観察を表示しています。",
             "plugins.sentry.ui.loadMoreEvents": "追加保有されたイベントを読み込み中",
             "plugins.sentry.ui.loadMoreValues": "追加読み込み",
+            "plugins.sentry.ui.metadata.email": "メール",
+            "plugins.sentry.ui.metadata.events": "イベント",
+            "plugins.sentry.ui.metadata.firstSeen": "初回確認",
+            "plugins.sentry.ui.metadata.firstSeenIn": "初回確認リリース",
+            "plugins.sentry.ui.metadata.id": "ID",
+            "plugins.sentry.ui.metadata.ipAddress": "IP アドレス",
+            "plugins.sentry.ui.metadata.lastChanged": "Sentry での最終変更",
+            "plugins.sentry.ui.metadata.lastSeen": "最終確認",
+            "plugins.sentry.ui.metadata.lastSeenIn": "最終確認リリース",
+            "plugins.sentry.ui.metadata.name": "名前",
+            "plugins.sentry.ui.metadata.observed": "観測日時",
+            "plugins.sentry.ui.metadata.username": "ユーザー名",
+            "plugins.sentry.ui.metadata.users": "ユーザー",
             "plugins.sentry.ui.noActivity": "記録された活動はありません",
             "plugins.sentry.ui.noActivity.description": "Sentryはこの問題に変更を記録していません。",
             "plugins.sentry.ui.noApplicationFrames": "アプリケーションフレームがありません",
@@ -7513,8 +7865,7 @@
             "plugins.sentry.ui.valuesRead": "{count} 個の値を読み取りました。",
             "plugins.sentry.ui.valuesRedacted": "Sentry が一部の値を秘匿しました",
             "plugins.sentry.ui.valuesRedacted.description": "この組織の Sentry ルールにより {count} 個の値がすでに秘匿されています。",
-            "plugins.sentry.ui.walkStoppedShort": "Sentry が示した次のページはこのビルドが従わない形式のため、この一覧はここで終わります。",
-            "plugins.sentry.ui.walkStoppedShort.continuation": "この一覧はここで終わります。Sentry の次ページ位置が、このビルドで引き継げる長さを超えています。"
+            "plugins.sentry.ui.walkStoppedShort": "Sentry が示した次のページはこのビルドが従わない形式のため、この一覧はここで終わります。"
           }
         }
       ],

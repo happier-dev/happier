@@ -36,6 +36,7 @@ import {
   listAzureDevOpsInstancesAction,
   prepareAzureDevOpsReviewWorkspaceAction,
   scanAzureDevOpsSourceAction,
+  verifyAzureDevOpsReviewWorkspaceAction,
 } from './triage/actions.js';
 import {
   AzureCommitsInputV1Schema,
@@ -66,11 +67,20 @@ import {
   setAzureDevOpsPullRequestThreadStatus,
 } from './triage/mutationActions.js';
 import {
+  createAzureDevOpsPullRequestThreadComment,
+  replyAzureDevOpsPullRequestThread,
+  submitAzureDevOpsPullRequestReview,
+} from './triage/reviewPublication.js';
+import {
   AzureAbandonInputV1Schema,
   AzureCompleteInputV1Schema,
   AzureMutationResultV1Schema,
   AzureReactivateInputV1Schema,
+  AzureReviewPublicationResultV1Schema,
   AzureRequestReviewInputV1Schema,
+  AzureSubmitReviewInputV1Schema,
+  AzureThreadCommentCreateInputV1Schema,
+  AzureThreadReplyInputV1Schema,
   AzureThreadStatusInputV1Schema,
   AzureThreadStatusResultV1Schema,
 } from './triage/mutations/contracts.js';
@@ -127,7 +137,9 @@ const BASE_FIELD = {
       + ' or your Azure DevOps Server collection URL.',
   },
   semantic: 'connectedAccountBase' as const,
-  schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
+  // Canonical base parsing/admission is host-owned. Do not add a second URL
+  // length policy at the provider declaration.
+  schema: { type: 'string' as const, minLength: 1 },
   required: true as const,
   secret: false as const,
 };
@@ -140,21 +152,21 @@ const TOKEN_FIELD = {
   },
   description: {
     key: 'plugins.azureDevops.auth.token.description',
-    fallback: 'An Azure DevOps personal access token with Code (read) access.',
+    fallback: 'Use Code (read) to browse. Actions that change Azure DevOps require Code (read & write).',
   },
   schema: { type: 'string' as const, minLength: 1 },
   secret: true as const,
 };
 
 /**
- * Every read Action reaches the provider and the exact account, so both grants are declared on all
- * three.
+ * Every provider read reaches the deployment and the exact account, so both network grants and the
+ * purpose grant travel together.
  *
- * `scan` and `get` additionally declare the exact account path their configured instance carries,
- * so the host cross-checks the credential-ref leaf at declaration time. `scan`'s published input is
- * a two-arm union — the deliberate shape that makes a mid-scan limit change unrepresentable — and
- * the canonical Action validator resolves the bound path in every representable arm, so the union
- * costs no declaration-time authority. `listInstances` carries no account at all, because producing
+ * Every role after discovery declares the exact account path its configured instance carries, so
+ * the host cross-checks the credential-ref leaf at declaration time. `scan`'s published input is a
+ * two-arm union — the deliberate shape that makes a mid-scan limit change unrepresentable — and the
+ * canonical Action validator resolves the bound path in every representable arm, so the union costs
+ * no declaration-time authority. `listInstances` carries no account at all, because producing
  * account references is what it performs.
  */
 const READ_HOST_ACCESS = [
@@ -185,13 +197,14 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }],
         // `GET` serves every read and every confirming re-read. `PATCH` covers the four writes
         // Azure expresses as an update of an existing resource — complete, abandon and reactivate
-        // on the pull request itself, plus one review thread's status — and `POST` covers exactly
-        // one: the documented bulk additive reviewer route behind `request-review`. The host
+        // on the pull request itself, plus one review thread's status. `POST` covers the documented
+        // bulk additive reviewer route and review-thread publication; `PUT` carries the viewer's
+        // verdict through Azure's per-reviewer vote route. The host
         // revalidates origin AND method at dispatch, so an Action whose verb is missing here is
         // rejected before it ever reaches Azure. `DELETE` stays absent: no declared Action removes
         // anything — `request-review` adds identities and never removes one — and a verb granted
         // for symmetry is authority the user approved for nothing.
-        methods: ['GET', 'PATCH', 'POST'],
+        methods: ['GET', 'PATCH', 'POST', 'PUT'],
       },
     }, {
       id: AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
@@ -202,7 +215,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         // Azure DevOps Server may be hosted on a private network. This flag stays on the
         // connected-account scope only; the fixed public SCM provider grant above remains
         // public-only even when a private Server account is selected.
-        methods: ['GET', 'PATCH', 'POST'],
+        methods: ['GET', 'PATCH', 'POST', 'PUT'],
         privateNetwork: true,
       },
     }, {
@@ -327,6 +340,19 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: prepareAzureDevOpsReviewWorkspaceAction,
     },
+    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.verifyReviewWorkspace]: {
+      title: 'Verify Azure DevOps review workspace',
+      description: 'Rereads one pull request and verifies the prepared local HEAD before review.',
+      scopes: ['global'],
+      surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
+      execution: { target: 'daemon' },
+      dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      inputSchema: sources.operations.verifyReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: verifyAzureDevOpsReviewWorkspaceAction,
+    },
     // The five source-native detail planes. Their published surface is
     // `plugin`, so the only caller that reaches them is this plugin's own
     // mounted detail artifact.
@@ -424,12 +450,15 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       // reasonably assume completion makes for them: it never moves Work Items and never bypasses
       // branch policy, and both are sent as an explicit `false` rather than left to a default.
       confirmation: {
-        title: 'Complete this pull request?',
-        body: 'Completing is permanent in Azure DevOps. Work items are not transitioned and branch'
-          + ' policy is not bypassed. The source branch is deleted only if you chose that, and'
-          + ' completion runs against the merge source shown here — if new commits arrive first,'
-          + ' nothing is completed and you are asked again.',
-        confirmLabel: 'Complete',
+        title: { key: 'plugins.azureDevops.actions.complete.confirm.title', fallback: 'Complete this pull request?' },
+        body: {
+          key: 'plugins.azureDevops.actions.complete.confirm.body',
+          fallback: 'Completing is permanent in Azure DevOps. Work items are not transitioned and branch'
+            + ' policy is not bypassed. The source branch is deleted only if you chose that, and'
+            + ' completion runs against the merge source shown here — if new commits arrive first,'
+            + ' nothing is completed and you are asked again.',
+        },
+        confirmLabel: { key: 'plugins.azureDevops.actions.complete.confirm.label', fallback: 'Complete' },
       },
       inputSchema: AzureCompleteInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -447,10 +476,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
       confirmation: {
-        title: 'Abandon this pull request?',
-        body: 'The pull request stops being active and its reviewers stop being asked. Azure can'
-          + ' reactivate it later, so this is not permanent.',
-        confirmLabel: 'Abandon',
+        title: { key: 'plugins.azureDevops.actions.abandon.confirm.title', fallback: 'Abandon this pull request?' },
+        body: {
+          key: 'plugins.azureDevops.actions.abandon.confirm.body',
+          fallback: 'The pull request stops being active and its reviewers stop being asked. Azure can'
+            + ' reactivate it later, so this is not permanent.',
+        },
+        confirmLabel: { key: 'plugins.azureDevops.actions.abandon.confirm.label', fallback: 'Abandon' },
       },
       inputSchema: AzureAbandonInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -470,10 +502,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       // The body says what comes back with it, because reactivating is not a private bookkeeping
       // change: the pull request becomes active again and its reviewers are asked again.
       confirmation: {
-        title: 'Reactivate this pull request?',
-        body: 'The pull request becomes active again and its reviewers are asked to look at it'
-          + ' again. You can abandon it once more afterwards.',
-        confirmLabel: 'Reactivate',
+        title: { key: 'plugins.azureDevops.actions.reactivate.confirm.title', fallback: 'Reactivate this pull request?' },
+        body: {
+          key: 'plugins.azureDevops.actions.reactivate.confirm.body',
+          fallback: 'The pull request becomes active again and its reviewers are asked to look at it'
+            + ' again. You can abandon it once more afterwards.',
+        },
+        confirmLabel: { key: 'plugins.azureDevops.actions.reactivate.confirm.label', fallback: 'Reactivate' },
       },
       inputSchema: AzureReactivateInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -493,10 +528,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       // The body states the one thing this write does NOT do, because the reviewer routes Azure
       // publishes can do it: nobody is removed and no existing vote is reset.
       confirmation: {
-        title: 'Request review from these people?',
-        body: 'They are added as reviewers and notified. Nobody currently reviewing is removed and'
-          + ' no existing vote is changed.',
-        confirmLabel: 'Request review',
+        title: { key: 'plugins.azureDevops.actions.requestReview.confirm.title', fallback: 'Request review from these people?' },
+        body: {
+          key: 'plugins.azureDevops.actions.requestReview.confirm.body',
+          fallback: 'They are added as reviewers and notified. Nobody currently reviewing is removed and'
+            + ' no existing vote is changed.',
+        },
+        confirmLabel: { key: 'plugins.azureDevops.actions.requestReview.confirm.label', fallback: 'Request review' },
       },
       inputSchema: AzureRequestReviewInputV1Schema.jsonSchema,
       resultSchema: AzureMutationResultV1Schema.jsonSchema,
@@ -514,10 +552,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
       confirmation: {
-        title: 'Change this thread’s status?',
-        body: 'Everyone on the pull request sees the new status. Nothing in the conversation is'
-          + ' changed, and you can set the status again afterwards.',
-        confirmLabel: 'Set status',
+        title: { key: 'plugins.azureDevops.actions.threadStatus.confirm.title', fallback: 'Change this thread’s status?' },
+        body: {
+          key: 'plugins.azureDevops.actions.threadStatus.confirm.body',
+          fallback: 'Everyone on the pull request sees the new status. Nothing in the conversation is'
+            + ' changed, and you can set the status again afterwards.',
+        },
+        confirmLabel: { key: 'plugins.azureDevops.actions.threadStatus.confirm.label', fallback: 'Set status' },
       },
       inputSchema: AzureThreadStatusInputV1Schema.jsonSchema,
       // A thread write settles into the thread's own vocabulary, not the pull request's: the
@@ -527,6 +568,66 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: setAzureDevOpsPullRequestThreadStatus,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
+      title: 'Submit an Azure DevOps pull request review',
+      description: 'Publishes the selected canonical review comments in order and submits the'
+        + ' viewer verdict last, only while the exact base and head remain current.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: { key: 'plugins.azureDevops.actions.submitReview.confirm.title', fallback: 'Submit this review?' },
+        body: { key: 'plugins.azureDevops.actions.submitReview.confirm.body', fallback: 'Selected comments are published in order, then the verdict is submitted. If the pull request comparison moved, nothing is written.' },
+        confirmLabel: { key: 'plugins.azureDevops.actions.submitReview.confirm.label', fallback: 'Submit review' },
+      },
+      inputSchema: AzureSubmitReviewInputV1Schema.jsonSchema,
+      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: submitAzureDevOpsPullRequestReview,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadCommentCreate]: {
+      title: 'Publish an Azure DevOps pull request review comment',
+      description: 'Publishes one canonical Happier proposal as a new review thread at its exact'
+        + ' preflighted Azure DevOps anchor.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
+        body: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.body', fallback: 'This comment becomes visible as a new Azure DevOps review thread at the comparison you reviewed.' },
+        confirmLabel: { key: 'plugins.azureDevops.actions.threadCommentCreate.confirm.label', fallback: 'Publish comment' },
+      },
+      inputSchema: AzureThreadCommentCreateInputV1Schema.jsonSchema,
+      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: createAzureDevOpsPullRequestThreadComment,
+    },
+    [AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadReply]: {
+      title: 'Reply to an Azure DevOps pull request review thread',
+      description: 'Publishes one canonical Happier proposal as a reply to the exact Azure DevOps'
+        + ' thread and parent comment selected by the reader.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.azureDevops.actions.threadReply.confirm.title', fallback: 'Post this thread reply?' },
+        body: { key: 'plugins.azureDevops.actions.threadReply.confirm.body', fallback: 'This reply becomes visible in the selected Azure DevOps review conversation.' },
+        confirmLabel: { key: 'plugins.azureDevops.actions.threadReply.confirm.label', fallback: 'Post reply' },
+      },
+      inputSchema: AzureThreadReplyInputV1Schema.jsonSchema,
+      resultSchema: AzureReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: replyAzureDevOpsPullRequestThread,
     },
   },
   scmHostingProviders: {
@@ -538,7 +639,13 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
       },
-      runtime: { adapter: azureDevopsOperationsAdapter },
+      runtime: {
+        adapter: {
+          routing: azureDevopsOperationsAdapter,
+          pullRequests: azureDevopsOperationsAdapter,
+          repositoryPublishing: azureDevopsOperationsAdapter,
+        },
+      },
     },
   },
   connectedAccountDescriptors: {
@@ -593,6 +700,8 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
             get: sources.operations.get.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
               .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
+            verifyReviewWorkspace: sources.operations.verifyReviewWorkspace
+              .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.verifyReviewWorkspace),
           },
           surfaces: { detail: { renderer: AZURE_DEVOPS_TRIAGE_DETAIL_RENDERER_ID } },
         }),

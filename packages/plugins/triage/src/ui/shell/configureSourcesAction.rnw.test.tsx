@@ -21,6 +21,7 @@ import { TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 } from '../../actions/savedV
 import { TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1 } from '../../actions/userMarksProtocol.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 
 /**
  * A reader who has nothing configured, and whether this page can do anything
@@ -112,6 +113,7 @@ async function mountShell(options: Readonly<{
     openRefuses?: boolean;
 }> = {}): Promise<PluginUiTestkit> {
     opened = [];
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -132,7 +134,7 @@ async function mountShell(options: Readonly<{
                     options.settingsPageId,
                 ) as unknown as ReturnType<typeof createSurfaceContextFixture>['targetedContributions'],
             }),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action }) => await executeAction(action),
@@ -147,7 +149,9 @@ async function mountShell(options: Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return fixture;
 }
 

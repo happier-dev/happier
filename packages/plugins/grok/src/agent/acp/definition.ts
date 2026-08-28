@@ -93,7 +93,7 @@ export function createGrokAcpRuntimeExtensions(
   }>,
 ): AgentAcpRuntimeExtensions {
   const sessionNotification = createGrokSessionNotificationObserver({
-    context: context as AgentSessionRuntimeContext,
+    context,
   });
   const askQuestion = async (
     params: Parameters<NonNullable<AgentAcpRuntimeExtensions['requests']>[string]>[0],

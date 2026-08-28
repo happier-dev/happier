@@ -16,8 +16,6 @@ import type {
 
 const GITHUB_COLLISION_SCOPE_PREFIX = 'github:';
 
-/** Printable non-space ASCII, so an identity tuple can be joined without collision. */
-const NATIVE_ITEM_ID_PATTERN = /^[\x21-\x7E]{1,256}$/u;
 const POSITIVE_DECIMAL_PATTERN = /^[1-9][0-9]*$/u;
 
 function utf8ByteLength(value: string): number {
@@ -66,7 +64,7 @@ export function buildGithubEntryLocalRef(input: Readonly<{
   const collisionScope = buildGithubCollisionScope(input.repositoryId);
   if (collisionScope === null) return null;
   const entryId = readPositiveDecimal(input.nativeItemId);
-  if (entryId === null || !NATIVE_ITEM_ID_PATTERN.test(entryId)) return null;
+  if (entryId === null) return null;
   if (utf8ByteLength(entryId) > MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1) return null;
   return Object.freeze({ kindId: input.kindId, collisionScope, entryId });
 }

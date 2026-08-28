@@ -29,11 +29,16 @@ export type CodexUsageSubjectRef =
 
 export type ResolveCodexUsageSubjectRefInput = Readonly<{
   connectedServiceRecord?: OauthCredentialRecord | TokenCredentialRecord | null;
+  connectedServiceProviderAccountId?: string | null;
   liveProviderAccount?: CodexActiveProviderAccount | null;
   authStoreProviderAccountIdProof?: CodexAuthStoreProviderAccountIdProof | null;
   provisionalDiscriminator?: string | null;
   accountLabel?: string | null;
 }>;
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
 
 function readProviderAccountId(record: OauthCredentialRecord | TokenCredentialRecord | null | undefined): string | null {
   if (!record || record.kind !== 'oauth') return null;
@@ -74,12 +79,14 @@ export function resolveCodexUsageSubjectRef(input: ResolveCodexUsageSubjectRefIn
   }
 
   const connectedServiceProviderAccountId = readProviderAccountId(input.connectedServiceRecord);
+  const selectedProviderAccountId = readString(input.connectedServiceProviderAccountId);
   const authStoreProof = input.authStoreProviderAccountIdProof;
+  const effectiveConnectedServiceProviderAccountId = selectedProviderAccountId ?? connectedServiceProviderAccountId;
   if (
-    connectedServiceProviderAccountId
+    effectiveConnectedServiceProviderAccountId
     && (
       authStoreProof?.status === 'conflict'
-      || (authStoreProof?.status === 'resolved' && authStoreProof.accountId !== connectedServiceProviderAccountId)
+      || (authStoreProof?.status === 'resolved' && authStoreProof.accountId !== effectiveConnectedServiceProviderAccountId)
     )
   ) {
     return {
@@ -91,11 +98,11 @@ export function resolveCodexUsageSubjectRef(input: ResolveCodexUsageSubjectRefIn
         : 'conflicting_provider_account_ids',
     };
   }
-  if (connectedServiceProviderAccountId) {
+  if (effectiveConnectedServiceProviderAccountId) {
     return {
       providerId: 'openai-codex',
       kind: 'providerSubject',
-      accountSubjectId: connectedServiceProviderAccountId,
+      accountSubjectId: effectiveConnectedServiceProviderAccountId,
       proof: 'connected_service_provider_account_id',
     };
   }

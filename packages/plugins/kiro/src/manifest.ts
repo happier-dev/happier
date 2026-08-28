@@ -53,6 +53,7 @@ export const KIRO_PLUGIN = definePlugin({
           },
           auth: {
             support: 'login_terminal',
+            nonInteractiveStatusProbe: true,
             loginLaunches: [{ kind: 'primary', args: ['login'] }],
           },
         },
@@ -66,6 +67,7 @@ export const KIRO_PLUGIN = definePlugin({
             delivery: ['newTurn', 'steer', 'followUp'],
             cancel: true,
           },
+          executionRuns: { open: ['create'], checkpoint: false, stop: true },
         }),
       },
       cliAuth: {

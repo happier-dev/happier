@@ -15,6 +15,7 @@ describe('POSTHOG_DETAIL_TABS_V1', () => {
             // here states its own lifetime.
             expect(['retain', 'discard']).toContain(tab.retention);
             expect(tab.title.length).toBeGreaterThan(0);
+            expect(tab.titleKey).toMatch(/^plugins\.posthog\.ui\.tab\./u);
             expect(tab.retainedState.length).toBeGreaterThan(0);
         }
     });

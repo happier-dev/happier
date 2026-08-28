@@ -1,124 +1,49 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { describe, expect, it } from 'vitest';
+import type { AgentConnectedAccountResumeFileCandidateV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { describe, expect, it, vi } from 'vitest';
 
 import { verifyResumeReachableOhMyPi } from './reachability.js';
 
+function createLookup(candidates: readonly AgentConnectedAccountResumeFileCandidateV1[]) {
+  return {
+    findDeclaredCandidate: vi.fn(async (input: Readonly<{
+      matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
+    }>) => ({ found: candidates.some(input.matchesCandidate) })),
+  };
+}
+
 describe('verifyResumeReachableOhMyPi', () => {
-  it('returns ok when candidate persisted session file exists', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-ohmypi-reachability-'));
-    const candidate = join(root, 'sessions', '--tmp-project--', '2026-05-28T00-00-00-000Z_omp-session-1.jsonl');
-    try {
-      await mkdir(join(root, 'sessions', '--tmp-project--'), { recursive: true });
-      await writeFile(candidate, '{}\n');
+  it('matches the native session id through host-custodied declared-file evidence', async () => {
+    const sessionFiles = createLookup([{
+      fileName: '2026-05-28T00-00-00-000Z_omp-session-1.jsonl',
+      nativeSessionId: null,
+    }]);
 
-      await expect(verifyResumeReachableOhMyPi({
-        targetMaterializedRoot: root,
-        targetMaterializedEnv: {},
-        vendorResumeId: 'omp-session-1',
-        cwd: '/tmp/project',
-        candidatePersistedSessionFile: candidate,
-      })).resolves.toEqual({
-        ok: true,
-        resolvedPath: candidate,
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('proves reachability from PI_CODING_AGENT_DIR session storage for cwd-encoded roots', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-ohmypi-reachability-'));
-    const agentDir = join(root, 'omp-agent-dir');
-    const sessionPath = join(
-      agentDir,
-      'sessions',
-      '--tmp-project--',
-      '2026-05-28T00-00-00-000Z_omp-session-1.jsonl',
-    );
-    try {
-      await mkdir(join(agentDir, 'sessions', '--tmp-project--'), { recursive: true });
-      await writeFile(sessionPath, '{}\n');
-
-      await expect(verifyResumeReachableOhMyPi({
-        targetMaterializedRoot: root,
-        targetMaterializedEnv: {
-          PI_CODING_AGENT_DIR: agentDir,
-        },
-        vendorResumeId: 'omp-session-1',
-        cwd: '/tmp/project',
-      })).resolves.toEqual({
-        ok: true,
-        resolvedPath: await realpath(sessionPath),
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('proves reachability from discovered non-Pi-encoded session roots', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-ohmypi-reachability-'));
-    const agentDir = join(root, 'omp-agent-dir');
-    const sessionPath = join(
-      agentDir,
-      'sessions',
-      '-tmp-project',
-      '2026-05-28T00-00-00-000Z_omp-session-1.jsonl',
-    );
-    try {
-      await mkdir(join(agentDir, 'sessions', '-tmp-project'), { recursive: true });
-      await writeFile(sessionPath, '{}\n');
-
-      await expect(verifyResumeReachableOhMyPi({
-        targetMaterializedRoot: root,
-        targetMaterializedEnv: {
-          PI_CODING_AGENT_DIR: agentDir,
-        },
-        vendorResumeId: 'omp-session-1',
-        cwd: '/tmp/project',
-      })).resolves.toEqual({
-        ok: true,
-        resolvedPath: await realpath(sessionPath),
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  it('fails closed when no resume file is reachable', async () => {
     await expect(verifyResumeReachableOhMyPi({
-      targetMaterializedRoot: '/tmp/fake',
-      targetMaterializedEnv: {},
+      vendorResumeId: 'omp-session-1',
+      sessionFiles,
+    })).resolves.toEqual({ ok: true });
+    expect(sessionFiles.findDeclaredCandidate).toHaveBeenCalledWith({
+      matchesCandidate: expect.any(Function),
+    });
+  });
+
+  it('uses native header evidence when a filename alone does not carry the session id', async () => {
+    await expect(verifyResumeReachableOhMyPi({
+      vendorResumeId: 'omp-session-1',
+      sessionFiles: createLookup([{
+        fileName: 'opaque.jsonl',
+        nativeSessionId: 'omp-session-1',
+      }]),
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it('fails closed when no declared candidate carries the native correlation', async () => {
+    await expect(verifyResumeReachableOhMyPi({
       vendorResumeId: 'omp-session-missing',
-      cwd: '/tmp/project',
+      sessionFiles: createLookup([]),
     })).resolves.toEqual({
       ok: false,
       reason: 'ohmypi_session_file_not_found',
     });
-  });
-
-  it('targetStrict: does not accept a file that is only available from a persisted candidate hint', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'happier-ohmypi-reachability-strict-candidate-'));
-    const candidate = join(root, 'sessions', '--tmp-project--', '2026-05-28T00-00-00-000Z_omp-session-1.jsonl');
-    try {
-      await mkdir(join(root, 'sessions', '--tmp-project--'), { recursive: true });
-      await writeFile(candidate, '{}\n');
-
-      await expect(verifyResumeReachableOhMyPi({
-        targetMaterializedRoot: root,
-        targetMaterializedEnv: {},
-        vendorResumeId: 'omp-session-1',
-        cwd: '/tmp/project',
-        candidatePersistedSessionFile: candidate,
-        targetStrict: true,
-      })).resolves.toEqual({
-        ok: false,
-        reason: 'ohmypi_session_file_not_found',
-      });
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
   });
 });

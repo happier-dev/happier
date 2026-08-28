@@ -211,24 +211,54 @@ function describeApplied(
         ),
       };
     case 'reopened':
-      return { tone: 'success', title: 'Reopened. GitLab confirmed this entry is open.' };
+      return {
+        tone: 'success',
+        title: text(
+          'plugins.gitlab.ui.mutations.reopen.reopened',
+          'Reopened. GitLab confirmed this entry is open.',
+        ),
+      };
     case 'reviewersChanged':
       return {
         tone: 'success',
-        title: 'Reviewers updated. GitLab confirmed the new reviewer set.',
+        title: text(
+          'plugins.gitlab.ui.mutations.reviewers.updated',
+          'Reviewers updated. GitLab confirmed the new reviewer set.',
+        ),
       };
     case 'discussionStateChanged':
       return {
         tone: 'success',
-        title: 'Discussion updated. GitLab confirmed its resolution state.',
+        title: text(
+          'plugins.gitlab.ui.mutations.discussion.updated',
+          'Discussion updated. GitLab confirmed its resolution state.',
+        ),
       };
     case 'assigneesChanged':
-      return { tone: 'success', title: 'Assignees updated. GitLab confirmed the new assignee set.' };
+      return {
+        tone: 'success',
+        title: text(
+          'plugins.gitlab.ui.mutations.assignees.updated',
+          'Assignees updated. GitLab confirmed the new assignee set.',
+        ),
+      };
     case 'labelsChanged':
-      return { tone: 'success', title: 'Labels updated. GitLab confirmed the new label set.' };
+      return {
+        tone: 'success',
+        title: text(
+          'plugins.gitlab.ui.mutations.labels.updated',
+          'Labels updated. GitLab confirmed the new label set.',
+        ),
+      };
     default:
       if (issueWrite) {
-        return { tone: 'success', title: 'Closed. GitLab confirmed this issue is closed.' };
+        return {
+          tone: 'success',
+          title: text(
+            'plugins.gitlab.ui.mutations.issue.closed',
+            'Closed. GitLab confirmed this issue is closed.',
+          ),
+        };
       }
       return {
         tone: 'success',
@@ -519,14 +549,14 @@ export function GitlabMutationControls({
           />
         )}
         {!mergeRequestWrites.includes('mergeRequestReopen') || reopenInput === null ? null : (
-          <GitlabWriteControl write="mergeRequestReopen" input={reopenInput} label="Reopen" variant="secondary" />
+          <GitlabWriteControl write="mergeRequestReopen" input={reopenInput} label="Reopen" labelKey="plugins.gitlab.ui.mutations.reopen.button" variant="secondary" />
         )}
         {!mergeRequestWrites.includes('reviewerChange') ? null : <NamedDeltaControls input={input} kind="reviewers" />}
         {!issueWrites.includes('issueClose') ? null : (
-          <GitlabWriteControl write="issueClose" input={issueCloseInput} label="Close issue" variant="secondary" />
+          <GitlabWriteControl write="issueClose" input={issueCloseInput} label="Close issue" labelKey="plugins.gitlab.ui.mutations.issue.close.button" variant="secondary" />
         )}
         {!issueWrites.includes('issueReopen') ? null : (
-          <GitlabWriteControl write="issueReopen" input={issueReopenInput} label="Reopen issue" variant="secondary" />
+          <GitlabWriteControl write="issueReopen" input={issueReopenInput} label="Reopen issue" labelKey="plugins.gitlab.ui.mutations.issue.reopen.button" variant="secondary" />
         )}
         {!issueWrites.includes('issueAssign') ? null : <NamedDeltaControls input={input} kind="assignees" />}
         {!issueWrites.includes('issueLabel') ? null : <NamedDeltaControls input={input} kind="labels" />}

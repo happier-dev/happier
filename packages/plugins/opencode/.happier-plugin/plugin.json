@@ -33,15 +33,7 @@
               "create",
               "resume",
               "fork"
-            ],
-            "usageLimitRecovery": {
-              "active": [
-                "checkNow"
-              ],
-              "inactive": [
-                "checkNow"
-              ]
-            }
+            ]
           },
           "surfaces": [
             "externalSessions"
@@ -69,6 +61,7 @@
                 "kind": "primary"
               }
             ],
+            "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
           "displayName": "OpenCode CLI",

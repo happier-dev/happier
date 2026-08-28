@@ -213,54 +213,63 @@ export function createSdkExecFixture(): Readonly<{
 }> {
   const listeners = new Set<(record: unknown) => void | Promise<void>>();
   const written: unknown[] = [];
-  let resolveExitPromise: ((result: Readonly<{
+  type ExitResult = Readonly<{
     exitCode: number | null;
     signal: string | null;
     stdout: string;
     stderr: string;
-  }>) => void) | null = null;
-  const exit = new Promise<Readonly<{
-    exitCode: number | null;
-    signal: string | null;
-    stdout: string;
-    stderr: string;
-  }>>((resolve) => {
-    resolveExitPromise = resolve;
+  }>;
+  const pendingExitResolvers = new Set<(result: ExitResult) => void>();
+  const pendingExits = new Set<Promise<ExitResult>>();
+  const settlePendingExits = async (result: ExitResult): Promise<void> => {
+    const exits = Array.from(pendingExits);
+    for (const resolve of Array.from(pendingExitResolvers)) resolve(result);
+    await Promise.all(exits);
+  };
+  const spawnClient = vi.fn(async (): Promise<ClaudeSdkExecClientHandle> => {
+    let resolveExitPromise!: (result: ExitResult) => void;
+    const exit = new Promise<ExitResult>((resolve) => {
+      resolveExitPromise = resolve;
+    });
+    pendingExitResolvers.add(resolveExitPromise);
+    pendingExits.add(exit);
+    void exit.finally(() => {
+      pendingExitResolvers.delete(resolveExitPromise);
+      pendingExits.delete(exit);
+    });
+    const client: ClaudeSdkJsonStreamClient = {
+      closed: exit.then(() => undefined),
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async writeRecord(record) {
+        written.push(record);
+        return { kind: 'written' };
+      },
+    };
+    return {
+      client,
+      process: {
+        exit,
+        async writeStdin() {},
+        kill() {},
+        async dispose() {},
+      },
+      status: 'running',
+      onExit() {
+        return () => undefined;
+      },
+      async dispose() {
+        resolveExitPromise({
+          exitCode: 0,
+          signal: null,
+          stdout: '',
+          stderr: '',
+        });
+      },
+    };
   });
-  const closed = exit.then(() => undefined);
-  const client: ClaudeSdkJsonStreamClient = {
-    closed,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    async writeRecord(record) {
-      written.push(record);
-      return { kind: 'written' };
-    },
-  };
-  const handle: ClaudeSdkExecClientHandle = {
-    client,
-    process: {
-      exit,
-      async writeStdin() {},
-      kill() {},
-      async dispose() {},
-    },
-    status: 'running',
-    onExit() {
-      return () => undefined;
-    },
-    async dispose() {
-      resolveExitPromise?.({
-        exitCode: 0,
-        signal: null,
-        stdout: '',
-        stderr: '',
-      });
-    },
-  };
-  const spawnClient = vi.fn(async () => handle);
 
   return {
     spawnClient,
@@ -273,22 +282,20 @@ export function createSdkExecFixture(): Readonly<{
       await Promise.all([...listeners].map((listener) => listener(record)));
     },
     async exitWith(result) {
-      resolveExitPromise?.({
+      await settlePendingExits({
         exitCode: result.exitCode,
         signal: result.signal,
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
       });
-      await exit;
     },
     async resolveExit() {
-      resolveExitPromise?.({
+      await settlePendingExits({
         exitCode: 0,
         signal: null,
         stdout: '',
         stderr: '',
       });
-      await exit;
     },
   };
 }

@@ -132,6 +132,7 @@ export type ClaudeAgentSdkContext = Readonly<{
         sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
         transcripts: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts'];
         accountUsage: ClaudeUnifiedTerminalContext['agentRuntime']['accountUsage'];
+        nativeHome?: ClaudeUnifiedTerminalContext['agentRuntime']['nativeHome'];
         toolExecution: ClaudeUnifiedTerminalContext['agentRuntime']['toolExecution'];
     }>;
     sessions: ClaudeUnifiedTerminalContext['sessions'];
@@ -1185,7 +1186,6 @@ export function createClaudeAgentSdkTurnOperations(
                 serviceId: 'claude-subscription',
                 refreshAttemptId: refreshAttempt.refreshAttemptId,
                 targetId: readString(params.happierSessionId),
-                env: params.launchEnv,
                 selection: claudeSubscriptionRuntimeAuthSelectionJson,
                 expectedCredentialRevision,
                 reason: input.reason,

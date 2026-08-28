@@ -7,6 +7,7 @@ import {
 } from '../collections/ids.js';
 import { fromCorpusStoredRow } from '../collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../collections/rows.js';
+import { advanceConfiguredSourceCollectionCursor } from './administerConfiguredSourceInstance.js';
 
 /**
  * The canonical active configured-source read.
@@ -49,6 +50,7 @@ export async function readActiveConfiguredSourceRows(
     status: 'complete';
 }>> {
     const rows: CorpusSourceInstanceRowV1[] = [];
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
         const page = await sourceInstances.query({
@@ -60,7 +62,7 @@ export async function readActiveConfiguredSourceRows(
         rows.push(...page.rows.map(
             (row) => fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row).value,
         ));
-        cursor = page.nextCursor;
+        cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
     return Object.freeze({ rows: Object.freeze(rows), status: 'complete' });

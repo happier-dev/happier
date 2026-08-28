@@ -99,6 +99,26 @@ describe('Bitbucket Triage source contribution conformance', () => {
     }]);
   });
 
+  it('binds final review verification to the exact safe source Action contract', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+    const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
+    const declaration = TriageSourcesContributionProtocolV1.operations.verifyReviewWorkspace.declaration;
+
+    expect(contribution?.operations.verifyReviewWorkspace)
+      .toBe('triage-verify-review-workspace');
+    const action = actions.get('triage-verify-review-workspace');
+    expect(action, 'workspace verification Action must be declared').toBeDefined();
+    expect(action?.surfaces).toEqual(declaration.surfaces);
+    expect(action?.dangerLevel).toBe('safe');
+    expect(action?.inputSchema).toEqual(declaration.input.schema.jsonSchema);
+    expect(action?.resultSchema).toEqual(declaration.resultSchema.jsonSchema);
+    expect(action?.hostAccess).toEqual(['bitbucket-api', 'bitbucket-connected-account']);
+    expect(action?.connectedAccountPurposeBindings).toEqual([{
+      path: 'instance.binding.account',
+      purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
+    }]);
+  });
+
   it('declares each source-native detail plane as a plugin-surfaced account-bound read', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
 
@@ -121,10 +141,11 @@ describe('Bitbucket Triage source contribution conformance', () => {
       }]);
     }
     // The provider-specific detail planes remain outside the source protocol;
-    // selected-PR preparation is the one optional shared source role.
+    // Selected-PR preparation and its final verification are the only optional
+    // shared source roles; provider-specific detail reads stay ordinary Actions.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
   });
 
   it('binds the exact account path on every configured source Action that receives one', () => {
@@ -138,6 +159,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
       BITBUCKET_TRIAGE_ACTION_IDS.scan,
       BITBUCKET_TRIAGE_ACTION_IDS.get,
       'triage-prepare-review-workspace',
+      'triage-verify-review-workspace',
     ]) {
       expect(actions.get(id)?.connectedAccountPurposeBindings).toEqual(binding);
     }

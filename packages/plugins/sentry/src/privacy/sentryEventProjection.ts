@@ -39,7 +39,10 @@ import {
   type TriageBoundedTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { SENTRY_DETAIL_BOUNDS_V1 } from '../detail/detailProjection.js';
+import {
+  SENTRY_DETAIL_BOUNDS_V1,
+  type SentryDetailBoundsV1,
+} from '../detail/detailProjection.js';
 import {
   isSentryAllowedTagKey,
   isSentrySensitiveTagKey,
@@ -49,42 +52,17 @@ import {
 export type { SentryTagKeyV1 };
 
 /** The published bounds one event projection is measured against. */
-export type SentryEventBoundsV1 = Readonly<{
-  identifierUtf8Bytes: number;
-  labelUtf8Bytes: number;
-  textUtf8Bytes: number;
-  locationUtf8Bytes: number;
-  maxSections: number;
-  maxFramesPerSection: number;
-  maxBreadcrumbs: number;
-  maxTags: number;
-  maxRedactions: number;
-  maxSensitivePaths: number;
-}>;
+export type SentryEventBoundsV1 = SentryDetailBoundsV1;
 
 /**
  * The ceilings a published event projection uses.
  *
- * They are derived from the one hard constraint that exists — the Action aggregate
- * rejects a result over one mebibyte outright, and a rejected result shows the reader
- * nothing at all — rather than from a guess about how deep a real stack is.
- * `sentryEventProjection.test.ts` saturates every one of them at once and measures the
- * encoded projection against that gate. The string bounds are the detail projector's,
- * because a Sentry exception message is exactly as much a display string as a title.
+ * Event strings use the shared detail/Triage semantic bounds. This is a direct
+ * alias, not a second bounds ledger. Collection cardinality is decided only by
+ * the canonical encoded Action response boundary after the complete projection
+ * is assembled.
  */
-export const SENTRY_EVENT_BOUNDS_V1: SentryEventBoundsV1 = Object.freeze({
-  identifierUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.identifierUtf8Bytes,
-  labelUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.labelUtf8Bytes,
-  textUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.textUtf8Bytes,
-  /** A file path is longer than a label and shorter than a message. */
-  locationUtf8Bytes: 384,
-  maxSections: 6,
-  maxFramesPerSection: 40,
-  maxBreadcrumbs: 32,
-  maxTags: 24,
-  maxRedactions: 384,
-  maxSensitivePaths: 128,
-});
+export const SENTRY_EVENT_BOUNDS_V1: SentryEventBoundsV1 = SENTRY_DETAIL_BOUNDS_V1;
 
 export type SentryRedactionReasonV1 = 'providerScrubbed' | 'pluginWithheld';
 
@@ -164,6 +142,8 @@ export type SentryEventProjectionV1 = Readonly<{
     frames: number;
     breadcrumbs: number;
     tags: number;
+    redactions: number;
+    sensitivePaths: number;
   }>;
 }>;
 
@@ -210,7 +190,14 @@ type Ledger = {
   redactions: SentryRedactionV1[];
   sensitivePaths: string[];
   truncated: boolean;
-  omitted: { sections: number; frames: number; breadcrumbs: number; tags: number };
+  omitted: {
+    sections: number;
+    frames: number;
+    breadcrumbs: number;
+    tags: number;
+    redactions: number;
+    sensitivePaths: number;
+  };
 };
 
 /**
@@ -232,12 +219,10 @@ function formatPath(segments: SentryPathV1): string {
 }
 
 function record(ledger: Ledger, path: string, reason: SentryRedactionReasonV1): void {
-  if (ledger.redactions.length >= SENTRY_EVENT_BOUNDS_V1.maxRedactions) return;
   ledger.redactions.push(Object.freeze({ path, reason }));
 }
 
 function markSensitive(ledger: Ledger, path: string): void {
-  if (ledger.sensitivePaths.length >= SENTRY_EVENT_BOUNDS_V1.maxSensitivePaths) return;
   if (!ledger.sensitivePaths.includes(path)) ledger.sensitivePaths.push(path);
 }
 
@@ -319,8 +304,8 @@ function isProviderScrubbed(meta: unknown, segments: SentryPathV1): boolean {
  *
  * `sensitiveAs` is passed rather than derived because a repeated field discloses its
  * *field*, not its element: forty frames of one stack carry one kind of sensitive
- * content, and spending the published `maxSensitivePaths` ceiling on forty copies of it
- * would silently push out the Tier-C user paths the disclosure exists to name.
+ * content, and repeating that path forty times would dilute the Tier-C user paths the
+ * disclosure exists to name.
  *
  * `metaAlias` is a second `_meta` mirror consulted for the same value. `_meta` is
  * `additionalProperties:{}` `[SCHEMA]` and the nesting it uses under `entries` is
@@ -407,8 +392,8 @@ function projectFrame(
     record(ledger, formatPath([...frames.path, index, 'vars']), 'pluginWithheld');
   }
   return Object.freeze({
-    filename: field(raw['filename'], 'filename', SENTRY_EVENT_BOUNDS_V1.locationUtf8Bytes),
-    function: field(raw['function'], 'function', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes),
+    filename: field(raw['filename'], 'filename', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes),
+    function: field(raw['function'], 'function', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes),
     lineNo,
     colNo: readInteger(raw['colNo']),
     inApp: raw['inApp'] === true,
@@ -429,13 +414,8 @@ function projectFrame(
 }
 
 /**
- * One bounded frame collection.
- *
- * Sentry returns a stack oldest-first, so the crash site is the **last** frame. A stack
- * past the ceiling therefore keeps its tail: dropping it would remove the only frame
- * most readers opened the trace for, while dropping leading frames costs the callers
- * furthest from the failure. The dropped count is reported either way, and the raw index
- * is what a redaction path names, so a `vars` path still addresses the provider's body.
+ * One allow-listed frame collection. The Action owner later fits the complete
+ * encoded projection, so this privacy owner does not invent a frame count.
  */
 function projectFrames(
   raw: unknown,
@@ -444,13 +424,7 @@ function projectFrames(
 ): readonly SentryFrameV1[] {
   if (!Array.isArray(raw)) return Object.freeze([]);
   const parsed: SentryFrameV1[] = [];
-  const start = Math.max(0, raw.length - SENTRY_EVENT_BOUNDS_V1.maxFramesPerSection);
   for (const [index, candidate] of raw.entries()) {
-    if (index < start) {
-      ledger.omitted.frames += 1;
-      ledger.truncated = true;
-      continue;
-    }
     const frame = projectFrame(candidate, index, frames, ledger);
     if (frame !== null) parsed.push(frame);
   }
@@ -469,11 +443,6 @@ function projectBreadcrumbs(
   const sensitiveStem = `${formatPath(valuesPath)}[]`;
   for (const [index, candidate] of raw.entries()) {
     if (!isRecord(candidate)) continue;
-    if (parsed.length >= SENTRY_EVENT_BOUNDS_V1.maxBreadcrumbs) {
-      ledger.omitted.breadcrumbs += 1;
-      ledger.truncated = true;
-      continue;
-    }
     // A breadcrumb's own payload bag is the request/response content §8.1 withholds;
     // only the four stated scalars survive.
     if (candidate['data'] !== undefined && candidate['data'] !== null) {
@@ -494,8 +463,8 @@ function projectBreadcrumbs(
       timestampMs: readTimestampMs(candidate['timestamp']),
       // A breadcrumb category is free-form provider text; its level is a fixed
       // vocabulary, and naming that in the disclosure would only dilute it.
-      category: field('category', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, true),
-      level: field('level', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, false),
+      category: field('category', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true),
+      level: field('level', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, false),
       message: field('message', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true),
     }));
   }
@@ -545,7 +514,7 @@ function projectSection(
           type: projectField({
             raw: candidate['type'],
             path: [...entryPath, 'data', 'values', index, 'type'],
-            maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes,
+            maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
             ledger,
           }) ?? '',
           value: projectField({
@@ -609,7 +578,7 @@ function projectSection(
     default:
       return Object.freeze([Object.freeze({
         kind: 'unsupported' as const,
-        entryType: bounded(entryType, SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, ledger).value,
+        entryType: bounded(entryType, SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, ledger).value,
       })]);
   }
 }
@@ -622,11 +591,6 @@ function projectSections(
   const sections: SentryEventSectionV1[] = [];
   for (const [index, candidate] of raw.entries()) {
     for (const section of projectSection(candidate, ['entries', index], ledger)) {
-      if (sections.length >= SENTRY_EVENT_BOUNDS_V1.maxSections) {
-        ledger.omitted.sections += 1;
-        ledger.truncated = true;
-        continue;
-      }
       sections.push(section);
     }
   }
@@ -658,11 +622,6 @@ function projectTags(
       ledger,
     });
     if (value === null) continue;
-    if (tags.length >= SENTRY_EVENT_BOUNDS_V1.maxTags) {
-      ledger.omitted.tags += 1;
-      ledger.truncated = true;
-      continue;
-    }
     // A tag discloses its key, not its index: the same key repeated is one fact about
     // what this projection carries, and it is only claimed for a tag that survived.
     if (isSentrySensitiveTagKey(key)) markSensitive(ledger, `tags.${key}`);
@@ -754,7 +713,14 @@ export function projectSentryEventForDisplay(
     redactions: [],
     sensitivePaths: [],
     truncated: false,
-    omitted: { sections: 0, frames: 0, breadcrumbs: 0, tags: 0 },
+    omitted: {
+      sections: 0,
+      frames: 0,
+      breadcrumbs: 0,
+      tags: 0,
+      redactions: 0,
+      sensitivePaths: 0,
+    },
   };
 
   for (const key of WITHHELD_TOP_LEVEL) {
@@ -799,7 +765,7 @@ export function projectSentryEventForDisplay(
     message: message ?? '',
     location: topLevel('location', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, true),
     culprit: topLevel('culprit', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, false),
-    platform: topLevel('platform', SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes, false),
+    platform: topLevel('platform', SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes, false),
     sections,
     tags,
     user,

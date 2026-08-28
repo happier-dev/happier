@@ -20,7 +20,7 @@ describe('OpenCode AGENT_DEFINITION', () => {
         sessionCapabilities: {
           sessionListing: 'supported',
           sessionFork: { conversation: 'supported', fromMessage: 'supported' },
-          usageLimitRecovery: { checkNow: 'supported' },
+          usageLimitRecovery: { checkNow: 'unsupported' },
         },
         tools: { delivery: 'native_mcp', support: 'supported' },
       },
@@ -45,38 +45,19 @@ describe('OpenCode AGENT_DEFINITION', () => {
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
   });
 
-  it('declares plugin-owned A.16y.3 runtime projection contributions', () => {
-    expect(AGENT_DEFINITION.runtimeContributions).toMatchObject({
-      agentCatalogEntry: {
-        importName: 'OPENCODE_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/catalog',
-      },
-      sessionControlAdapter: {
-        kind: 'providerSessionControlAdapter',
-        providerId: 'opencode',
-        source: './agent/surfaces/sessions/controls/adapter',
-        exportName: 'OPENCODE_SESSION_CONTROL_ADAPTER',
-        generatedAdapter: expect.objectContaining({
-          providerId: 'opencode',
-          runtimeDescriptor: expect.objectContaining({ providerId: 'opencode' }),
-        }),
-      },
-      runtimeDescriptorReader: {
+  it('keeps only the released flat-metadata compatibility fact', () => {
+    expect(AGENT_DEFINITION).toMatchObject({
+      releasedFlatSessionMetadataRuntimeDescriptorReader: {
         kind: 'providerRuntimeDescriptorReader',
         providerId: 'opencode',
-        source: './agent/identity/runtimeDescriptor',
-        exportName: 'readOpenCodeSessionMetadataRuntimeDescriptor',
         generatedReader: expect.objectContaining({
           providerId: 'opencode',
           backendModeKey: 'backendMode',
         }),
       },
-      protocolRuntimeDescriptor: {
-        kind: 'providerRuntimeDescriptorV1',
-        providerId: 'opencode',
-        buildFunction: 'buildOpenCodeAgentRuntimeDescriptorV1',
-        canonicalReader: 'readCanonicalOpenCodeAgentRuntimeDescriptorV1',
-      },
     });
+    expect(AGENT_DEFINITION).not.toHaveProperty('sessionControlAdapter');
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
+    expect(AGENT_DEFINITION).not.toHaveProperty('protocolRuntimeDescriptor');
   });
 });

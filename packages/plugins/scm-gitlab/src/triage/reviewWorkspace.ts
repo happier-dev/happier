@@ -8,9 +8,17 @@
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type {
+  ActionsService,
+  PluginActionInputById,
+  PluginActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
+import type {
   TriagePrepareReviewWorkspaceInputV1,
   TriagePrepareReviewWorkspaceResultV1,
   TriageSourceFailureV1,
+  TriageVerifyReviewWorkspaceInputV1,
+  TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { admitGitlabItemInvocation } from './admission.js';
@@ -93,9 +101,9 @@ function readGitlabPreparedSourceTip(
  * still names that exact route without turning the locator into a second
  * identity or a replacement endpoint router.
  */
-function readObservedRoutingToken(
-  input: TriagePrepareReviewWorkspaceInputV1,
-): string | null {
+function readObservedRoutingToken(input: Readonly<{
+  lastKnownLocator: TriagePrepareReviewWorkspaceInputV1['lastKnownLocator'];
+}>): string | null {
   const routingToken = input.lastKnownLocator.routingToken;
   return typeof routingToken === 'string'
     && routingToken !== ''
@@ -104,9 +112,55 @@ function readObservedRoutingToken(
     : null;
 }
 
+type GitlabReviewWorkspaceRequest = Readonly<{
+  instance: TriageVerifyReviewWorkspaceInputV1['instance'];
+  entryRef: TriageVerifyReviewWorkspaceInputV1['entryRef'];
+  lastKnownLocator: TriageVerifyReviewWorkspaceInputV1['lastKnownLocator'];
+  observed: TriageVerifyReviewWorkspaceInputV1['observed'];
+}>;
+
+type GitlabAuthorizedReviewWorkspace =
+  | Readonly<{
+    kind: 'authorized';
+    sourceTip: GitlabPreparedSourceTip;
+    pullRequest: Readonly<{ number: number }>;
+  }>
+  | Readonly<{ kind: 'unsupported' }>
+  | Readonly<{ kind: 'unavailable'; reason: 'account' }>
+  | Readonly<{
+    kind: 'refused';
+    reason: 'instanceMoved' | 'pullRequestMoved' | 'observedHeadMoved';
+  }>;
+
+/**
+ * One cancellation and transport-failure boundary for both SCM preparation
+ * and verification. Action transport failures mean the canonical SCM owner is
+ * unavailable; an abort remains cancellation and is never projected as a
+ * retryable source result.
+ */
+async function executeGitlabReviewWorkspaceScmAction(input: Readonly<{
+  actions: Pick<ActionsService, 'execute'>;
+  request: PluginActionInputById['scm.reviewWorkspace.materializePrepared'];
+  signal: AbortSignal;
+}>): Promise<PluginActionResultById['scm.reviewWorkspace.materializePrepared'] | null> {
+  try {
+    const result = await input.actions.execute(
+      'scm.reviewWorkspace.materializePrepared',
+      input.request,
+      { signal: input.signal },
+    );
+    input.signal.throwIfAborted();
+    return result;
+  } catch (error) {
+    input.signal.throwIfAborted();
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    return null;
+  }
+}
+
 function projectAdmissionFailure(
   failure: TriageSourceFailureV1,
-): TriagePrepareReviewWorkspaceResultV1 {
+): Exclude<GitlabAuthorizedReviewWorkspace, Readonly<{ kind: 'authorized' }>> {
   if (failure.code === 'gitlab-kind-unsupported') return { kind: 'unsupported' };
   if (failure.class === 'unsupportedContract') {
     return { kind: 'refused', reason: 'instanceMoved' };
@@ -114,23 +168,18 @@ function projectAdmissionFailure(
   return { kind: 'unavailable', reason: 'account' };
 }
 
-/**
- * Rereads the selected merge request before it sends exactly one generic local
- * materialization Action. The provider response remains the authority for the
- * source project, branch and head; neither a target project nor a GitLab merge
- * ref can reach the SCM owner.
- */
-export async function prepareGitlabReviewWorkspace(
-  input: TriagePrepareReviewWorkspaceInputV1,
+/** One provider authority path shared by initial preparation and final verification. */
+async function authorizeGitlabReviewWorkspace(
+  input: GitlabReviewWorkspaceRequest,
   context: PluginInvocationContext,
-): Promise<TriagePrepareReviewWorkspaceResultV1> {
-  if (input.workspace === null) return { kind: 'workspaceRequired' };
-
+): Promise<GitlabAuthorizedReviewWorkspace> {
+  context.signal.throwIfAborted();
   const admitted = await admitGitlabItemInvocation({
     instance: input.instance,
     localRef: input.entryRef,
     admissibleKinds: ['merge-request'],
   }, context);
+  context.signal.throwIfAborted();
   if (!admitted.ok) return projectAdmissionFailure(admitted.failure);
 
   const reread = await requestGitlabJson({
@@ -140,6 +189,7 @@ export async function prepareGitlabReviewWorkspace(
     signal: admitted.dependencies.signal,
     nowMs: admitted.dependencies.nowMs,
   });
+  context.signal.throwIfAborted();
   if (reread.kind === 'failed') {
     return reread.failure.code === 'not-found'
       ? { kind: 'refused', reason: 'pullRequestMoved' }
@@ -180,15 +230,40 @@ export async function prepareGitlabReviewWorkspace(
     return { kind: 'refused', reason: 'observedHeadMoved' };
   }
 
-  const materialized = await context.services.actions.execute(
-    'scm.reviewWorkspace.materializePrepared',
-    {
+  return Object.freeze({
+    kind: 'authorized' as const,
+    sourceTip,
+    pullRequest: Object.freeze({ number: pullRequestNumber }),
+  });
+}
+
+/**
+ * Rereads the selected merge request before it sends exactly one generic local
+ * materialization Action. The provider response remains the authority for the
+ * source project, branch and head; neither a target project nor a GitLab merge
+ * ref can reach the SCM owner.
+ */
+export async function prepareGitlabReviewWorkspace(
+  input: TriagePrepareReviewWorkspaceInputV1,
+  context: PluginInvocationContext,
+): Promise<TriagePrepareReviewWorkspaceResultV1> {
+  if (input.workspace === undefined) return { kind: 'workspaceRequired' };
+  const authorized = await authorizeGitlabReviewWorkspace(input, context);
+  if (authorized.kind !== 'authorized') return authorized;
+  const { sourceTip, pullRequest } = authorized;
+
+  const materialized = await executeGitlabReviewWorkspaceScmAction({
+    actions: context.services.actions,
+    request: {
       cwd: input.workspace.rootPath,
       displayName: sourceTip.branch,
       sourceTip,
     },
-    { signal: context.signal },
-  );
+    signal: context.signal,
+  });
+  if (materialized === null) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
   if (!materialized.success) {
     switch (materialized.errorCode) {
       case 'NOT_REPOSITORY':
@@ -199,6 +274,9 @@ export async function prepareGitlabReviewWorkspace(
         return { kind: 'unavailable', reason: 'scmResolver' };
     }
   }
+  if ('verification' in materialized) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
 
   return {
     kind: 'prepared',
@@ -206,6 +284,63 @@ export async function prepareGitlabReviewWorkspace(
     branch: materialized.branchName,
     created: materialized.created,
     currentness: materialized.currentness,
-    pullRequest: { number: pullRequestNumber },
+    pullRequest,
   };
+}
+
+/**
+ * Reauthorizes and rereads the selected merge request, then asks the canonical
+ * SCM owner to compare the already prepared checkout's current local HEAD with
+ * the same provider-authoritative source tip. No provider or Git command is
+ * reconstructed in Triage or in this source boundary.
+ */
+export async function verifyGitlabReviewWorkspace(
+  input: TriageVerifyReviewWorkspaceInputV1,
+  context: PluginInvocationContext,
+): Promise<TriageVerifyReviewWorkspaceResultV1> {
+  const authorized = await authorizeGitlabReviewWorkspace(input, context);
+  if (authorized.kind === 'unsupported') {
+    return { kind: 'refused', reason: 'pullRequestMoved' };
+  }
+  if (authorized.kind !== 'authorized') return authorized;
+  if (!pluginJsonValuesEqual(input.prepared.pullRequest, authorized.pullRequest)) {
+    return { kind: 'refused', reason: 'pullRequestMoved' };
+  }
+
+  const verified = await executeGitlabReviewWorkspaceScmAction({
+    actions: context.services.actions,
+    request: {
+      cwd: input.workspace.rootPath,
+      displayName: authorized.sourceTip.branch,
+      sourceTip: authorized.sourceTip,
+      verification: { targetPath: input.prepared.repositoryPath },
+    },
+    signal: context.signal,
+  });
+  if (verified === null) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  if (!verified.success) {
+    switch (verified.errorCode) {
+      case 'NOT_REPOSITORY':
+      case 'INVALID_PATH':
+      case 'REMOTE_NOT_FOUND':
+        return { kind: 'workspaceMismatch' };
+      default:
+        return { kind: 'unavailable', reason: 'scmResolver' };
+    }
+  }
+  if (!('verification' in verified)) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  const verification = readRecord(verified.verification);
+  if (verification === null
+    || verification.targetPath !== input.prepared.repositoryPath) {
+    return { kind: 'workspaceMismatch' };
+  }
+  if (typeof verification.sourceHeadSha !== 'string'
+    || verification.sourceHeadSha.toLowerCase() !== authorized.sourceTip.sourceHeadSha.toLowerCase()) {
+    return { kind: 'refused', reason: 'observedHeadMoved' };
+  }
+  return { kind: 'verified', pullRequest: authorized.pullRequest };
 }

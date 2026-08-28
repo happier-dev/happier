@@ -1,6 +1,5 @@
 import type {
   AgentLaunchEnvironment,
-  AgentExecutionRunOpenRequest,
   AgentRuntime,
   AgentRuntimeContext,
   AgentRuntimeFactory,
@@ -13,16 +12,12 @@ import type {
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { claudeHandoffSurface } from '../surfaces/sessions/handoff/providerOps.js';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { AgentRuntimeJsonValueSchema } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import type { AgentModelDescriptor } from '@happier-dev/plugin-sdk/agents';
 import {
   createAgentSessionPreAdmissionBuffer,
-  createExecutionRunHostBackendFromSessionRuntime,
   type AgentSessionPreAdmissionBuffer,
   type AgentSessionPreAdmissionBufferResult,
 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -70,14 +65,6 @@ import {
   isClaudeUltracodeSupportedModelId,
   resolveClaudeEffortForModel,
 } from './reasoningEffort.js';
-import { CLAUDE_AUTH_ENV_KEYS } from '../auth/services/runtime/env.js';
-import {
-  prepareClaudeQualifiedPurposeRoot,
-  shareClaudeUserConfigWithIsolatedRoot,
-} from '../auth/services/qualifiedPurposeRoot.js';
-import {
-  claudeProviderBindingExposesInheritedIdentity,
-} from '../providerBinding/inheritedIdentityExposure.js';
 import { probeClaudeSupportsEffortRaw } from '../preflight/models.js';
 
 export {
@@ -188,12 +175,6 @@ export type ClaudeNativeSessionFactory = (input: Readonly<{
   supportsEffort?: boolean;
 }>) => ClaudeNativeSessionOperations | Promise<ClaudeNativeSessionOperations>;
 
-export type ClaudeNativeExecutionSessionFactory = (input: Readonly<{
-  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>;
-  context: AgentRuntimeContext;
-  supportsEffort?: boolean;
-}>) => ClaudeNativeSessionOperations | Promise<ClaudeNativeSessionOperations>;
-
 type ClaudeSupportsEffortResolver = (input: Readonly<{
   request: Readonly<{
     cwd: string;
@@ -205,275 +186,8 @@ type ClaudeSupportsEffortResolver = (input: Readonly<{
 
 export type CreateClaudeNativeRuntimeOptions = Readonly<{
   openSession: ClaudeNativeSessionFactory;
-  openExecutionSession?: ClaudeNativeExecutionSessionFactory;
-  prepareLaunchEnvironment?: ClaudeNativeLaunchEnvironmentPreparer;
   resolveSupportsEffort?: ClaudeSupportsEffortResolver;
 }>;
-
-type ClaudePreparedLaunchEnvironment = Readonly<{
-  launchEnvironment: AgentLaunchEnvironment;
-  isInvalidated(): boolean;
-  armInvalidation(handler: () => Promise<void>): void;
-  dispose(): Promise<void>;
-}>;
-
-export type ClaudeNativeLaunchEnvironmentPreparer = (input: Readonly<{
-  request: Readonly<{
-    cwd: string;
-    launchEnvironment?: AgentLaunchEnvironment;
-    providerBinding?: AgentSessionProviderBinding;
-    stateSharing?: AgentSessionOpenRequest['stateSharing'];
-  }>;
-  context: AgentRuntimeContext;
-}>) => Promise<ClaudePreparedLaunchEnvironment>;
-
-const CLAUDE_SUBSCRIPTION_PURPOSE = 'model_upstream';
-const ANTHROPIC_API_KEY_PURPOSE = 'model_upstream_api_key';
-const CLAUDE_CREDENTIAL_FILE_ID = '.credentials.json';
-
-function sameService(
-  binding: Awaited<ReturnType<AgentRuntimeContext['services']['connectedAccounts']['getBinding']>>,
-  pluginId: string,
-  localId: string,
-): boolean {
-  return binding?.service.pluginId === pluginId && binding.service.localId === localId;
-}
-
-function mergeQualifiedAuthLaunchEnvironment(input: Readonly<{
-  source?: AgentLaunchEnvironment;
-  rootDir: string;
-  authEnv: Readonly<Record<string, string>>;
-}>): AgentLaunchEnvironment {
-  const values = { ...(input.source?.values ?? {}) };
-  for (const key of [...CLAUDE_AUTH_ENV_KEYS, 'CLAUDE_CONFIG_DIR'] as const) {
-    delete values[key];
-  }
-  Object.assign(values, input.authEnv, { CLAUDE_CONFIG_DIR: input.rootDir });
-  const materializedKeys = new Set(Object.keys(values));
-  return Object.freeze({
-    values: Object.freeze(values),
-    unset: Object.freeze(
-      (input.source?.unset ?? []).filter((key) => !materializedKeys.has(key)),
-    ),
-  });
-}
-
-async function waitForClaudePurposeObservations(
-  observations: Iterable<Promise<void>>,
-  signal: AbortSignal,
-): Promise<void> {
-  const abortError = () => signal.reason instanceof Error
-    ? signal.reason
-    : new Error('Claude qualified Connected Account preparation was aborted.');
-  if (signal.aborted) throw abortError();
-  let abort!: () => void;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    abort = () => reject(abortError());
-    signal.addEventListener('abort', abort, { once: true });
-  });
-  try {
-    await Promise.race([Promise.all(observations), aborted]);
-  } finally {
-    signal.removeEventListener('abort', abort);
-  }
-}
-
-export const prepareClaudeQualifiedConnectedAccountLaunch:
-  ClaudeNativeLaunchEnvironmentPreparer = async ({ request, context }) => {
-    if (request.providerBinding !== undefined) {
-      if (!claudeProviderBindingExposesInheritedIdentity(request.providerBinding)) {
-        return Object.freeze({
-          launchEnvironment: request.launchEnvironment ?? Object.freeze({
-            values: Object.freeze({}),
-            unset: Object.freeze([]),
-          }),
-          isInvalidated: () => false,
-          armInvalidation() {},
-          async dispose() {},
-        });
-      }
-      // The binding supplies no credential, so an inherited config root would
-      // answer for this Provider-selected launch with the user's personal
-      // Anthropic login. Pin an isolated root that still shares their
-      // non-identity Claude configuration.
-      const isolatedRootDir = await mkdtemp(
-        join(tmpdir(), 'happier-claude-provider-binding-'),
-      );
-      try {
-        await prepareClaudeQualifiedPurposeRoot({
-          rootDir: isolatedRootDir,
-          processEnv: process.env,
-          sessionDirectory: request.cwd,
-        });
-        await shareClaudeUserConfigWithIsolatedRoot({
-          rootDir: isolatedRootDir,
-          processEnv: process.env,
-          // The host resolves the account's provider state-sharing policy and
-          // carries it here. Absent, the launch falls back to the mode
-          // `ConnectedServicesProviderStateSharingPolicyV1` itself defaults to:
-          // sharing history is the norm, and isolating it behind the user's
-          // back is the failure this path must not reintroduce.
-          stateMode: request.stateSharing?.stateMode ?? 'shared',
-        });
-      } catch (error) {
-        await rm(isolatedRootDir, { recursive: true, force: true });
-        throw error;
-      }
-      return Object.freeze({
-        launchEnvironment: mergeQualifiedAuthLaunchEnvironment({
-          ...(request.launchEnvironment ? { source: request.launchEnvironment } : {}),
-          rootDir: isolatedRootDir,
-          authEnv: Object.freeze({}),
-        }),
-        isInvalidated: () => false,
-        armInvalidation() {},
-        async dispose() {
-          await rm(isolatedRootDir, { recursive: true, force: true });
-        },
-      });
-    }
-
-    const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
-    const initialObservations = new Map<string, Promise<void>>();
-    const resolveInitial = new Map<string, () => void>();
-    let invalidated = false;
-    let invalidationHandler: (() => Promise<void>) | null = null;
-    let rootDir: string | null = null;
-
-    const invalidate = async (): Promise<void> => {
-      invalidated = true;
-      await invalidationHandler?.();
-    };
-    for (const purpose of [CLAUDE_SUBSCRIPTION_PURPOSE, ANTHROPIC_API_KEY_PURPOSE]) {
-      initialObservations.set(purpose, new Promise<void>((resolve) => {
-        resolveInitial.set(purpose, resolve);
-      }));
-      let initial = true;
-      subscriptions.push(context.services.connectedAccounts.watch(purpose, () => {
-        if (initial) {
-          initial = false;
-          resolveInitial.get(purpose)?.();
-          resolveInitial.delete(purpose);
-          return;
-        }
-        return invalidate();
-      }));
-    }
-
-    try {
-      await waitForClaudePurposeObservations(
-        initialObservations.values(),
-        context.signal,
-      );
-      const subscriptionBinding = await context.services.connectedAccounts.getBinding(
-        CLAUDE_SUBSCRIPTION_PURPOSE,
-        { signal: context.signal },
-      );
-      const useSubscription = sameService(
-        subscriptionBinding,
-        'happier.agent.claude',
-        'claude-subscription',
-      );
-      const anthropicBinding = useSubscription
-        ? null
-        : await context.services.connectedAccounts.getBinding(
-            ANTHROPIC_API_KEY_PURPOSE,
-            { signal: context.signal },
-          );
-      const useAnthropic = sameService(
-        anthropicBinding,
-        'happier.agent.claude',
-        'anthropic',
-      );
-      if (!useSubscription && !useAnthropic) {
-        return Object.freeze({
-          launchEnvironment: request.launchEnvironment ?? Object.freeze({
-            values: Object.freeze({}),
-            unset: Object.freeze([]),
-          }),
-          isInvalidated: () => invalidated,
-          armInvalidation(handler) {
-            invalidationHandler = handler;
-            if (invalidated) void handler();
-          },
-          async dispose() {
-            for (const subscription of subscriptions) subscription.dispose();
-          },
-        });
-      }
-
-      rootDir = await mkdtemp(join(tmpdir(), 'happier-claude-qualified-account-'));
-      await prepareClaudeQualifiedPurposeRoot({
-        rootDir,
-        processEnv: process.env,
-        sessionDirectory: request.cwd,
-      });
-
-      let authEnv: Readonly<Record<string, string>>;
-      if (useSubscription) {
-        if (!subscriptionBinding) {
-          throw new Error('Claude Subscription binding disappeared before materialization.');
-        }
-        const files = await context.services.connectedAccounts.materialize(
-          CLAUDE_SUBSCRIPTION_PURPOSE,
-          { kind: 'files', fileIds: [CLAUDE_CREDENTIAL_FILE_ID] },
-          { signal: context.signal, expectedAccount: subscriptionBinding.account },
-        );
-        if (files.kind !== 'files') {
-          throw new Error('Claude Subscription returned an invalid qualified materialization.');
-        }
-        const credentialFile = files.files[CLAUDE_CREDENTIAL_FILE_ID];
-        if (!credentialFile) {
-          throw new Error('Claude Subscription did not materialize its native credential file.');
-        }
-        await writeFile(
-          join(rootDir, CLAUDE_CREDENTIAL_FILE_ID),
-          credentialFile,
-          { mode: 0o600, flag: 'wx' },
-        );
-        authEnv = Object.freeze({});
-      } else {
-        if (!anthropicBinding) {
-          throw new Error('Anthropic binding disappeared before materialization.');
-        }
-        const environment = await context.services.connectedAccounts.materialize(
-          ANTHROPIC_API_KEY_PURPOSE,
-          { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
-          { signal: context.signal, expectedAccount: anthropicBinding.account },
-        );
-        if (environment.kind !== 'environment') {
-          throw new Error('Anthropic returned an invalid qualified materialization.');
-        }
-        const apiKey = environment.env.ANTHROPIC_API_KEY?.trim() ?? '';
-        if (!apiKey) {
-          throw new Error('Anthropic did not materialize ANTHROPIC_API_KEY.');
-        }
-        authEnv = Object.freeze({ ANTHROPIC_API_KEY: apiKey });
-      }
-
-      const launchEnvironment = mergeQualifiedAuthLaunchEnvironment({
-        source: request.launchEnvironment,
-        rootDir,
-        authEnv,
-      });
-      return Object.freeze({
-        launchEnvironment,
-        isInvalidated: () => invalidated,
-        armInvalidation(handler) {
-          invalidationHandler = handler;
-          if (invalidated) void handler();
-        },
-        async dispose() {
-          for (const subscription of subscriptions) subscription.dispose();
-          if (rootDir) await rm(rootDir, { recursive: true, force: true });
-        },
-      });
-    } catch (error) {
-      for (const subscription of subscriptions) subscription.dispose();
-      if (rootDir) await rm(rootDir, { recursive: true, force: true });
-      throw error;
-    }
-  };
 
 export function createClaudeNativeSessionOpener(openers: Readonly<{
   openAgentSdkSession: ClaudeNativeSessionFactory;
@@ -647,7 +361,7 @@ function sendFailure(
 export function createClaudeNativeSessionRuntimeFromOperations(
   operations: ClaudeNativeSessionOperations,
   request: AgentSessionOpenRequest,
-  context?: AgentSessionRuntimeContext,
+  context: AgentSessionRuntimeContext,
   onDispose?: () => void | Promise<void>,
 ): AgentSessionRuntime {
   const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
@@ -841,7 +555,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
       });
     },
   ) ?? (() => undefined);
-  const activeInputBinding = context?.session.services.activeInput.bind({
+  const activeInputBinding = context.session.services.activeInput.bind({
     isTurnInFlight: () => operations.isTurnInFlight?.() === true,
     canSteer: () => operations.canSteerPrompt?.() === true,
     canInterruptForPendingInput: () => operations.canInterruptForPendingInput?.() !== false,
@@ -881,7 +595,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
           };
     },
   });
-  const modelsBinding = context?.session.services.models?.bind({
+  const modelsBinding = context.session.services.models.bind({
     read: readModels,
     subscribe(listener) {
       modelListeners.add(listener);
@@ -890,8 +604,25 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     },
   });
   const initialProviderSessionId = operations.readProviderIdentity().sessionId?.trim();
+  const sourceRuntimeDescriptor = request.runtimeDescriptorV1;
+  const sourceRuntimeAgent = sourceRuntimeDescriptor?.agent;
+  const effectiveConfigDir = request.launchEnvironment?.values.CLAUDE_CONFIG_DIR?.trim();
+  const runtimeDescriptorV1 = sourceRuntimeDescriptor
+    && sourceRuntimeDescriptor.v === 1
+    && sourceRuntimeDescriptor.agentId === 'claude'
+    && sourceRuntimeAgent
+    && typeof sourceRuntimeAgent === 'object'
+    ? Object.freeze({
+        ...sourceRuntimeDescriptor,
+        agent: Object.freeze({
+          ...sourceRuntimeAgent,
+          ...(effectiveConfigDir ? { configDir: effectiveConfigDir } : {}),
+        }),
+      })
+    : undefined;
 
   return {
+    ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     async connectedServiceApplicationSettled() {
       await operations.releaseConnectedServiceUsageLimitDialog?.();
     },
@@ -1276,52 +1007,20 @@ export function createClaudeNativeRuntime(
     request: AgentSessionOpenRequest,
     context: AgentSessionRuntimeContext,
   ): Promise<AgentSessionRuntime> => {
-    const prepared = options.prepareLaunchEnvironment
-      ? await options.prepareLaunchEnvironment({ request, context })
-      : null;
-    const effectiveRequest = prepared
-      ? Object.freeze({
-          ...request,
-          launchEnvironment: prepared.launchEnvironment,
-        }) as AgentSessionOpenRequest
-      : request;
-    let operations: ClaudeNativeSessionOperations;
-    try {
-      const supportsEffort = await (options.resolveSupportsEffort
-        ?? resolveClaudeInstalledEffortSupport)({
-          request: effectiveRequest,
-          context,
-        });
-      if (prepared?.isInvalidated()) {
-        throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
-      }
-      operations = await options.openSession({
-        request: effectiveRequest,
-        context,
-        supportsEffort,
-      });
-    } catch (error) {
-      await prepared?.dispose();
-      throw error;
-    }
+    const supportsEffort = await (options.resolveSupportsEffort
+      ?? resolveClaudeInstalledEffortSupport)({ request, context });
+    const operations = await options.openSession({ request, context, supportsEffort });
     const releaseGoals = goals.bind(request.sessionId, operations);
     try {
       const runtime = createClaudeNativeSessionRuntimeFromOperations(
         operations,
-        effectiveRequest,
+        request,
         context,
-        async () => {
-          releaseGoals();
-          await prepared?.dispose();
-        },
-      );
-      prepared?.armInvalidation(
-        async () => await runtime.dispose('runtime_recovery'),
+        releaseGoals,
       );
       return runtime;
     } catch (error) {
       releaseGoals();
-      await prepared?.dispose();
       throw error;
     }
   };
@@ -1331,81 +1030,6 @@ export function createClaudeNativeRuntime(
       goals: goals.control,
       async open(request, context) {
         return await openSession(request, context);
-      },
-    },
-    executionRuns: {
-      async open(request, context) {
-        if (request.kind !== 'create') {
-          throw new Error(`Claude execution runs do not support ${request.kind}.`);
-        }
-        const openExecutionSession = options.openExecutionSession;
-        if (!openExecutionSession) {
-          throw new Error('Claude native execution session factory is unavailable.');
-        }
-        return await createExecutionRunHostBackendFromSessionRuntime({
-          request,
-          openSession: async () => {
-            const sessionRequest: AgentSessionOpenRequest = {
-              kind: 'create',
-              sessionId: request.runId,
-              cwd: request.cwd,
-              ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-              ...(request.configuration ? { configuration: request.configuration } : {}),
-              ...(request.providerBinding ? { providerBinding: request.providerBinding } : {}),
-              ...(request.stateSharing ? { stateSharing: request.stateSharing } : {}),
-            };
-            const prepared = options.prepareLaunchEnvironment
-              ? await options.prepareLaunchEnvironment({
-                  request: sessionRequest,
-                  context,
-                })
-              : null;
-            const effectiveRequest = prepared
-              ? Object.freeze({
-                  ...request,
-                  launchEnvironment: prepared.launchEnvironment,
-                }) as Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>
-              : request;
-            const effectiveSessionRequest: AgentSessionOpenRequest = prepared
-              ? Object.freeze({
-                  ...sessionRequest,
-                  launchEnvironment: prepared.launchEnvironment,
-                })
-              : sessionRequest;
-            let operations: ClaudeNativeSessionOperations;
-            try {
-              const supportsEffort = await (options.resolveSupportsEffort
-                ?? resolveClaudeInstalledEffortSupport)({
-                  request: effectiveRequest,
-                  context,
-                });
-              if (prepared?.isInvalidated()) {
-                throw new Error('Claude qualified Connected Account launch was invalidated before opening the runtime.');
-              }
-              operations = await openExecutionSession({
-                request: effectiveRequest,
-                context,
-                supportsEffort,
-              });
-            } catch (error) {
-              await prepared?.dispose();
-              throw error;
-            }
-            const session = createClaudeNativeSessionRuntimeFromOperations(
-              operations,
-              effectiveSessionRequest,
-              undefined,
-              async () => await prepared?.dispose(),
-            );
-            prepared?.armInvalidation(
-              async () => await session.dispose('runtime_recovery'),
-            );
-            return session;
-          },
-          readCheckpointId: (event) => event.kind === 'provider-session-id'
-            ? event.providerSessionId
-            : null,
-        });
       },
     },
     surfaces: {
@@ -1427,10 +1051,7 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
   context: AgentSessionRuntimeContext;
   supportsEffort?: boolean;
 }>): Promise<ClaudeNativeSessionOperations> {
-  const sdkContext = createClaudeNativeAgentSdkContext(
-    input.context,
-    input.context,
-  );
+  const sdkContext = createClaudeNativeAgentSdkContext(input.context);
   const launchSettings = await resolveClaudeNativeLaunchSettings({
     settings: input.context.services.settings.forScope({ kind: 'account' }),
     launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
@@ -1478,60 +1099,10 @@ async function openClaudeNativeAgentSdkSession(input: Readonly<{
   });
 }
 
-async function openClaudeNativeExecutionSession(input: Readonly<{
-  request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>;
-  context: AgentRuntimeContext;
-  supportsEffort?: boolean;
-}>): Promise<ClaudeNativeSessionOperations> {
-  const sdkContext = createClaudeNativeAgentSdkContext(input.context);
-  const launchSettings = await resolveClaudeNativeLaunchSettings({
-    settings: input.context.services.settings.forScope({ kind: 'account' }),
-    launchEnv: resolveClaudeNativeBaseLaunchEnvironment({
-      launchEnvironment: input.request.launchEnvironment,
-      processEnv: process.env,
-    }),
-    includeAdvancedOptions: true,
-  });
-  const initialModelId = input.request.providerBinding?.model.id
-    ?? input.request.configuration?.model.value
-    ?? null;
-  const providerModel = input.request.providerBinding?.model;
-  const requestedEffort = input.request.configuration?.options.reasoning_effort?.value;
-  const initialEffort = input.supportsEffort === true ? resolveClaudeEffortForModel({
-    modelId: initialModelId,
-    effort: requestedEffort,
-    ...(providerModel ? { providerModel } : {}),
-  }) : null;
-  const requestedUltracode = input.request.configuration?.options.ultracode?.value;
-  const initialUltracode = input.supportsEffort === true
-    && (requestedUltracode === true || requestedUltracode === 'true')
-    && isClaudeUltracodeSupportedModelId(initialModelId, providerModel);
-  return createClaudeAgentSdkTurnOperations({
-    ctx: sdkContext,
-    queryContext: sdkContext.agentRuntime.exec,
-    permissionEngine: createClaudeNativePermissionEngine(input.context),
-    directory: input.request.cwd,
-    launchEnv: launchSettings.launchEnv,
-    advancedOptions: launchSettings.advancedOptions,
-    permissionMode: input.request.configuration?.permissionIntent.value ?? 'default',
-    supportsEffort: input.supportsEffort === true,
-    initialModelId,
-    ...(initialEffort ? { initialEffort } : {}),
-    ...(initialUltracode ? { initialUltracode: true } : {}),
-    ...(providerModel ? { providerModel } : {}),
-    happierSessionId: null,
-    publishSdkMessages: true,
-    enableSessionWorkState: false,
-    enableSessionResumability: false,
-  });
-}
-
 export const createClaudeAgentRuntime: AgentRuntimeFactory = () => createClaudeNativeRuntime({
   openSession: createClaudeNativeSessionOpener({
     openAgentSdkSession: openClaudeNativeAgentSdkSession,
     openUnifiedTerminalSession: openClaudeNativeUnifiedTerminalSession,
   }),
-  openExecutionSession: openClaudeNativeExecutionSession,
-  prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
   resolveSupportsEffort: resolveClaudeInstalledEffortSupport,
 });

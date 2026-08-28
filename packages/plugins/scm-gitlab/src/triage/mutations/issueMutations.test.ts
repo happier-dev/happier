@@ -185,6 +185,25 @@ describe('gitlab/issue/close', () => {
     expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
   });
 
+  it('preserves the answer-loss failure when the confirming read cannot prove the close', async () => {
+    const transport = scriptedTransport({
+      [`GET ${ISSUE_URL}`]: [
+        { status: 200, body: issueBody() },
+        { status: 200, body: issueBody({ state: 'opened' }) },
+      ],
+      [`PUT ${ISSUE_URL}`]: [ANSWER_LOST],
+    });
+
+    const result = await closeGitlabIssue(issueInput(), transport.context);
+
+    expect(result).toMatchObject({
+      kind: 'unconfirmed',
+      observed: { state: 'opened' },
+      failure: { class: 'transient', code: 'transport-failed' },
+    });
+    expect(transport.requests.filter((request) => request.method === 'PUT')).toHaveLength(1);
+  });
+
   it('never claims closed when the confirming read still reports it open', async () => {
     const transport = scriptedTransport({
       [`GET ${ISSUE_URL}`]: [

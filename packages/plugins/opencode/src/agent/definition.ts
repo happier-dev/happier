@@ -6,10 +6,6 @@ const OPENCODE_AGENT_CORE = Object.freeze({
   cloudConnect: null,
   connectedServices: {
     supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
-    sessionAuthSwitch: {
-      continuityMode: 'restart_same_home',
-      supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-    },
     supportedKindsByServiceId: {
       'openai-codex': ['oauth'],
       openai: ['token'],
@@ -25,7 +21,7 @@ const OPENCODE_AGENT_CORE = Object.freeze({
     sessionListing: 'supported',
     sessionFork: { conversation: 'supported', fromMessage: 'supported' },
     sessionRollback: { conversation: 'unsupported' },
-    usageLimitRecovery: { checkNow: 'supported' },
+    usageLimitRecovery: { checkNow: 'unsupported' },
   },
   runtimeKinds: {
     defaultKind: 'server',
@@ -104,26 +100,6 @@ const OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION = {
   },
 } as const;
 
-const OPENCODE_SESSION_CONTROL_ADAPTER_PROJECTION = {
-  providerId: 'opencode',
-  runtimeDescriptor: OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION,
-  runtimeKindOverride: {
-    aliases: OPENCODE_RUNTIME_KIND_ALIASES,
-    caseInsensitive: true,
-    accountSettingsField: 'opencodeBackendMode',
-    fallbackRuntimeKind: 'server',
-  },
-  configuredRuntimeKind: {
-    aliases: OPENCODE_RUNTIME_KIND_ALIASES,
-    caseInsensitive: true,
-    accountSettingsField: 'opencodeBackendMode',
-  },
-  vendorResumeId: {
-    descriptorField: 'providerSessionId',
-    legacyField: 'opencodeSessionId',
-  },
-} as const;
-
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({
   id: 'opencode',
@@ -136,31 +112,9 @@ export const AGENT_DEFINITION = Object.freeze({
     rootHelpDescription: 'Start OpenCode CLI',
     allowTmux: true,
   },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'OPENCODE_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-    sessionControlAdapter: {
-      kind: 'providerSessionControlAdapter',
-      providerId: 'opencode',
-      source: './agent/surfaces/sessions/controls/adapter',
-      exportName: 'OPENCODE_SESSION_CONTROL_ADAPTER',
-      generatedAdapter: OPENCODE_SESSION_CONTROL_ADAPTER_PROJECTION,
-    },
-    runtimeDescriptorReader: {
-      kind: 'providerRuntimeDescriptorReader',
-      providerId: 'opencode',
-      source: './agent/identity/runtimeDescriptor',
-      exportName: 'readOpenCodeSessionMetadataRuntimeDescriptor',
-      generatedReader: OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION,
-    },
-    protocolRuntimeDescriptor: {
-      kind: 'providerRuntimeDescriptorV1',
-      providerId: 'opencode',
-      source: './protocol/runtimeDescriptorV1',
-      buildFunction: 'buildOpenCodeAgentRuntimeDescriptorV1',
-      canonicalReader: 'readCanonicalOpenCodeAgentRuntimeDescriptorV1',
-    },
+  releasedFlatSessionMetadataRuntimeDescriptorReader: {
+    kind: 'providerRuntimeDescriptorReader',
+    providerId: 'opencode',
+    generatedReader: OPENCODE_RUNTIME_DESCRIPTOR_READER_PROJECTION,
   },
 });

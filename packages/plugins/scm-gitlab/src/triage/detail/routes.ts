@@ -16,12 +16,12 @@
  * fixes each one, and a reader control names the count it adds.
  */
 
-import { buildGitlabApiUrl } from '../http/gitlabClient.js';
+import { buildGitlabApiUrl, GITLAB_REST_MAX_PAGE_SIZE } from '../http/gitlabClient.js';
 import type { GitlabConfiguredOrigin } from '../origin.js';
 import type { GitlabKindId } from '../types.js';
 
-/** The largest page GitLab accepts on any REST collection. */
-export const GITLAB_MAX_DETAIL_PAGE_SIZE_V1 = 100;
+/** The provider maximum admitted by the detail Action contracts. */
+export const GITLAB_MAX_DETAIL_PAGE_SIZE_V1 = GITLAB_REST_MAX_PAGE_SIZE;
 
 /** Merge-request `Activity` mounts the newest 36 notes. */
 export const GITLAB_MERGE_REQUEST_NOTES_PAGE_SIZE_V1 = 36;
@@ -240,10 +240,10 @@ export function buildGitlabPipelineJobsUrl(input: Readonly<{
 /**
  * `GET …/merge_requests/{iid}/diffs?page=&per_page=`.
  *
- * The current endpoint, always. The deprecated `…/changes` path and its
- * `access_raw_diffs=true` companion are not built here: V1 admits GitLab.com
- * only (`sources/SCM.md` §4.1b), and GitLab.com serves the current contract, so
- * a legacy branch would be code no admitted deployment can reach.
+ * The current structured endpoint, always. The deprecated `…/changes` path and
+ * its `access_raw_diffs=true` companion are not built here. The distinct
+ * `raw_diffs` resource below is GitLab.com's current explicit raw-evidence read;
+ * it is neither a structured fallback nor part of this walk.
  */
 export function buildGitlabDiffsUrl(
   input: GitlabDetailRouteInputV1,
@@ -258,4 +258,11 @@ export function buildGitlabDiffsUrl(
     ['page', String(page)],
     ['per_page', String(perPage)],
   ]);
+}
+
+/** `GET …/merge_requests/{iid}/raw_diffs` — raw text, only on explicit demand. */
+export function buildGitlabRawDiffsUrl(input: GitlabDetailRouteInputV1): string {
+  assertRoute(input);
+  if (input.kindId !== 'merge-request') throw new Error('gitlab_raw_diff_kind_invalid');
+  return buildGitlabApiUrl(input.origin, itemPath(input, '/raw_diffs'));
 }

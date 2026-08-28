@@ -46,15 +46,14 @@ import {
   resolveCodexAppliedGeneration,
   resolveCodexAppliedGroupId,
   resolveCodexAppliedProfileId,
-  writeCodexConnectedServiceAuthStore,
   type CodexConnectedServiceAuthGenerationRequest,
 } from '../../auth/services/runtime/auth/generationRequest.js';
 import {
   readCodexActiveProviderAccount,
-  readCodexAuthStoreProviderAccountId,
+  readCodexAuthStoreProviderAccountIdFromJson,
   type CodexActiveProviderAccount,
 } from '../../auth/services/runtime/auth/accountId.js';
-import { readCodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
+import { readCodexAuthTokensFromJson, type CodexEnvironmentAuthTokens } from '../../cli/auth/environment.js';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../auth/services/quota/runtimeRateLimits.js';
 import { resolveCodexUsageSubjectRef } from '../../auth/services/usage/identity.js';
 import {
@@ -304,6 +303,7 @@ type CodexAppServerRuntimeParams = Readonly<{
 
 export type CodexAppServerRuntimeHost = Readonly<{
   baseProcessEnv: Readonly<Record<string, string | undefined>>;
+  nativeHome?: NonNullable<AgentSessionRuntimeContext['session']['services']['nativeHome']>;
   logger: Readonly<{
     debug(message: string, fields?: Readonly<Record<string, unknown>>): void;
   }>;
@@ -317,7 +317,7 @@ export type CodexAppServerRuntimeHost = Readonly<{
     accessToken: string;
     accountId: string | null;
   }>): Promise<unknown>;
-  accountUsage?: CodexAppServerAccountUsageService;
+  accountUsage: CodexAppServerAccountUsageService;
   ui?: Pick<AgentSessionRuntimeContext['services']['interactions'], 'requestApproval' | 'askQuestions'>;
   mcp?: Pick<
     NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>['mcp'],
@@ -893,11 +893,8 @@ export function createCodexAppServerRuntime(
   let backgroundCompletion: Promise<void> | null = null;
   let activeChatGptAuthTokensRefreshSelection: CodexConnectedServiceRefreshSelection | null =
     resolveCodexConnectedServiceRefreshSelectionFromEnv(readRuntimeProcessEnv());
-  let activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
-    readCodexEnvironmentAuthTokens(readRuntimeProcessEnv()).accessToken,
-  );
-  let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeIdentity | null =
-    resolveCodexInitialConnectedServiceRuntimeIdentity(readRuntimeProcessEnv());
+  let activeChatGptAccessTokenFingerprint: string | null = null;
+  let latestConnectedServiceRuntimeIdentity: CodexConnectedServiceRuntimeIdentity | null = null;
   let publishedProvisionalProviderAccountUsageRecordId: string | null = null;
   const pendingProviderPrompts = new Set<PendingProviderPrompt>();
   const runtimeSubscribers = new Set<(event: CodexAppServerEvent) => void>();
@@ -907,6 +904,27 @@ export function createCodexAppServerRuntime(
     session: {},
   });
   const rollbackProviderTurnIdsBySessionTurnId = new Map<string, string>();
+
+  const readHostOwnedAuthTokens = async (): Promise<CodexEnvironmentAuthTokens> => {
+    try {
+      const bytes = (await params.host.nativeHome?.readFiles(['auth.json']))?.['auth.json'];
+      if (!bytes) return readCodexAuthTokensFromJson(null);
+      return readCodexAuthTokensFromJson(JSON.parse(new TextDecoder().decode(bytes)) as unknown);
+    } catch {
+      return readCodexAuthTokensFromJson(null);
+    }
+  };
+  const readHostOwnedAuthStoreProof = async () => {
+    try {
+      const bytes = (await params.host.nativeHome?.readFiles(['auth.json']))?.['auth.json'];
+      if (!bytes) return { status: 'missing' } as const;
+      return readCodexAuthStoreProviderAccountIdFromJson(
+        JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+      );
+    } catch {
+      return { status: 'missing' } as const;
+    }
+  };
   const publishedToolEventKeys = new Set<string>();
   const pendingHappierTitleToolNamesByCallId = new Map<string, string>();
   const publishedGeneratedMediaItemIds = new Set<string>();
@@ -1099,9 +1117,9 @@ export function createCodexAppServerRuntime(
   };
 
   const readRateLimitResetCreditsRaw = async (
-    env: Readonly<Record<string, string | undefined>>,
+    _env: Readonly<Record<string, string | undefined>>,
   ): Promise<unknown> => {
-    const authTokens = readCodexEnvironmentAuthTokens(env);
+    const authTokens = await readHostOwnedAuthTokens();
     const accessToken = authTokens.accessToken ?? authTokens.idToken;
     if (!accessToken) return undefined;
     if (!params.host.fetchRateLimitResetCredits) return undefined;
@@ -1123,7 +1141,6 @@ export function createCodexAppServerRuntime(
     options: RecordProviderAccountUsageSnapshotOptions,
   ): Promise<void> => {
     const service = params.host.accountUsage;
-    if (!service || typeof service.recordSnapshot !== 'function') return;
     const env = readRuntimeProcessEnv();
     const codexHome = resolveCodexHome(env);
     const observedAtMs = Date.now();
@@ -1156,7 +1173,7 @@ export function createCodexAppServerRuntime(
       const identityFence = latestConnectedServiceRuntimeIdentity;
       const rawResetCredits = await readRateLimitResetCreditsRaw(env);
       const authStoreProviderAccountIdProof = !appliedIdentity && !forceProvisional
-        ? await readCodexAuthStoreProviderAccountId(codexHome)
+        ? await readHostOwnedAuthStoreProof()
         : null;
       if (latestConnectedServiceRuntimeIdentity !== identityFence) {
         appliedIdentity = null;
@@ -1209,7 +1226,7 @@ export function createCodexAppServerRuntime(
         return;
       }
       const provisionalRecordId = publishedProvisionalProviderAccountUsageRecordId;
-      if (!provisionalRecordId || typeof service.adoptProvisionalRecord !== 'function') return;
+      if (!provisionalRecordId) return;
       publishedProvisionalProviderAccountUsageRecordId = null;
       const adoptionResult = await service.adoptProvisionalRecord({
         adoption: {
@@ -2113,6 +2130,14 @@ export function createCodexAppServerRuntime(
   };
 
   const openSession = async (options?: Readonly<Record<string, unknown>>): Promise<string> => {
+    const authTokens = await readHostOwnedAuthTokens();
+    activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
+      authTokens.accessToken ?? authTokens.idToken,
+    );
+    latestConnectedServiceRuntimeIdentity ??= resolveCodexInitialConnectedServiceRuntimeIdentity(
+      readRuntimeProcessEnv(),
+      authTokens,
+    );
     const appServerClient = await ensureClient();
     const resumeId = readResumeId(options);
     const existingSessionId = trimStringValue(options?.existingSessionId);
@@ -2846,39 +2871,6 @@ export function createCodexAppServerRuntime(
       : {}),
   });
 
-  const connectedServiceRequestPreservesAppliedBinding = (
-    request: CodexConnectedServiceAuthGenerationRequest,
-  ): boolean => {
-    const current = latestConnectedServiceRuntimeIdentity;
-    const providerAccountId = trimStringValue(request.credential.oauth.providerAccountId);
-    if (!current || !providerAccountId) return false;
-    return current.providerAccountId === providerAccountId
-      && current.profileId === resolveCodexAppliedProfileId({
-        credential: request.credential,
-        selection: request.selection,
-        expected: request.expected,
-      })
-      && current.groupId === resolveCodexAppliedGroupId({
-        selection: request.selection,
-        expected: request.expected,
-      });
-  };
-
-  const readAccountLabelForAppliedAccount = async (
-    providerAccountId: string,
-  ): Promise<string | null> => {
-    try {
-      const activeAccount = readCodexActiveProviderAccount(await (await ensureClient()).request('account/read'));
-      if (activeAccount.providerAccountId !== providerAccountId) return null;
-      return activeAccount.providerEmail;
-    } catch (error) {
-      params.host.logger.debug('Codex app-server live account read failed after connected-service auth apply (ignored)', {
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-      return null;
-    }
-  };
-
   const applyRuntimeAuth = async (
     rawRequest: AgentSessionRuntimeAuthApplyRequest,
   ): Promise<AgentSessionRuntimeAuthApplyResult> => await runConnectedServiceAuthApply(async () => {
@@ -2890,33 +2882,12 @@ export function createCodexAppServerRuntime(
         error: 'invalid_request',
       };
     }
-    if (
-      (pendingTurn !== null || realtimeConversation.hasRetainedAttemptAuthority())
-      && !connectedServiceRequestPreservesAppliedBinding(request)
-    ) {
-      return {
-        ok: false,
-        errorCode: 'auth_identity_change_restart_required',
-        error: 'auth_identity_change_restart_required',
-        recovery: 'restart_resume',
-      };
-    }
-    const codexHome = resolveCodexHome(readRuntimeProcessEnv());
     const appServerClient = await ensureClient();
     const applied = await applyCodexConnectedServiceAuthGeneration({
       client: appServerClient,
       candidate: request.credential,
       forcedWorkspaceId: request.forcedWorkspaceId,
       forcedLoginMethod: request.forcedLoginMethod,
-      persistAuthStore: async () => {
-        if (disposed) {
-          throw new Error('Codex app-server runtime was replaced during connected-service auth apply.');
-        }
-        await writeCodexConnectedServiceAuthStore({
-          codexHome,
-          credential: request.credential,
-        });
-      },
       refreshSelection: request.selection,
       updateRefreshSelection: async (selection) => {
         const previousSelection = activeChatGptAuthTokensRefreshSelection;
@@ -2946,61 +2917,50 @@ export function createCodexAppServerRuntime(
         ...(applied.recovery ? { recovery: applied.recovery } : {}),
       };
     }
+    if (disposed) {
+      return {
+        ok: false,
+        errorCode: 'runtime_replaced_during_auth_apply',
+        error: 'runtime_replaced_during_auth_apply',
+        appliedVia: applied.appliedVia,
+        activeAccountId: applied.activeAccountId,
+        recovery: 'restart_resume',
+      };
+    }
 
     activeChatGptAccessTokenFingerprint = computeCodexAccessTokenFingerprint(
       request.credential.oauth.accessToken,
     );
-    latestConnectedServiceRuntimeIdentity = buildConnectedServiceRuntimeIdentity(
+    const appliedRuntimeIdentity = buildConnectedServiceRuntimeIdentity(
       request,
       applied.activeAccountId,
       null,
     );
-    if (applied.durability.persisted === false) {
-      return {
-        ok: false,
-        errorCode: applied.durability.errorCode,
-        error: applied.durability.errorCode,
-        appliedVia: applied.appliedVia,
-        activeAccountId: applied.activeAccountId,
-        verification: buildConnectedServiceApplicationVerification(latestConnectedServiceRuntimeIdentity),
-        durability: applied.durability,
-      };
-    }
-
-    const accountLabel = await readAccountLabelForAppliedAccount(applied.activeAccountId);
-    latestConnectedServiceRuntimeIdentity = buildConnectedServiceRuntimeIdentity(
-      request,
-      applied.activeAccountId,
-      accountLabel,
-    );
-    try {
-      const operationIdentity = latestConnectedServiceRuntimeIdentity;
-      const result = await readCodexRuntimeRateLimitsSnapshot(appServerClient);
-      await recordProviderAccountUsageSnapshot(result.rawSnapshot, {
-        operationIdentity,
-        includeLiveAccountIdentity: true,
-      });
-    } catch (error) {
-      params.host.logger.debug('Codex app-server quota snapshot failed after connected-service auth apply', {
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-      return {
-        ok: false,
-        errorCode: 'post_apply_quota_probe_failed',
-        error: 'post_apply_quota_probe_failed',
-        appliedVia: applied.appliedVia,
-        activeAccountId: applied.activeAccountId,
-        verification: buildConnectedServiceApplicationVerification(latestConnectedServiceRuntimeIdentity),
-        durability: applied.durability,
-      };
-    }
+    latestConnectedServiceRuntimeIdentity = appliedRuntimeIdentity;
+    // Exact provider application and durable auth-store persistence settle the
+    // auth operation. The canonical account-usage owner performs the optional
+    // live-account verification and quota publication afterward, fenced by the
+    // exact identity that was just applied. A slow diagnostic must not turn a
+    // successful in-process hot swap into a restart-required fan-out result.
+    void (async () => {
+      try {
+        const result = await readCodexRuntimeRateLimitsSnapshot(appServerClient);
+        await recordProviderAccountUsageSnapshot(result.rawSnapshot, {
+          operationIdentity: appliedRuntimeIdentity,
+          includeLiveAccountIdentity: true,
+        });
+      } catch (error) {
+        params.host.logger.debug('Codex app-server quota snapshot failed after connected-service auth apply (ignored)', {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
+    })();
 
     return {
       ok: true,
       appliedVia: applied.appliedVia,
       activeAccountId: applied.activeAccountId,
-      verification: buildConnectedServiceApplicationVerification(latestConnectedServiceRuntimeIdentity),
-      durability: applied.durability,
+      verification: buildConnectedServiceApplicationVerification(appliedRuntimeIdentity),
     };
   });
 
@@ -3041,8 +3001,9 @@ export function createCodexAppServerRuntime(
       },
       runtime: {
         safeToProbe: true,
-        safeToApply: pendingTurn === null
-          && !realtimeConversation.hasRetainedAttemptAuthority(),
+        // Codex owns an in-process account/login/start hot-auth boundary. Keep
+        // turn state visible, but never reinterpret it as a restart/defer gate.
+        safeToApply: true,
         inProviderTurn: pendingTurn !== null,
         profileId: identity.profileId,
         ...(identity.groupId ? { groupId: identity.groupId } : {}),

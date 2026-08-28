@@ -1,12 +1,18 @@
 import {
   parseCredentialRecord,
-  type OauthCredentialRecord,
-  type TokenCredentialRecord,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import type {
+  AgentConnectedAccountNativeAuthCodecV1,
+  AgentConnectedAccountRuntimeAuthAdapterResultV1,
+  AgentConnectedAccountRuntimeAuthHotApplyInputV1,
+  AgentConnectedAccountRuntimeAuthTargetV1,
+  AgentConnectedAccountRuntimeAuthUsageInputV1,
+  AgentConnectedAccountRuntimeAuthVerificationInputV1,
+  AgentConnectedAccountTransitionVerificationResultV1,
+} from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { recoverCodexConnectedServiceRestartResumeOnce } from '../auth/application.js';
 import {
-  readCodexAuthStoreProviderAccountId,
+  readCodexAuthStoreProviderAccountIdFromJson,
   type CodexActiveProviderAccountVerification,
   verifyCodexActiveProviderAccount,
 } from '../auth/accountId.js';
@@ -18,12 +24,12 @@ import { resolveCodexRuntimeQuotaProbeSupport } from '../../quota/probe.js';
 import { readCodexRuntimeRateLimitsSnapshot } from '../../quota/runtimeRateLimits.js';
 import { resolveCodexUsageSubjectRef } from '../../usage/identity.js';
 import { mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot } from '../../usage/snapshot.js';
-import type { CodexAppServerClient } from '../../../../runtime/appServer/client.js';
+import { buildCodexCloudAuthFile } from '../../openai/cloud/authFile.js';
 
-type RuntimeAuthTargetInput = Readonly<{
-  target: Readonly<{ agentId: string; targetId?: string | null }>;
-  selection: unknown;
-}>;
+type RuntimeAuthTargetInput = AgentConnectedAccountRuntimeAuthTargetV1;
+type RuntimeAuthHotApplyInput = AgentConnectedAccountRuntimeAuthHotApplyInputV1;
+type RuntimeAuthVerificationInput = AgentConnectedAccountRuntimeAuthVerificationInputV1;
+type RuntimeAuthUsageInput = AgentConnectedAccountRuntimeAuthUsageInputV1;
 
 type RuntimeFailureInput = Readonly<{
   target: Readonly<{ agentId: string; targetId?: string | null }>;
@@ -31,7 +37,7 @@ type RuntimeFailureInput = Readonly<{
   selection?: unknown;
 }>;
 
-type RuntimeAuthAdapterResult = Readonly<Record<string, unknown>>;
+type RuntimeAuthAdapterResult = AgentConnectedAccountRuntimeAuthAdapterResultV1;
 
 type CodexAccountTransitionVerificationResult =
   | CodexActiveProviderAccountVerification
@@ -45,11 +51,10 @@ type CodexAccountTransitionVerificationResult =
 export type CodexConnectedServiceRuntimeAuthAdapter = Readonly<{
   classifyRuntimeAuthFailure(input: RuntimeFailureInput): CodexConnectedServiceRuntimeFailureClassification | null;
   materializeActiveProfile(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
-  canHotApply(input: RuntimeAuthTargetInput): RuntimeAuthAdapterResult;
-  hotApply(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
-  recoverAfterRuntimeAuthSwitch(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
-  verifyActiveAccount(input: RuntimeAuthTargetInput): Promise<CodexAccountTransitionVerificationResult>;
-  probeQuota(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
+  canHotApply(input: RuntimeAuthHotApplyInput): RuntimeAuthAdapterResult;
+  hotApply(input: RuntimeAuthHotApplyInput): Promise<RuntimeAuthAdapterResult>;
+  verifyActiveAccount(input: RuntimeAuthVerificationInput): Promise<CodexAccountTransitionVerificationResult>;
+  probeQuota(input: RuntimeAuthUsageInput): Promise<RuntimeAuthAdapterResult>;
   refreshActiveProfile(input: RuntimeAuthTargetInput): Promise<RuntimeAuthAdapterResult>;
 }>;
 
@@ -61,92 +66,12 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function readRecovery(value: unknown): 'restart_resume' | 'restart_rematerialize' | null {
+  return value === 'restart_resume' || value === 'restart_rematerialize' ? value : null;
+}
+
 function readSelection(input: RuntimeAuthTargetInput | RuntimeFailureInput): Record<string, unknown> | null {
   return readRecord(input.selection);
-}
-
-function readCredentialRecord(input: RuntimeAuthTargetInput): OauthCredentialRecord | TokenCredentialRecord | null {
-  const record = readRecord(readSelection(input)?.record);
-  return parseCredentialRecord(record);
-}
-
-function readClient(value: unknown): Pick<CodexAppServerClient, 'request'> | null {
-  const record = readRecord(value);
-  if (!record || typeof record.request !== 'function') return null;
-  const request = record.request as CodexAppServerClient['request'];
-  return {
-    request: (method, params, options) => request.call(record, method, params, options),
-  };
-}
-
-function readMaterializedCodexHome(selection: Record<string, unknown> | null): string | null {
-  const targetMaterializedEnv = readRecord(selection?.targetMaterializedEnv);
-  return readString(targetMaterializedEnv?.CODEX_HOME)
-    ?? readString(selection?.targetMaterializedRoot);
-}
-
-function readNonNegativeInteger(value: unknown): number | null {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.trunc(value);
-}
-
-function readApplyCallback(value: unknown): ((request: Readonly<Record<string, unknown>>) => Promise<unknown>) | null {
-  const selection = readRecord(value);
-  const callback = selection?.applyConnectedServiceAuthGeneration;
-  return typeof callback === 'function'
-    ? async (request) => await callback.call(selection, request)
-    : null;
-}
-
-function unwrapRuntimeControlResult(value: unknown): Record<string, unknown> | null {
-  const result = readRecord(value);
-  if (!result) return null;
-  if (result.ok === true && 'value' in result) return readRecord(result.value);
-  return result;
-}
-
-function buildApplyRequest(selection: Record<string, unknown>): Readonly<Record<string, unknown>> | null {
-  const record = readCredentialRecord({ target: { agentId: 'codex' }, selection });
-  if (!record) return null;
-  const profileId = readString(selection.activeProfileId ?? selection.profileId);
-  const groupId = readString(selection.groupId);
-  const generation = readNonNegativeInteger(selection.generation);
-  return {
-    serviceId: 'openai-codex',
-    ...(readString(selection.applyReason) ? { reason: readString(selection.applyReason) } : {}),
-    ...(selection.requireDirectLiveHotApply === true ? { requireDirectLiveHotApply: true } : {}),
-    ...(profileId || groupId || generation !== null ? {
-      expected: {
-        ...(profileId ? { profileId } : {}),
-        ...(groupId ? { groupId } : {}),
-        ...(generation !== null ? { generation } : {}),
-      },
-    } : {}),
-    authGeneration: {
-      credential: record,
-      ...(readString(selection.credentialRevision)
-        ? { credentialRevision: readString(selection.credentialRevision) }
-        : {}),
-      forcedWorkspaceId: readString(selection.forcedWorkspaceId),
-      ...(readString(selection.forcedLoginMethod)
-        ? { forcedLoginMethod: readString(selection.forcedLoginMethod) }
-        : {}),
-      ...(groupId && profileId && generation !== null ? {
-        selection: {
-          kind: 'group',
-          serviceId: 'openai-codex',
-          groupId,
-          activeProfileId: profileId,
-          ...(readString(selection.fallbackProfileId)
-            ? { fallbackProfileId: readString(selection.fallbackProfileId) }
-            : {}),
-          generation,
-        },
-      } : profileId ? {
-        selection: { kind: 'profile', serviceId: 'openai-codex', profileId },
-      } : {}),
-    },
-  };
 }
 
 function classifyProbeError(error: unknown): Readonly<{
@@ -176,69 +101,48 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
     async materializeActiveProfile() {
       return { supported: true };
     },
-    canHotApply(input: RuntimeAuthTargetInput) {
-      return readApplyCallback(input.selection) && buildApplyRequest(readSelection(input) ?? {})
-        ? { supported: true, mode: 'codex_chatgpt_auth_tokens' }
+    canHotApply(input: RuntimeAuthHotApplyInput) {
+      return input.applySelectedAuthGeneration && input.materializeNativeAuth
+        ? { supported: true }
         : { supported: false, reason: 'runtime_apply_callback_unavailable' };
     },
-    async hotApply(input: RuntimeAuthTargetInput) {
-      const selection = readSelection(input);
-      const callback = readApplyCallback(selection);
-      const request = selection ? buildApplyRequest(selection) : null;
-      if (!callback || !request) {
+    async hotApply(input: RuntimeAuthHotApplyInput) {
+      if (!input.applySelectedAuthGeneration || !input.materializeNativeAuth) {
         return { applied: false, reason: 'runtime_apply_callback_unavailable' };
       }
-      const result = unwrapRuntimeControlResult(await callback(request));
-      if (!result || result.ok !== true) {
+      const result = await input.applySelectedAuthGeneration();
+      if (!result.ok) {
         return {
           applied: false,
           reason: readString(result?.errorCode ?? result?.error) ?? 'runtime_apply_failed',
-          ...(readString(result?.recovery) ? { recovery: readString(result?.recovery) } : {}),
-          ...(result?.appliedVia ? { appliedVia: result.appliedVia } : {}),
-          ...(result?.activeAccountId ? { activeAccountId: result.activeAccountId } : {}),
+          ...(readRecovery(result?.recovery) ? { recovery: readRecovery(result?.recovery)! } : {}),
         };
       }
-      const durability = readRecord(result.durability);
-      if (durability?.persisted === false) {
+      try {
+        const verification = await input.materializeNativeAuth();
+        if (verification.status !== 'verified') {
+          return {
+            applied: false,
+            reason: verification.reason ?? 'runtime_apply_persistence_failed',
+            recovery: 'restart_resume',
+          };
+        }
+      } catch {
         return {
           applied: false,
-          reason: readString(durability.errorCode) ?? 'runtime_apply_persistence_failed',
-          appliedVia: result.appliedVia,
-          activeAccountId: result.activeAccountId,
+          reason: 'runtime_apply_persistence_failed',
           recovery: 'restart_resume',
         };
       }
       return {
         applied: true,
-        reason: readString(result.appliedVia) ?? 'direct_live_hot_auth',
-        ...(readRecord(result.verification) ? { verification: result.verification } : {}),
-        ...(result.activeAccountId ? { activeAccountId: result.activeAccountId } : {}),
+        reason: result.appliedVia || 'direct_live_hot_auth',
+        ...(result.verification ? { verification: result.verification } : {}),
       };
     },
-    async recoverAfterRuntimeAuthSwitch(input: RuntimeAuthTargetInput) {
+    async verifyActiveAccount(input: RuntimeAuthVerificationInput) {
       const selection = readSelection(input);
-      const restartAndResume = selection?.restartAndResume;
-      if (typeof restartAndResume !== 'function') {
-        return { recovered: false, reason: 'missing_restart_resume' };
-      }
-      return await recoverCodexConnectedServiceRestartResumeOnce({
-        attemptsSoFar: readNonNegativeInteger(selection?.attemptsSoFar) ?? 0,
-        restartAndResume: async () => {
-          await restartAndResume();
-          return { resumed: true };
-        },
-      });
-    },
-    async verifyActiveAccount(input: RuntimeAuthTargetInput) {
-      const record = readCredentialRecord(input);
-      if (!record || record.kind !== 'oauth' || record.serviceId !== 'openai-codex') {
-        return {
-          status: 'unavailable',
-          retryable: false,
-          reason: 'missing_expected_provider_account_id',
-        } as const;
-      }
-      const expectedProviderAccountId = readString(record.oauth.providerAccountId);
+      const expectedProviderAccountId = readString(selection?.sourceProviderAccountId);
       if (!expectedProviderAccountId) {
         return {
           status: 'unavailable',
@@ -246,8 +150,7 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
           reason: 'missing_expected_provider_account_id',
         } as const;
       }
-      const client = readClient(readSelection(input)?.client);
-      if (!client) {
+      if (!input.readProviderAccount) {
         return {
           status: 'unavailable',
           retryable: true,
@@ -256,7 +159,7 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
       }
       let rawAccount: unknown;
       try {
-        rawAccount = await client.request('account/read');
+        rawAccount = await input.readProviderAccount();
       } catch (error) {
         const classification = classifyProbeError(error);
         return {
@@ -266,17 +169,27 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
           errorClassification: classification,
         } as const;
       }
-      const materializedCodexHome = readMaterializedCodexHome(readSelection(input));
+      const nativeVerification = await input.inspectNativeAuth?.();
+      const authStoreProviderAccountIdProof = nativeVerification?.status === 'verified'
+        && nativeVerification.providerAccountId
+        ? { status: 'resolved' as const, accountId: nativeVerification.providerAccountId }
+        : nativeVerification?.status === 'mismatch'
+          ? {
+              status: 'conflict' as const,
+              accountIds: [
+                nativeVerification.expectedProviderAccountId ?? expectedProviderAccountId,
+                nativeVerification.actualProviderAccountId,
+              ].filter((value): value is string => Boolean(value)),
+            }
+          : { status: 'missing' as const };
       return verifyCodexActiveProviderAccount({
         expectedProviderAccountId,
-        expectedProviderEmail: record.oauth.providerEmail,
+        expectedProviderEmail: readString(selection?.sourceAccountLabel),
         rawAccount,
-        authStoreProviderAccountIdProof: materializedCodexHome
-          ? await readCodexAuthStoreProviderAccountId(materializedCodexHome)
-          : { status: 'missing' },
+        authStoreProviderAccountIdProof,
       });
     },
-    async probeQuota(input: RuntimeAuthTargetInput) {
+    async probeQuota(input: RuntimeAuthUsageInput) {
       const selection = readSelection(input);
       const support = resolveCodexRuntimeQuotaProbeSupport(selection);
       if (!support.supported) {
@@ -285,18 +198,19 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
           reason: support.reason,
         };
       }
-      const client = readClient(selection?.client);
-      const record = readCredentialRecord(input);
-      if (!record || record.kind !== 'oauth' || !client) {
+      if (!input.readProviderUsage) {
         return { status: 'unsupported' };
       }
       const { rawSnapshot } = await readCodexRuntimeRateLimitsSnapshot({
-        request: async (_method, requestParams) => await client.request('account/rateLimits/read', requestParams),
+        request: async (_method, requestParams) => await input.readProviderUsage!(requestParams as never),
       });
       const observedAtMs = Date.now();
       const usageSnapshot = mapCodexRateLimitSnapshotToProviderAccountUsageSnapshot({
-        subject: resolveCodexUsageSubjectRef({ connectedServiceRecord: record }),
-        accountLabel: readString(record.oauth.providerEmail),
+        subject: resolveCodexUsageSubjectRef({
+          connectedServiceProviderAccountId: readString(selection?.sourceProviderAccountId),
+          provisionalDiscriminator: `${readString(selection?.serviceId) ?? 'openai-codex'}:${readString(selection?.profileId ?? selection?.activeProfileId) ?? 'unknown'}`,
+        }),
+        accountLabel: readString(selection?.sourceAccountLabel),
         observedAtMs,
         fetchedAtMs: observedAtMs,
         rawSnapshot,
@@ -308,6 +222,65 @@ export function createCodexConnectedServiceRuntimeAuthAdapter(): CodexConnectedS
         status: 'unsupported',
         reason: 'codex_refresh_requires_daemon_refresh_coordinator',
       };
+    },
+  };
+}
+
+export function createCodexConnectedAccountNativeAuthCodec(): AgentConnectedAccountNativeAuthCodecV1 {
+  return {
+    materialize({ credential }) {
+      const record = parseCredentialRecord(credential);
+      if (!record || record.kind !== 'oauth' || record.serviceId !== 'openai-codex') {
+        throw new TypeError('Codex native auth materialization requires an OpenAI Codex OAuth credential');
+      }
+      return {
+        files: {
+          'auth.json': new TextEncoder().encode(JSON.stringify(buildCodexCloudAuthFile({
+            accessToken: record.oauth.accessToken,
+            refreshToken: record.oauth.refreshToken,
+            idToken: record.oauth.idToken,
+            accountId: record.oauth.providerAccountId,
+            lastRefreshIso: new Date().toISOString(),
+          }))),
+        },
+      };
+    },
+    inspect({ credential, files }): AgentConnectedAccountTransitionVerificationResultV1 {
+      const record = parseCredentialRecord(credential);
+      const expectedProviderAccountId = record?.kind === 'oauth'
+        ? readString(record.oauth.providerAccountId)
+        : null;
+      const bytes = files['auth.json'];
+      if (!expectedProviderAccountId || !bytes) {
+        return { status: 'unavailable', retryable: false, reason: 'missing_expected_provider_account_id' };
+      }
+      let proof: ReturnType<typeof readCodexAuthStoreProviderAccountIdFromJson>;
+      try {
+        proof = readCodexAuthStoreProviderAccountIdFromJson(JSON.parse(new TextDecoder().decode(bytes)));
+      } catch {
+        proof = { status: 'missing' };
+      }
+      if (proof.status === 'resolved' && proof.accountId === expectedProviderAccountId) {
+        return {
+          status: 'verified',
+          providerAccountId: proof.accountId,
+          activeAccountId: proof.accountEmail ?? null,
+          proofStrength: 'diagnostic',
+          source: 'codex_auth_store',
+        };
+      }
+      if (proof.status === 'resolved' || proof.status === 'conflict') {
+        return {
+          status: 'mismatch',
+          expectedProviderAccountId,
+          actualProviderAccountId: proof.status === 'resolved'
+            ? proof.accountId
+            : proof.accountIds.find((id) => id !== expectedProviderAccountId) ?? null,
+          retryable: true,
+          reason: 'provider_account_auth_store_mismatch',
+        };
+      }
+      return { status: 'unavailable', retryable: true, reason: 'active_account_probe_missing_account_id' };
     },
   };
 }

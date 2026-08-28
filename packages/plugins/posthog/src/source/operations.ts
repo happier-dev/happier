@@ -41,17 +41,17 @@ import {
     decodeTriagePagingTokenV1,
     encodeTriagePagingTokenV1,
 } from '@happier-dev/triage-protocol/v1';
+import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
+import {
+    fitActionResultPageV1,
+    fitActionResultSequenceV1,
+} from '@happier-dev/triage-sources/projection/actionResultSequence';
 
 import {
-    MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1,
     MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1,
     PosthogConfigurationDirectoryInputV1Schema,
     type PosthogConfigurationDirectoryResultV1,
 } from '../connect/configurationContract.js';
-import {
-    PosthogCapabilityProbeInputV1Schema,
-    type PosthogCapabilityProbeResultV1,
-} from '../connect/capabilityProbe.js';
 import type { PosthogFailure } from '../api/errors.js';
 import { organizationProjectsPath, organizationsListPath } from '../api/paths.js';
 import {
@@ -61,6 +61,7 @@ import {
     type PosthogEnvironmentRow,
 } from '../api/types/directory.js';
 import type { PosthogIssueRow } from '../api/types/issues.js';
+import { POSTHOG_ISSUE_EVENTS_INCLUDE } from '../api/types/events.js';
 import {
     selectPosthogApiOrigin,
     type PosthogApiOrigin,
@@ -76,6 +77,11 @@ import {
     type PosthogSampledEventsResultV1,
 } from './detail/issueEventsContract.js';
 import { readPosthogIssueActivity } from './detail/issueActivity.js';
+import { readPosthogCodeVariables } from './detail/codeVariables.js';
+import {
+    PosthogCodeVariablesInputV1Schema,
+    type PosthogCodeVariablesResultV1,
+} from './detail/codeVariablesContract.js';
 import {
     POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
     PosthogIssueActivityInputV1Schema,
@@ -361,8 +367,6 @@ export function createPosthogConfigurationDirectoryReader(
             : admitForgeRequestUrl(page.next, origin as string);
         const next = admittedNext !== null
             && isForwardDirectoryContinuation(requestedUrl, admittedNext)
-            && new TextEncoder().encode(admittedNext).byteLength
-                <= MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1
             ? admittedNext
             : null;
         return {
@@ -378,7 +382,7 @@ export function createPosthogConfigurationDirectoryReader(
         if (!read.result.ok) return unavailable(toTriageSourceFailure(read.result.failure));
         const page = read.result.value;
         const { next, incomplete } = pageState(page, read.requestedUrl);
-        const rows = page.rows.flatMap((row) => {
+        const projectedRows = page.rows.flatMap((row) => {
             const key = buildPosthogLocalInstanceKey(origin, row.organizationUuid);
             const displayName = projectTriageDisplayTextV1(row.name, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
             return !key.ok || displayName.value.length === 0 ? [] : [{
@@ -387,12 +391,22 @@ export function createPosthogConfigurationDirectoryReader(
                 localInstanceKey: key.value,
             }];
         });
-        return {
-            kind: 'organizations',
+        const rows = projectedRows.slice(0, MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1);
+        return fitActionResultPageV1(
             rows,
-            ...(next === null ? {} : { next }),
-            ...(incomplete || rows.length !== page.rows.length ? { incomplete: true as const } : {}),
-        };
+            next ?? undefined,
+            (fittedRows, omittedCount, fittedNext, continuationOmitted) => ({
+                kind: 'organizations' as const,
+                rows: fittedRows,
+                ...(fittedNext === undefined ? {} : { next: fittedNext }),
+                ...(incomplete
+                    || rows.length !== page.rows.length
+                    || omittedCount > 0
+                    || continuationOmitted
+                    ? { incomplete: true as const }
+                    : {}),
+            }),
+        ).result;
     }
     const read = await readPage(
         organizationProjectsPath(parsed.organizationUuid),
@@ -401,7 +415,7 @@ export function createPosthogConfigurationDirectoryReader(
     if (!read.result.ok) return unavailable(toTriageSourceFailure(read.result.failure));
     const page = read.result.value;
     const { next, incomplete } = pageState(page, read.requestedUrl);
-    const rows = page.rows.flatMap((row) => {
+    const projectedRows = page.rows.flatMap((row) => {
         if (row.organizationUuid !== parsed.organizationUuid) return [];
         const displayName = projectTriageDisplayTextV1(row.displayName, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
         return displayName.value.length === 0 ? [] : [{
@@ -411,13 +425,23 @@ export function createPosthogConfigurationDirectoryReader(
             displayName: displayName.value,
         }];
     });
-    return {
-        kind: 'environments',
-        organizationUuid: parsed.organizationUuid,
+    const rows = projectedRows.slice(0, MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1);
+    return fitActionResultPageV1(
         rows,
-        ...(next === null ? {} : { next }),
-        ...(incomplete || rows.length !== page.rows.length ? { incomplete: true as const } : {}),
-    };
+        next ?? undefined,
+        (fittedRows, omittedCount, fittedNext, continuationOmitted) => ({
+            kind: 'environments' as const,
+            organizationUuid: parsed.organizationUuid,
+            rows: fittedRows,
+            ...(fittedNext === undefined ? {} : { next: fittedNext }),
+            ...(incomplete
+                || rows.length !== page.rows.length
+                || omittedCount > 0
+                || continuationOmitted
+                ? { incomplete: true as const }
+                : {}),
+        }),
+    ).result;
     });
   };
 }
@@ -927,65 +951,6 @@ function resolveInvokedInstance(
     });
 }
 
-/** One ephemeral authenticated Error Tracking read for the active Settings draft. */
-export type PosthogCapabilityProbe = (
-    input: unknown,
-    context: PluginInvocationContext,
-) => Promise<PosthogCapabilityProbeResultV1>;
-
-export function createPosthogCapabilityProbe(
-    deadlineMs: number,
-): PosthogCapabilityProbe {
-  return async function probeCapability(
-    input: unknown,
-    context: PluginInvocationContext,
-  ): Promise<PosthogCapabilityProbeResultV1> {
-    return await runPosthogBoundedInvocation(context, deadlineMs, async (signal) => {
-    const parsed = PosthogCapabilityProbeInputV1Schema.parse(input);
-    const routed = resolveInvokedInstance(parsed.draft);
-    if (!routed.ok) return { kind: 'unavailable', failure: routed.failure };
-    const environment = routed.configuration.environments[0];
-    if (environment === undefined) {
-        return {
-            kind: 'unavailable',
-            failure: sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.environmentNotConfigured,
-            ),
-        };
-    }
-    const client = createPosthogInvocationClient(
-        context,
-        parsed.draft.binding.account,
-        routed.origin,
-    );
-    const page = await scanPosthogIssuePage(
-        client,
-        {
-            origin: routed.origin,
-            environment: {
-                teamRouteId: environment.teamPathId,
-                teamUuid: environment.teamUuid,
-            },
-            window: resolvePosthogWindowPolicy(
-                routed.configuration.scanWindowPolicy,
-                Date.now(),
-            ),
-            nativeLimit: 1,
-            offset: 0,
-        },
-        { signal },
-    );
-    return page.ok
-        ? { kind: 'available' }
-        : { kind: 'unavailable', failure: toTriageSourceFailure(page.failure) };
-    });
-  };
-}
-
-export const probePosthogCapability: PosthogCapabilityProbe
-    = createPosthogCapabilityProbe(POSTHOG_INTERACTIVE_READ_DEADLINE_MS);
-
 const UUID_PATTERN
     = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
 
@@ -1014,38 +979,12 @@ async function readPosthogSourceEntry(
         failure,
     });
 
-    const routed = resolveInvokedInstance(parsed.instance);
-    if (!routed.ok) return unresolved(routed.failure);
-    const { origin, configuration } = routed;
-
-    // The requested ref must already belong to this instance's configured scope. A ref
-    // from another deployment or an environment this instance does not select is
-    // refused before a request is built, never re-scoped onto the invoked instance.
-    const scope = parsePosthogCollisionScope(parsed.localRef.collisionScope);
-    if (
-        parsed.localRef.kindId !== POSTHOG_ENTRY_KIND
-        || scope === null
-        || scope.origin !== (origin as string)
-    ) {
-        return unresolved(sourceFailure(
-            'unsupportedContract',
-            POSTHOG_FAILURE_CODES.instanceScopeMismatch,
-        ));
-    }
-    const environment = configuration.environments
-        .find((candidate) => candidate.teamUuid === scope.teamUuid);
-    if (environment === undefined) {
-        return unresolved(sourceFailure(
-            'unsupportedContract',
-            POSTHOG_FAILURE_CODES.environmentNotConfigured,
-        ));
-    }
-    if (!UUID_PATTERN.test(parsed.localRef.entryId)) {
-        return unresolved(sourceFailure(
-            'unsupportedContract',
-            POSTHOG_FAILURE_CODES.entryIdMalformed,
-        ));
-    }
+    // Exact get and every source-native detail plane share one admission owner. A ref
+    // from another deployment/environment is refused before a request is built, never
+    // re-scoped onto the invoked instance.
+    const scope = resolvePosthogIssueScope(parsed.instance, parsed.localRef);
+    if (!scope.ok) return unresolved(scope.failure);
+    const { origin, configuration, environment } = scope;
 
     const client = createPosthogInvocationClient(context, parsed.instance.binding.account, origin);
     const outcome = await getPosthogIssue(
@@ -1148,6 +1087,143 @@ export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, con
  */
 export const POSTHOG_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
 
+type PosthogIssueScope =
+    | Readonly<{
+        ok: true;
+        origin: PosthogApiOrigin;
+        configuration: PosthogConfigurationToken;
+        environment: PosthogConfiguredEnvironment;
+    }>
+    | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
+
+/** One scope admission owner for aggregate get and every source-native exact-issue read. */
+function resolvePosthogIssueScope(
+    instance: Readonly<{
+        localInstanceKey: string;
+        configuration: Readonly<{ v: 1; token: string }>;
+    }>,
+    localRef: Readonly<{ kindId: string; collisionScope: string; entryId: string }>,
+): PosthogIssueScope {
+    const routed = resolveInvokedInstance(instance);
+    if (!routed.ok) return routed;
+    const scope = parsePosthogCollisionScope(localRef.collisionScope);
+    if (
+        localRef.kindId !== POSTHOG_ENTRY_KIND
+        || scope === null
+        || scope.origin !== (routed.origin as string)
+    ) {
+        return {
+            ok: false,
+            failure: sourceFailure(
+                'unsupportedContract',
+                POSTHOG_FAILURE_CODES.instanceScopeMismatch,
+            ),
+        };
+    }
+    const environment = routed.configuration.environments
+        .find((candidate) => candidate.teamUuid === scope.teamUuid);
+    if (environment === undefined) {
+        return {
+            ok: false,
+            failure: sourceFailure(
+                'unsupportedContract',
+                POSTHOG_FAILURE_CODES.environmentNotConfigured,
+            ),
+        };
+    }
+    if (!UUID_PATTERN.test(localRef.entryId)) {
+        return {
+            ok: false,
+            failure: sourceFailure(
+                'unsupportedContract',
+                POSTHOG_FAILURE_CODES.entryIdMalformed,
+            ),
+        };
+    }
+    return {
+        ok: true,
+        origin: routed.origin,
+        configuration: routed.configuration,
+        environment,
+    };
+}
+
+function codeVariablesResult(variables: unknown): PosthogCodeVariablesResultV1 | null {
+    let full: string;
+    try {
+        full = JSON.stringify(variables, null, 2) ?? '{}';
+    } catch {
+        return null;
+    }
+    // The shared projection owner derives the one real Action-envelope boundary and
+    // preserves Unicode code points; PostHog does not invent a second byte limit.
+    return fitActionResultTextV1(full, (variablesText, truncated) => Object.freeze({
+        kind: 'revealed' as const,
+        variablesText,
+        ...(truncated ? { truncated: true as const } : {}),
+    }));
+}
+
+export type PosthogCodeVariablesReader = (
+    input: unknown,
+    context: PluginInvocationContext,
+) => Promise<PosthogCodeVariablesResultV1>;
+
+export function createPosthogCodeVariablesReader(
+    deadlineMs: number,
+): PosthogCodeVariablesReader {
+    return async (input, context) => await runPosthogBoundedInvocation(
+        context,
+        deadlineMs,
+        async (signal) => {
+            const parsed = PosthogCodeVariablesInputV1Schema.parse(input);
+            const unavailable = (failure: TriageSourceFailureV1): PosthogCodeVariablesResultV1 => ({
+                kind: 'unavailable',
+                failure,
+            });
+            const scope = resolvePosthogIssueScope(parsed.instance, parsed.localRef);
+            if (!scope.ok) return unavailable(scope.failure);
+            if (
+                parsed.frozenRequest.issueId !== parsed.localRef.entryId
+                || parsed.frozenRequest.include.some((value, index) => (
+                    value !== POSTHOG_ISSUE_EVENTS_INCLUDE[index]
+                ))
+                || parsed.selectedOffset < parsed.frozenRequest.offset
+                || parsed.selectedOffset >= parsed.frozenRequest.offset + parsed.frozenRequest.limit
+            ) {
+                return unavailable(sourceFailure(
+                    'unsupportedContract',
+                    POSTHOG_FAILURE_CODES.requestInvalid,
+                ));
+            }
+            const client = createPosthogInvocationClient(
+                context,
+                parsed.instance.binding.account,
+                scope.origin,
+            );
+            const read = await readPosthogCodeVariables(client, {
+                teamRouteId: scope.environment.teamPathId,
+                issueId: parsed.localRef.entryId,
+                detailWindow: {
+                    from: parsed.frozenRequest.from,
+                    to: parsed.frozenRequest.to,
+                },
+                selectedUuid: parsed.selectedUuid,
+                selectedOffset: parsed.selectedOffset,
+            }, { signal });
+            if (!read.ok) return unavailable(toTriageSourceFailure(read.failure));
+            const result = codeVariablesResult(read.value.variables);
+            return result ?? unavailable(sourceFailure(
+                'unsupportedContract',
+                POSTHOG_FAILURE_CODES.responseUnreadable,
+            ));
+        },
+    );
+}
+
+export const readPosthogCodeVariablesForIssue: PosthogCodeVariablesReader
+    = createPosthogCodeVariablesReader(POSTHOG_MOUNTED_DETAIL_DEADLINE_MS);
+
 export type PosthogSampledEventsReader = (
     input: unknown,
     context: PluginInvocationContext,
@@ -1177,35 +1253,9 @@ export function createPosthogSampledEventsReader(
             failure: TriageSourceFailureV1,
         ): PosthogSampledEventsResultV1 => Object.freeze({ kind: 'unavailable' as const, failure });
 
-        const routed = resolveInvokedInstance(parsed.instance);
-        if (!routed.ok) return unavailable(routed.failure);
-        const { origin, configuration } = routed;
-
-        const scope = parsePosthogCollisionScope(parsed.localRef.collisionScope);
-        if (
-            parsed.localRef.kindId !== POSTHOG_ENTRY_KIND
-            || scope === null
-            || scope.origin !== (origin as string)
-        ) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.instanceScopeMismatch,
-            ));
-        }
-        const environment = configuration.environments
-            .find((candidate) => candidate.teamUuid === scope.teamUuid);
-        if (environment === undefined) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.environmentNotConfigured,
-            ));
-        }
-        if (!UUID_PATTERN.test(parsed.localRef.entryId)) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.entryIdMalformed,
-            ));
-        }
+        const scope = resolvePosthogIssueScope(parsed.instance, parsed.localRef);
+        if (!scope.ok) return unavailable(scope.failure);
+        const { origin, configuration, environment } = scope;
 
         // The first page freezes the window; every later page reuses that exact frozen
         // window, because a relative policy resolved again would move the result set the
@@ -1251,24 +1301,28 @@ export function createPosthogSampledEventsReader(
         // refused to advance, and neither is the provider's end of the sample.
         const stoppedShort = walk.kind === 'stoppedShort'
             || (walk.kind === 'continues' && continuation === null);
-        return Object.freeze({
-            kind: 'sampled' as const,
-            events: page.value.events,
-            omittedRowCount: page.value.omittedRowCount,
-            frozenRequest: Object.freeze({
-                v: 1 as const,
-                issueId: page.value.request.issueId,
-                from: page.value.request.dateRange.date_from,
-                to: page.value.request.dateRange.date_to,
-                filterTestAccounts: page.value.request.filterTestAccounts,
-                onlyAppFrames: page.value.request.onlyAppFrames,
-                include: page.value.request.include,
-                limit: page.value.request.limit,
-                offset: page.value.request.offset,
-            }),
-            ...(continuation === null ? {} : { continuation }),
-            ...(stoppedShort ? { incomplete: POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } : {}),
+        const frozenRequest = Object.freeze({
+            v: 1 as const,
+            issueId: page.value.request.issueId,
+            from: page.value.request.dateRange.date_from,
+            to: page.value.request.dateRange.date_to,
+            filterTestAccounts: page.value.request.filterTestAccounts,
+            onlyAppFrames: page.value.request.onlyAppFrames,
+            include: page.value.request.include,
+            limit: page.value.request.limit,
+            offset: page.value.request.offset,
         });
+        return fitActionResultSequenceV1(
+            page.value.events,
+            (events, envelopeOmittedCount): PosthogSampledEventsResultV1 => Object.freeze({
+                kind: 'sampled' as const,
+                events,
+                omittedRowCount: page.value.omittedRowCount + envelopeOmittedCount,
+                frozenRequest,
+                ...(continuation === null ? {} : { continuation }),
+                ...(stoppedShort ? { incomplete: POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1 } : {}),
+            }),
+        ).result;
         });
     };
 }
@@ -1312,35 +1366,9 @@ export function createPosthogIssueActivityReader(
             failure,
         });
 
-        const routed = resolveInvokedInstance(parsed.instance);
-        if (!routed.ok) return unavailable(routed.failure);
-        const { origin, configuration } = routed;
-
-        const scope = parsePosthogCollisionScope(parsed.localRef.collisionScope);
-        if (
-            parsed.localRef.kindId !== POSTHOG_ENTRY_KIND
-            || scope === null
-            || scope.origin !== (origin as string)
-        ) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.instanceScopeMismatch,
-            ));
-        }
-        const environment = configuration.environments
-            .find((candidate) => candidate.teamUuid === scope.teamUuid);
-        if (environment === undefined) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.environmentNotConfigured,
-            ));
-        }
-        if (!UUID_PATTERN.test(parsed.localRef.entryId)) {
-            return unavailable(sourceFailure(
-                'unsupportedContract',
-                POSTHOG_FAILURE_CODES.entryIdMalformed,
-            ));
-        }
+        const scope = resolvePosthogIssueScope(parsed.instance, parsed.localRef);
+        if (!scope.ok) return unavailable(scope.failure);
+        const { origin, environment } = scope;
 
         const frontier: PosthogIssueActivityFrontier | null = parsed.continuation === undefined
             ? { v: 1, page: 1, limit: parsed.limit }
@@ -1377,14 +1405,17 @@ export function createPosthogIssueActivityReader(
         // must not read that as exhaustion.
         const stoppedShort = walk.kind === 'stoppedShort'
             || (walk.kind === 'continues' && continuation === null);
-        return Object.freeze({
-            kind: 'activity' as const,
-            records: page.value.records,
-            omittedRowCount: page.value.omittedRowCount,
-            ...(page.value.totalCount === null ? {} : { totalCount: page.value.totalCount }),
-            ...(continuation === null ? {} : { continuation }),
-            ...(stoppedShort ? { incomplete: POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } : {}),
-        });
+        return fitActionResultSequenceV1(
+            page.value.records,
+            (records, envelopeOmittedCount): PosthogIssueActivityResultV1 => Object.freeze({
+                kind: 'activity' as const,
+                records,
+                omittedRowCount: page.value.omittedRowCount + envelopeOmittedCount,
+                ...(page.value.totalCount === null ? {} : { totalCount: page.value.totalCount }),
+                ...(continuation === null ? {} : { continuation }),
+                ...(stoppedShort ? { incomplete: POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1 } : {}),
+            }),
+        ).result;
         });
     };
 }

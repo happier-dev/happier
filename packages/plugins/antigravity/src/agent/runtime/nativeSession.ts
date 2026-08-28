@@ -1,5 +1,4 @@
 import type {
-  AgentRuntimeContext,
   AgentSessionMcpServer,
   AgentSessionOpenRequest,
   AgentSessionRuntime,
@@ -27,20 +26,18 @@ function composeLaunchEnvironment(request: AgentSessionOpenRequest): Readonly<Re
   return environment;
 }
 
-type AntigravityNativeRuntimeInput<TContext extends AgentRuntimeContext> = Readonly<{
+type AntigravityNativeRuntimeInput = Readonly<{
   mode: ConcreteAntigravityRuntimeMode;
   request: AgentSessionOpenRequest;
-  context: TContext;
+  context: AgentSessionRuntimeContext;
   connectedAccountEnv?: Readonly<Record<string, string>>;
   materializeAuthEnv?: () => Promise<Readonly<Record<string, string>> | null>;
 }>;
 
 type AntigravityMcpServerResolver = () => Promise<readonly AgentSessionMcpServer[]>;
 
-const NO_SESSION_MCP_SERVERS: readonly AgentSessionMcpServer[] = Object.freeze([]);
-
 function createPermissionRequester(
-  context: AgentRuntimeContext,
+  context: AgentSessionRuntimeContext,
 ): AntigravityLocalharnessPermissionRequester {
   return async (request) => {
     const result = await context.services.interactions.confirm({
@@ -67,7 +64,7 @@ function mapQuestionAnswer(
   return { multipleChoiceAnswer: { selectedChoiceIndices } };
 }
 
-function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnessElicitation {
+function createElicitation(context: AgentSessionRuntimeContext): AntigravityLocalharnessElicitation {
   return async (request) => {
     const questions = request.questions.map((question, index): InteractionTransientAuthorQuestionV1 => {
       const id = question.id?.trim() || `question-${index}`;
@@ -108,7 +105,7 @@ function createElicitation(context: AgentRuntimeContext): AntigravityLocalharnes
 }
 
 function createAntigravityNativeRuntimeWithMcp(
-  input: AntigravityNativeRuntimeInput<AgentRuntimeContext>,
+  input: AntigravityNativeRuntimeInput,
   resolveMcpServers: AntigravityMcpServerResolver,
 ): AgentSessionRuntime {
   const env = composeLaunchEnvironment(input.request);
@@ -156,26 +153,12 @@ function createAntigravityNativeRuntimeWithMcp(
 }
 
 export function createAntigravityNativeSessionRuntime(
-  input: AntigravityNativeRuntimeInput<AgentSessionRuntimeContext>,
+  input: AntigravityNativeRuntimeInput,
 ): AgentSessionRuntime {
   return createAntigravityNativeRuntimeWithMcp(
     input,
     () => input.context.session.services.mcp.resolveServers({
       signal: input.context.signal,
     }),
-  );
-}
-
-/**
- * PEP-EXECUTION detached runs have no Session scope. They deliberately receive
- * no native-session MCP launch servers; generic invocation MCP is not a
- * substitute and no Session is fabricated.
- */
-export function createAntigravityNativeExecutionRunRuntime(
-  input: AntigravityNativeRuntimeInput<AgentRuntimeContext>,
-): AgentSessionRuntime {
-  return createAntigravityNativeRuntimeWithMcp(
-    input,
-    async () => NO_SESSION_MCP_SERVERS,
   );
 }

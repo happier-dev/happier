@@ -1,6 +1,7 @@
 import {
   isPluginError,
   PluginError,
+  arePluginMachineMaterializationRefsEqual,
   arePluginMachineExecutionOriginsEqual,
   type JsonValue,
   type PluginInvocationContext,
@@ -14,35 +15,18 @@ import type {
   PluginMachineExecutionOriginV1,
 } from '@happier-dev/plugin-sdk/actions';
 import {
-  ConversationBindingCreateInputV1Schema,
-  ConversationBindingDeleteInputV1Schema,
-  ConversationBindingReadInputV1Schema,
   ConversationBindingReadResultV1Schema,
-  ConversationBindingResolveInputV1Schema,
-  ConversationBindingSetEnabledInputV1Schema,
-  ConversationBindingUpdateInputV1Schema,
-  ConversationConnectionCreateInputV1Schema,
-  ConversationConnectionDeleteInputV1Schema,
-  ConversationConnectionPollRetryInputV1Schema,
-  ConversationConnectionRetestInputV1Schema,
-  ConversationConnectionPrepareInputV1Schema,
+  ConversationSessionProjectionBaselineAcceptResultV1Schema,
   isConversationConnectionSelectableTransportV1,
   ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
-  ConversationConnectionTransferInputV1Schema,
-  ConversationConnectionUpdateInputV1Schema,
-  ConversationDeliveryResolveInputV1Schema,
   ConversationEndpointResolveInputV1Schema,
   ConversationEndpointResolveResultV1Schema,
-  ConversationPairingCancelInputV1Schema,
-  ConversationPairingCreateInputV1Schema,
-  ConversationPairingFinalizeInputV1Schema,
   ConversationProviderConnectionStopInputV1Schema,
   ConversationProviderConnectionStopResultV1Schema,
   ConversationProviderSetupOutcomeV1Schema,
   ConversationPrincipalResolveInputV1Schema,
   ConversationPrincipalResolveResultV1Schema,
-  ConversationTransportFactReportInputV1Schema,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
   MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   areConversationEndpointIdentitiesEqual,
@@ -71,7 +55,10 @@ import {
   type ConversationProviderConnectionStopInputV1,
   type ConversationConnectionPrepareInputV1,
   type ConversationConnectionPrepareResultV1,
+  type ConversationSessionProjectionBaselineAcceptInputV1,
+  type ConversationSessionProjectionBaselineAcceptResultV1,
   type ConversationConnectionUpdateInputV1,
+  type ConversationTransportFactReportInputV1,
   type ConversationDeliveryResolveInputV1,
   type ConversationPairingCancelInputV1,
   type ConversationPairingCreateInputV1,
@@ -81,7 +68,6 @@ import {
   type ConversationProviderSetupResultV1,
   type ConversationConnectionHistoryGapFactV1,
   type ConversationBindingInputModeV1,
-  type ConversationBindingTargetMutationV1,
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationResolvedEndpointV1,
@@ -116,7 +102,6 @@ import {
   type ConversationDeleteStopRequestV1,
   type ConversationPendingOldTransportStopV1,
   type ConversationTransferStopRequestV1,
-  areConversationMaterializationRefsEqual,
 } from './connectionLifecycle.js';
 import {
   hasCurrentConversationTransportCaller,
@@ -128,6 +113,7 @@ import {
 } from './bindingTransition.js';
 import {
   isChannelStateJsonRecord as isJsonRecord,
+  asChannelStateRow,
   ownChannelStateValue as own,
   readConversationBindingManagementRows,
   readConversationIngressAttentionPage,
@@ -161,6 +147,7 @@ import {
   tryDecodeBase64Url,
 } from './privateRowIdentity.js';
 import {
+  acceptConversationSessionProjectionBaseline,
   createConversationSessionProjectionFrontierRow,
   createConversationSessionProjectionFrontierRowId,
   readConversationSessionProjectionNoHistoryBaseline,
@@ -334,119 +321,13 @@ function freezeTransportOrigin(origin: ConnectionTransportOrigin): ConnectionTra
   });
 }
 
-/** Maps public action-schema rejection onto the existing stable plugin error codes. */
-function readAdmittedActionInput<T>(
-  input: JsonValue,
-  schema: Readonly<{ parse(value: unknown): T }>,
-  code: string,
-  message: string,
-): T {
-  try {
-    return schema.parse(input);
-  } catch (cause) {
-    throw new PluginError({ code, message }, { cause });
-  }
-}
-
-function readAdmittedConnectionPrepareInput(input: JsonValue): ConversationConnectionPrepareInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionPrepareInputV1Schema,
-    'channels_connection_prepare_input_invalid',
-    'Connection preparation input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConnectionCreateInput(input: JsonValue): ConversationConnectionCreateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionCreateInputV1Schema,
-    'channels_connection_create_input_invalid',
-    'Connection creation input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConnectionTransferInput(input: JsonValue): ConversationConnectionTransferInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionTransferInputV1Schema,
-    'channels_connection_transfer_input_invalid',
-    'Connection transfer input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConnectionUpdateInput(input: JsonValue): ConversationConnectionUpdateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionUpdateInputV1Schema,
-    'channels_connection_update_input_invalid',
-    'Connection update input was not admitted by its strict contract.',
-  );
-}
-
-/** The present-user retry remains one exact blocked-row CAS; it never invokes a provider. */
-function readAdmittedConnectionPollRetryInput(input: JsonValue): ConversationConnectionPollRetryInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionPollRetryInputV1Schema,
-    'channels_connection_poll_retry_input_invalid',
-    'Connection poll retry input was not admitted by its strict contract.',
-  );
-}
-
-/** The present-user retest re-observes exactly one saved connection row. */
-function readAdmittedConnectionRetestInput(input: JsonValue): ConversationConnectionRetestInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionRetestInputV1Schema,
-    'channels_connection_retest_input_invalid',
-    'Connection retest input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConnectionDeleteInput(input: JsonValue): ConversationConnectionDeleteInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationConnectionDeleteInputV1Schema,
-    'channels_connection_delete_input_invalid',
-    'Connection deletion input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedConversationDeliveryResolveInput(input: JsonValue): ConversationDeliveryResolveInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationDeliveryResolveInputV1Schema,
-    'channels_delivery_resolve_input_invalid',
-    'Delivery resolution input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedBindingSetEnabledInput(input: JsonValue): ConversationBindingSetEnabledInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingSetEnabledInputV1Schema,
-    'channels_binding_set_enabled_input_invalid',
-    'Binding enablement input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedBindingCreateInput(input: JsonValue): ConversationBindingCreateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingCreateInputV1Schema,
-    'channels_binding_create_input_invalid',
-    'Binding creation input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedBindingReadInput(input: JsonValue): ConversationBindingReadInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingReadInputV1Schema,
-    'channels_binding_read_input_invalid',
-    'Binding read input was not admitted by its strict contract.',
-  );
+/**
+ * The host admits each Action's strict schema before invoking its handler.
+ * Preserve the runtime's generic JSON signature without repeating structural
+ * parsing inside every Action owner.
+ */
+function admittedActionInput<T>(input: JsonValue): T {
+  return input as T;
 }
 
 function assertBindingPrincipalSelectionIdsAreUnique(
@@ -463,60 +344,6 @@ function assertBindingPrincipalSelectionIdsAreUnique(
     }
     ids.add(principal.id);
   }
-}
-
-function readAdmittedBindingDeleteInput(input: JsonValue): ConversationBindingDeleteInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingDeleteInputV1Schema,
-    'channels_binding_delete_input_invalid',
-    'Binding deletion input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedBindingResolveInput(input: JsonValue): ConversationBindingResolveInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingResolveInputV1Schema,
-    'channels_binding_resolve_input_invalid',
-    'Binding resolution input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedBindingUpdateInput(input: JsonValue): ConversationBindingUpdateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationBindingUpdateInputV1Schema,
-    'channels_binding_update_input_invalid',
-    'Binding update input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedPairingCreateInput(input: JsonValue): ConversationPairingCreateInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationPairingCreateInputV1Schema,
-    'channels_pairing_create_input_invalid',
-    'Pairing creation input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedPairingFinalizeInput(input: JsonValue): ConversationPairingFinalizeInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationPairingFinalizeInputV1Schema,
-    'channels_pairing_finalize_input_invalid',
-    'Pairing finalization input was not admitted by its strict contract.',
-  );
-}
-
-function readAdmittedPairingCancelInput(input: JsonValue): ConversationPairingCancelInputV1 {
-  return readAdmittedActionInput(
-    input,
-    ConversationPairingCancelInputV1Schema,
-    'channels_pairing_cancel_input_invalid',
-    'Pairing cancellation input must select exactly one unfinished pairing item.',
-  );
 }
 
 function bindingResolutionUnavailable(
@@ -971,7 +798,7 @@ export async function resolveConversationBindingForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingResolveResultV1> {
-  const resolveInput = readAdmittedBindingResolveInput(input);
+  const resolveInput = admittedActionInput<ConversationBindingResolveInputV1>(input);
   if (resolveInput.kind === 'endpoint') {
     const resolution = await resolveBindingEndpointCandidates({
       connectionId: resolveInput.connectionId,
@@ -1004,7 +831,7 @@ export async function readConversationBindingForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingReadResultV1> {
-  const readInput = readAdmittedBindingReadInput(input);
+  const readInput = admittedActionInput<ConversationBindingReadInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(readInput.bindingId, { signal: context.signal });
@@ -1243,7 +1070,6 @@ function sameConversationBindingTarget(
   if (left.kind !== right.kind) return false;
   if (left.kind === 'automation' && right.kind === 'automation') {
     return left.automationId === right.automationId
-      && left.templateVersion === right.templateVersion
       && left.policy.resultDelivery === right.policy.resultDelivery;
   }
   if (left.kind !== 'session' || right.kind !== 'session') return false;
@@ -1371,14 +1197,13 @@ async function assertPairingCheckpointedPullBaseline(input: Readonly<{
 
 /** The host-stamped generic Action is the sole Automation target and result-delivery verifier in Channels. */
 async function verifyAutomationBindingTarget(
-  target: Extract<ConversationBindingTargetMutationV1, Readonly<{ kind: 'automation' }>>,
+  target: Extract<ConversationBindingTargetV1, Readonly<{ kind: 'automation' }>>,
   context: PluginInvocationContext,
 ): Promise<PluginActionResultById['automation.conversation.target.verify']> {
   const verification: PluginActionResultById['automation.conversation.target.verify'] = await context.services.actions.execute(
     'automation.conversation.target.verify',
     {
       automationId: target.automationId,
-      expectedTemplateVersion: target.expectedTemplateVersion,
       ...(target.policy.resultDelivery === 'finalResult'
         ? { resultDelivery: 'finalResult' as const }
         : {}),
@@ -1391,11 +1216,11 @@ async function verifyAutomationBindingTarget(
 
 /**
  * Automation owns target currentness and final-result eligibility. Channels
- * passes the exact target preconditions through the host-stamped generic Action
- * and persists only its returned current version.
+ * asks the host-stamped generic Action immediately before persistence and keeps
+ * only the stable Automation identity plus result-delivery policy.
  */
 async function resolveBindingTargetForPersistence(
-  target: ConversationBindingTargetMutationV1,
+  target: ConversationBindingTargetV1,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingTargetV1 | ConversationAutomationTargetNotVerifiedResult> {
   if (target.kind === 'session') return target;
@@ -1407,14 +1232,13 @@ async function resolveBindingTargetForPersistence(
   return {
     kind: 'automation',
     automationId: target.automationId,
-    templateVersion: verification.templateVersion,
     policy: target.policy,
   };
 }
 
 /** Early pairing verification is feedback only; finalization must reverify. */
 async function verifyPairingTargetForFeedback(
-  target: ConversationBindingTargetMutationV1,
+  target: ConversationBindingTargetV1,
   context: PluginInvocationContext,
 ): Promise<ConversationAutomationTargetNotVerifiedResult | null> {
   if (target.kind === 'session') return null;
@@ -1585,7 +1409,7 @@ async function writeConversationPairingBinding(
   }
   const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: input.connectionId });
   if (connection.lifecycle.deletionState !== 'none') return { kind: 'staleConnectionRevision' };
-  if (!areConversationMaterializationRefsEqual(connection.transportOrigin.materializationRef, input.materialization)) {
+  if (!arePluginMachineMaterializationRefsEqual(connection.transportOrigin.materializationRef, input.materialization)) {
     return { kind: 'wrongMaterialization' };
   }
   // Pairing proposals freeze only a caller precondition. Recheck it after the
@@ -1595,9 +1419,9 @@ async function writeConversationPairingBinding(
   if (target.kind === 'notVerified') {
     if (input.target.kind !== 'automation') return target;
     // A prior attempt may have committed before its response was lost. The
-    // verifier still runs on every finalize attempt, but later target drift
+    // verifier still runs on every finalize attempt, but later target removal
     // cannot hide an already-created row that exactly matches the frozen
-    // proposal and its previously verified template version.
+    // proposal and stable Automation identity.
     const existing = await collection.get(input.bindingId, { signal: context.signal });
     assertNotAborted(context.signal);
     if (existing === null) return target;
@@ -1605,7 +1429,6 @@ async function writeConversationPairingBinding(
     const expected = createPairingBindingCandidate(input, {
       kind: 'automation',
       automationId: input.target.automationId,
-      templateVersion: input.target.expectedTemplateVersion,
       policy: input.target.policy,
     });
     return samePairingBinding(rejoined, expected.binding)
@@ -1643,7 +1466,7 @@ async function writeConversationPairingBinding(
 export function createConversationPairingManagementHandlers(pairing: ConversationPairingManager) {
   return {
     async create(input: JsonValue, context: PluginInvocationContext) {
-      const createInput = readAdmittedPairingCreateInput(input);
+      const createInput = admittedActionInput<ConversationPairingCreateInputV1>(input);
       // This is only early user feedback. The frozen mutation deliberately
       // remains unchanged so finalization must reverify after its proposal
       // claim and currentness checks.
@@ -1702,7 +1525,7 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
     },
 
     async finalize(input: JsonValue, context: PluginInvocationContext) {
-      const finalizeInput = readAdmittedPairingFinalizeInput(input);
+      const finalizeInput = admittedActionInput<ConversationPairingFinalizeInputV1>(input);
       return await pairing.finalize(
         finalizeInput,
         async (writeInput) => await writeConversationPairingBinding(writeInput, context),
@@ -1710,7 +1533,7 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
     },
 
     async cancel(input: JsonValue, context: PluginInvocationContext): Promise<ConversationPairingCancelResult> {
-      const cancelInput = readAdmittedPairingCancelInput(input);
+      const cancelInput = admittedActionInput<ConversationPairingCancelInputV1>(input);
       // Pairing memory outlives an Account change, so an opaque item ID is not
       // by itself authority over it. The connection the item is attached to is
       // the Account partition every other pairing entry already proves; resolve
@@ -2374,7 +2197,7 @@ export async function prepareConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionPrepareResultV1> {
-  const prepareInput = readAdmittedConnectionPrepareInput(input);
+  const prepareInput = admittedActionInput<ConversationConnectionPrepareInputV1>(input);
   const provider = await readCurrentSelectedProvider({
     context,
     selection: prepareInput.providerSelection,
@@ -2500,7 +2323,7 @@ export async function updateConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionUpdateResult> {
-  const updateInput = readAdmittedConnectionUpdateInput(input);
+  const updateInput = admittedActionInput<ConversationConnectionUpdateInputV1>(input);
   const result = await mutateConversationConnectionLifecycle({
     connectionId: updateInput.connectionId,
     expectedRevision: updateInput.expectedRevision,
@@ -2530,7 +2353,7 @@ export async function retryConversationConnectionPollForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionPollRetryResult> {
-  const request = readAdmittedConnectionPollRetryInput(input);
+  const request = admittedActionInput<ConversationConnectionPollRetryInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(request.connectionId, { signal: context.signal });
@@ -2628,7 +2451,7 @@ export async function retestConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionRetestResultV1> {
-  const request = readAdmittedConnectionRetestInput(input);
+  const request = admittedActionInput<ConversationConnectionRetestInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(request.connectionId, { signal: context.signal });
@@ -2799,7 +2622,7 @@ export async function retestConversationConnectionForInvocation(
 
 async function rereadConversationConnectionRetestAuthority(input: Readonly<{
   collection: ChannelStateCollection;
-  request: ReturnType<typeof readAdmittedConnectionRetestInput>;
+  request: ConversationConnectionRetestInputV1;
   context: PluginInvocationContext;
   providerBefore: CurrentProviderContributionWitness;
 }>): Promise<Readonly<{
@@ -3134,7 +2957,7 @@ export async function deleteConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionDeleteResult> {
-  const deleteInput = readAdmittedConnectionDeleteInput(input);
+  const deleteInput = admittedActionInput<ConversationConnectionDeleteInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(deleteInput.connectionId, { signal: context.signal });
@@ -3279,7 +3102,7 @@ export async function abandonConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionDeleteResult> {
-  const abandonInput = readAdmittedConnectionDeleteInput(input);
+  const abandonInput = admittedActionInput<ConversationConnectionDeleteInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(abandonInput.connectionId, { signal: context.signal });
@@ -3366,15 +3189,7 @@ export async function reportConversationTransportFactForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationTransportFactReportResultV1> {
-  let report: ReturnType<typeof ConversationTransportFactReportInputV1Schema.parse>;
-  try {
-    report = ConversationTransportFactReportInputV1Schema.parse(input);
-  } catch (cause) {
-    throw new PluginError({
-      code: 'channels_transport_fact_input_invalid',
-      message: 'Transport fact input was not admitted by its strict contract.',
-    }, { cause });
-  }
+  const report = admittedActionInput<ConversationTransportFactReportInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(report.connectionId, { signal: context.signal });
@@ -3677,16 +3492,6 @@ export async function settleConversationProviderExclusiveCheckpointedPollReplace
  */
 const MAX_CONNECTION_DELETE_RELATION_ROWS = 32;
 
-function stateRowFromCollectionRow(row: Readonly<{
-  rowId: string;
-  revision: number;
-  value: JsonValue;
-}>): StateRow | undefined {
-  return isJsonRecord(row.value)
-    ? { rowId: row.rowId, revision: row.revision, value: row.value }
-    : undefined;
-}
-
 function hasExactStateRowIdentity(input: Readonly<{
   row: StateRow;
   recordKind: string;
@@ -3740,7 +3545,7 @@ async function appendFinalizingBindingArtifacts(input: Readonly<{
   const frontier = await input.collection.get(frontierRowId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (frontier !== null) {
-    const frontierRow = stateRowFromCollectionRow(frontier);
+    const frontierRow = asChannelStateRow(frontier);
     if (frontierRow === undefined || !hasExactStateRowIdentity({
       row: frontierRow,
       recordKind: CHANNEL_STATE_RECORD_KIND.projectionFrontier,
@@ -3761,7 +3566,7 @@ async function appendFinalizingBindingArtifacts(input: Readonly<{
   const rotation = await input.collection.get(rotationRowId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (rotation !== null) {
-    const rotationRow = stateRowFromCollectionRow(rotation);
+    const rotationRow = asChannelStateRow(rotation);
     if (rotationRow === undefined || !hasExactStateRowIdentity({
       row: rotationRow,
       recordKind: CHANNEL_STATE_RECORD_KIND.sessionRotation,
@@ -3803,7 +3608,7 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   const connectionStored = await collection.get(input.connectionId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (connectionStored === null) return;
-  const connectionRow = stateRowFromCollectionRow(connectionStored);
+  const connectionRow = asChannelStateRow(connectionStored);
   if (connectionRow === undefined) return;
   const current = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: input.connectionId });
   if (!finalizingDeleteIsAuthorized(current)) return;
@@ -3820,7 +3625,7 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   const reservationStored = await collection.get(reservationRowId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (reservationStored === null) return;
-  const reservationRow = stateRowFromCollectionRow(reservationStored);
+  const reservationRow = asChannelStateRow(reservationStored);
   if (reservationRow === undefined || readReservationConnectionId({
     row: reservationRow,
     reservationRowId,
@@ -3861,7 +3666,7 @@ async function finalizeConversationConnectionDelete(input: Readonly<{
   let hasDependentMutation = false;
 
   for (const stored of relationPage.rows) {
-    const row = stateRowFromCollectionRow(stored);
+    const row = asChannelStateRow(stored);
     if (row === undefined) return;
     const recordKind = own(row.value, CHANNEL_STATE_FIELD.recordKind);
     if (recordKind === CHANNEL_STATE_RECORD_KIND.connection) {
@@ -3953,7 +3758,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
   const bindingStored = await collection.get(input.bindingId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (bindingStored === null) return;
-  const bindingRow = stateRowFromCollectionRow(bindingStored);
+  const bindingRow = asChannelStateRow(bindingStored);
   if (bindingRow === undefined) return;
   const current = readConversationBindingUpdateRow({ row: bindingRow, bindingId: input.bindingId });
   if (!finalizingBindingDeleteIsAuthorized(current)) return;
@@ -3964,7 +3769,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
   const connectionStored = await collection.get(current.binding.connectionId, { signal: input.context.signal });
   assertNotAborted(input.context.signal);
   if (connectionStored === null) return;
-  const connectionRow = stateRowFromCollectionRow(connectionStored);
+  const connectionRow = asChannelStateRow(connectionStored);
   if (connectionRow === undefined) return;
   const connection = readConversationConnectionUpdateRow({
     row: connectionRow,
@@ -3992,7 +3797,7 @@ async function finalizeConversationBindingDelete(input: Readonly<{
   const mutations: ChannelStateBatchMutation[] = [];
   let hasDependentMutation = false;
   for (const stored of relationPage.rows) {
-    const row = stateRowFromCollectionRow(stored);
+    const row = asChannelStateRow(stored);
     if (row === undefined) return;
     const recordKind = own(row.value, CHANNEL_STATE_FIELD.recordKind);
     if (recordKind === CHANNEL_STATE_RECORD_KIND.binding) {
@@ -4102,7 +3907,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
   if (connectionPage !== undefined) {
     for (const stored of connectionPage.rows) {
       if (context.signal.aborted) return;
-      const row = stateRowFromCollectionRow(stored);
+      const row = asChannelStateRow(stored);
       if (row === undefined || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.connection) {
         continue;
       }
@@ -4146,7 +3951,7 @@ export async function finalizeConversationConnectionDeletesForInvocation(
     for (const stored of bindingPage.rows) {
       if (context.signal.aborted) return;
       remainingBindings -= 1;
-      const row = stateRowFromCollectionRow(stored);
+      const row = asChannelStateRow(stored);
       if (row === undefined || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding) {
         continue;
       }
@@ -4175,7 +3980,7 @@ export async function createConversationBindingForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingCreateResult> {
-  const createInput = readAdmittedBindingCreateInput(input);
+  const createInput = admittedActionInput<ConversationBindingCreateInputV1>(input);
   const audience = await resolveBindingAudienceSelection({
     connectionId: createInput.connectionId,
     expectedConnectionRevision: createInput.expectedConnectionRevision,
@@ -4282,10 +4087,23 @@ export async function createConversationBindingForInvocation(
 
 /** All existing-binding writes share one transition, verifier, and atomic persistence owner. */
 async function mutateConversationBinding(
+  updateInput: ConversationBindingSetEnabledInputV1,
+  context: PluginInvocationContext,
+  operation: 'channels_binding_set_enabled',
+): Promise<
+  | ConversationBindingUpdateResultV1
+  | Extract<ConversationBindingMutationResultV1, Readonly<{ kind: 'notVerified' }>>
+>;
+async function mutateConversationBinding(
   updateInput: ConversationBindingUpdateInputV1,
   context: PluginInvocationContext,
+  operation?: 'channels_binding_update',
+): Promise<ConversationBindingMutationResultV1>;
+async function mutateConversationBinding(
+  updateInput: ConversationBindingUpdateInputV1,
+  context: PluginInvocationContext,
+  operation: 'channels_binding_update' | 'channels_binding_set_enabled' = 'channels_binding_update',
 ): Promise<ConversationBindingMutationResultV1> {
-  const operation = 'channels_binding_update';
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(updateInput.bindingId, { signal: context.signal });
@@ -4341,9 +4159,27 @@ async function mutateConversationBinding(
   const requestedInputMode = updateInput.inputMode ?? current.binding.inputMode;
   const requestedEndpoint = audience?.endpoint ?? current.binding.endpoint;
   let target = current.binding.target;
-  if (updateInput.target !== undefined) {
-    const verifiedTarget = await resolveBindingTargetForPersistence(updateInput.target, context);
-    if (verifiedTarget.kind === 'notVerified') return verifiedTarget;
+  if (
+    updateInput.target !== undefined
+    || (
+      updateInput.enabled === true
+      && !current.binding.enabled
+      && current.binding.target.kind === 'automation'
+    )
+  ) {
+    const verifiedTarget = await resolveBindingTargetForPersistence(
+      updateInput.target ?? current.binding.target,
+      context,
+    );
+    if (verifiedTarget.kind === 'notVerified') {
+      if (operation === 'channels_binding_set_enabled') {
+        throw pluginError(
+          `${operation}_target_not_verified`,
+          'The retained Automation target is not currently eligible for this binding.',
+        );
+      }
+      return verifiedTarget;
+    }
     target = verifiedTarget;
   }
   const transition = transitionConversationBinding({
@@ -4477,10 +4313,8 @@ export async function updateConversationBindingForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingMutationResultV1> {
-  return await mutateConversationBinding(
-    readAdmittedBindingUpdateInput(input),
-    context,
-  );
+  const updateInput = admittedActionInput<ConversationBindingUpdateInputV1>(input);
+  return await mutateConversationBinding(updateInput, context);
 }
 
 /** The narrow enable/disable Action uses the same canonical binding mutation owner. */
@@ -4488,12 +4322,41 @@ export async function setConversationBindingEnabledForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingUpdateResult> {
-  const setEnabledInput = readAdmittedBindingSetEnabledInput(input);
-  return await setConversationBindingEnabledInAccountCollection({
-    collection: requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION),
-    ...setEnabledInput,
+  const setEnabledInput = admittedActionInput<ConversationBindingSetEnabledInputV1>(input);
+  const result = await mutateConversationBinding(
+    setEnabledInput,
+    context,
+    'channels_binding_set_enabled',
+  );
+  if (result.kind === 'notVerified') {
+    throw pluginError(
+      'channels_binding_set_enabled_target_not_verified',
+      'The retained Automation target is not currently eligible for this binding.',
+    );
+  }
+  return result;
+}
+
+/** Accepts one exact paused Session transcript frontier without replaying history. */
+export async function acceptConversationSessionProjectionBaselineForInvocation(
+  input: JsonValue,
+  context: PluginInvocationContext,
+): Promise<ConversationSessionProjectionBaselineAcceptResultV1> {
+  const request = admittedActionInput<ConversationSessionProjectionBaselineAcceptInputV1>(input);
+  const accepted = await acceptConversationSessionProjectionBaseline({
+    actions: context.services.actions,
+    stateCollection: requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION),
+    bindingId: request.bindingId,
+    expectedBindingRevision: request.expectedBindingRevision,
+    expectedFrontierRevision: request.expectedFrontierRevision,
     signal: context.signal,
-    assertCurrent: () => assertNotAborted(context.signal),
+    now: Date.now(),
+  });
+  return ConversationSessionProjectionBaselineAcceptResultV1Schema.parse({
+    kind: 'baselineAccepted',
+    bindingId: request.bindingId,
+    bindingRevision: accepted.bindingRevision,
+    frontierRevision: accepted.frontierRevision,
   });
 }
 
@@ -4506,7 +4369,7 @@ export async function deleteConversationBindingForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationBindingDeleteResultV1> {
-  const deleteInput = readAdmittedBindingDeleteInput(input);
+  const deleteInput = admittedActionInput<ConversationBindingDeleteInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(deleteInput.bindingId, { signal: context.signal });
@@ -4544,7 +4407,7 @@ export async function deleteConversationBindingForInvocation(
         'Binding deletion owner connection does not exist.',
       );
     }
-    demandConnectionRow = stateRowFromCollectionRow(storedConnection);
+    demandConnectionRow = asChannelStateRow(storedConnection);
     if (demandConnectionRow === undefined) {
       throw pluginError(
         'channels_binding_delete_connection_corrupt',
@@ -4600,7 +4463,7 @@ export async function resolveConversationDeliveryForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationDeliveryResolveResult> {
-  const resolution = readAdmittedConversationDeliveryResolveInput(input);
+  const resolution = admittedActionInput<ConversationDeliveryResolveInputV1>(input);
   return await resolveConversationOutwardDeliveryCustodyInAccountCollection({
     stateCollection: requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION),
     deliveriesCollection: requireChannelsAccountStorage(context).collection(CHANNEL_DELIVERIES_COLLECTION),
@@ -4614,7 +4477,7 @@ export async function createConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionCreateResult> {
-  const createInput = readAdmittedConnectionCreateInput(input);
+  const createInput = admittedActionInput<ConversationConnectionCreateInputV1>(input);
   const provider = await readCurrentSelectedProvider({
     context,
     selection: createInput.providerSelection,
@@ -4824,7 +4687,7 @@ export async function transferConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
 ): Promise<ConversationConnectionTransferResult> {
-  const transferInput = readAdmittedConnectionTransferInput(input);
+  const transferInput = admittedActionInput<ConversationConnectionTransferInputV1>(input);
   const collection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(context.signal);
   const row = await collection.get(transferInput.connectionId, { signal: context.signal });

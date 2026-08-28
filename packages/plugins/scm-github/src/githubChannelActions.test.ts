@@ -97,6 +97,7 @@ function coreContext(
       qualifiedId: `happier.scm.forge.github/actions/${ARBITRARY_PROVIDER_ACTION_ID}`,
     },
     surface: 'plugin',
+    invokedAtMs: 1_760_000_700_000,
     caller: {
       kind: 'plugin',
       pluginId: 'happier.channels',

@@ -1,6 +1,5 @@
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
-  CLAUDE_SUBSCRIPTION_OAUTH_PROFILE,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
@@ -14,6 +13,7 @@ import {
   CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES,
   CLAUDE_CODE_SETUP_TOKEN_SCOPES,
 } from '../agent/auth/services/native/scopes.js';
+import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './claudeSubscriptionProfile.js';
 
 const CLAUDE_CREDENTIAL_FILE_ID = '.credentials.json';
 const SETUP_TOKEN_KEY = 'setupToken';

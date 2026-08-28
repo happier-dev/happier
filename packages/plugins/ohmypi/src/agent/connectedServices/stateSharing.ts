@@ -1,7 +1,11 @@
 import type { AgentConnectedAccountStateSharingDescriptorV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 export const ohMyPiConnectedServiceStateSharingDescriptor = Object.freeze({
-  providerSupportStatus: 'unsupported',
+  nativeHome: {
+    environmentKey: 'PI_CODING_AGENT_DIR',
+    defaultRelativePath: '.omp/agent',
+  },
+  providerSupportStatus: 'supported',
   config: {
     supported: false,
     modes: ['isolated'],
@@ -9,11 +13,11 @@ export const ohMyPiConnectedServiceStateSharingDescriptor = Object.freeze({
     unavailableReason: 'not_implemented',
   },
   state: {
-    supported: false,
-    modes: ['isolated'],
-    entries: [],
+    supported: true,
+    modes: ['isolated', 'shared'],
+    entries: [{ path: 'sessions', mode: 'linked' }],
+    sharedStatePrivacyRiskAcknowledgementRequired: true,
     symlinkUnavailableDegradePolicy: 'block_continuity',
-    unavailableReason: 'not_implemented',
   },
   authIsolation: {
     mode: 'process_env',

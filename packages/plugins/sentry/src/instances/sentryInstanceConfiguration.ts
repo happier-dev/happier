@@ -12,10 +12,9 @@
  *   the expected origin survives, and a malformed key never routes.
  */
 
-import {
-  SENTRY_MAX_CONFIGURATION_TOKEN_UTF8_BYTES,
-  SENTRY_SCOPE_SEPARATOR,
-} from '../sentryContracts.js';
+import { MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
+
+import { SENTRY_SCOPE_SEPARATOR } from '../sentryContracts.js';
 
 import { normalizeSentryOrigin } from '../auth/sentryOrigin.js';
 import { isSentryNumericId, type SentryInvokedInstanceV1 } from './sentryCollisionScope.js';
@@ -62,7 +61,7 @@ export function encodeSentryInstanceConfiguration(
     projectScope: { kind: 'allAccessible' },
     environmentScope: { kind: 'all' },
   });
-  if (new TextEncoder().encode(token).byteLength > SENTRY_MAX_CONFIGURATION_TOKEN_UTF8_BYTES) {
+  if (new TextEncoder().encode(token).byteLength > MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1) {
     throw new Error('The Sentry instance configuration exceeds the bounded token size.');
   }
   return token;
@@ -71,7 +70,7 @@ export function encodeSentryInstanceConfiguration(
 export function decodeSentryInstanceConfiguration(
   token: string,
 ): SentryInstanceConfigurationResultV1 {
-  if (new TextEncoder().encode(token).byteLength > SENTRY_MAX_CONFIGURATION_TOKEN_UTF8_BYTES) {
+  if (new TextEncoder().encode(token).byteLength > MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1) {
     return REJECTED;
   }
   let parsed: unknown;

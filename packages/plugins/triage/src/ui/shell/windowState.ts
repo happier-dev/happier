@@ -1,4 +1,7 @@
-import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  formatTriageTimestampV1,
+  type TriageSourceFailureV1,
+} from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListWindowV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
@@ -295,12 +298,15 @@ const PACING_REASON_COPY_V1: Readonly<Record<TriageRefreshPacingReasonV1, Readon
 
 export function readTriageRefreshPacingNotice(
   reason: TriageRefreshPacingReasonV1,
+  nextEligibleAtMs: number,
+  locale: string,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
 ): TriageListFailureNoticeV1 {
   const copy = PACING_REASON_COPY_V1[reason];
+  const retryAt = formatTriageTimestampV1(locale, nextEligibleAtMs, 'absolute', nextEligibleAtMs);
   return Object.freeze({
     title: text('plugins.triage.surface.waiting', 'Waiting before the next read'),
-    description: text(copy.key, copy.fallback),
+    description: `${text(copy.key, copy.fallback)} ${text('plugins.triage.surface.waiting.retryAt', 'Try again at')} ${retryAt}.`,
   });
 }
 

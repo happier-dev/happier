@@ -1,4 +1,9 @@
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+  measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+} from '@happier-dev/plugin-sdk/actions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import currentUser from '../fixtures/currentUser.json' with { type: 'json' };
@@ -28,6 +33,10 @@ import {
   createInvocationContext,
   type StubReply,
 } from './testSupport.js';
+
+vi.mock('@happier-dev/plugin-sdk/actions', async () => (
+  import('../../../../../protocol/src/actions/externalActionApi.js')
+));
 
 const WORKSPACE_UUID = '{4b2f0e6c-8a71-4f2e-9d51-6c3b70a19d44}';
 const REPOSITORY_UUID = '{1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9}';
@@ -354,6 +363,92 @@ describe('Bitbucket activity plane', () => {
     expect(row?.rawKind).toBe('some_future_event');
     expect(settled.omittedRowCount).toBe(0);
   });
+
+  it('preserves provider labels and comment text beyond the retired local field caps', async () => {
+    const actor = 'A'.repeat(1_024);
+    const summary = 'provider comment '.repeat(768);
+    const seam = harness((url) => (
+      url.includes('/pullrequests/42/activity')
+        ? envelope([{ comment: {
+          id: 7,
+          created_on: '2026-08-01T00:02:00Z',
+          user: { display_name: actor },
+          content: { raw: summary },
+        } }])
+        : undefined
+    ));
+
+    const settled = BitbucketActivityResultV1Schema.parse(
+      await listBitbucketActivity(planeInput(), seam.context),
+    );
+    if (settled.kind !== 'activity') throw new Error('the activity page must settle');
+    expect(settled.rows[0]).toMatchObject({ actor, summary: summary.trim() });
+    expect(settled.rows[0]).not.toHaveProperty('truncated');
+    expect(seam.requests[0]?.url).toContain('pagelen=100');
+  });
+
+  it('fits a large activity page through the canonical Action envelope with exact omissions', async () => {
+    const rowBodyLength = Math.floor(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2);
+    const values = Array.from({ length: 2 }, (_unused, index) => ({
+      comment: {
+        id: index + 1,
+        created_on: '2026-08-01T00:02:00Z',
+        user: { display_name: `Actor ${index}` },
+        content: {
+          raw: `${index}: ${'x'.repeat(rowBodyLength)}`,
+        },
+      },
+    }));
+    const seam = harness((url) => (
+      url.includes('/pullrequests/42/activity') ? envelope(values) : undefined
+    ));
+
+    const settled = BitbucketActivityResultV1Schema.parse(
+      await listBitbucketActivity(planeInput(), seam.context),
+    );
+    if (settled.kind !== 'activity') throw new Error('the activity page must settle');
+    expect(settled.rows.length).toBeGreaterThan(0);
+    expect(settled.rows.length).toBeLessThan(values.length);
+    expect(settled.rows.length + settled.omittedRowCount).toBe(values.length);
+    expect(settled.projectionTruncated).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
+  });
+
+  it('keeps rows and reports an opaque next page too large for the Action envelope', async () => {
+    const nextUrl = 'https://api.bitbucket.org/2.0/repositories/x/y/pullrequests/42/activity'
+      + `?cursor=${'c'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES)}`;
+    const seam = harness((url) => (
+      url.includes('/pullrequests/42/activity')
+        ? envelope([{ approval: { date: '2026-08-01T00:00:00Z' } }], nextUrl)
+        : undefined
+    ));
+
+    const settled = BitbucketActivityResultV1Schema.parse(
+      await listBitbucketActivity(planeInput(), seam.context),
+    );
+    if (settled.kind !== 'activity') throw new Error('the activity page must settle');
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.continuation).toBeUndefined();
+    expect(settled.incomplete).toBe('continuationUnavailable');
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
+  });
+
+  it('keeps an ordinary opaque next page without reporting the walk incomplete', async () => {
+    const nextUrl = 'https://api.bitbucket.org/2.0/repositories/x/y/pullrequests/42/activity?page=2';
+    const seam = harness((url) => (
+      url.includes('/pullrequests/42/activity')
+        ? envelope([{ approval: { date: '2026-08-01T00:00:00Z' } }], nextUrl)
+        : undefined
+    ));
+
+    const settled = BitbucketActivityResultV1Schema.parse(
+      await listBitbucketActivity(planeInput(), seam.context),
+    );
+    if (settled.kind !== 'activity') throw new Error('the activity page must settle');
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.continuation).toBeTypeOf('string');
+    expect(settled.incomplete).toBeUndefined();
+  });
 });
 
 /* ------------------------------------------------------------------ admission */
@@ -419,8 +514,7 @@ describe('Bitbucket authoritative Overview and Diff planes', () => {
 
   it('follows the provider raw-diff redirect, keeps diffstat, and truncates the result by Action bytes', async () => {
     const redirected = 'https://api.bitbucket.org/2.0/repositories/x/y/diff/main..feature';
-    // Backslashes expand in JSON, so this exceeds the Action gate without a multi-megabyte fixture.
-    const oversized = `diff --git a/a.ts b/a.ts\n${'\\'.repeat(550_000)}`;
+    const oversized = `diff --git a/a.ts b/a.ts\n${'"\\\n'.repeat(4_000_000)}🚀`;
     const seam = harness((url) => {
       if (url.endsWith('/pullrequests/42/diff')) {
         return { status: 302, headers: { location: redirected } };
@@ -445,27 +539,60 @@ describe('Bitbucket authoritative Overview and Diff planes', () => {
     if (settled.kind !== 'diff') throw new Error('the diff must settle');
     expect(settled.files.map((file) => file.path)).toEqual(['src/a.ts']);
     expect(settled.raw).toMatchObject({ kind: 'available', truncated: true });
-    expect(new TextEncoder().encode(JSON.stringify(settled)).length).toBeLessThanOrEqual(1_024 * 1_024);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
     if (settled.raw?.kind !== 'available') throw new Error('the raw prefix must be available');
-    expect(new TextEncoder().encode(JSON.stringify({
+    const nextCodePoint = Array.from(oversized.slice(settled.raw.text.length))[0];
+    expect(nextCodePoint).toBeDefined();
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1({
       ...settled,
-      raw: { ...settled.raw, text: `${settled.raw.text}\\` },
-    })).length).toBeGreaterThan(1_024 * 1_024);
+      raw: { ...settled.raw, text: `${settled.raw.text}${nextCodePoint}` },
+    })).toBe(false);
     expect(seam.requests.find((request) => request.url.endsWith('/pullrequests/42/diff'))?.redirect)
       .toBe('manual');
     expect(seam.requests.some((request) => request.url === redirected)).toBe(true);
   });
 
-  it('keeps the pull request and reports Bitbucket 555 as a typed too-large diff', async () => {
+  it('fits file rows together with Bitbucket 555 raw-result framing', async () => {
+    const resultWithoutRaw = (statusLength: number) => ({
+      kind: 'diff' as const,
+      files: [{
+        path: 'src/a.ts',
+        status: 'x'.repeat(statusLength),
+        linesAdded: 0,
+        linesRemoved: 0,
+      }],
+      omittedRowCount: 0,
+      projectionTruncated: false,
+    });
+    const emptyStatusBytes = measureExternalActionResultResponseEnvelopeUtf8BytesV1(
+      resultWithoutRaw(0),
+    );
+    const statusLength = EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES - emptyStatusBytes;
+    expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(resultWithoutRaw(statusLength)))
+      .toBe(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(resultWithoutRaw(statusLength + 1)))
+      .toBe(false);
+
     const seam = harness((url) => {
       if (url.endsWith('/pullrequests/42/diff')) return { status: 555, body: { type: 'error' } };
-      if (url.includes('/pullrequests/42/diffstat')) return envelope([]);
+      if (url.includes('/pullrequests/42/diffstat')) {
+        return envelope([{
+          status: 'x'.repeat(statusLength),
+          lines_added: 0,
+          lines_removed: 0,
+          old: { path: 'src/a.ts' },
+          new: { path: 'src/a.ts' },
+        }]);
+      }
       return undefined;
     });
     const settled = BitbucketDiffResultV1Schema.parse(
       await readBitbucketDiff(planeInput(), seam.context),
     );
     expect(settled).toMatchObject({ kind: 'diff', raw: { kind: 'tooLarge' } });
+    if (settled.kind !== 'diff') throw new Error('the diff must settle');
+    expect(settled.files.length + settled.omittedRowCount).toBe(1);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
   });
 
   it('refuses a raw-diff redirect outside the Bitbucket API origin before sending credentials', async () => {

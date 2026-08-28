@@ -38,6 +38,7 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
 /**
@@ -142,7 +143,12 @@ const admittedSources = [{
 
 type Harness = Readonly<{
     executeAction: (request: Readonly<{ action: unknown; input: unknown }>) => Promise<unknown>;
-    state: { sourceUnreachable: boolean };
+    state: {
+        sourceUnreachable: boolean;
+        repeatMarksCursor: boolean;
+        cycleMarksCursor: boolean;
+    };
+    ephemeralSharedScope: ReturnType<typeof createTriageEphemeralSharedScopeFixture>;
 }>;
 
 /**
@@ -153,7 +159,11 @@ type Harness = Readonly<{
 function createEntriesHarness(): Harness {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
-    const state = { sourceUnreachable: false };
+    const state = {
+        sourceUnreachable: false,
+        repeatMarksCursor: false,
+        cycleMarksCursor: false,
+    };
 
     const executeScan: TriageAdmittedOperationExecutorV1 = async (unusedOperation, input) => {
         const scanInput = input as Readonly<{ page: { kind: string; continuation?: { token: string } } }>;
@@ -180,6 +190,7 @@ function createEntriesHarness(): Harness {
 
     return {
         state,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         async executeAction(request) {
             const action = String(request.action);
             if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
@@ -213,6 +224,11 @@ function createPinsHarness(pinCount: number): Harness {
     const PAGE = 2;
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+    const state = {
+        sourceUnreachable: false,
+        repeatMarksCursor: false,
+        cycleMarksCursor: false,
+    };
     /** Newest pin first, which is the order the marks index already returns. */
     const pins = Array.from({ length: pinCount }, (unused, index) => ({
         entryRef: entryRef(`${pinCount - 1 - index}`),
@@ -224,7 +240,8 @@ function createPinsHarness(pinCount: number): Harness {
     }));
 
     return {
-        state: { sourceUnreachable: false },
+        state,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         async executeAction(request) {
             const action = String(request.action);
             if (action === TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1) {
@@ -237,10 +254,17 @@ function createPinsHarness(pinCount: number): Harness {
                 const input = TriageListPinnedEntriesInputV1Schema.parse(request.input);
                 const from = input.cursor === undefined ? 0 : Number(input.cursor);
                 const to = Math.min(from + PAGE, pins.length);
+                const nextCursor = to >= pins.length ? undefined : `${to}`;
                 return {
                     v: 1,
                     pins: pins.slice(from, to),
-                    ...(to >= pins.length ? {} : { nextCursor: `${to}` }),
+                    ...(nextCursor === undefined
+                        ? {}
+                        : { nextCursor: input.cursor !== undefined && state.repeatMarksCursor
+                            ? input.cursor
+                            : state.cycleMarksCursor && input.cursor === '4'
+                                ? '2'
+                                : nextCursor }),
                 } satisfies TriageListPinnedEntriesResultV1;
             }
             // A real configured source with nothing to walk, so the pinned
@@ -273,7 +297,9 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
             },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({
+                ephemeralSharedScope: harness.ephemeralSharedScope,
+            }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
@@ -281,7 +307,9 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, harness.ephemeralSharedScope);
+    });
     return fixture;
 }
 
@@ -363,5 +391,44 @@ describe('the mounted continuation row', () => {
         // the pins the reader had loaded are still on screen.
         await expect(shell.getByText('Pinned change 1'))
             .resolves.toEqual({ content: 'Pinned change 1' });
+    });
+
+    it('settles a non-advancing pins cursor without dropping the page it answered', async () => {
+        const harness = createPinsHarness(6);
+        const shell = await mountShell(harness);
+        harness.state.repeatMarksCursor = true;
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+
+        await expect(shell.getByText('Pinned change 3')).resolves.toBeDefined();
+        await expect(shell.getByText('More pins could not be loaded')).resolves.toBeDefined();
+
+        harness.state.repeatMarksCursor = false;
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Try again' }));
+        });
+        await expect(shell.queryByText('More pins could not be loaded')).resolves.toBeUndefined();
+    });
+
+    it('settles a cyclic pins cursor instead of replaying it forever', async () => {
+        const harness = createPinsHarness(8);
+        const shell = await mountShell(harness);
+        harness.state.cycleMarksCursor = true;
+
+        // The first append reaches cursor 4. The second walk is 2 -> 4 -> 2:
+        // each individual cursor advances, but the walk has returned to a
+        // position it already consumed and can never reach the two older pins.
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+
+        await expect(shell.getByText('Pinned change 2')).resolves.toBeDefined();
+        await expect(shell.queryByText('Pinned change 0')).resolves.toBeUndefined();
+        await expect(shell.getByText('More pins could not be loaded')).resolves.toBeDefined();
     });
 });

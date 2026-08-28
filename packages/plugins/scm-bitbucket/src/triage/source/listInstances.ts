@@ -118,11 +118,17 @@ export async function listBitbucketSourceInstances(
       ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
     });
     if (!workspaces.ok) {
-      recordFailure(binding, toTriageSourceFailure(workspaces.failure));
+      const failure = toTriageSourceFailure(workspaces.failure);
+      recordFailure(binding, failure);
+      complete = false;
+      incompleteFailure ??= failure;
       continue;
     }
     if (workspaces.failure !== undefined) {
-      recordFailure(binding, toTriageSourceFailure(workspaces.failure));
+      const failure = toTriageSourceFailure(workspaces.failure);
+      recordFailure(binding, failure);
+      complete = false;
+      incompleteFailure ??= failure;
     }
 
     for (const workspace of workspaces.workspaces) {

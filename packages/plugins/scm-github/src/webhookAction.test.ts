@@ -110,7 +110,7 @@ describe('GitHub webhook Action', () => {
     }
   });
 
-  it('retains a current endpoint-local source revision across fresh Action services in one activated plugin generation', async () => {
+  it('re-reads the complete current source set for every delivery without retaining provider-local membership', async () => {
     const register = vi.fn();
     const cleanup = await activate({
       actions: { register },
@@ -138,11 +138,13 @@ describe('GitHub webhook Action', () => {
       });
       const secondExecute = vi.fn(async (actionId: string, actionInput: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          expect(actionInput).toEqual({
-            transport: { kind: 'durablePush' },
-            knownRevision: '7',
-          });
-          return { kind: 'unchanged' as const, revision: '7' };
+          expect(actionInput).toEqual({ transport: { kind: 'durablePush' } });
+          return {
+            kind: 'page' as const,
+            revision: '8',
+            definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+            nextCursor: null,
+          };
         }
         if (actionId === 'automation.event.admit') {
           return { results: [{ kind: 'rejoined' as const, runId: 'run-1', checkpointSafe: true as const }] };
@@ -163,7 +165,7 @@ describe('GitHub webhook Action', () => {
     }
   });
 
-  it('starts each activated plugin generation with a fresh endpoint-local webhook cache', async () => {
+  it('does not carry source membership across activated plugin generations', async () => {
     const firstRegister = vi.fn();
     const firstCleanup = await activate({
       actions: { register: firstRegister },
@@ -278,15 +280,12 @@ describe('GitHub webhook Action', () => {
     expect(execute).toHaveBeenNthCalledWith(3, 'automation.event.admit', {
       eventRef: {
         pluginId: 'happier.scm.forge.github',
-        localId: 'automation/repository-event-v1',
+        localId: 'automation/repository-pushed-v1',
       },
       occurrenceId: 'github:repository:77:delivery:github-delivery-1',
-      occurredAt: Date.parse('2026-08-10T12:01:02Z'),
+      occurredAt: 1,
       observationReceivedAt: 1,
       payload: {
-        kind: 'push',
-        eventId: 'github-delivery-1',
-        occurredAtMs: Date.parse('2026-08-10T12:01:02Z'),
         repository: { repositoryId: '77', nameWithOwner: 'acme/widgets' },
         ref: 'refs/heads/main',
         before: 'a',
@@ -300,17 +299,14 @@ describe('GitHub webhook Action', () => {
   });
 
   it('uses a revision-confirmed endpoint-local lookup and retries instead of settling when any admission is unsafe', async () => {
-    const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
+    const execute = vi.fn(async (actionId: string) => {
       if (actionId === 'automation.event.sources.list') {
-        const listInput = actionInput as Readonly<{ knownRevision?: string }>;
-        return listInput.knownRevision === '7'
-          ? { kind: 'unchanged' as const, revision: '7' }
-          : {
-            kind: 'page' as const,
-            revision: '7',
-            definitions: [sourceDefinition('automation-1', 'github:repository:77')],
-            nextCursor: null,
-          };
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+          nextCursor: null,
+        };
       }
       if (actionId === 'automation.event.admit') {
         return {
@@ -334,7 +330,6 @@ describe('GitHub webhook Action', () => {
     });
     expect(execute).toHaveBeenNthCalledWith(1, 'automation.event.sources.list', {
       transport: { kind: 'durablePush' },
-      knownRevision: '7',
     }, { signal: expect.any(AbortSignal) });
   });
 
@@ -437,6 +432,24 @@ describe('GitHub webhook Action', () => {
     );
   });
 
+  it('retries an empty continuation page instead of acknowledging from a partial current-source scan', async () => {
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId !== 'automation.event.sources.list') throw new Error(`unexpected Action ${actionId}`);
+      return {
+        kind: 'page' as const,
+        revision: '7',
+        definitions: [],
+        nextCursor: 'page-2',
+      };
+    });
+
+    await expect(createGithubWebhookActionHandlerV1()(input, contextWithActions(execute))).resolves.toEqual({
+      kind: 'retry',
+      code: 'github.automation-unavailable',
+    });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it('retries the delivery when one result in the complete semantic admission is checkpoint-unsafe', async () => {
     const firstPage = ['automation-001', 'automation-002'].map((automationId) => sourceDefinition(
       automationId,
@@ -511,15 +524,12 @@ describe('GitHub webhook Action', () => {
     const reports: unknown[] = [];
     const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
       if (actionId === 'automation.event.sources.list') {
-        const listInput = actionInput as Readonly<{ knownRevision?: string }>;
-        return listInput.knownRevision === '7'
-          ? { kind: 'unchanged' as const, revision: '7' }
-          : {
-            kind: 'page' as const,
-            revision: '7',
-            definitions: [sourceDefinition('automation-1', 'github:repository:77')],
-            nextCursor: null,
-          };
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [sourceDefinition('automation-1', 'github:repository:77')],
+          nextCursor: null,
+        };
       }
       if (actionId === 'automation.event.admit') {
         return { results: [{ kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const }] };
@@ -552,7 +562,7 @@ describe('GitHub webhook Action', () => {
         ...definitionSelector('automation-1'),
         eventRef: {
           pluginId: 'happier.scm.forge.github',
-          localId: 'automation/repository-event-v1',
+          localId: 'automation/repository-pushed-v1',
         },
         state: 'observing',
         code: 'none',
@@ -565,15 +575,17 @@ describe('GitHub webhook Action', () => {
       },
     ]);
 
-    // The catalog fact is reported when a revision is adopted, not on every
-    // delivery: a second delivery on the unchanged revision still reports the
-    // per-Automation health but must not repeat the catalog round trip.
+    // Every delivery adopts one complete current scan; the provider retains no
+    // source membership that could route a later delivery after an edit.
     reports.length = 0;
     await expect(handler(input, context)).resolves.toEqual({
       kind: 'settled',
       disposition: 'accepted',
     });
-    expect(reports).toEqual([expect.objectContaining({ kind: 'source', state: 'observing' })]);
+    expect(reports).toEqual([
+      expect.objectContaining({ kind: 'catalogReconciliation', adoptedRevision: '7' }),
+      expect.objectContaining({ kind: 'source', state: 'observing' }),
+    ]);
   });
 
   it('reports attention on the same source when the admission the delivery needs is unavailable', async () => {
@@ -618,6 +630,55 @@ describe('GitHub webhook Action', () => {
       observedDelta: 0,
       admittedDelta: 0,
       skippedDelta: 0,
+    }));
+  });
+
+  it('maps rejoined and skipped result positions to their exact trigger health counters', async () => {
+    const reports: unknown[] = [];
+    const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page' as const,
+          revision: '7',
+          definitions: [
+            sourceDefinition('automation-1', 'github:repository:77'),
+            sourceDefinition('automation-2', 'github:repository:77'),
+          ],
+          nextCursor: null,
+        };
+      }
+      if (actionId === 'automation.event.admit') {
+        return {
+          results: [
+            { kind: 'rejoined' as const, runId: 'run-1', checkpointSafe: true as const },
+            { kind: 'skipped' as const, reason: 'filtered' as const, checkpointSafe: true as const },
+          ],
+        };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        reports.push(actionInput);
+        return {};
+      }
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+
+    await expect(createGithubWebhookActionHandlerV1()(input, contextWithActions(execute))).resolves.toEqual({
+      kind: 'settled',
+      disposition: 'accepted',
+    });
+    expect(reports).toContainEqual(expect.objectContaining({
+      kind: 'source',
+      triggerId: 'trigger-automation-1',
+      observedDelta: 1,
+      admittedDelta: 0,
+      skippedDelta: 0,
+    }));
+    expect(reports).toContainEqual(expect.objectContaining({
+      kind: 'source',
+      triggerId: 'trigger-automation-2',
+      observedDelta: 1,
+      admittedDelta: 0,
+      skippedDelta: 1,
     }));
   });
 
@@ -694,7 +755,8 @@ describe('GitHub webhook Action', () => {
 function definitionSelector(automationId: string) {
   return {
     automationId,
-    templateVersion: 1,
+    triggerId: `trigger-${automationId}`,
+    triggerRevision: 1,
     sourceSelectorId: `00000000-0000-4000-8000-${automationId.replace(/[^0-9]/gu, '').padStart(12, '0').slice(-12)}`,
   };
 }
@@ -704,7 +766,7 @@ function sourceDefinition(automationId: string, sourceInstanceId: string) {
     ...definitionSelector(automationId),
     eventRef: {
       pluginId: 'happier.scm.forge.github',
-      localId: 'automation/repository-event-v1',
+      localId: 'automation/repository-pushed-v1',
     },
     sourceInstanceId,
     sourceContractVersion: 1,

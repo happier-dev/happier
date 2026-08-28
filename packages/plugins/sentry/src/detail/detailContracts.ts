@@ -27,48 +27,40 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
+  TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
   TriageConfiguredSourceInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
+const defineSentryDetailString = (
+  options: Parameters<typeof defineProtocolUtf8String>[0],
+) => defineProtocolUtf8String({
+  ...options,
+  pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
+
 import {
-  readSentryCursorProbe,
-  type SentryCursorProbeV1,
-} from '../api/sentryCursorCycle.js';
+  readCursorCycleProbeV1,
+  type CursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
 import { SENTRY_MAX_DETAIL_PAGE_SIZE } from '../api/sentryRoutes.js';
 import { SENTRY_EVENT_BOUNDS_V1 } from '../privacy/sentryEventProjection.js';
 
 import {
   SENTRY_DETAIL_BOUNDS_V1,
-  SENTRY_MAX_ACTIVITY_ITEMS,
   SENTRY_MAX_EVENT_ROWS,
   SENTRY_MAX_TAG_VALUE_ROWS,
 } from './detailProjection.js';
 
 /** The page size one mounted detail panel asks for. */
 export const SENTRY_DETAIL_PAGE_SIZE = SENTRY_MAX_DETAIL_PAGE_SIZE;
-
-/**
- * The largest continuation this source will mint or accept, in UTF-8 bytes.
- *
- * A Sentry cursor is a compact `offset:limit:is_prev` triple, but it is provider
- * text: the bound is stated here so an unexpectedly long one is refused at the
- * boundary rather than carried into panel state.
- *
- * The token carries exactly two of those cursors — the position to request and
- * the one the cycle probe is watching — plus two small integers, so its width is
- * a constant of the walk rather than a function of how many pages it has read.
- * The predecessor evidence, the complete requested-position history, made this
- * bound a page ceiling instead: with real keyset cursors the 23rd `Load more`
- * stopped fitting and settled `continuationUnavailable`.
- */
-export const MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES = 512;
 
 const CONTINUATION_VERSION = 1;
 
@@ -80,7 +72,7 @@ export type SentryDetailFrontierV1 = Readonly<{
   limit: number;
   /**
    * The earlier position this walk is watching for, and the schedule that moves
-   * it (`api/sentryCursorCycle.ts`).
+   * it (the shared Triage source cursor-cycle owner).
    *
    * It is the walk's own non-progress evidence, and it lives here because a walk
    * whose pages are separate Action invocations has nowhere else to keep it.
@@ -92,10 +84,10 @@ export type SentryDetailFrontierV1 = Readonly<{
    *
    * It is a within-panel position, exactly like `cursor`: no route, no
    * credential, no clock, and nothing that outlives the mounted panel — and it
-   * is one saved cursor rather than every requested one, because this token is
-   * bounded and a reader may press "Load more" as long as there are pages.
+   * is one saved cursor rather than every requested one. Its own bookkeeping is
+   * constant-space, so a reader may press "Load more" as long as there are pages.
    */
-  probe: SentryCursorProbeV1;
+  probe: CursorCycleProbeV1;
 }>;
 
 export function encodeSentryDetailContinuation(
@@ -106,19 +98,16 @@ export function encodeSentryDetailContinuation(
     || !Number.isSafeInteger(frontier.limit)
     || frontier.limit < 1
     || frontier.limit > SENTRY_DETAIL_PAGE_SIZE
-    || readSentryCursorProbe(frontier.probe) === null
+    || readCursorCycleProbeV1(frontier.probe) === null
   ) {
     return null;
   }
-  const token = JSON.stringify({
+  return JSON.stringify({
     v: CONTINUATION_VERSION,
     cursor: frontier.cursor,
     limit: frontier.limit,
     probe: { ...frontier.probe },
   });
-  return new TextEncoder().encode(token).length > MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES
-    ? null
-    : token;
 }
 
 /**
@@ -128,9 +117,6 @@ export function encodeSentryDetailContinuation(
  * position.
  */
 export function decodeSentryDetailContinuation(token: string): SentryDetailFrontierV1 | null {
-  if (new TextEncoder().encode(token).length > MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES) {
-    return null;
-  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(token);
@@ -141,7 +127,7 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
   const raw = decoded as Readonly<Record<string, unknown>>;
   const cursor = raw['cursor'];
   const limit = raw['limit'];
-  const probe = readSentryCursorProbe(raw['probe']);
+  const probe = readCursorCycleProbeV1(raw['probe']);
   if (
     raw['v'] !== CONTINUATION_VERSION
     || typeof cursor !== 'string'
@@ -171,9 +157,9 @@ export function decodeSentryDetailContinuation(token: string): SentryDetailFront
  * (`REQ-04`). The names are the scan plane's own, because a cursor this source
  * will not follow means the same thing on both planes — including the last one,
  * which is emphatically not a cursor verdict: the provider's cursor can be
- * perfectly well formed and simply not fit the bounded token beside the walk's
- * own cycle evidence, and blaming the provider for a bound this side owns is a
- * different and false claim.
+ * perfectly well formed while this source fails to serialize the continuation
+ * beside the walk's own cycle evidence, and blaming the provider for a failure
+ * this side owns is a different and false claim.
  */
 const SentryIncompleteReasonSchema = defineProtocolUnion([
   defineProtocolLiteral('paginationHeaderAbsent'),
@@ -187,25 +173,30 @@ const SentryBooleanSchema = defineProtocolUnion([
   defineProtocolLiteral(false),
 ]);
 
-const IdentifierSchema = defineProtocolUtf8String({
+const IdentifierSchema = defineSentryDetailString({
   maxUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.identifierUtf8Bytes,
   minLength: 1,
 });
-const TextSchema = defineProtocolUtf8String({
+const TextSchema = defineSentryDetailString({
   maxUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.textUtf8Bytes,
   minLength: 1,
 });
-const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.labelUtf8Bytes,
+const LabelSchema = defineSentryDetailString({
+  maxUtf8Bytes: SENTRY_DETAIL_BOUNDS_V1.textUtf8Bytes,
   minLength: 1,
 });
 const TimestampSchema = defineProtocolNumber({ integer: true });
 const CountSchema = defineProtocolNumber({ integer: true, minimum: 0 });
+const EmptyOrTextSchema = defineProtocolUnion([
+  defineProtocolLiteral(''),
+  TextSchema,
+]);
+const EmptyOrLabelSchema = defineProtocolUnion([
+  defineProtocolLiteral(''),
+  LabelSchema,
+]);
 
-const ContinuationSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES,
-  minLength: 1,
-});
+const ContinuationSchema = defineProtocolString({ minLength: 1 });
 
 const PageLimitSchema = defineProtocolNumber({
   integer: true,
@@ -238,9 +229,7 @@ export const SentryProjectedTagV1Schema = defineProtocolObject({
   key: IdentifierSchema,
   name: LabelSchema.optional(),
   totalValues: CountSchema.optional(),
-  topValues: defineProtocolArray(SentryProjectedTagValueV1Schema, {
-    maxItems: SENTRY_DETAIL_BOUNDS_V1.maxTopValuesPerTag,
-  }),
+  topValues: defineProtocolArray(SentryProjectedTagValueV1Schema),
   truncated: defineProtocolLiteral(true).optional(),
 }, { policy: 'closed' });
 
@@ -303,18 +292,14 @@ export const SentryIssueOverviewProjectionV1Schema = defineProtocolObject({
 
 export const SentryIssueTagsProjectionV1Schema = defineProtocolObject({
   kind: defineProtocolLiteral('tags'),
-  tags: defineProtocolArray(SentryProjectedTagV1Schema, {
-    maxItems: SENTRY_DETAIL_BOUNDS_V1.maxTagKeys,
-  }),
+  tags: defineProtocolArray(SentryProjectedTagV1Schema),
   omittedTagCount: CountSchema,
   projectionTruncated: SentryBooleanSchema,
 }, { policy: 'closed' });
 
 const SentryActivityAvailableSchema = defineProtocolObject({
   status: defineProtocolLiteral('available'),
-  items: defineProtocolArray(SentryProjectedActivityItemV1Schema, {
-    maxItems: SENTRY_MAX_ACTIVITY_ITEMS,
-  }),
+  items: defineProtocolArray(SentryProjectedActivityItemV1Schema),
   malformedItemCount: CountSchema,
   omittedItemCount: CountSchema,
   projectionTruncated: SentryBooleanSchema,
@@ -389,7 +374,7 @@ export const SentryTagValuesInputV1Schema = defineProtocolObject({
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
   /** One provider tag key, revalidated as a single path segment at the route. */
-  tagKey: defineProtocolUtf8String({ maxUtf8Bytes: 200, minLength: 1 }),
+  tagKey: defineSentryDetailString({ maxUtf8Bytes: 200, minLength: 1 }),
   limit: PageLimitSchema,
   continuation: ContinuationSchema.optional(),
 }, { policy: 'closed' });
@@ -454,10 +439,7 @@ function nullable<TValue>(
   return defineProtocolUnion([schema, NullSchema]);
 }
 
-const LocationSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.locationUtf8Bytes,
-  minLength: 1,
-});
+const LocationSchema = TextSchema;
 
 /**
  * Always the empty object.
@@ -485,15 +467,13 @@ const SentryBreadcrumbV1Schema = defineProtocolObject({
   message: nullable(TextSchema),
 }, { policy: 'closed' });
 
-const FramesSchema = defineProtocolArray(SentryFrameV1Schema, {
-  maxItems: SENTRY_EVENT_BOUNDS_V1.maxFramesPerSection,
-});
+const FramesSchema = defineProtocolArray(SentryFrameV1Schema);
 
 const SentryEventSectionV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('exception'),
-    type: defineProtocolUtf8String({ maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes }),
-    value: defineProtocolUtf8String({ maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes }),
+    type: EmptyOrLabelSchema,
+    value: EmptyOrTextSchema,
     frames: FramesSchema,
   }, { policy: 'closed' }),
   defineProtocolObject({
@@ -502,9 +482,7 @@ const SentryEventSectionV1Schema = defineProtocolUnion([
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('breadcrumbs'),
-    entries: defineProtocolArray(SentryBreadcrumbV1Schema, {
-      maxItems: SENTRY_EVENT_BOUNDS_V1.maxBreadcrumbs,
-    }),
+    entries: defineProtocolArray(SentryBreadcrumbV1Schema),
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('message'),
@@ -517,8 +495,8 @@ const SentryEventSectionV1Schema = defineProtocolUnion([
 ]);
 
 const SentryRedactionV1Schema = defineProtocolObject({
-  path: defineProtocolUtf8String({
-    maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.labelUtf8Bytes,
+  path: defineSentryDetailString({
+    maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes,
     minLength: 1,
   }),
   reason: defineProtocolUnion([
@@ -528,22 +506,20 @@ const SentryRedactionV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 
 export const SentryEventProjectionV1Schema = defineProtocolObject({
-  eventId: defineProtocolUtf8String({
+  eventId: defineSentryDetailString({
     maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.identifierUtf8Bytes,
   }),
   dateCreatedMs: nullable(TimestampSchema),
-  title: defineProtocolUtf8String({ maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes }),
-  message: defineProtocolUtf8String({ maxUtf8Bytes: SENTRY_EVENT_BOUNDS_V1.textUtf8Bytes }),
+  title: EmptyOrTextSchema,
+  message: EmptyOrTextSchema,
   location: nullable(TextSchema),
   culprit: nullable(TextSchema),
   platform: nullable(LabelSchema),
-  sections: defineProtocolArray(SentryEventSectionV1Schema, {
-    maxItems: SENTRY_EVENT_BOUNDS_V1.maxSections,
-  }),
+  sections: defineProtocolArray(SentryEventSectionV1Schema),
   tags: defineProtocolArray(defineProtocolObject({
     key: LabelSchema,
     value: TextSchema,
-  }, { policy: 'closed' }), { maxItems: SENTRY_EVENT_BOUNDS_V1.maxTags }),
+  }, { policy: 'closed' })),
   user: nullable(defineProtocolObject({
     id: nullable(IdentifierSchema),
     email: nullable(TextSchema),
@@ -556,18 +532,16 @@ export const SentryEventProjectionV1Schema = defineProtocolObject({
    * from these two arrays, which is why they are published rather than derived: a
    * disclosure assembled from a boolean is a guess.
    */
-  redactions: defineProtocolArray(SentryRedactionV1Schema, {
-    maxItems: SENTRY_EVENT_BOUNDS_V1.maxRedactions,
-  }),
-  sensitivePaths: defineProtocolArray(LabelSchema, {
-    maxItems: SENTRY_EVENT_BOUNDS_V1.maxSensitivePaths,
-  }),
+  redactions: defineProtocolArray(SentryRedactionV1Schema),
+  sensitivePaths: defineProtocolArray(LabelSchema),
   projectionTruncated: SentryBooleanSchema,
   omitted: defineProtocolObject({
     sections: CountSchema,
     frames: CountSchema,
     breadcrumbs: CountSchema,
     tags: CountSchema,
+    redactions: CountSchema,
+    sensitivePaths: CountSchema,
   }, { policy: 'closed' }),
 }, { policy: 'closed' });
 

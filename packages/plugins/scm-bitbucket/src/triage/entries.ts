@@ -5,19 +5,6 @@ import {
   readBitbucketEntryId,
 } from './identity.js';
 import { readBitbucketCloneUrl } from '../bitbucketCloneUrl.js';
-import { truncateUtf8 } from './text.js';
-
-/**
- * Raw-decode guard for untrusted provider prose, not the published display bound.
- *
- * The bound a list row must fit belongs to `@happier-dev/triage-protocol` and is applied once, at
- * the projection boundary in `source/observations.ts`, together with single-line normalization.
- * This one only stops an absurd provider payload from being carried around in memory before it
- * gets there, so it is deliberately much larger and is never the value a row is measured against.
- * An identity-valid provider entity is never dropped because its presentation is large: oversize
- * text is truncated on a UTF-8 boundary and the entry is flagged.
- */
-export const MAX_BITBUCKET_TEXT_UTF8_BYTES = 4 * 1024;
 
 export type BitbucketAccountRef = Readonly<{
   uuid: string | null;
@@ -249,12 +236,8 @@ export function decodeBitbucketPullRequestRow(raw: unknown): BitbucketPullReques
     return { ok: false, reason: 'identity-invalid' };
   }
 
-  const rawTitle = readString(record.title) ?? '';
-  const title = truncateUtf8(rawTitle, MAX_BITBUCKET_TEXT_UTF8_BYTES);
-  const rawSummary = readNestedString(record, 'summary', 'raw');
-  const summary = rawSummary === null
-    ? null
-    : truncateUtf8(rawSummary, MAX_BITBUCKET_TEXT_UTF8_BYTES);
+  const title = readString(record.title) ?? '';
+  const summary = readNestedString(record, 'summary', 'raw');
   const reviewers = readOptionalList(record.reviewers, (reviewer) => {
     const account = readAccountRef(reviewer);
     return account === null || account.uuid === null ? null : account;
@@ -267,9 +250,9 @@ export function decodeBitbucketPullRequestRow(raw: unknown): BitbucketPullReques
       kindId: 'pull-request',
       collisionScope,
       entryId,
-      title: title.value,
-      summary: summary?.value ?? null,
-      projectionTruncated: title.truncated || (summary?.truncated ?? false),
+      title,
+      summary,
+      projectionTruncated: false,
       state: readState(record.state),
       webUrl: readNestedString(record, 'links', 'html', 'href'),
       repository,

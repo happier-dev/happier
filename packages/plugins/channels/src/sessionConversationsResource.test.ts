@@ -16,6 +16,7 @@ import {
   SESSION_CONVERSATIONS_RESOURCE_RUNTIME,
 } from './sessionConversationsResource.js';
 import { SESSION_INFO_RESOURCE_RUNTIME } from './sessionInfoResource.js';
+import { createConversationSessionProjectionFrontierRow } from './sessionProjection.js';
 import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
 import {
   createCurrentConversationConnectionFixture,
@@ -85,6 +86,27 @@ class MemoryAccountCollection {
       rows,
       ...(next === undefined ? {} : { nextCursor: rows.at(-1)?.rowId }),
       changeCursor: 1,
+    };
+  }
+}
+
+class WatchableMemoryAccountCollection extends MemoryAccountCollection {
+  private readonly listeners = new Set<() => void>();
+
+  override async put(value: Record<string, unknown>, input: Readonly<{
+    expectedRevision: number | 'absent';
+  }>) {
+    const row = await super.put(value, input);
+    for (const listener of [...this.listeners]) listener();
+    return row;
+  }
+
+  watch(_request: unknown, next: () => void) {
+    this.listeners.add(next);
+    return {
+      dispose: () => {
+        this.listeners.delete(next);
+      },
     };
   }
 }
@@ -457,6 +479,38 @@ describe('Channels Session conversations Resource', () => {
     expect(states.attention).toEqual({ visible: true, count: 1 });
   });
 
+  it('projects one paused transcript frontier with the exact recovery revisions', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(createCurrentConversationConnectionFixture({
+      connectionId: 'connection-1',
+      authority: CONNECTION_AUTHORITY,
+    }), { expectedRevision: 'absent' });
+    await state.put(sessionBindingRecord('binding-a', 'session-a'), { expectedRevision: 'absent' });
+    await state.put(createConversationSessionProjectionFrontierRow({
+      bindingId: 'binding-a',
+      targetSessionId: 'session-a',
+      transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100 },
+      lastScannedSeq: 7,
+      revision: 3,
+      now: 100,
+    }), { expectedRevision: 'absent' });
+
+    const serialized = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read({
+      signal: new AbortController().signal,
+      context: { kind: 'session', sessionId: 'session-a' },
+      accountStorage: accountStorageFor(state, deliveries),
+    });
+    expect((JSON.parse(resourceText(serialized)) as Readonly<{ attention: unknown }>).attention).toEqual([
+      {
+        bindingId: 'binding-a',
+        reason: 'transcriptHistoryGap',
+        bindingRevision: 1,
+        frontierRevision: 1,
+      },
+    ]);
+  });
+
   it('matches a Session identity longer than the display summary bound instead of its truncation', async () => {
     // `target.summary` is a 28-code-point display projection. Two Sessions that
     // share the first 27 code points collapse onto the same summary, so a
@@ -510,5 +564,49 @@ describe('Channels Session conversations Resource', () => {
     expect(invalidate).toHaveBeenCalledTimes(2);
     observation.dispose();
     expect(state.dispose).toHaveBeenCalledTimes(2);
+  });
+
+  it('rereads the mounted Session projection after a connection-only state change', async () => {
+    const state = new WatchableMemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    const connection = await state.put(createCurrentConversationConnectionFixture({
+      connectionId: 'connection-1',
+      authority: CONNECTION_AUTHORITY,
+      transport: { kind: 'checkpointedPull' },
+      overlapSafety: 'safe',
+      replayContinuity: 'checkpointed',
+      outboundTextLimit: { maximum: 4_096, unit: 'unicodeCodePoints' },
+    }), { expectedRevision: 'absent' });
+    await state.put(sessionBindingRecord('binding-a', 'session-a'), { expectedRevision: 'absent' });
+    const options = {
+      signal: new AbortController().signal,
+      context: { kind: 'session' as const, sessionId: 'session-a' },
+      accountStorage: accountStorageFor(state, deliveries),
+    };
+    let refreshed: Promise<Readonly<{ attention: readonly unknown[] }>> | undefined;
+    const observation = SESSION_CONVERSATIONS_RESOURCE_RUNTIME.observe(() => {
+      refreshed = Promise.resolve(SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(options)).then((result) => (
+        JSON.parse(resourceText(result)) as Readonly<{ attention: readonly unknown[] }>
+      ));
+    }, options);
+
+    const currentValue = connection.value;
+    await state.put({
+      ...currentValue,
+      'updated-at': 2,
+      payload: {
+        ...(currentValue.payload as Record<string, unknown>),
+        enabled: false,
+      },
+    }, { expectedRevision: connection.revision });
+
+    if (refreshed === undefined) {
+      throw new Error('Expected the connection watch to refresh the mounted Session projection.');
+    }
+    await expect(refreshed).resolves.toEqual({
+      bindings: expect.any(Array),
+      attention: [{ bindingId: 'binding-a', reason: 'connectionDisabled' }],
+    });
+    observation.dispose();
   });
 });

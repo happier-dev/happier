@@ -24,7 +24,6 @@ import {
     type PosthogPageWalkV1,
 } from './pageWalk.js';
 import {
-    POSTHOG_ACTIVITY_BOUNDS_V1,
     POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
     projectPosthogActivityRecords,
     type PosthogProjectedActivityRecord,
@@ -71,13 +70,22 @@ export function resolvePosthogIssueActivityLimit(requested: number): number | nu
  * route, or one that does not strictly advance — leaves the walk short: the provider
  * never said there was nothing more, so neither may this page.
  */
-function readWalk(next: string | null, path: string, page: number): PosthogPageWalkV1 {
+function readWalk(
+    client: PosthogApiClient,
+    next: string | null,
+    path: string,
+    page: number,
+): PosthogPageWalkV1 {
     if (next === null) {
         return POSTHOG_WALK_EXHAUSTED;
     }
+    const admitted = client.admitProviderUrl(next);
+    if (admitted === null) {
+        return POSTHOG_WALK_STOPPED_SHORT;
+    }
     let url: URL;
     try {
-        url = new URL(next);
+        url = new URL(admitted);
     } catch {
         return POSTHOG_WALK_STOPPED_SHORT;
     }
@@ -129,13 +137,10 @@ export async function readPosthogIssueActivity(
     return {
         ok: true,
         value: {
-            records: projectPosthogActivityRecords(
-                envelope.rawRecords,
-                POSTHOG_ACTIVITY_BOUNDS_V1,
-            ),
+            records: projectPosthogActivityRecords(envelope.rawRecords),
             omittedRowCount: envelope.skippedRowCount,
             totalCount: envelope.totalCount,
-            walk: readWalk(envelope.next, path, input.page),
+            walk: readWalk(client, envelope.next, path, input.page),
         },
     };
 }

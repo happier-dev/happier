@@ -67,19 +67,22 @@ export function readGitlabRetryEvidence(
   // `Retry-After` is the response's own instruction and wins when present.
   const retryAfterSeconds = readDeltaSeconds(headers.get('retry-after'));
   if (retryAfterSeconds !== null) {
-    return { retryNotBeforeMs: nowMs + retryAfterSeconds * 1000, source: 'retry-after' };
+    const retryNotBeforeMs = nowMs + retryAfterSeconds * 1000;
+    if (Number.isSafeInteger(retryNotBeforeMs)) {
+      return { retryNotBeforeMs, source: 'retry-after' };
+    }
   }
 
   const resetSeconds = readEpochSeconds(headers.get('ratelimit-reset'));
   if (resetSeconds !== null) {
     const absoluteMs = resetSeconds * 1000;
-    return absoluteMs > nowMs
+    return Number.isSafeInteger(absoluteMs) && absoluteMs > nowMs
       ? { retryNotBeforeMs: absoluteMs, source: 'ratelimit-reset' }
       : null;
   }
 
   const resetTimeMs = readHttpDateMs(headers.get('ratelimit-resettime'));
-  if (resetTimeMs !== null && resetTimeMs > nowMs) {
+  if (resetTimeMs !== null && Number.isSafeInteger(resetTimeMs) && resetTimeMs > nowMs) {
     return { retryNotBeforeMs: resetTimeMs, source: 'ratelimit-reset-time' };
   }
 

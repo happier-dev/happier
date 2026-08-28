@@ -1,6 +1,4 @@
 import type {
-  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
-  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
   HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
   HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
   HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
@@ -22,7 +20,6 @@ import { requestForgeJson as requestScmForgeJson } from '@happier-dev/plugin-sdk
 import { GITHUB_API_VERSION } from '../observations/githubProviderContracts.js';
 
 import { resolveGithubCheckoutReferenceFromPullRequest } from './checkoutReference.js';
-import { mapGithubDefaultBranch } from './defaultBranch.js';
 import {
   createGithubAuthRequiredError,
   createGithubCommandFailedError,
@@ -57,7 +54,6 @@ export type GithubRestPullRequestAdapter = Readonly<{
   listPullRequests(input: ScmHostingProviderPullRequestListInput): Promise<readonly ScmPullRequestSummary[]>;
   getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null>;
   createPullRequest(input: ScmHostingProviderPullRequestCreateInput): Promise<ScmPullRequestSummary>;
-  getDefaultBranch(input: ScmHostingProviderDefaultBranchInput): Promise<ScmHostingProviderDefaultBranchMetadata>;
   resolvePullRequestCheckoutReference(
     input: ScmHostingProviderPullRequestCheckoutReferenceInput
   ): Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
@@ -322,12 +318,6 @@ export function createGithubRestAdapter(params?: Readonly<{
       const pullRequest = mapGithubPullRequest(input.provider, raw);
       if (!pullRequest) throw createGithubCommandFailedError('GitHub returned an invalid pull request payload');
       return pullRequest;
-    },
-    async getDefaultBranch(input) {
-      const raw = await requestJson(input.provider, repositoryUrl(input.provider), { method: 'GET' }, input.runtimeServices, input.signal);
-      const mapped = mapGithubDefaultBranch(raw);
-      if (!mapped) throw createGithubCommandFailedError('GitHub returned an invalid repository payload');
-      return mapped;
     },
     async resolvePullRequestCheckoutReference(input) {
       const pullRequest = await getPullRequest(input);

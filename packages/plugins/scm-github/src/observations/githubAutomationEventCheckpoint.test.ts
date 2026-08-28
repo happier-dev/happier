@@ -16,42 +16,47 @@ import {
 } from './githubAutomationEventCheckpoint.js';
 
 describe('GitHub Automation Event checkpoint identity', () => {
-  const checkpointRowId = (pluginId: string, localId = 'automation/repository-pushed-v1'): string =>
+  const checkpointRowId = (input: Readonly<{
+    automationId?: string;
+    triggerId?: string;
+    eventLocalId?: string;
+    sourceSelectorId?: string;
+  }> = {}): string =>
     createGithubAutomationEventCheckpointRowId({
-      automationId: 'automation-a',
+      automationId: input.automationId ?? 'automation-a',
+      triggerId: input.triggerId ?? 'trigger-a',
       eventRef: {
-        pluginId,
-        localId,
+        pluginId: 'happier.scm.forge.github',
+        localId: input.eventLocalId ?? 'automation/repository-pushed-v1',
       },
-      sourceSelectorId: '00000000-0000-4000-8000-000000000001',
+      sourceSelectorId: input.sourceSelectorId ?? '00000000-0000-4000-8000-000000000001',
     });
 
-  // One pinned vector, over the identity the plugin actually emits: a change to
-  // the length-delimited encoding or the domain constant fails here rather than
-  // silently rekeying every checkpoint row. The predecessor `happier.scm.*`
-  // spelling is deliberately not pinned. The forge cut was pre-publication, and
-  // `isGithubAutomationEventCheckpointRowV1` rejects any row whose
-  // `eventPluginId` is not the current `GITHUB_PLUGIN_ID`, so no stored row can
-  // address the retired identity and a vector for it would only keep a retired
-  // product identity alive in shipped source.
-  it('scopes the opaque row ID to each semantic trigger Event', () => {
+  it('keeps semantic trigger checkpoints independently addressable', () => {
     const ids = [
       'automation/repository-pushed-v1',
       'automation/issue-opened-v1',
       'automation/pull-request-opened-v1',
       'automation/pull-request-merged-v1',
-    ].map((localId) => checkpointRowId('happier.scm.forge.github', localId));
+    ].map((eventLocalId, index) => checkpointRowId({
+      automationId: `automation-${index}`,
+      triggerId: `trigger-${index}`,
+      eventLocalId,
+      sourceSelectorId: `00000000-0000-4000-8000-00000000000${index + 1}`,
+    }));
 
-    expect(new Set(ids)).toHaveSize(4);
+    expect(new Set(ids).size).toBe(4);
   });
 
-  // The encoder is domain-separated by the contributing plugin identity, so an
-  // encoder that dropped `eventRef.pluginId` would collide two plugins'
-  // checkpoints onto one row. Asserted as a property, which needs no second
-  // pinned digest and therefore no second product identity in this file.
-  it('domain-separates the row ID by contributing plugin identity', () => {
-    expect(checkpointRowId('happier.scm.forge.github'))
-      .not.toBe(checkpointRowId('happier.scm.forge.gitlab'));
+  it('domain-separates every trigger-scoped identity fact', () => {
+    expect(checkpointRowId({ automationId: 'automation-a' }))
+      .not.toBe(checkpointRowId({ automationId: 'automation-b' }));
+    expect(checkpointRowId({ triggerId: 'trigger-a' }))
+      .not.toBe(checkpointRowId({ triggerId: 'trigger-b' }));
+    expect(checkpointRowId({ eventLocalId: 'automation/repository-pushed-v1' }))
+      .not.toBe(checkpointRowId({ eventLocalId: 'automation/issue-opened-v1' }));
+    expect(checkpointRowId({ sourceSelectorId: '00000000-0000-4000-8000-000000000001' }))
+      .not.toBe(checkpointRowId({ sourceSelectorId: '00000000-0000-4000-8000-000000000002' }));
   });
 
   it('produces rows accepted by the compiled declared checkpoint collection schema', () => {
@@ -63,7 +68,9 @@ describe('GitHub Automation Event checkpoint identity', () => {
       'automation/pull-request-merged-v1',
     ]) {
       const row = createGithubAutomationEventCheckpointRowV1({
+        checkpointRowId: checkpointRowId({ eventLocalId: localId }),
         automationId: 'automation-a',
+        triggerId: 'trigger-a',
         eventRef: { pluginId: 'happier.scm.forge.github', localId },
         sourceSelectorId: '00000000-0000-4000-8000-000000000001',
         sourceInstanceId: 'github:repository:77',
@@ -77,7 +84,7 @@ describe('GitHub Automation Event checkpoint identity', () => {
         },
         lastContiguousOccurrenceId: null,
         baseline: { kind: 'currentHead', establishedAt: 1_000 },
-        lastEvaluatedTemplateVersion: 1,
+        lastEvaluatedTriggerRevision: 1,
         continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
       });
 
@@ -87,7 +94,9 @@ describe('GitHub Automation Event checkpoint identity', () => {
     }
     const genericRow = {
       ...createGithubAutomationEventCheckpointRowV1({
+        checkpointRowId: checkpointRowId({ eventLocalId: 'automation/repository-pushed-v1' }),
         automationId: 'automation-a',
+        triggerId: 'trigger-a',
         eventRef: {
           pluginId: 'happier.scm.forge.github',
           localId: 'automation/repository-pushed-v1',
@@ -98,20 +107,20 @@ describe('GitHub Automation Event checkpoint identity', () => {
         cursor: null,
         lastContiguousOccurrenceId: null,
         baseline: { kind: 'currentHead', establishedAt: 1_000 },
-        lastEvaluatedTemplateVersion: 1,
+        lastEvaluatedTriggerRevision: 1,
         continuity: null,
       }),
-      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: 'automation/repository-event-v1',
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: 'automation/repository-pushed-v0',
     };
     expect(isGithubAutomationEventCheckpointRowV1(genericRow)).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, genericRow)).toBe(false);
   });
 
-  it('declares the exact Automation/Event/source lookup within the Collection index ceiling', () => {
+  it('declares the trigger/Event/source lookup within the Collection index ceiling', () => {
     expect(GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION.indexes).toEqual([{
       id: GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID.byAutomationEventSource,
       fields: [
-        { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId, direction: 'asc' },
+        { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId, direction: 'asc' },
         { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId, direction: 'asc' },
         { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId, direction: 'asc' },
         { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId, direction: 'asc' },

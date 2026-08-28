@@ -1,9 +1,9 @@
-import type {
-  AgentExecutionRunEvent,
-  AgentExecutionRunOpenRequest,
-  AgentExecutionRunRuntime,
-  AgentExecutionRunRuntimeFactory,
-  AgentRuntimeContext,
+import {
+  createFiniteExecutionRunHostRuntime,
+  type AgentExecutionRunOpenRequest,
+  type AgentExecutionRunRuntime,
+  type AgentExecutionRunRuntimeFactory,
+  type AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import {
@@ -38,12 +38,6 @@ type NormalizedDeepSecStart = Readonly<{
 }>;
 
 type DeepSecAgentCli = 'claude' | 'codex' | 'both';
-
-type EventInput = AgentExecutionRunEvent extends infer Event
-  ? Event extends AgentExecutionRunEvent
-    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
-    : never
-  : never;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -280,6 +274,22 @@ function createOutput(params: Readonly<{
   const selectedScopeDiagnostics = params.runResult.status === 'selected_scope_failed'
     ? params.runResult.diagnostics
     : undefined;
+  const partialDiagnostics = params.runResult.status === 'partial'
+    ? params.runResult.diagnostics
+    : undefined;
+  const failureDiagnostics = params.runResult.status === 'failed'
+    ? [{
+        code: 'deepsec_process_failed',
+        severity: 'error' as const,
+        messageKey: 'plugins.deepsec.runtime.failed',
+        detail: (() => {
+          const observed = params.runResult.result.termination.observed;
+          if (observed.kind === 'exit') return { exitCode: observed.exitCode, signal: null };
+          if (observed.kind === 'signal') return { exitCode: null, signal: observed.signal };
+          return { exitCode: null, signal: null };
+        })(),
+      }]
+    : undefined;
   const output: ReviewFindingsV2 = {
     runRef: {
       runId: params.runId,
@@ -290,14 +300,18 @@ function createOutput(params: Readonly<{
       ? 'DeepSec review readiness failed.'
       : selectedScopeDiagnostics
         ? 'DeepSec selected-file scope validation failed.'
-        : `DeepSec review: ${count} finding(s).`,
+        : partialDiagnostics
+          ? `DeepSec review partially completed with ${count} finding(s).`
+          : `DeepSec review: ${count} finding(s).`,
     overviewMarkdown: readiness
       ? `DeepSec cannot start until these prerequisites are available: ${readiness.missing.join(', ')}.`
       : selectedScopeDiagnostics
         ? 'DeepSec could not validate the selected file scope, so no scan was launched.'
-        : count > 0
-          ? `DeepSec reported ${count} security finding(s).`
-          : 'DeepSec review: no findings.',
+        : partialDiagnostics
+          ? `DeepSec reported ${count} security finding(s) before processing stopped early.`
+          : count > 0
+            ? `DeepSec reported ${count} security finding(s).`
+            : 'DeepSec review: no findings.',
     findings: [...params.findings],
     questions: [],
     assumptions: [],
@@ -327,10 +341,23 @@ function createOutput(params: Readonly<{
       }];
     }),
     generatedAtMs: Date.now(),
+    ...(readiness
+      ? { status: 'failed', error: { code: 'deepsec_readiness_failed' } }
+      : selectedScopeDiagnostics
+        ? { status: 'failed', error: { code: 'deepsec_scope_failed' } }
+        : failureDiagnostics
+          ? { status: 'failed', error: { code: 'deepsec_process_failed' } }
+          : {}),
     ...(readiness ? { readiness } : {}),
-    ...(selectedScopeDiagnostics ? { diagnostics: selectedScopeDiagnostics } : {}),
+    ...(selectedScopeDiagnostics
+      ? { diagnostics: selectedScopeDiagnostics }
+      : partialDiagnostics
+        ? { diagnostics: partialDiagnostics }
+        : failureDiagnostics
+          ? { diagnostics: failureDiagnostics }
+          : {}),
     ...(params.runResult.status === 'partial'
-      ? { limits: { findingsTruncated: false, patchesTruncated: false } }
+      ? { limits: { findingsTruncated: true, patchesTruncated: false } }
       : {}),
   };
   return JSON.stringify(output);
@@ -387,39 +414,26 @@ function readGatewayEnvironment(request: AgentExecutionRunOpenRequest): Readonly
     : { environment: undefined, hasGatewayKey: false };
 }
 
-function readFailureCode(result: Extract<DeepSecReviewRunResult, { result: unknown }>['result']): string {
-  const observed = result.termination.observed;
-  return observed.kind === 'exit' ? String(observed.exitCode) : observed.kind === 'signal' ? observed.signal : 'unknown';
-}
-
 function createRuntime(
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
   context: AgentRuntimeContext,
 ): AgentExecutionRunRuntime {
-  const abortController = new AbortController();
-  const signal = AbortSignal.any([context.signal, abortController.signal]);
-  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
-  const history: AgentExecutionRunEvent[] = [];
-  let sequence = 0;
-  let terminal = false;
-  let disposed = false;
-
-  function emit(event: EventInput): void {
-    if (terminal) return;
-    const published = Object.freeze({
-      ...event,
-      sequence: ++sequence,
-      runId: request.runId,
-      emittedAtMs: Date.now(),
-    }) as AgentExecutionRunEvent;
-    history.push(published);
-    for (const listener of listeners) listener(published);
-    terminal = event.kind === 'run-complete' || event.kind === 'run-failed' || event.kind === 'run-cancelled';
-  }
-
-  async function execute(): Promise<void> {
-    emit({ kind: 'run-start' });
-    try {
+  return createFiniteExecutionRunHostRuntime({
+    request,
+    signal: context.signal,
+    unsupportedSendDiagnostic: {
+      code: 'deepsec_follow_up_unsupported',
+      severity: 'error',
+      message: 'DeepSec execution runs are single-shot',
+    },
+    mapFailure(error) {
+      return {
+        code: 'deepsec_execution_failed',
+        severity: 'error',
+        message: error instanceof Error ? error.message : 'DeepSec execution failed',
+      };
+    },
+    async execute({ signal, emit }) {
       if (context.services.availability('exec').status !== 'available') {
         throw new Error('DeepSec execution requires the host process service');
       }
@@ -448,8 +462,7 @@ function createRuntime(
           channel: 'assistant',
           text: createOutput({ runId: request.runId, findings: normalizeDeepSecFindings([]), runResult }),
         });
-        emit({ kind: 'run-complete' });
-        return;
+        return { status: 'complete' };
       }
       const agentCli = await resolveAgentCliReadiness({
         context,
@@ -477,15 +490,16 @@ function createRuntime(
         signal,
       });
       if (signal.aborted) {
-        emit({ kind: 'run-cancelled' });
-        return;
+        return { status: 'cancelled' };
       }
       if (runResult.status === 'requires_confirmation') {
         emit({
           kind: 'output-delta',
           channel: 'assistant',
           text: JSON.stringify({
-            runRef: { runId: request.runId, callId: `deepsec:${request.runId}` },
+            runRef: { runId: request.runId, callId: `deepsec:${request.runId}`, backendId: 'deepsec' },
+            status: 'failed',
+            error: { code: 'deepsec_confirmation_required' },
             summary: 'DeepSec review requires confirmation.',
             overviewMarkdown: 'DeepSec review requires confirmation before launch.',
             findings: [],
@@ -495,65 +509,12 @@ function createRuntime(
             warning: runResult.warning,
           }),
         });
-        emit({ kind: 'run-complete' });
-        return;
+        return { status: 'complete' };
       }
 
       const findings = normalizeDeepSecFindings(parseDeepSecCommentOutMarkdown(runResult.commentOutMarkdown));
       emit({ kind: 'output-delta', channel: 'assistant', text: createOutput({ runId: request.runId, findings, runResult }) });
-      if (runResult.status === 'failed') {
-        throw new Error(`DeepSec exited with code ${readFailureCode(runResult.result)}`);
-      }
-      emit({ kind: 'run-complete' });
-    } catch (error) {
-      if (signal.aborted) {
-        emit({ kind: 'run-cancelled' });
-        return;
-      }
-      emit({
-        kind: 'run-failed',
-        diagnostic: {
-          code: 'deepsec_execution_failed',
-          severity: 'error',
-          message: error instanceof Error ? error.message : 'DeepSec execution failed',
-        },
-      });
-    }
-  }
-
-  const execution = execute();
-  void execution.catch(() => undefined);
-  return Object.freeze({
-    async send() {
-      return {
-        status: 'unsupported' as const,
-        diagnostic: {
-          code: 'deepsec_follow_up_unsupported',
-          severity: 'error' as const,
-          message: 'DeepSec execution runs are single-shot',
-        },
-      };
-    },
-    async stop() {
-      if (terminal) return { status: 'notRunning' as const };
-      abortController.abort(new Error('DeepSec execution run stopped'));
-      return { status: 'requested' as const };
-    },
-    watch(listener: (event: AgentExecutionRunEvent) => void) {
-      for (const event of history) listener(event);
-      if (!terminal) listeners.add(listener);
-      return {
-        dispose() {
-          listeners.delete(listener);
-        },
-      };
-    },
-    async dispose() {
-      if (disposed) return;
-      disposed = true;
-      abortController.abort(new Error('DeepSec execution run disposed'));
-      listeners.clear();
-      await execution;
+      return { status: 'complete' };
     },
   });
 }

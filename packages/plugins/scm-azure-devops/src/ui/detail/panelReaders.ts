@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { mergeAbortSignals } from '@happier-dev/plugin-sdk/async';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
@@ -37,9 +38,10 @@ import {
  * The panel-owned readers behind the Azure DevOps detail body.
  *
  * Each reader's lifetime is the lifetime of the panel that owns its data: every
- * read is scoped to its panel's active interval, so leaving aborts the request,
- * rejects a late result, and discards every row the panel held. Nothing here
- * fetches on mount of the detail surface.
+ * read is scoped to its panel's active interval, so leaving aborts the request
+ * and rejects a late result. Discard panels clear their rows; Files retains its
+ * parsed walk and provider position exactly as its tab declaration requires.
+ * Nothing here fetches on mount of the detail surface.
  *
  * The one exception is `useAzureIterations`, which belongs to the detail ROOT
  * rather than to a tab. `Activity` and `Files` both need to know which iteration
@@ -67,9 +69,8 @@ type ExecuteResult = Readonly<{ status: string; result?: unknown; code?: string 
 /**
  * The entry the mounted surface is about, as the three fields every source Action addresses it by.
  *
- * Exported because the writes address the same entry the reads do, and they carry no routing
- * token. A second derivation beside this one is how a mutation could end up addressing a different
- * pull request than the panel showing it.
+ * Exported because the writes address the same entry the reads do. A second derivation beside this
+ * one is how a mutation could end up addressing a different pull request than the panel showing it.
  */
 export function useAzureEntryLocalRef(input: TriageDetailSurfaceInputV1) {
   const { entryRef } = input.observation;
@@ -117,20 +118,41 @@ function useAzureSettledRead<T>(
     // which is the same code path the first read takes — there is no second read
     // owner and no automatic poll.
     void attempt;
-    setState({ kind: 'loading' });
+    setState((current) => (current.kind === 'ready'
+      ? { ...current, pending: true, failure: null }
+      : { kind: 'loading' }));
     let left = false;
+    const superseded = new AbortController();
+    const mergedSignal = mergeAbortSignals([activeSignal, superseded.signal]);
+    const readSignal = mergedSignal.signal;
     void (async () => {
-      const outcome = await read(activeSignal);
-      if (left || activeSignal.aborted) return;
-      setState(outcome.kind === 'ready'
-        ? { kind: 'ready', value: outcome.value }
-        : { kind: 'unavailable', failure: outcome.failure });
+      try {
+        const outcome = await read(readSignal);
+        if (left || readSignal.aborted) return;
+        setState((current) => {
+          if (outcome.kind === 'ready') {
+            return { kind: 'ready', value: outcome.value, pending: false, failure: null };
+          }
+          return current.kind === 'ready'
+            ? { ...current, pending: false, failure: outcome.failure }
+            : { kind: 'unavailable', failure: outcome.failure };
+        });
+      } finally {
+        mergedSignal.dispose();
+      }
     })();
     return () => {
       left = true;
-      setState({ kind: 'loading' });
+      superseded.abort();
+      mergedSignal.dispose();
     };
   }, [active, activeSignal, attempt, read]);
+
+  // A discarded tab clears only when it actually leaves. Refresh supersession
+  // uses the cleanup above but deliberately keeps the last-known-good value.
+  useEffect(() => {
+    if (!active) setState({ kind: 'loading' });
+  }, [active]);
 
   const refresh = useCallback(() => {
     setAttempt((current) => current + 1);
@@ -146,6 +168,7 @@ export type AzureIterationsViewV1 = Readonly<{
   /** Absent when Azure returned none. It is never `0`. */
   currentIterationId?: number;
   omittedRowCount: number;
+  projectionTruncated: boolean;
 }>;
 
 export type AzureIterationsControllerV1 = Readonly<{
@@ -188,12 +211,13 @@ export function useAzureIterations(
     if (parsed.data.kind === 'unavailable') {
       return { kind: 'failed' as const, failure: parsed.data.failure };
     }
-    const { currentIterationId, omittedRowCount, rows } = parsed.data;
+    const { currentIterationId, omittedRowCount, projectionTruncated, rows } = parsed.data;
     return {
       kind: 'ready' as const,
       value: {
         rows,
         omittedRowCount,
+        projectionTruncated,
         ...(currentIterationId === undefined ? {} : { currentIterationId }),
       },
     };
@@ -216,10 +240,18 @@ type PageReader<TRow> = (
 ) => Promise<Readonly<{ kind: 'page'; page: AzurePagedPageV1<TRow> }>
 | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>>;
 
+type AzurePagedWalkOptionsV1 = Readonly<{
+  /** Retain the parsed walk while the tab is inactive. Its in-flight read is still aborted. */
+  retainOnDeactivate?: boolean;
+  /** A provider identity change invalidates a retained walk. */
+  resetKey?: string | number;
+}>;
+
 function useAzurePagedWalk<TRow>(
   readPage: PageReader<TRow>,
   enabled: boolean,
   disabledFailure: TriageSourceFailureV1,
+  options: AzurePagedWalkOptionsV1 = {},
 ): AzurePagedControllerV1<TRow> {
   const [state, dispatch] = useReducer(
     azurePagedReducer<TRow>,
@@ -229,30 +261,70 @@ function useAzurePagedWalk<TRow>(
   const { active, activeSignal } = useTabPanelActivity();
   const interval = useRef<AbortSignal | null>(null);
   const requested = useRef<Set<string>>(new Set());
+  const inFlight = useRef<AbortController | null>(null);
   /** Monotonic across the panel's whole life, never derived from the reducer. */
   const nextToken = useRef(0);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const resetKey = options.resetKey;
+  const retainOnDeactivate = options.retainOnDeactivate === true;
+  const previousResetKey = useRef<string | number | undefined>(undefined);
 
   const runPage = useCallback(async (
     token: number,
     cursor: string | null,
     pageSignal: AbortSignal,
+    replaceRows: boolean,
   ): Promise<void> => {
+    const superseded = new AbortController();
+    inFlight.current = superseded;
+    const mergedSignal = mergeAbortSignals([pageSignal, superseded.signal]);
+    const requestSignal = mergedSignal.signal;
     dispatch({ kind: 'requestStarted', token });
-    const outcome = await readPage(cursor, pageSignal);
-    if (pageSignal.aborted) return;
-    if (outcome.kind === 'failed') {
-      dispatch({ kind: 'pageFailed', token, failure: outcome.failure });
-      return;
+    try {
+      const outcome = await readPage(cursor, requestSignal);
+      if (requestSignal.aborted) return;
+      if (inFlight.current === superseded) inFlight.current = null;
+      if (outcome.kind === 'failed') {
+        dispatch({ kind: 'pageFailed', token, failure: outcome.failure });
+        return;
+      }
+      const repeatedContinuation = outcome.page.continuation !== null
+        && requested.current.has(outcome.page.continuation);
+      if (replaceRows) {
+        dispatch({ kind: 'panelLeft' });
+        dispatch({ kind: 'requestStarted', token });
+      }
+      dispatch({
+        kind: 'pageSettled',
+        token,
+        page: repeatedContinuation
+          ? { ...outcome.page, continuation: null }
+          : outcome.page,
+      });
+      if (repeatedContinuation) {
+        dispatch({
+          kind: 'pageFailed',
+          token,
+          failure: {
+            class: 'unsupportedContract',
+            code: 'azure-devops/detail-continuation-non-progress',
+          },
+        });
+      }
+    } finally {
+      mergedSignal.dispose();
     }
-    dispatch({ kind: 'pageSettled', token, page: outcome.page });
   }, [readPage]);
 
-  const startWalk = useCallback((pageSignal: AbortSignal): void => {
+  const startWalk = useCallback((pageSignal: AbortSignal, replaceRows: boolean): void => {
+    inFlight.current?.abort();
+    inFlight.current = null;
     requested.current = new Set();
-    dispatch({ kind: 'panelLeft' });
+    if (!replaceRows) dispatch({ kind: 'panelLeft' });
     nextToken.current += 1;
     if (enabled) {
-      void runPage(nextToken.current, null, pageSignal);
+      void runPage(nextToken.current, null, pageSignal, replaceRows);
       return;
     }
     // A plane with nothing to address settles as unavailable NAMING itself,
@@ -265,13 +337,24 @@ function useAzurePagedWalk<TRow>(
   useEffect(() => {
     if (!active) return undefined;
     interval.current = activeSignal;
-    startWalk(activeSignal);
+    const keyChanged = previousResetKey.current !== resetKey;
+    previousResetKey.current = resetKey;
+    if (
+      !retainOnDeactivate
+      || keyChanged
+      || stateRef.current.kind !== 'ready'
+      || stateRef.current.pending
+    ) {
+      startWalk(activeSignal, false);
+    }
     return () => {
+      inFlight.current?.abort();
+      inFlight.current = null;
       interval.current = null;
       requested.current = new Set();
-      dispatch({ kind: 'panelLeft' });
+      if (!retainOnDeactivate) dispatch({ kind: 'panelLeft' });
     };
-  }, [active, activeSignal, startWalk]);
+  }, [active, activeSignal, resetKey, retainOnDeactivate, startWalk]);
 
   const loadMore = useCallback(() => {
     const pageSignal = interval.current;
@@ -280,13 +363,13 @@ function useAzurePagedWalk<TRow>(
     if (requested.current.has(next)) return;
     requested.current.add(next);
     nextToken.current += 1;
-    void runPage(nextToken.current, next, pageSignal);
+    void runPage(nextToken.current, next, pageSignal, false);
   }, [runPage, state.canLoadMore, state.continuation, state.pending]);
 
   const refresh = useCallback(() => {
     const pageSignal = interval.current;
     if (pageSignal === null || state.pending) return;
-    startWalk(pageSignal);
+    startWalk(pageSignal, true);
   }, [startWalk, state.pending]);
 
   return useMemo(() => ({ state, loadMore, refresh }), [loadMore, refresh, state]);
@@ -331,7 +414,7 @@ export function useAzureCommits(
         omittedRowCount: page.omittedRowCount,
         projectionTruncated: page.projectionTruncated,
         continuation: page.continuationToken ?? null,
-        incomplete: null,
+        incomplete: page.incomplete ?? null,
       },
     };
   }, [entry, execute]);
@@ -393,7 +476,6 @@ export function useAzureIterationChanges(
         return { kind: 'failed' as const, failure: parsed.data.failure };
       }
       const page = parsed.data;
-      const { nextSkip, nextTop } = page;
       return {
         kind: 'page' as const,
         page: {
@@ -402,9 +484,9 @@ export function useAzureIterationChanges(
           projectionTruncated: page.projectionTruncated,
           // Present together or absent together: half a position would have to
           // be completed by guessing, which is the defect this rule prevents.
-          continuation: nextSkip === undefined || nextTop === undefined
-            ? null
-            : encodeAzureChangesPosition({ nextSkip, nextTop }),
+          continuation: 'nextSkip' in page
+            ? encodeAzureChangesPosition({ nextSkip: page.nextSkip, nextTop: page.nextTop })
+            : null,
           incomplete: null,
         },
       };
@@ -412,7 +494,10 @@ export function useAzureIterationChanges(
     [entry, execute, iterationId],
   );
 
-  return useAzurePagedWalk(readPage, iterationId !== undefined, ITERATION_UNAVAILABLE);
+  return useAzurePagedWalk(readPage, iterationId !== undefined, ITERATION_UNAVAILABLE, {
+    retainOnDeactivate: true,
+    ...(iterationId === undefined ? {} : { resetKey: iterationId }),
+  });
 }
 
 /* ------------------------------------------------------------------ policies */
@@ -422,6 +507,7 @@ export type AzurePoliciesViewV1 = Readonly<{
   evaluations: readonly AzureProjectedPolicyEvaluationRowV1[];
   evaluationsPartial: boolean;
   omittedRowCount: number;
+  projectionTruncated: boolean;
 }>;
 
 export function useAzurePolicies(
@@ -451,10 +537,16 @@ export function useAzurePolicies(
     if (parsed.data.kind === 'unavailable') {
       return { kind: 'failed' as const, failure: parsed.data.failure };
     }
-    const { evaluations, evaluationsPartial, omittedRowCount, statuses } = parsed.data;
+    const {
+      evaluations,
+      evaluationsPartial,
+      omittedRowCount,
+      projectionTruncated,
+      statuses,
+    } = parsed.data;
     return {
       kind: 'ready' as const,
-      value: { statuses, evaluations, evaluationsPartial, omittedRowCount },
+      value: { statuses, evaluations, evaluationsPartial, omittedRowCount, projectionTruncated },
     };
   }, [entry, execute]);
 
@@ -466,6 +558,7 @@ export function useAzurePolicies(
 export type AzureThreadsViewV1 = Readonly<{
   rows: readonly AzureProjectedThreadRowV1[];
   omittedRowCount: number;
+  projectionTruncated: boolean;
 }>;
 
 /**
@@ -502,8 +595,8 @@ export function useAzureThreads(
     if (parsed.data.kind === 'unavailable') {
       return { kind: 'failed' as const, failure: parsed.data.failure };
     }
-    const { omittedRowCount, rows } = parsed.data;
-    return { kind: 'ready' as const, value: { rows, omittedRowCount } };
+    const { omittedRowCount, projectionTruncated, rows } = parsed.data;
+    return { kind: 'ready' as const, value: { rows, omittedRowCount, projectionTruncated } };
   }, [entry, execute]);
 
   return useAzureSettledRead(read, active, activeSignal);

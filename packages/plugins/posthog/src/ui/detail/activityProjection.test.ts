@@ -6,7 +6,6 @@ import {
     type PosthogRawActivityRecord,
 } from '../../api/types/activity.js';
 import {
-    POSTHOG_ACTIVITY_BOUNDS_V1,
     POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
     projectPosthogActivityRecords,
 } from './activityProjection.js';
@@ -16,7 +15,7 @@ function projectFixture() {
     if (envelope === null) {
         throw new Error('recorded activity fixture must satisfy the strict envelope');
     }
-    return projectPosthogActivityRecords(envelope.rawRecords, POSTHOG_ACTIVITY_BOUNDS_V1);
+    return projectPosthogActivityRecords(envelope.rawRecords);
 }
 
 /** Every string anywhere inside a projected value, for leak detection. */
@@ -81,12 +80,12 @@ describe('projectPosthogActivityRecords', () => {
             rawDetail: null,
         };
 
-        const [projected] = projectPosthogActivityRecords([raw], POSTHOG_ACTIVITY_BOUNDS_V1);
+        const [projected] = projectPosthogActivityRecords([raw]);
 
         expect(projected?.actor).toBe('nameless@example.invalid');
     });
 
-    it('bounds a pathological record and says so rather than dropping it', () => {
+    it('does not silently shorten provider fields to source-invented presentation budgets', () => {
         const raw: PosthogRawActivityRecord = {
             id: 'x'.repeat(4_096),
             activity: 'a'.repeat(4_096),
@@ -98,15 +97,11 @@ describe('projectPosthogActivityRecords', () => {
             },
         };
 
-        const [projected] = projectPosthogActivityRecords([raw], POSTHOG_ACTIVITY_BOUNDS_V1);
+        const [projected] = projectPosthogActivityRecords([raw]);
 
-        expect(projected?.truncated).toBe(true);
-        expect(projected?.changedFields.length)
-            .toBe(POSTHOG_ACTIVITY_BOUNDS_V1.maxChangedFieldsPerRecord);
-        expect(new TextEncoder().encode(projected?.activity ?? '').length)
-            .toBeLessThanOrEqual(POSTHOG_ACTIVITY_BOUNDS_V1.activityUtf8Bytes);
-        expect(new TextEncoder().encode(projected?.actor ?? '').length)
-            .toBeLessThanOrEqual(POSTHOG_ACTIVITY_BOUNDS_V1.actorUtf8Bytes);
+        expect(projected?.changedFields).toHaveLength(64);
+        expect(projected?.activity).toBe('a'.repeat(4_096));
+        expect(projected?.actor).toBe('n'.repeat(4_096));
     });
 
     it('projects provider text through the published single-line rule', () => {
@@ -118,17 +113,15 @@ describe('projectPosthogActivityRecords', () => {
             rawDetail: { changes: [{ field: 'sta\r\ntus' }] },
         };
 
-        const [projected] = projectPosthogActivityRecords([raw], POSTHOG_ACTIVITY_BOUNDS_V1);
+        const [projected] = projectPosthogActivityRecords([raw]);
 
         // A control run is collapsed by the contract's own owner, not by a rule this
         // source restates: a name or field carrying one stays readable on one line.
         expect(projected?.actor).toBe('Dana O kafor');
         expect(projected?.changedFields).toEqual(['sta tus']);
-        // Collapsing is not truncation: no content was lost.
-        expect(projected?.truncated).toBeUndefined();
     });
 
-    it('keeps a whole saturated activity page inside the Action byte gate', () => {
+    it('projects a whole provider-default activity page without imposing a cumulative cap', () => {
         const saturated: readonly PosthogRawActivityRecord[] = Array.from(
             { length: POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT },
             (_unused, index) => ({
@@ -144,11 +137,8 @@ describe('projectPosthogActivityRecords', () => {
             }),
         );
 
-        const projected = projectPosthogActivityRecords(saturated, POSTHOG_ACTIVITY_BOUNDS_V1);
-        const bytes = new TextEncoder().encode(JSON.stringify(projected)).length;
-
-        // The strict Action aggregate rejects a result over 1 MiB, and a rejected page
-        // shows a reader nothing at all.
-        expect(bytes).toBeLessThan(1_024 * 1_024);
+        const projected = projectPosthogActivityRecords(saturated);
+        expect(projected).toHaveLength(POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT);
+        expect(collectStrings(projected)).toContain('a'.repeat(4_096));
     });
 });

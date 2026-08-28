@@ -1,6 +1,4 @@
 import type {
-  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
-  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
   HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
   HostingProviderPullRequestGetInput as ScmHostingProviderPullRequestGetInput,
   HostingProviderPullRequestListInput as ScmHostingProviderPullRequestListInput,
@@ -45,6 +43,7 @@ import {
 } from './mapping.js';
 
 export type AzureDevopsOperationsAdapter = typeof azureDevopsHostingProviderAdapter & ScmHostingProviderRuntimeAdapter & Readonly<{
+  getPullRequestAuthProfileKey(input: Readonly<{ provider: ScmHostingProviderRef }>): string | null;
   listPullRequests(input: ScmHostingProviderPullRequestListInput): Promise<readonly ScmPullRequestSummary[]>;
   getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null>;
   createPullRequest(input: ScmHostingProviderPullRequestCreateInput): Promise<ScmPullRequestSummary>;
@@ -52,7 +51,6 @@ export type AzureDevopsOperationsAdapter = typeof azureDevopsHostingProviderAdap
     pullRequest: ScmPullRequestSummary;
     reused: boolean;
   }>>;
-  getDefaultBranch(input: ScmHostingProviderDefaultBranchInput): Promise<ScmHostingProviderDefaultBranchMetadata>;
   describePublishTargets(
     input: ScmHostingProviderRepositoryDescribePublishTargetsInput
   ): Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
@@ -377,6 +375,9 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
 
   return Object.freeze({
     ...azureDevopsHostingProviderAdapter,
+    getPullRequestAuthProfileKey() {
+      return null;
+    },
     listPullRequests,
     getPullRequest,
     createPullRequest,
@@ -433,25 +434,6 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
         if (listedAfterDuplicate) return { pullRequest: listedAfterDuplicate, reused: true };
         throw error;
       }
-    },
-    async getDefaultBranch(input: ScmHostingProviderDefaultBranchInput) {
-      const coordinates = readAzureDevopsRepositoryCoordinates(input.provider);
-      const raw = await runAzJson({
-        args: [
-          'repos',
-          'show',
-          ...baseArgs(input.provider),
-          '--output',
-          'json',
-        ],
-        ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
-      });
-      const repository = mapAzureRepositorySummary({
-        provider: input.provider,
-        raw,
-        repositoryName: coordinates.repository,
-      });
-      return { name: repository?.defaultBranch ?? 'main' };
     },
     async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
       const detection = await detectAzureDevopsCliAuth({

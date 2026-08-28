@@ -17,8 +17,8 @@ import {
 } from '../../corpus/testkit/corpusCollections.test-support.js';
 import { deriveUserMarkTag } from '../../corpus/identity/tags.js';
 import { testkitEntryRef } from '../../corpus/testkit/observations.test-support.js';
+import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../../projection/listWindow.js';
 import {
-    TRIAGE_PINNED_PAGE_LIMIT_V1,
     readTriagePinnedEntries,
     submitTriagePin,
     type TriageMarkHostV1,
@@ -187,7 +187,7 @@ describe('the surface Pin/Unpin command', () => {
         const fixture = createTestkitCorpusCollections();
         let clock = 1_000;
         const host = createMarkHost(fixture, () => clock);
-        const total = TRIAGE_PINNED_PAGE_LIMIT_V1 + 1;
+        const total = MAX_TRIAGE_LIST_WINDOW_ROWS_V1 + 1;
         for (let index = 0; index < total; index += 1) {
             clock = 1_000 + index;
             await submitTriagePin(host, {
@@ -198,7 +198,7 @@ describe('the surface Pin/Unpin command', () => {
         }
 
         const first = await readTriagePinnedEntries(host);
-        expect(first.pins).toHaveLength(TRIAGE_PINNED_PAGE_LIMIT_V1);
+        expect(first.pins).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(first.nextCursor).toBeDefined();
         // The oldest pin is the one the bound leaves out, so it is the one that
         // has to be reachable.
@@ -213,7 +213,7 @@ describe('the surface Pin/Unpin command', () => {
         expect(await submitTriagePin(host, { pinned: false, entryRef: testkitEntryRef({ entryId: '0' }) }))
             .toEqual({ v: 1, status: 'unpinned' });
         const afterUnpin = await readTriagePinnedEntries(host);
-        expect(afterUnpin.pins).toHaveLength(TRIAGE_PINNED_PAGE_LIMIT_V1);
+        expect(afterUnpin.pins).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
         expect(afterUnpin.nextCursor).toBeUndefined();
     });
 

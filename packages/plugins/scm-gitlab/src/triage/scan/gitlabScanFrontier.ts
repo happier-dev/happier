@@ -17,8 +17,15 @@
  * exists spends the user's quota to learn something the `Link` header already says.
  */
 
-import type { GitlabConfiguredOrigin } from '../origin.js';
-import { buildGitlabApiUrl, requestGitlabJson } from '../http/gitlabClient.js';
+import {
+  advanceCursorCycleWalkV1,
+  type CursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
+import {
+  buildGitlabApiUrl,
+  GITLAB_REST_MAX_PAGE_SIZE,
+  requestGitlabJson,
+} from '../http/gitlabClient.js';
 import type {
   GitlabAuthorizedInvocation,
   GitlabHttpFetcher,
@@ -34,10 +41,11 @@ import type {
   GitlabWalkReason,
 } from '../mapping/gitlabInvolvement.js';
 import { projectGitlabScanHealth } from '../mapping/gitlabInvolvement.js';
+import type { GitlabConfiguredOrigin } from '../origin.js';
 import type { GitlabFailure, GitlabMappedEntry } from '../types.js';
 
-/** GitLab caps REST `per_page` at 100. */
-export const GITLAB_MAX_NATIVE_PAGE_SIZE = 100;
+/** The provider maximum used to derive one scan walk's fixed native geometry. */
+export const GITLAB_MAX_NATIVE_PAGE_SIZE = GITLAB_REST_MAX_PAGE_SIZE;
 
 /**
  * The one derivation of this walk's fixed provider page size.
@@ -56,6 +64,8 @@ export type GitlabLaneFrontier = {
   readonly request: GitlabLaneRequest;
   nextUrl: string;
   ended: boolean;
+  /** Constant-space evidence that this provider walk has not revisited a URL. */
+  cycleProbe: CursorCycleProbeV1;
 };
 
 export type GitlabScanFrontier = Readonly<{
@@ -83,18 +93,24 @@ export function createGitlabScanFrontier(input: Readonly<{
     nativePageSize,
     nextLaneIndex: 0,
     walkHealth: new Set(input.walkHealth ?? []),
-    lanes: input.lanes.map((request) => ({
-      request,
-      nextUrl: buildGitlabApiUrl(input.origin, request.path, [
+    lanes: input.lanes.map((request) => {
+      const nextUrl = buildGitlabApiUrl(input.origin, request.path, [
         ...request.query,
         ['per_page', String(nativePageSize)],
         // Newest-first is the ordering the surface reads; it is fixed for the whole
         // invocation so a later page cannot silently re-sort the walk.
         ['order_by', 'updated_at'],
         ['sort', 'desc'],
-      ]),
-      ended: false,
-    })),
+      ]);
+      const initialized = advanceCursorCycleWalkV1(null, nextUrl);
+      if (initialized.kind !== 'advanced') throw new Error('an initial cursor cannot be revisited');
+      return {
+        request,
+        nextUrl,
+        ended: false,
+        cycleProbe: initialized.walk.probe,
+      };
+    }),
   };
 }
 
@@ -222,8 +238,15 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
       result.response.headers,
       input.invocation.origin.normalized,
     );
-    if (selection.kind === 'next') {
-      lane.nextUrl = selection.url;
+    const advanced = selection.kind === 'next'
+      ? advanceCursorCycleWalkV1(
+        { cursor: lane.nextUrl, probe: lane.cycleProbe },
+        selection.url,
+      )
+      : null;
+    if (selection.kind === 'next' && advanced?.kind === 'advanced') {
+      lane.nextUrl = advanced.walk.cursor;
+      lane.cycleProbe = advanced.walk.probe;
     } else {
       lane.ended = true;
       // GitLab named a next page this invocation may not follow — a cross-origin or
@@ -231,7 +254,9 @@ export async function runGitlabScan(input: GitlabScanInput): Promise<GitlabScanR
       // UNFINISHED, and a lane that stopped unfinished is not a lane that ran out.
       // Without this the walk settles `complete`/`walkFinished` and tells the reader
       // their inbox is whole over a lane that was cut off.
-      if (selection.kind === 'refused') frontier.walkHealth.add('lane-unresolved');
+      if (selection.kind === 'refused' || selection.kind === 'next') {
+        frontier.walkHealth.add('lane-unresolved');
+      }
     }
   }
 

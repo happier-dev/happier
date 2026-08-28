@@ -4,7 +4,7 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { Text, defineUiSurface, type ComposerRefV1 } from '@happier-dev/plugin-ui';
+import { Text, defineUiSurface, useComposer, type ComposerRefV1 } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { useTriageBoundComposer } from './useBoundComposer.js';
@@ -30,7 +30,11 @@ function sessionIdOf(ref: ComposerRefV1): string {
 }
 
 /** Every committed render, as the pair the invariant is about. */
-type CommittedFrame = Readonly<{ mountedOn: string; wrote: string | null }>;
+type CommittedFrame = Readonly<{
+    mountedOn: string;
+    wrote: string | null;
+    current: string | null;
+}>;
 
 const mounted: PluginUiTestkit[] = [];
 
@@ -44,10 +48,12 @@ async function mountBinding(): Promise<Readonly<{
     function Harness(): React.ReactElement {
         const [composer, setState] = React.useState<ComposerRefV1>(COMPOSER_A);
         setComposer = setState;
+        const current = useComposer().current();
         const handle = useTriageBoundComposer(composer);
         frames.push(Object.freeze({
             mountedOn: sessionIdOf(composer),
             wrote: handle === null ? null : sessionIdOf(handle.ref),
+            current: current === null ? null : sessionIdOf(current.ref),
         }));
         return <Text value="bound" variant="label" />;
     }
@@ -86,10 +92,14 @@ afterEach(async () => {
 });
 
 describe('useTriageBoundComposer', () => {
-    it('binds the exact scope it was mounted on', async () => {
+    it('binds the exact scope outside a Composer-bound mount while current remains null', async () => {
         const binding = await mountBinding();
 
-        expect(binding.frames.at(-1)).toEqual({ mountedOn: 'session-a', wrote: 'session-a' });
+        expect(binding.frames.at(-1)).toEqual({
+            mountedOn: 'session-a',
+            wrote: 'session-a',
+            current: null,
+        });
     });
 
     it('never hands the previous scope handle to a replacement scope', async () => {
@@ -103,6 +113,10 @@ describe('useTriageBoundComposer', () => {
         expect(binding.frames.filter((frame) => (
             frame.wrote !== null && frame.wrote !== frame.mountedOn
         ))).toEqual([]);
-        expect(binding.frames.at(-1)).toEqual({ mountedOn: 'session-b', wrote: 'session-b' });
+        expect(binding.frames.at(-1)).toEqual({
+            mountedOn: 'session-b',
+            wrote: 'session-b',
+            current: null,
+        });
     });
 });

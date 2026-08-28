@@ -1087,7 +1087,6 @@ describe('Channels core activation', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           policy: { resultDelivery: 'finalResult' },
         },
         linkPreviewPolicy: 'suppress',
@@ -1107,10 +1106,10 @@ describe('Channels core activation', () => {
       automationRunId: 'run-1',
       resultId: 'handoff-1',
       automationId: 'automation-1',
-      templateVersion: 3,
       resultDelivery: 'finalResult',
     } as const;
     const context: PluginInvocationContext = {
+      invokedAtMs: 1_700_000_000_000,
       plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
       contribution: {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.automationResultDeliver,
@@ -1121,7 +1120,11 @@ describe('Channels core activation', () => {
         kind: 'automationRun',
         automationId: 'automation-1',
         runId: 'run-1',
-        origin: 'conversation',
+        cause: {
+          kind: 'conversation',
+          occurrenceKey: 'conversation:binding:message-1',
+          occurredAt: 1_700_000_000_000,
+        },
       },
       signal: new AbortController().signal,
       services: { storage } as unknown as PluginServices,
@@ -1179,7 +1182,7 @@ describe('Channels core activation', () => {
     }
   });
 
-  it('updates one retained connection through its guarded row CAS and lets the provider list/read projection reread only the current snapshot', async () => {
+  it('updates one retained connection through its guarded row CAS while preserving recovery attention and withholding provider reconciliation', async () => {
     const connectionId = 'connection-update-1';
     const updatedBatches: Array<readonly MutableChannelStateMutation[]> = [];
     let abortDuringConnectionGet: AbortController | null = null;
@@ -1296,7 +1299,7 @@ describe('Channels core activation', () => {
             payload: expect.objectContaining({
               authorityEpoch: 5,
               enabled: false,
-              historyGap: null,
+              historyGap: initialPayload.historyGap,
               maximumObservationAgeMs: 120_000,
               observationAgeExpansionFloorOccurredAt: expect.any(Number),
             }),
@@ -1316,7 +1319,7 @@ describe('Channels core activation', () => {
         ...initialPayload,
         authorityEpoch: 5,
         enabled: false,
-        historyGap: null,
+        historyGap: initialPayload.historyGap,
         maximumObservationAgeMs: 120_000,
         observationAgeExpansionFloorOccurredAt,
       });
@@ -1338,7 +1341,7 @@ describe('Channels core activation', () => {
           deletionState: 'none',
           maximumObservationAgeMs: 120_000,
           attention: {
-            historyGap: null,
+            historyGap: initialPayload.historyGap,
             providerReadiness: null,
             ingressConflict: null,
             pollFailure: null,
@@ -1351,23 +1354,9 @@ describe('Channels core activation', () => {
       }));
       observation.dispose();
 
-      const expectedSnapshot = {
-        [connectionId]: {
-          v: 1,
-          connectionId,
-          providerConnectionKey: initialPayload.providerConnectionKey,
-          providerConfigVersion: 1,
-          providerConfig: initialPayload.providerConfig,
-          credentialRef: null,
-          authorityEpoch: 5,
-          enabled: false,
-          deletionState: 'none',
-          requiresFullSharedMessageContent: false,
-        },
-      };
       await expect(reconciler.invokeAction('reconcile', {})).resolves.toEqual({
-        list: expectedSnapshot,
-        read: expectedSnapshot,
+        list: {},
+        read: {},
       });
 
       const writeCountAfterSuccess = updatedBatches.length;
@@ -2451,6 +2440,7 @@ describe('Channels core activation', () => {
       },
     });
     const initial = reconciliationConnection(connectionId);
+    const historyGap = { reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable' as const };
     collection.rows.set(connectionId, {
       rowId: connectionId,
       revision: 4,
@@ -2458,7 +2448,7 @@ describe('Channels core activation', () => {
         ...initial,
         payload: {
           ...initial.payload,
-          historyGap: { reportedAt: 1_700_000_000_000, reason: 'providerHistoryUnavailable' },
+          historyGap,
           maximumObservationAgeMs: 120_000,
         },
       },
@@ -2495,7 +2485,7 @@ describe('Channels core activation', () => {
             payload: expect.objectContaining({
               authorityEpoch: 5,
               enabled: false,
-              historyGap: null,
+              historyGap,
               maximumObservationAgeMs: 120_000,
             }),
           }),
@@ -2507,7 +2497,7 @@ describe('Channels core activation', () => {
           payload: {
             authorityEpoch: 5,
             enabled: false,
-            historyGap: null,
+            historyGap,
             maximumObservationAgeMs: 120_000,
           },
         },
@@ -3242,6 +3232,7 @@ describe('Channels core activation', () => {
       account: { collection: () => collection },
     } as unknown as PluginServices['storage'];
     const context: PluginInvocationContext = {
+      invokedAtMs: 1_700_000_000_000,
       plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
       contribution: {
         id: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,

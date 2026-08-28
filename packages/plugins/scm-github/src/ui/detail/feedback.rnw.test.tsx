@@ -5,13 +5,16 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_PLUGIN_ID,
 } from '../../observations/githubProviderContracts.js';
-import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
+import {
+  GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
+} from '../../triage/contribution.js';
 
 import { renderSurface } from '../renderSurface.js';
 
@@ -31,6 +34,7 @@ const HEAD_REVISION = '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29';
 function launchInput(
   kindId: 'pull-request' | 'issue',
   facts: readonly JsonValue[] = [],
+  linkedSessions: readonly JsonValue[] = [],
 ): JsonValue {
   return {
     v: 1,
@@ -73,7 +77,7 @@ function launchInput(
       },
       viewer: { involvement: ['reviewRequested'] },
     },
-    linkedSessions: [],
+    linkedSessions,
   } as JsonValue;
 }
 
@@ -100,7 +104,18 @@ const answers: {
 };
 
 const dispatched: string[] = [];
+const mutationInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
+
+function withFeedbackPageEvidence(value: JsonValue): JsonValue {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  if (value.kind === 'unavailable') return value;
+  return {
+    ...value,
+    omittedRowCount: value.omittedRowCount ?? 0,
+    projectionTruncated: value.projectionTruncated ?? false,
+  } as JsonValue;
+}
 
 async function mountFeedback(input: JsonValue): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
@@ -118,15 +133,67 @@ async function mountFeedback(input: JsonValue): Promise<PluginUiTestkit> {
       launchInput: input,
       handlers: {
         executeAction: async ({ action, input: actionInput }) => {
+          if (action === 'reviews.comments.list') {
+            dispatched.push(action);
+            return {
+              items: [{
+                id: 'review-comment-1',
+                body: 'Please keep the returned error.',
+                serverRevision: 3,
+                anchor: { kind: 'file', filePath: 'src/pump.ts' },
+                snapshot: {
+                  kind: 'text',
+                  selectedLines: ['return error;'],
+                  beforeContext: [],
+                  afterContext: [],
+                  selectedLinesHash: 'selected-hash',
+                  contextWindowHash: 'context-hash',
+                  capturedAt: OBSERVED_AT_MS,
+                  fileLength: 80,
+                  source: 'committed',
+                  commitSha: HEAD_REVISION,
+                  isUncommitted: false,
+                  isUntracked: false,
+                  truncated: false,
+                  hasBidiControls: false,
+                  likelyMinified: false,
+                },
+                linkedRefs: [{
+                  kind: 'pullRequest',
+                  url: 'https://github.com/octo-org/example-app/pull/1284',
+                }],
+              }],
+              cursor: null,
+            } as JsonValue;
+          }
           const localId = (action as { localId: string }).localId;
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback) {
             const connection = (actionInput as { connection: keyof typeof answers }).connection;
             dispatched.push(`${localId}:${connection}`);
-            return answers[connection];
+            return withFeedbackPageEvidence(answers[connection]);
           }
           dispatched.push(localId);
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks) {
             return answers.checks;
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution) {
+            mutationInputs.push(actionInput);
+            return { kind: 'applied', effect: 'changed' };
+          }
+          if (localId === GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadReply) {
+            mutationInputs.push(actionInput);
+            return {
+              kind: 'settled',
+              publication: {
+                publicationPlanId: 'P'.repeat(43),
+                entries: [{
+                  happierCommentId: 'review-comment-1',
+                  publicationCorrelationId: 'C'.repeat(43),
+                  outcome: { kind: 'uncertain' },
+                }],
+                verdict: { kind: 'notRequested' },
+              },
+            };
           }
           throw new Error(`unexpected action ${localId}`);
         },
@@ -160,6 +227,7 @@ function resetAnswers(): void {
 
 afterEach(async () => {
   dispatched.splice(0);
+  mutationInputs.splice(0);
   resetAnswers();
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -182,6 +250,11 @@ describe('the mounted GitHub Feedback plane', () => {
   });
 
   it('offers an issue Comments, and does not offer it Feedback', async () => {
+    answers.comments = {
+      kind: 'comments',
+      rows: [],
+      previousCursor: 'issue-comments-before',
+    };
     const detail = await mountFeedback(launchInput('issue'));
 
     await expect(detail.getByRole('tab', { name: 'Comments' }))
@@ -194,6 +267,29 @@ describe('the mounted GitHub Feedback plane', () => {
     expect(dispatched).toEqual([
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:comments`,
     ]);
+    await expect(detail.getByRole('button', { name: 'Show 40 earlier comments' }))
+      .resolves.toMatchObject({ role: 'button' });
+  });
+
+  it('renders envelope omissions and an unavailable continuation as partial evidence', async () => {
+    answers.comments = {
+      kind: 'comments',
+      rows: [],
+      omittedRowCount: 2,
+      projectionTruncated: true,
+      incomplete: 'continuationUnavailable',
+    };
+    const detail = await mountFeedback(launchInput('issue'));
+    await act(async () => {
+      await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
+    });
+
+    await expect(detail.getByText(
+      '0 comment(s) read. 2 row(s) on the pages read could not be understood.',
+    )).resolves.toMatchObject({ content: expect.any(String) });
+    await expect(detail.getByText(
+      'GitHub offered another page in a form this build will not follow, so this list stops here.',
+    )).resolves.toMatchObject({ content: expect.any(String) });
   });
 
   it('shows current review, request, check and conversation facts from independent reads, not the Timeline', async () => {
@@ -290,6 +386,123 @@ describe('the mounted GitHub Feedback plane', () => {
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:reviews`,
       `${GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback}:threads`,
     ].sort());
+  });
+
+  it('resolves the exact conversation from its row without asking for an internal thread id', async () => {
+    answers.threads = {
+      kind: 'threads',
+      rows: [{
+        id: 'PRRT_1',
+        isResolved: false,
+        path: 'src/pump.ts',
+        line: 42,
+        replies: [{ id: 'PRRC_1', author: 'line-reviewer', body: 'The tail is dropped.' }],
+      }],
+    };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await openFeedback(detail);
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', {
+        name: 'Resolve conversation at src/pump.ts:42',
+      }));
+    });
+
+    expect(mutationInputs).toEqual([{
+      v: 1,
+      instance: expect.any(Object),
+      localRef: {
+        kindId: 'pull-request',
+        collisionScope: 'github:1296269',
+        entryId: '1284',
+      },
+      routingToken: 'octo-org/example-app',
+      threadId: 'PRRT_1',
+      resolved: true,
+    }]);
+    await expect(detail.queryByRole('textbox', { label: 'Review thread ID' }))
+      .resolves.toBeUndefined();
+  });
+
+  it('publishes one canonical proposal into the exact conversation from its row', async () => {
+    answers.threads = {
+      kind: 'threads',
+      rows: [{
+        id: 'PRRT_1',
+        isResolved: false,
+        path: 'src/pump.ts',
+        line: 42,
+        replies: [{ id: 'PRRC_1', author: 'line-reviewer', body: 'The tail is dropped.' }],
+      }],
+    };
+    const detail = await mountFeedback(launchInput('pull-request', [], [{
+      sessionId: 'session-review-1',
+      displayTitle: 'Review this pull request',
+    }]));
+    await openFeedback(detail);
+    await vi.waitFor(async () => {
+      expect(await detail.queryByRole('radio', {
+        name: 'Please keep the returned error.',
+      })).toBeDefined();
+    }, { timeout: 5_000 });
+
+    await expect(detail.findByRole('radio', { name: 'Please keep the returned error.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Post selected reply' }));
+    });
+
+    expect(mutationInputs.at(-1)).toMatchObject({
+      threadId: 'PRRT_1',
+      publicationPlan: {
+        target: {
+          providerId: 'github',
+          configuredAccountId: 'account-1',
+          subtarget: { kindId: 'review-thread', targetId: 'PRRT_1' },
+          entryRef: {
+            sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
+            kindId: 'pull-request',
+            collisionScope: 'github:1296269',
+            entryId: '1284',
+          },
+        },
+        baseRevision: null,
+        headRevision: null,
+        entries: [{
+          happierCommentId: 'review-comment-1',
+          expectedServerRevision: 3,
+          body: 'Please keep the returned error.',
+        }],
+        verdict: null,
+      },
+    });
+    expect(dispatched.filter((action) => action === 'reviews.comments.list')).toHaveLength(1);
+  });
+
+  it('reopens the exact resolved conversation from the same row control', async () => {
+    answers.threads = {
+      kind: 'threads',
+      rows: [{
+        id: 'PRRT_2',
+        isResolved: true,
+        replies: [{ id: 'PRRC_2', author: 'reviewer', body: 'Resolved too early.' }],
+      }],
+    };
+    const detail = await mountFeedback(launchInput('pull-request'));
+    await openFeedback(detail);
+
+    const buttons = await detail.getAllByRole('button');
+    const reopen = buttons
+      .find((button) => button.name?.startsWith('Reopen conversation') === true);
+    expect(buttons.map((button) => button.name)).toContain(
+      'Reopen conversation at Review conversation',
+    );
+    await act(async () => { await detail.press(reopen!); });
+
+    expect(mutationInputs).toEqual([expect.objectContaining({
+      threadId: 'PRRT_2',
+      resolved: false,
+    })]);
   });
 
   it('keeps answered comments and checks when the reviews read cannot be made', async () => {

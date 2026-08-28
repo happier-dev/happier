@@ -69,9 +69,6 @@ export type TriagePinIntentV1 =
     }>
   | Readonly<{ pinned: false; entryRef: TriageEntryRefV1 }>;
 
-/** One bounded page, sized to the same row ceiling the list window uses. */
-export const TRIAGE_PINNED_PAGE_LIMIT_V1 = MAX_TRIAGE_LIST_WINDOW_ROWS_V1;
-
 /**
  * The two mark operations a mounted surface performs, independent of how they
  * reach the owner. The hook holds one of these and never branches on transport.
@@ -100,7 +97,7 @@ export function createDirectTriageMarksTransport(
     async read(cursor, options) {
       return await listTriagePinnedEntries({
         v: 1,
-        limit: TRIAGE_PINNED_PAGE_LIMIT_V1,
+        limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
         ...(cursor === undefined ? {} : { cursor }),
       }, {
         collections,
@@ -166,7 +163,7 @@ export async function readTriagePinnedEntries(
     TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1,
     {
       v: 1,
-      limit: TRIAGE_PINNED_PAGE_LIMIT_V1,
+      limit: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
       ...(cursor === undefined ? {} : { cursor }),
     },
     options,

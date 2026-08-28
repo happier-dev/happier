@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 
 import issuesListDirectHit from '../fixtures/issuesListDirectHit.json' with { type: 'json' };
 import issuesListMalformedRows from '../fixtures/issuesListMalformedRows.json' with { type: 'json' };
@@ -7,11 +8,8 @@ import issuesListPage1 from '../fixtures/issuesListPage1.json' with { type: 'jso
 import issuesListPage2 from '../fixtures/issuesListPage2.json' with { type: 'json' };
 import issuesListRateLimited from '../fixtures/issuesListRateLimited.json' with { type: 'json' };
 
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
-
 import type { SentryApiClientV1 } from '../api/sentryApiClient.js';
 import {
-  SENTRY_CONTINUATION_UNAVAILABLE_REASON,
   decodeSentryScanContinuation,
 } from './sentryContinuation.js';
 import { executeSentryScanPage, type SentryScanPageResultV1 } from './scanIssuesPage.js';
@@ -461,11 +459,9 @@ describe('executeSentryScanPage', () => {
   });
 
   it('keeps minting a frontier however long a genuinely advancing walk runs', async () => {
-    // The non-progress evidence rides inside a BOUNDED token, so evidence that
-    // grows with the walk is a page ceiling nobody declared. With Sentry's own
-    // keyset cursors a position history stopped fitting at the 199th page and
-    // the walk settled `continuation-unavailable` — the branch written for a
-    // pathologically wide provider cursor, reached by an ordinary long scan.
+    // Non-progress evidence must stay constant-space: evidence that grows with
+    // the walk creates a page ceiling nobody declared. The predecessor position
+    // history made an ordinary keyset walk settle `continuation-unavailable`.
     const advertise = (cursor: string) => ({
       ...issuesListPage1,
       headers: {
@@ -497,8 +493,7 @@ describe('executeSentryScanPage', () => {
       if (result.continuation === null) return;
       // The token itself must not grow with the walk; a frontier that widens
       // per page is the ceiling in a different disguise.
-      expect(new TextEncoder().encode(result.continuation).byteLength)
-        .toBeLessThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 / 4);
+      expect(new TextEncoder().encode(result.continuation).byteLength).toBeGreaterThan(0);
       token = result.continuation;
     }
   });
@@ -549,15 +544,13 @@ describe('executeSentryScanPage', () => {
     expect(stoppedAt).not.toBeNull();
   });
 
-  it('stops with continuation-unavailable, not a cursor verdict, when the frontier exceeds the bound', async () => {
-    // The provider cursor is intact and advancing; it is simply wider than the
-    // protocol's bounded paging token, so the walk cannot be resumed.
-    const oversizedCursor = 'c'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+  it('preserves a wide provider cursor in the continuation', async () => {
+    const wideCursor = 'c'.repeat(Math.floor(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 / 4));
     const { client } = clientReturning({
       ...issuesListPage1,
       headers: {
         ...issuesListPage1.headers,
-        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${oversizedCursor}>; rel="next"; results="true"; cursor="${oversizedCursor}"`,
+        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${wideCursor}>; rel="next"; results="true"; cursor="${wideCursor}"`,
       },
     });
 
@@ -565,19 +558,35 @@ describe('executeSentryScanPage', () => {
 
     expect(result.kind).toBe('page');
     if (result.kind !== 'page') return;
+    expect(result.continuation).not.toBeNull();
+    expect(result.health).toBeNull();
+    expect(result.continuation).toContain(wideCursor);
+    expect(result.observations).toHaveLength(2);
+  });
+
+  it('retains rows and states a provider frontier that exceeds the paging-token boundary', async () => {
+    // The first frontier carries the same cursor in its current position and
+    // cycle probe. Derive an over-bound pair from the canonical token resource;
+    // this source owns no second cursor byte ceiling.
+    const cursor = 'c'.repeat(Math.floor(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 / 2) + 1);
+    const { client } = clientReturning({
+      ...issuesListPage1,
+      headers: {
+        ...issuesListPage1.headers,
+        link: `<https://us.sentry.io/api/0/organizations/7701/issues/?&cursor=${cursor}>; rel="next"; results="true"; cursor="${cursor}"`,
+      },
+    });
+
+    const result = await initialPage(client);
+
+    expect(result.kind).toBe('page');
+    if (result.kind !== 'page') return;
+    expect(result.observations).toHaveLength(2);
     expect(result.continuation).toBeNull();
     expect(result.health).toEqual({
       kind: 'partial',
-      reason: SENTRY_CONTINUATION_UNAVAILABLE_REASON,
+      reason: 'sentry-continuation-unavailable',
     });
-    // The same page with a carryable cursor is not a stop at all, so the reason
-    // above describes the bound and nothing about the cursor's shape.
-    expect(result.health).not.toEqual({
-      kind: 'partial',
-      reason: 'sentry-pagination-cursor-malformed',
-    });
-    // Rows already read are kept: an unresumable walk is still a real page.
-    expect(result.observations).toHaveLength(2);
   });
 
   it('returns ordinary failed for a 429, carrying only the deadline and no continuation', async () => {

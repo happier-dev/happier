@@ -172,6 +172,7 @@ function mapReadAfterPage(
       items: [],
       nextCursor: mapped.value.nextCursor,
       boundary: mapped.value.nextCursor,
+      hasMore: false,
       diagnostics: page.diagnostics,
     });
   }
@@ -181,6 +182,7 @@ function mapReadAfterPage(
     items: mapped.value.items,
     nextCursor: mapped.value.nextCursor,
     boundary: mapped.value.items.at(-1)!.id,
+    hasMore: false,
     ...(page.diagnostics?.length ? { diagnostics: page.diagnostics } : {}),
   });
 }

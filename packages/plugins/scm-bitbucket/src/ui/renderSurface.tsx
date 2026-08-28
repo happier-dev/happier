@@ -79,6 +79,7 @@ import {
 import {
   BitbucketCommentResolutionControls,
   BitbucketMutationControls,
+  BitbucketReviewCommentReplyControls,
 } from './detail/mutations.js';
 import {
   useBitbucketActivity,
@@ -123,18 +124,22 @@ function PageFailureBanner({
 function PagedFooter({
   state,
   loadMoreTitle,
+  loadMoreTitleKey,
   onLoadMore,
   onRefresh,
   refreshLabel,
+  refreshLabelKey,
   summary,
   summaryKey,
   summaryValues,
 }: Readonly<{
   state: BitbucketPagedStateV1<unknown>;
   loadMoreTitle: string;
+  loadMoreTitleKey: string;
   onLoadMore: () => void;
   onRefresh: () => void;
   refreshLabel: string;
+  refreshLabelKey: string;
   summary: string;
   summaryKey: string;
   summaryValues: Readonly<Record<string, string | number>>;
@@ -147,14 +152,23 @@ function PagedFooter({
           variant="caption"
           tone="neutral"
           valueKey="plugins.bitbucket.ui.rowsUnreadable"
-          fallback="{count} row(s) on the pages read could not be understood."
+          fallback="{count} provider row(s) could not be included in this result."
           values={{ count: state.omittedRowCount }}
+        />
+      )}
+      {state.incomplete === null ? null : (
+        <Text
+          variant="caption"
+          tone="neutral"
+          valueKey="plugins.bitbucket.ui.paginationIncomplete"
+          fallback="Bitbucket offered another page, but this build could not carry its position, so this list stops here."
         />
       )}
       {state.canLoadMore
         ? (
           <Button
             title={loadMoreTitle}
+            titleKey={loadMoreTitleKey}
             variant="secondary"
             busy={state.pending}
             onPress={onLoadMore}
@@ -167,6 +181,7 @@ function PagedFooter({
           disabled={state.pending}
           variant="plain"
           accessibilityLabel={refreshLabel}
+          accessibilityLabelKey={refreshLabelKey}
         />
       </Row>
     </Stack>
@@ -184,6 +199,7 @@ function OverviewPanel({
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
+  const text = usePluginTranslation();
   const controller = useBitbucketOverview(input);
   const overviewResult = controller.result?.kind === 'overview' ? controller.result : null;
   const freshObservation = overviewResult?.observation.kind === 'present'
@@ -218,7 +234,10 @@ function OverviewPanel({
   const entries: readonly MetadataEntry[] = overview.fields.flatMap((field) => {
     if (field.kind === 'pending' || field.kind === 'status') return [];
     const value = fieldValueText(field, locale, nowMs);
-    return value === null ? [] : [{ label: field.label, value }];
+    return value === null ? [] : [{
+      label: text(`plugins.bitbucket.ui.field.${field.id.replace('bitbucket/', '')}`, field.label),
+      value,
+    }];
   });
 
   return (
@@ -227,10 +246,10 @@ function OverviewPanel({
         {controller.result?.kind !== 'unavailable' ? null : (
           <Banner
             tone="warning"
-            title="Showing the launch observation"
+            title={text('plugins.bitbucket.ui.overviewFallback', 'Showing the launch observation')}
             description={failureDescription(
               controller.result.failure,
-              'Bitbucket could not refresh this overview.',
+              text('plugins.bitbucket.ui.overviewRefreshFailed', 'Bitbucket could not refresh this overview.'),
             )}
           />
         )}
@@ -245,14 +264,14 @@ function OverviewPanel({
         )}
         {overview.summary === null ? null : (
           <Stack gap="small">
-            <Text variant="caption" tone="neutral" fallback="Description" />
+            <Text variant="caption" tone="neutral" valueKey="plugins.bitbucket.ui.description" fallback="Description" />
             <Text value={overview.summary} />
           </Stack>
         )}
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
-              <Status key={field.id} tone={field.tone} label={`${field.label}: ${field.value}`} />
+              <Status key={field.id} tone={field.tone} label={`${text(`plugins.bitbucket.ui.field.${field.id.replace('bitbucket/', '')}`, field.label)}: ${field.value}`} />
             ))}
           </Row>
         )}
@@ -268,7 +287,7 @@ function OverviewPanel({
               fallback="Answered in the panels beside this one, not on the list row:"
             />
             <Row gap="small">
-              {pendingFields.map((field) => <Badge key={field.id} value={field.label} />)}
+              {pendingFields.map((field) => <Badge key={field.id} value={text(`plugins.bitbucket.ui.field.${field.id.replace('bitbucket/', '')}`, field.label)} />)}
             </Row>
           </Stack>
         )}
@@ -284,13 +303,13 @@ function OverviewPanel({
           titleKey="plugins.bitbucket.ui.observation"
           entries={[
             {
-              label: 'Observed',
+              label: text('plugins.bitbucket.ui.observed', 'Observed'),
               value: formatTimestamp(locale, overview.observedAtMs, 'relative', nowMs),
             },
             ...(overview.sourceUpdatedAtMs === null
               ? []
               : [{
-                label: 'Bitbucket last changed',
+                label: text('plugins.bitbucket.ui.lastChanged', 'Bitbucket last changed'),
                 value: formatTimestamp(locale, overview.sourceUpdatedAtMs, 'relative', nowMs),
               }]),
           ]}
@@ -300,6 +319,7 @@ function OverviewPanel({
           disabled={controller.pending}
           variant="plain"
           accessibilityLabel="Re-read this overview from Bitbucket"
+          accessibilityLabelKey="plugins.bitbucket.ui.rereadOverview"
         />
       </Stack>
     </ScrollArea>
@@ -313,12 +333,13 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
   const controller = useBitbucketDiff(input);
   const { state } = controller;
   if (state.kind === 'idle' || state.kind === 'loading') {
-    return <LoadingState title="Reading this diff from Bitbucket" />;
+    return <LoadingState title="Reading this diff from Bitbucket" titleKey="plugins.bitbucket.ui.readingDiff" />;
   }
   if (state.kind === 'unavailable') {
     return (
       <ErrorState
         title="The diff is unavailable"
+        titleKey="plugins.bitbucket.ui.diffUnavailable"
         description={failureDescription(
           state.failure,
           text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.'),
@@ -334,7 +355,9 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
           <Banner
             tone="warning"
             title="This diff is too large for Bitbucket to return"
+            titleKey="plugins.bitbucket.ui.diffTooLarge"
             description="The pull request remains available; open it in Bitbucket for the full diff."
+            descriptionKey="plugins.bitbucket.ui.diffTooLarge.description"
           />
         )}
         {controller.raw?.kind !== 'available' ? null : (
@@ -343,7 +366,9 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
               <Banner
                 tone="neutral"
                 title="The raw diff was shortened"
+                titleKey="plugins.bitbucket.ui.rawDiffShortened"
                 description="The returned prefix fits Happier's Action-result boundary."
+                descriptionKey="plugins.bitbucket.ui.rawDiffShortened.description"
               />
             ) : null}
             <Text variant="code" value={controller.raw.text} />
@@ -351,6 +376,7 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
         )}
         <Metadata
           title="Changed files"
+          titleKey="plugins.bitbucket.ui.changedFiles"
           entries={state.rows.map((row: BitbucketProjectedDiffstatRowV1) => ({
             label: row.path,
             value: `${row.status} · +${String(row.linesAdded)} −${String(row.linesRemoved)}`,
@@ -359,9 +385,11 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
         <PagedFooter
           state={state}
           loadMoreTitle="Show more changed files"
+          loadMoreTitleKey="plugins.bitbucket.ui.showMoreFiles"
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
           refreshLabel="Re-read this diff from Bitbucket"
+          refreshLabelKey="plugins.bitbucket.ui.rereadDiff"
           summary={`${String(state.rows.length)} changed file(s) read.`}
           summaryKey="plugins.bitbucket.ui.diffFilesRead"
           summaryValues={{ count: state.rows.length }}
@@ -380,10 +408,16 @@ const ACTIVITY_HEADLINES: Readonly<Record<string, string | undefined>> = Object.
   comment: 'Commented',
 });
 
-function activityHeadline(row: BitbucketProjectedActivityRowV1): string {
-  // An entry this build does not model keeps Bitbucket's own word for it rather
-  // than disappearing or being described as something it is not.
-  const headline = ACTIVITY_HEADLINES[row.kind] ?? row.rawKind;
+function activityHeadline(
+  text: ReturnType<typeof usePluginTranslation>,
+  row: BitbucketProjectedActivityRowV1,
+): string {
+  // Unknown provider kinds retain the row itself, but use neutral localized chrome rather than
+  // exposing an untranslated provider token as authored UI.
+  const headline = text(
+    `plugins.bitbucket.ui.activity.${row.kind}`,
+    ACTIVITY_HEADLINES[row.kind] ?? 'Activity',
+  );
   return row.actor === undefined ? headline : `${headline} · ${row.actor}`;
 }
 
@@ -444,9 +478,11 @@ function ActivityPanel({
         <PagedFooter
           state={state}
           loadMoreTitle="Show more activity"
+          loadMoreTitleKey="plugins.bitbucket.ui.showMoreActivity"
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
           refreshLabel="Re-read this activity from Bitbucket"
+          refreshLabelKey="plugins.bitbucket.ui.rereadActivity"
           summary={`${String(state.rows.length)} entry/entries read.`}
           summaryKey="plugins.bitbucket.ui.entriesRead"
           summaryValues={{ count: state.rows.length }}
@@ -454,7 +490,7 @@ function ActivityPanel({
       )}
       renderItem={(row) => (
         <Item
-          title={activityHeadline(row)}
+          title={activityHeadline(text, row)}
           {...(row.summary === undefined ? {} : { subtitle: row.summary })}
           {...(row.atMs === undefined
             ? {}
@@ -510,9 +546,9 @@ function BuildsPanel({
   const rollupEntries: readonly MetadataEntry[] = rollup.failingCount === undefined
     ? []
     : [
-      { label: 'Failing', value: String(rollup.failingCount) },
-      { label: 'Running', value: String(rollup.runningCount ?? 0) },
-      { label: 'Passing', value: String(rollup.passingCount ?? 0) },
+      { label: text('plugins.bitbucket.ui.status.failing', 'Failing'), value: String(rollup.failingCount) },
+      { label: text('plugins.bitbucket.ui.status.running', 'Running'), value: String(rollup.runningCount ?? 0) },
+      { label: text('plugins.bitbucket.ui.status.passing', 'Passing'), value: String(rollup.passingCount ?? 0) },
     ];
 
   return (
@@ -550,9 +586,11 @@ function BuildsPanel({
         <PagedFooter
           state={state}
           loadMoreTitle="Show more builds"
+          loadMoreTitleKey="plugins.bitbucket.ui.showMoreBuilds"
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
           refreshLabel="Re-read the builds from Bitbucket"
+          refreshLabelKey="plugins.bitbucket.ui.rereadBuilds"
           summary={`${String(state.rows.length)} build status(es) read.`}
           summaryKey="plugins.bitbucket.ui.buildStatusesRead"
           summaryValues={{ count: state.rows.length }}
@@ -597,10 +635,13 @@ const RESOLUTION_LABELS: Readonly<Record<string, string>> = Object.freeze({
   unknown: 'Resolution not reported',
 });
 
-function commentHeadline(row: BitbucketProjectedCommentRowV1): string {
-  const author = row.author ?? 'Someone';
-  const edited = row.editedAtMs === undefined ? '' : ' · edited';
-  const reply = row.parentId === undefined ? '' : ' · reply';
+function commentHeadline(
+  text: ReturnType<typeof usePluginTranslation>,
+  row: BitbucketProjectedCommentRowV1,
+): string {
+  const author = row.author ?? text('plugins.bitbucket.ui.someone', 'Someone');
+  const edited = row.editedAtMs === undefined ? '' : ` · ${text('plugins.bitbucket.ui.edited', 'edited')}`;
+  const reply = row.parentId === undefined ? '' : ` · ${text('plugins.bitbucket.ui.reply', 'reply')}`;
   return `${author}${reply}${edited}`;
 }
 
@@ -638,7 +679,12 @@ function CommentsPanel({
       accessibilityLabelKey="plugins.bitbucket.ui.commentsLabel"
       items={state.rows}
       keyForItem={(row) => row.id}
-      header={<PageFailureBanner state={state} />}
+      header={(
+        <Stack gap="small">
+          <PageFailureBanner state={state} />
+          <BitbucketReviewCommentReplyControls input={input} comments={state.rows} />
+        </Stack>
+      )}
       empty={(
         <EmptyState
           title="No comments"
@@ -653,9 +699,11 @@ function CommentsPanel({
           // Deliberately not "earlier": Bitbucket publishes pagination but no
           // chronological ordering contract for this collection.
           loadMoreTitle="Show 30 more comments"
+          loadMoreTitleKey="plugins.bitbucket.ui.showMoreComments"
           onLoadMore={controller.loadMore}
           onRefresh={controller.refresh}
           refreshLabel="Re-read the comments from Bitbucket"
+          refreshLabelKey="plugins.bitbucket.ui.rereadComments"
           summary={`${String(state.rows.length)} comment(s) read.`}
           summaryKey="plugins.bitbucket.ui.commentsRead"
           summaryValues={{ count: state.rows.length }}
@@ -663,9 +711,12 @@ function CommentsPanel({
       )}
       renderItem={(row) => (
         <Item
-          title={commentHeadline(row)}
-          subtitle={row.deleted ? 'This comment was deleted.' : row.body}
-          detail={RESOLUTION_LABELS[row.resolution]}
+          title={commentHeadline(text, row)}
+          subtitle={row.deleted ? text('plugins.bitbucket.ui.commentDeleted', 'This comment was deleted.') : row.body}
+          detail={text(
+            `plugins.bitbucket.ui.resolution.${row.resolution}`,
+            RESOLUTION_LABELS[row.resolution] ?? 'Resolution not reported',
+          )}
           {...(row.atMs === undefined
             ? {}
             : { caption: formatTimestamp(locale, row.atMs, 'relative', nowMs) })}
@@ -701,6 +752,7 @@ function BitbucketDetailBody({
   input,
 }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
   const { locale } = useSurfaceContext();
+  const text = usePluginTranslation();
   const [selected, setSelected] = React.useState<BitbucketDetailTabIdV1>(
     BITBUCKET_DEFAULT_DETAIL_TAB_V1,
   );
@@ -724,13 +776,13 @@ function BitbucketDetailBody({
           const declared = BITBUCKET_DETAIL_TABS_V1.find((candidate) => candidate.id === next);
           if (declared !== undefined) setSelected(declared.id);
         }}
-        ariaLabel="Bitbucket pull request detail"
+        ariaLabel={text('plugins.bitbucket.ui.detailLabel', 'Bitbucket pull request detail')}
       >
         {BITBUCKET_DETAIL_TABS_V1.map((declaration) => (
           <Tabs.Item
             key={declaration.id}
             value={declaration.id}
-            title={declaration.title}
+            title={text(declaration.titleKey, declaration.title)}
             // Stated, never inherited: the shared primitive would otherwise discard a panel this
             // source means to keep, or keep one it means to discard.
             retention={declaration.retention}

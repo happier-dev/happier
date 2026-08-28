@@ -22,6 +22,7 @@ import {
 } from '../../corpus/testkit/observations.test-support.js';
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 
 /**
  * What the reader keeps looking at when the window stops holding the entry they
@@ -134,8 +135,9 @@ async function executeAction(action: string): Promise<JsonValue> {
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountShell(): Promise<PluginUiTestkit> {
+async function mountShell() {
     listsTheEntry = true;
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -153,7 +155,7 @@ async function mountShell(): Promise<PluginUiTestkit> {
                     container: 'appPage',
                 },
             }),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action }) => await executeAction(action),
@@ -162,8 +164,10 @@ async function mountShell(): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
-    return fixture;
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
+    return { shell: fixture, ephemeralSharedScope };
 }
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
@@ -175,9 +179,14 @@ async function openTheRow(shell: PluginUiTestkit): Promise<void> {
 }
 
 /** The next settled pass enumerates nothing, so the selected row is evicted. */
-async function evictTheRow(shell: PluginUiTestkit): Promise<void> {
+async function evictTheRow(
+    shell: PluginUiTestkit,
+    ephemeralSharedScope: ReturnType<typeof createTriageEphemeralSharedScopeFixture>,
+): Promise<void> {
     listsTheEntry = false;
-    await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('manual', shell.context.hostApi, ephemeralSharedScope);
+    });
     await act(async () => { await Promise.resolve(); });
     void shell;
 }
@@ -188,11 +197,11 @@ afterEach(async () => {
 
 describe('the selected entry once the window stops holding it', () => {
     it('keeps naming the entry the reader opened', async () => {
-        const shell = await mountShell();
+        const { shell, ephemeralSharedScope } = await mountShell();
         await openTheRow(shell);
         await expect(shell.getByText(ENTRY_TITLE)).resolves.toBeDefined();
 
-        await evictTheRow(shell);
+        await evictTheRow(shell, ephemeralSharedScope);
 
         // The cause is still stated — it always was.
         await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
@@ -202,10 +211,10 @@ describe('the selected entry once the window stops holding it', () => {
     });
 
     it('keeps the facts the aggregate had, and says they are no longer current', async () => {
-        const shell = await mountShell();
+        const { shell, ephemeralSharedScope } = await mountShell();
         await openTheRow(shell);
 
-        await evictTheRow(shell);
+        await evictTheRow(shell, ephemeralSharedScope);
 
         // §2.2's own facts, from the last row the window published for this
         // selection: why it was asking for the reader, its state, its scope and
@@ -221,9 +230,9 @@ describe('the selected entry once the window stops holding it', () => {
     });
 
     it('drops the retained facts once the reader leaves the entry', async () => {
-        const shell = await mountShell();
+        const { shell, ephemeralSharedScope } = await mountShell();
         await openTheRow(shell);
-        await evictTheRow(shell);
+        await evictTheRow(shell, ephemeralSharedScope);
 
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Close' }));

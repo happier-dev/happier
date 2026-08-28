@@ -6,9 +6,19 @@ import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import {
+    TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+} from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationPlan.js';
+import {
+    TESTKIT_OBSERVED_REVISION,
+    testkitConfiguredInstance,
+} from '../../sessions/testkit/entrySessionTestkit.test-support.js';
+import { testkitLocator } from '../../corpus/testkit/observations.test-support.js';
 import { useTriageEntrySessionStart } from './useEntrySessionStart.js';
 
 /**
@@ -54,6 +64,23 @@ const START_REQUEST = Object.freeze({
     },
 });
 
+const PREPARED_OPERATION = Object.freeze({
+    point: {
+        pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+        protocol: {
+            id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+            version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+        },
+    },
+    contributor: {
+        pluginId: ENTRY_REF.source.pluginId,
+        contributionId: ENTRY_REF.source.localId,
+        immutableGenerationId: 'example-forge-generation-1',
+    },
+    role: 'prepareReviewWorkspace',
+    action: { pluginId: ENTRY_REF.source.pluginId, localId: 'prepare-review-workspace' },
+});
+
 const PREPARED_REVIEW_START_REQUEST = Object.freeze({
     ...START_REQUEST,
     action: {
@@ -61,6 +88,15 @@ const PREPARED_REVIEW_START_REQUEST = Object.freeze({
         actionId: 'compose-prepared-review',
         label: 'Compose in prepared review workspace',
         workspaceMode: 'pull_request',
+    },
+    reviewWorkspace: {
+        operation: PREPARED_OPERATION,
+        preparation: {
+            instance: testkitConfiguredInstance(),
+            entryRef: ENTRY_REF,
+            lastKnownLocator: testkitLocator(),
+            observed: TESTKIT_OBSERVED_REVISION,
+        },
     },
 });
 
@@ -78,6 +114,8 @@ const startProbeSurface = defineUiSurface(function StartProbe(_context: RenderCo
 
 const mounted: PluginUiTestkit[] = [];
 let seeds: unknown[] = [];
+let preparedSelections: unknown[] = [];
+let openedPreparations: unknown[] = [];
 
 async function mountProbe(input: Readonly<{
     request?: typeof START_REQUEST;
@@ -115,10 +153,26 @@ async function mountProbe(input: Readonly<{
                 if (actionId === 'projects.list') return { items: [], truncated: false };
                 throw new Error(`Unexpected action: ${actionId}`);
             },
+            openNewSession: async ({ request, preparedReviewWorkspace }) => {
+                seeds.push(request);
+                if (preparedReviewWorkspace !== undefined) openedPreparations.push(preparedReviewWorkspace);
+                if (input.seedResult !== undefined) throw new Error('New Session unavailable');
+            },
             selectActionInput: async ({ request }) => {
-                if (!('seed' in request)) throw new Error('Compose must not request a settled draft.');
-                seeds.push(request.seed);
-                return (input.seedResult ?? { kind: 'newSessionSeeded' }) as never;
+                if (!('operation' in request)) throw new Error('Unexpected Session draft selection');
+                const selected = {
+                    kind: 'submitted' as const,
+                    action: request.operation.action,
+                    input: request.draft ?? {},
+                    selection: {
+                        target: { pluginId: 'happier.triage', immutableGenerationId: 'entry-session-start-checkout-test' },
+                        point: request.operation.point,
+                        contributor: request.operation.contributor,
+                    },
+                    connectedAccount: { kind: 'none' as const },
+                };
+                preparedSelections.push(selected);
+                return selected;
             },
         },
     });
@@ -134,6 +188,8 @@ async function settle(): Promise<void> {
 
 afterEach(async () => {
     seeds = [];
+    preparedSelections = [];
+    openedPreparations = [];
     activeStartRequest = START_REQUEST;
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -164,13 +220,9 @@ describe('single-entry compose checkout handoff', () => {
         });
     });
 
-    it('stops the prepared-review compose flow when the host refuses its unmaterialized checkout intent', async () => {
+    it('carries the exact selected preparation into the prepared-review compose request', async () => {
         const { fixture, actionCalls } = await mountProbe({
             request: PREPARED_REVIEW_START_REQUEST,
-            seedResult: {
-                code: 'unavailable',
-                diagnostics: ['prepared_review_workspace_unavailable'],
-            },
         });
 
         await act(async () => {
@@ -181,8 +233,12 @@ describe('single-entry compose checkout handoff', () => {
         expect(seeds).toEqual([expect.objectContaining({
             checkoutIntent: 'preparedReviewWorkspace',
         })]);
-        // The host's unavailable outcome stops before Triage can spend a
-        // creation key or reach a Session/link/SCM writer.
+        expect((seeds[0] as { placement?: { directory?: string } }).placement?.directory).toBeUndefined();
+        expect(preparedSelections).toHaveLength(1);
+        expect(openedPreparations).toEqual([{
+            operation: PREPARED_OPERATION,
+            result: preparedSelections[0],
+        }]);
         expect(actionCalls).toEqual(['sessions.spawn.profiles.list', 'projects.list']);
     });
 });

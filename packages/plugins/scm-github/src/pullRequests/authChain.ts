@@ -1,6 +1,4 @@
 import type {
-  HostingProviderDefaultBranchInput as ScmHostingProviderDefaultBranchInput,
-  HostingProviderDefaultBranchMetadata as ScmHostingProviderDefaultBranchMetadata,
   HostingProviderPullRequestCheckoutReferenceInput as ScmHostingProviderPullRequestCheckoutReferenceInput,
   HostingProviderPullRequestCheckoutReferenceMetadata as ScmHostingProviderPullRequestCheckoutReferenceMetadata,
   HostingProviderPullRequestCreateInput as ScmHostingProviderPullRequestCreateInput,
@@ -26,7 +24,6 @@ export type GithubPullRequestAdapter = typeof githubHostingProviderAdapter & Rea
   listPullRequests(input: ScmHostingProviderPullRequestListInput): Promise<readonly ScmPullRequestSummary[]>;
   getPullRequest(input: ScmHostingProviderPullRequestGetInput): Promise<ScmPullRequestSummary | null>;
   createPullRequest(input: ScmHostingProviderPullRequestCreateInput): Promise<ScmPullRequestSummary>;
-  getDefaultBranch(input: ScmHostingProviderDefaultBranchInput): Promise<ScmHostingProviderDefaultBranchMetadata>;
   resolvePullRequestCheckoutReference(
     input: ScmHostingProviderPullRequestCheckoutReferenceInput
   ): Promise<ScmHostingProviderPullRequestCheckoutReferenceMetadata>;
@@ -79,13 +76,6 @@ export function createGithubPullRequestAdapter(params?: Readonly<{
         throw createGithubAuthRequiredError('GitHub pull request creation is unavailable');
       }
       return await restAdapter.createPullRequest(input);
-    },
-    async getDefaultBranch(input: ScmHostingProviderDefaultBranchInput) {
-      requireBoundAccountHost(input.provider);
-      if (!restAdapter.getDefaultBranch) {
-        throw createGithubAuthRequiredError('GitHub default branch lookup is unavailable');
-      }
-      return await restAdapter.getDefaultBranch(input);
     },
     async resolvePullRequestCheckoutReference(
       input: ScmHostingProviderPullRequestCheckoutReferenceInput,

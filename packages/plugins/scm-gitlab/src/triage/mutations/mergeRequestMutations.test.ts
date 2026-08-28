@@ -480,6 +480,28 @@ describe('gitlab/merge-request/mark-ready', () => {
     expect(result).toMatchObject({ kind: 'refused', reason: 'mutationRejected' });
   });
 
+  it('preserves every provider explanation without an invented count or label ceiling', async () => {
+    const messages = Array.from(
+      { length: 9 },
+      (_, index) => `Provider explanation ${index}: ${'detail '.repeat(32)}`,
+    );
+    const transport = scriptedTransport({
+      [`GET ${ITEM_URL}`]: [{ status: 200, body: mergeRequestBody({ draft: true }) }],
+      [`POST ${GRAPHQL_URL}`]: [{
+        status: 200,
+        body: { data: { mergeRequestSetDraft: { errors: messages } } },
+      }],
+    });
+
+    const result = await markGitlabMergeRequestReady(mergeInput(), transport.context);
+
+    expect(result).toMatchObject({
+      kind: 'refused',
+      reason: 'mutationRejected',
+      messages: messages.map((message) => message.trim()),
+    });
+  });
+
   it('never claims ready when the confirming read still reports a draft', async () => {
     const transport = scriptedTransport({
       [`GET ${ITEM_URL}`]: [

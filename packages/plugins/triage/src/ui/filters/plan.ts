@@ -1,6 +1,6 @@
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
-import type { SurfaceFilterSelectionV1 } from '../../projection/listWindow.js';
+import type { SurfaceFilterSelectionV1, TriageListFacetCensusV1 } from '../../projection/listWindow.js';
 import type { TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { sameTriageFilterValueV1, type TriageFilterFacetValueV1 } from '../state/surface.js';
 import type { TriageTextResolverV1 } from '../shell/windowState.js';
@@ -16,28 +16,10 @@ import type { TriageTextResolverV1 } from '../shell/windowState.js';
  * carries, which is the same unfiltered fact the health strip names connections
  * from.
  *
- * **Type and Scope are not DISCOVERED here, and the reason is a producer rather
- * than a preference.** The only projected facts a mounted surface can see are
- * `TriageListWindowV1.rows`, and
- * `projection/listWindow.ts#foldTriageListWindow` applies the facet conjunction
- * *before* it publishes them. Discovering options from that set would trap the
- * reader inside their first choice: selecting one kind leaves only that kind's
- * rows, so the option that would widen the filter again no longer exists. The
- * honest producer is the window owner publishing the facet census it observed
- * before filtering — one owner, one coverage claim — which is
- * `U-CORPUS-QUERY-ORDERING`'s (`core/CORPUS.md` §6.1). A rail that offered a
- * control the reader could not undo would be worse than a rail that says which
- * facets it can honestly answer for.
- *
- * **They are still planned when they are ACTIVE**, which is a different fact
- * from discovery and needs no census. A route carries both facets
- * (`ui/navigation/location.ts` writes `ft,` and `fp,` segments) and the window
- * applies them, so a reader can arrive at a narrowed list whose only cause is a
- * constraint nothing on screen names. Planning exactly the reader's own live
- * values — never a wider set — makes the constraint visible and removable
- * without inventing an option the fold cannot honestly offer. It is the same
- * rule `planSourceFacet` already applies to a selected source the reader has
- * since unconfigured, so there is one reason here rather than two.
+ * Type and Scope come only from the window owner's pre-filter census, under the
+ * census's disclosed coverage. The shell never rediscovers them from filtered
+ * rows. Active route values are retained beside that census so a constraint
+ * remains removable after its source disappears, exactly like Source below.
  *
  * The plan carries both halves of each option: the opaque `key` the public
  * option control takes as its value, and the exact facet value the reducer
@@ -159,33 +141,42 @@ function planSourceFacet(
 }
 
 /**
- * One Type or Scope facet, planned from the reader's own live constraints.
+ * One Type or Scope facet, planned from the window owner's pre-filter census.
  *
- * There is no census to enumerate from, so the option set is exactly what is
- * selected: every option is `selected`, and deselecting one is the only move it
- * offers. That is honest in both directions — it never claims a value the fold
- * did not observe, and it never leaves an applied constraint without a control.
- * With nothing selected the option list is empty and the rail renders no
- * control at all, which is the same rule a facet with nothing to offer already
- * follows.
+ * The census supplies every value observed under its disclosed coverage, so a
+ * selected value cannot erase the alternatives that would widen the lens. A
+ * selected route value absent from the current census is retained as well: the
+ * reader can remove a stale constraint after a source disappears instead of
+ * being trapped by an invisible filter.
  *
  * The value's own name is the label. It is qualified by the source exactly when
  * the selected values span more than one, because two options reading `issue`
  * are two constraints a reader cannot tell apart — the same "one name or the
  * qualified one" rule `sourceLabel` applies a few lines above.
  */
-function planActiveFacet<TFacet extends 'types' | 'scopes'>(
+function planCensusFacet<TFacet extends 'types' | 'scopes'>(
   facet: TFacet,
   facetLabelKey: string,
   facetLabelFallback: string,
   readValueName: (value: SurfaceFilterSelectionV1[TFacet][number]) => string,
   input: Readonly<{
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+    facetCensus?: TriageListFacetCensusV1;
     filters: SurfaceFilterSelectionV1;
   }>,
   text: TriageTextResolverV1,
 ): TriageFilterFacetPlanV1 {
-  const values = input.filters[facet] as readonly SurfaceFilterSelectionV1[TFacet][number][];
+  const values: SurfaceFilterSelectionV1[TFacet][number][] = [
+    ...((input.facetCensus?.[facet] ?? []) as readonly SurfaceFilterSelectionV1[TFacet][number][]),
+  ];
+  for (const active of input.filters[facet] as readonly SurfaceFilterSelectionV1[TFacet][number][]) {
+    const selection = { facet, value: active } as TriageFilterFacetValueV1;
+    if (values.some((value) => sameTriageFilterValueV1(
+      { facet, value } as TriageFilterFacetValueV1,
+      selection,
+    ))) continue;
+    values.push(active);
+  }
   const sources: PluginContributionIdentity[] = [];
   for (const value of values) {
     if (sources.some((seen) => sameSource(seen, value.source))) continue;
@@ -200,7 +191,7 @@ function planActiveFacet<TFacet extends 'types' | 'scopes'>(
       return Object.freeze({
         key: `${facet}:${JSON.stringify([value.source.pluginId, value.source.localId, name])}`,
         label: qualify ? `${name} — ${sourceLabel(value.source, input.configuredSources)}` : name,
-        selected: true,
+        selected: selectedIn(input.filters, { facet, value } as TriageFilterFacetValueV1),
         selection: { facet, value } as TriageFilterFacetValueV1,
       });
     })),
@@ -233,13 +224,14 @@ function planClosedFacet<TFacet extends 'states' | 'attention'>(
 export function planTriageFilterFacetsV1(
   input: Readonly<{
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
+    facetCensus?: TriageListFacetCensusV1;
     filters: SurfaceFilterSelectionV1;
   }>,
   text: TriageTextResolverV1 = ENGLISH_TEXT,
 ): readonly TriageFilterFacetPlanV1[] {
   return Object.freeze([
     planSourceFacet(input, text),
-    planActiveFacet(
+    planCensusFacet(
       'types',
       'plugins.triage.surface.filters.type',
       'Type',
@@ -247,7 +239,7 @@ export function planTriageFilterFacetsV1(
       input,
       text,
     ),
-    planActiveFacet(
+    planCensusFacet(
       'scopes',
       'plugins.triage.surface.filters.scope',
       'Scope',

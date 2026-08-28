@@ -290,6 +290,32 @@ describe('activate', () => {
     });
   });
 
+  it('publishes process failure evidence as a structured failed outcome', async () => {
+    const fixture = createRuntimeContext({
+      async run() {
+        return processResult(7);
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-process-failed' }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_process_failed' },
+      diagnostics: [{
+        code: 'deepsec_process_failed',
+        severity: 'error',
+        messageKey: 'plugins.deepsec.runtime.failed',
+        detail: { exitCode: 7, signal: null },
+      }],
+    });
+  });
+
   it('selects repository audit mode from the canonical execution-run profile', async () => {
     const fixture = createRuntimeContext();
     const { runtime } = await createNativeDeepSecRuntime();
@@ -309,6 +335,76 @@ describe('activate', () => {
       ['scan'],
       expect.arrayContaining(['process', '--comment-out']),
     ]);
+  });
+
+  it('publishes required cost confirmation as a structured failed outcome', async () => {
+    const fixture = createRuntimeContext();
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-confirmation-required',
+      profileLocalId: 'repository-security-audit',
+      includeExplicitMode: false,
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_confirmation_required' },
+      warning: { status: 'requires_confirmation' },
+    });
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it('publishes repository audit process failures as diagnosable partial findings', async () => {
+    const commentOutMarkdown = [
+      '### src/auth.ts:2',
+      '',
+      '**Severity:** critical',
+      '**Rule:** CWE-601',
+      '**Category:** open_redirect',
+      '',
+      'Validate redirect destinations before use.',
+    ].join('\n');
+    let launchCount = 0;
+    const fixture = createRuntimeContext({
+      async run(request) {
+        launchCount += 1;
+        if (launchCount === 1) return processResult();
+        const commentOutIndex = request.args?.indexOf('--comment-out') ?? -1;
+        const commentOutPath = commentOutIndex >= 0 ? request.args?.[commentOutIndex + 1] : undefined;
+        if (commentOutPath) await writeFile(commentOutPath, commentOutMarkdown, 'utf8');
+        return processResult(2);
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-partial-repository-audit',
+      profileLocalId: 'repository-security-audit',
+      includeExplicitMode: false,
+      confirmedCostWarning: true,
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    expect(readStructuredOutput(events)).toMatchObject({
+      summary: 'DeepSec review partially completed with 1 finding(s).',
+      findings: [expect.objectContaining({ filePath: 'src/auth.ts', startLine: 2 })],
+      diagnostics: [{
+        code: 'deepsec_process_failed',
+        severity: 'warning',
+        messageKey: 'plugins.deepsec.runtime.partial',
+        detail: { exitCode: 2, signal: null },
+      }],
+      limits: { findingsTruncated: true, patchesTruncated: false },
+    });
   });
 
   it('uses only host-resolved selected review-scope paths for selected-file reviews', async () => {
@@ -396,6 +492,8 @@ describe('activate', () => {
 
     expect(events.at(-1)?.kind).toBe('run-complete');
     expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_scope_failed' },
       summary: 'DeepSec selected-file scope validation failed.',
       diagnostics: [{
         code: 'scope_path_unavailable',
@@ -408,6 +506,36 @@ describe('activate', () => {
       root: 'workspace',
       relativePath: 'src/link-outside.ts',
     }, { signal: expect.any(AbortSignal) });
+    expect(fixture.checkReadiness).not.toHaveBeenCalled();
+    expect(fixture.resolve).not.toHaveBeenCalled();
+    expect(fixture.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects a selected directory before readiness or process launch', async () => {
+    const fixture = createRuntimeContext({
+      async stat() {
+        return { kind: 'directory', size: 0, modifiedAtMs: 0 };
+      },
+    });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest({
+      runId: 'run-selected-directory',
+      mode: 'selected_files',
+      paths: ['src'],
+    }), fixture.context);
+    if (!opened) throw new Error('Expected native DeepSec execution run');
+
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+
+    expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_scope_failed' },
+      diagnostics: [expect.objectContaining({
+        code: 'scope_path_unavailable',
+        path: 'src',
+      })],
+    });
     expect(fixture.checkReadiness).not.toHaveBeenCalled();
     expect(fixture.resolve).not.toHaveBeenCalled();
     expect(fixture.run).not.toHaveBeenCalled();
@@ -491,9 +619,13 @@ describe('activate', () => {
     await opened.dispose();
 
     expect(events.at(-1)?.kind).toBe('run-complete');
-    expect(readStructuredOutput(events).readiness).toMatchObject({
-      status: 'missing',
-      missing: ['AI_GATEWAY_API_KEY'],
+    expect(readStructuredOutput(events)).toMatchObject({
+      status: 'failed',
+      error: { code: 'deepsec_readiness_failed' },
+      readiness: {
+        status: 'missing',
+        missing: ['AI_GATEWAY_API_KEY'],
+      },
     });
     expect(fixture.resolve).toHaveBeenCalledOnce();
     expect(fixture.run).not.toHaveBeenCalled();

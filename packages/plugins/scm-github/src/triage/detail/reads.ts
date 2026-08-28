@@ -21,17 +21,14 @@ import type { GithubTriageFailureV1 } from '../types.js';
 import {
   GITHUB_DETAIL_BOUNDS_V1,
   projectGithubChangedFileRows,
-  projectGithubCommentRows,
   projectGithubTimelineRows,
   type GithubPageProjectionV1,
   type GithubProjectedChangedFileRowV1,
-  type GithubProjectedCommentRowV1,
   type GithubProjectedTimelineRowV1,
 } from './projection.js';
 import {
   GITHUB_CHANGED_FILES_CEILING_V1,
   buildGithubChangedFilesUrl,
-  buildGithubIssueCommentsUrl,
   buildGithubPullRequestUrl,
   buildGithubTimelineUrl,
   readGithubValidatedPageNumber,
@@ -229,25 +226,6 @@ export async function readGithubChangedFilesPage(
     page: input.page,
     ceilingReached: input.page * input.perPage >= GITHUB_CHANGED_FILES_CEILING_V1,
     project: (body) => projectGithubChangedFileRows(body, GITHUB_DETAIL_BOUNDS_V1),
-  });
-}
-
-/* ------------------------------------------------------------------- comments */
-
-export async function readGithubIssueCommentsPage(
-  input: PagedReadInput,
-  dependencies: GithubDetailReadDependenciesV1,
-): Promise<GithubDetailReadResultV1<GithubDetailPageV1<GithubProjectedCommentRowV1>>> {
-  let url: string;
-  try {
-    url = buildGithubIssueCommentsUrl(input);
-  } catch {
-    return failed(REQUEST_INVALID);
-  }
-  return readPagedCollection(dependencies, {
-    url,
-    page: input.page,
-    project: (body) => projectGithubCommentRows(body, GITHUB_DETAIL_BOUNDS_V1),
   });
 }
 

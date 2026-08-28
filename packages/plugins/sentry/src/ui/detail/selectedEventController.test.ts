@@ -29,7 +29,14 @@ function projection(eventId: string): SentryEventProjectionV1 {
     redactions: [],
     sensitivePaths: [],
     projectionTruncated: false,
-    omitted: { sections: 0, frames: 0, breadcrumbs: 0, tags: 0 },
+    omitted: {
+      sections: 0,
+      frames: 0,
+      breadcrumbs: 0,
+      tags: 0,
+      redactions: 0,
+      sensitivePaths: 0,
+    },
   };
 }
 
@@ -117,7 +124,7 @@ describe('Sentry selected-event controller', () => {
     })).toBe(settled);
   });
 
-  it('keeps the selection but replaces the body on an explicit refresh', () => {
+  it('keeps the last-known-good projection through same-selection refresh and failure', () => {
     const settled = sentrySelectedEventReducer(demanded(), {
       kind: 'settled',
       token: demanded().token,
@@ -126,8 +133,23 @@ describe('Sentry selected-event controller', () => {
     const refreshed = sentrySelectedEventReducer(settled, { kind: 'refreshRequested' });
 
     expect(refreshed.selected).toEqual(settled.selected);
-    expect(refreshed.read.kind).toBe('loading');
+    expect(refreshed.read).toEqual({
+      kind: 'success',
+      projection: projection('a'.repeat(32)),
+      refresh: { kind: 'loading' },
+    });
     expect(refreshed.token).not.toBe(settled.token);
+
+    const failed = sentrySelectedEventReducer(refreshed, {
+      kind: 'failed',
+      token: refreshed.token,
+      failure: FAILURE,
+    });
+    expect(failed.read).toEqual({
+      kind: 'success',
+      projection: projection('a'.repeat(32)),
+      refresh: { kind: 'error', failure: FAILURE },
+    });
   });
 
   it('states a failed read as a failure rather than as an issue with no trace', () => {

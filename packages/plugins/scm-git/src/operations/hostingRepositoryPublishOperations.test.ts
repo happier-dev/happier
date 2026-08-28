@@ -12,6 +12,7 @@ import {
   type ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  type HostingProviderRepositoryPublishingCapability,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -128,19 +129,38 @@ function snapshot(overrides: Partial<ScmWorkingSnapshot> = {}): ScmWorkingSnapsh
     };
 }
 
-function createRegistry(adapter: Readonly<Record<string, unknown>>) {
+function completePublishingCapability(
+    adapter: Partial<HostingProviderRepositoryPublishingCapability>,
+): HostingProviderRepositoryPublishingCapability {
+    return {
+        describePublishTargets: async () => ({
+            auth: { state: 'unknown', profileKind: 'unknown' },
+            targets: [],
+        }),
+        createRepository: async () => {
+            throw new Error('Repository creation is not configured by this fixture');
+        },
+        getRepository: async () => null,
+        ...adapter,
+    };
+}
+
+function createRegistry(adapter: Partial<HostingProviderRepositoryPublishingCapability>) {
+    const capability = completePublishingCapability(adapter);
     return {
         providers: [{
             ...provider,
             capabilities: {},
         }],
-        getAdapter(id: string) {
-            return id === provider.id ? adapter : undefined;
+        getRepositoryPublishing(id: string) {
+            return id === provider.id ? capability : undefined;
         },
     };
 }
 
-function createMultiProviderRegistry(adapters: Readonly<Record<string, Readonly<Record<string, unknown>>>>) {
+function createMultiProviderRegistry(
+    adapters: Readonly<Record<string, Partial<HostingProviderRepositoryPublishingCapability>>>,
+) {
     const providerTwo: ScmHostingProviderRef = {
         ...provider,
         id: 'scm.github.enterprise',
@@ -152,8 +172,9 @@ function createMultiProviderRegistry(adapters: Readonly<Record<string, Readonly<
             { ...provider, capabilities: {} },
             { ...providerTwo, capabilities: {} },
         ],
-        getAdapter(id: string) {
-            return adapters[id];
+        getRepositoryPublishing(id: string) {
+            const adapter = adapters[id];
+            return adapter ? completePublishingCapability(adapter) : undefined;
         },
     };
 }
@@ -344,8 +365,10 @@ describe('git hosting repository publish operation', () => {
                     urlSafety,
                     capabilities: {},
                 }],
-                getAdapter(id: string) {
-                    return id === provider.id ? { getRepository, createRepository } : undefined;
+                getRepositoryPublishing(id: string) {
+                    return id === provider.id
+                        ? completePublishingCapability({ getRepository, createRepository })
+                        : undefined;
                 },
             },
             readSnapshot: async () => snapshot(),

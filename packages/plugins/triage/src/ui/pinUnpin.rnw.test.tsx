@@ -36,6 +36,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
 /**
@@ -153,7 +154,13 @@ function createHarness() {
         });
     }
 
-    return { collections, control, executeAction, state };
+    return {
+        collections,
+        control,
+        executeAction,
+        state,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+    };
 }
 
 type Harness = ReturnType<typeof createHarness>;
@@ -184,7 +191,9 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
             },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({
+                ephemeralSharedScope: harness.ephemeralSharedScope,
+            }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
@@ -192,7 +201,9 @@ async function mountShell(harness: Harness): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, harness.ephemeralSharedScope);
+    });
     return fixture;
 }
 
@@ -324,7 +335,9 @@ describe('the mounted Pin/Unpin affordance', () => {
         });
 
         harness.state.includeEntry = false;
-        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
+        await act(async () => {
+            await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+        });
         await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
 
         await act(async () => {
@@ -385,4 +398,5 @@ describe('the mounted Pin/Unpin affordance', () => {
         // passes either way. This harness exposes no locale knob; proving the
         // catalogue lookup would need one. Do not read this test as i18n coverage.
     });
+
 });

@@ -2,7 +2,6 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from '../../actions/sessionLinksProtocol.js';
-import { planTriageActionDeliveryV1 } from '../../sessions/actionDelivery.js';
 import { openLinkedSession } from '../../sessions/entrySessionOpen.js';
 import type { TriageActionV1 } from '../../settings/actions.js';
 import { projectTriageNewSessionDestinationV1 } from '../header/newSessionDestination.js';
@@ -13,7 +12,6 @@ import {
 import type { TriageBulkSelectedEntryV1 } from './bulkSelectionEntries.js';
 import {
     projectTriageBulkEntryOutcomesV1,
-    type TriageBulkComposeOutcomeV1,
     type TriageBulkEntryOutcomeV1,
     type TriageBulkLinkOutcomeV1,
 } from './bulkSessionOutcome.js';
@@ -25,10 +23,7 @@ import {
 } from './bulkSessionPlan.js';
 
 /** The host boundary the completed bulk Session sequence consumes. */
-export type TriageBulkSessionExecutionHostV1 = TriageSessionStartHostV1 & Readonly<{
-    readComposer: (ref: unknown, options?: unknown) => Promise<unknown>;
-    applyComposer: (ref: unknown, transaction: unknown, options?: unknown) => Promise<unknown>;
-}>;
+export type TriageBulkSessionExecutionHostV1 = TriageSessionStartHostV1;
 
 type TriageBulkStartedSessionOutcomeV1 = Readonly<{
     start: TriageStartEntrySessionResultV1;
@@ -40,7 +35,7 @@ type TriageBulkStartedSessionOutcomeV1 = Readonly<{
  *
  * Creation, primary link, delivery and generic open remain below the Triage
  * start Action. This sequence only joins those owner-owned phases with the
- * remaining links and composer work that a mounted bulk press still owns.
+ * remaining links that a mounted bulk press still owns.
  */
 export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     host: TriageBulkSessionExecutionHostV1;
@@ -60,6 +55,12 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
     // host New Session surface before a Triage Session exists.
     if (input.destination === 'attachAllToNewSession') {
         throw new Error('triage:bulk:seedDestinationCannotRun');
+    }
+    if (input.action.target.kind === 'agent' && input.action.target.delivery === 'compose') {
+        // A compose action must be authored before spawn. This executor owns
+        // direct Session starts and cannot create one canonical draft per unit,
+        // so it must never fall back to spawn-then-patch-composer.
+        throw new Error('triage:bulk:composeRequiresNewSessionAuthoring');
     }
     const finalOpen = input.destination === 'oneSessionForAllEntries'
         ? 'deferred' as const
@@ -113,14 +114,6 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
                     unit.entries.slice(1),
                     input.signal,
                 );
-                const compose = await composeInto({
-                    host: input.host,
-                    action: input.action,
-                    sessionId,
-                    promptText: input.promptText,
-                    entries: unit.entries,
-                    signal: input.signal,
-                });
                 let completed: TriageStartEntrySessionResultV1 = result;
                 if (result.type === 'linked' && result.finalOpen === 'deferred') {
                     const opened = await openLinkedSession({
@@ -154,7 +147,7 @@ export async function runTriageBulkEntrySessionStartsV1(input: Readonly<{
                         entries: unit.entries,
                         start: completed,
                         secondaryLinks,
-                        compose,
+                        compose: 'notRequested',
                     }),
                 };
             }
@@ -198,45 +191,4 @@ async function linkRemainingEntries(
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-async function composeInto(input: Readonly<{
-    host: TriageBulkSessionExecutionHostV1;
-    action: TriageActionV1;
-    sessionId: string;
-    promptText: string | null;
-    entries: readonly TriageBulkSelectedEntryV1[];
-    signal: AbortSignal;
-}>): Promise<TriageBulkComposeOutcomeV1> {
-    const target = input.action.target;
-    if (target.kind !== 'agent' || target.delivery !== 'compose') return 'notRequested';
-    const plan = planTriageActionDeliveryV1({
-        delivery: 'compose',
-        promptText: input.promptText,
-        entries: input.entries.map((entry) => ({
-            entryRef: entry.entryRef,
-            sourceInstance: entry.sourceInstance,
-            presentation: entry.presentation,
-            ...(entry.lastKnownLocator === undefined
-                ? {}
-                : { lastKnownLocator: entry.lastKnownLocator }),
-        })),
-    });
-    if (plan.kind !== 'compose') return 'notRequested';
-    try {
-        const ref = { kind: 'session', sessionId: input.sessionId };
-        const read = await input.host.readComposer(ref);
-        if (!isRecord(read) || read.status !== 'ready' || !isRecord(read.snapshot)) return 'refused';
-        const revision = read.snapshot.revision;
-        if (typeof revision !== 'number') return 'refused';
-        const operations: unknown[] = [];
-        if (plan.text !== undefined) operations.push({ kind: 'text.set', text: plan.text });
-        for (const attachment of plan.attachments) {
-            operations.push({ kind: 'attachment.add', ...attachment });
-        }
-        const applied = await input.host.applyComposer(ref, { expectedRevision: revision, operations });
-        return isRecord(applied) && applied.status === 'applied' ? 'applied' : 'refused';
-    } catch {
-        return 'refused';
-    }
 }

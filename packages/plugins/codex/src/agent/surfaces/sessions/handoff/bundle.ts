@@ -2,6 +2,7 @@ import type {
   AgentTerminalSessionStateUpdate,
   HandoffImportResultV1,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { open } from 'node:fs/promises';
 import { z } from 'zod';
 
 import { buildCodexAgentRuntimeDescriptor } from '../../../../protocol/runtimeDescriptorV1.js';
@@ -14,6 +15,13 @@ import {
 
 const CODEX_HANDOFF_SESSION_META_PROBE_BYTES = 64 * 1024;
 const CODEX_HANDOFF_ROLLOUT_ROOTS = new Set(['sessions', 'archived_sessions']);
+
+export type CodexHandoffBundleFile = Readonly<{
+  t: 'happier.handoff.file.v1';
+  filePath: string;
+  offsetBytes: number;
+  sizeBytes: number;
+}>;
 
 type CodexHandoffRuntimeDescriptor = Extract<
   AgentTerminalSessionStateUpdate,
@@ -56,8 +64,14 @@ export const CodexSessionHandoffBundleSchema = z.object({
   }).strict().optional(),
   files: z.array(z.object({
     relativePath: z.string().min(1),
-    contentBase64: z.string().min(1),
-  }).strict()).min(1),
+    contentBase64: z.string().min(1).optional(),
+    contentFile: z.object({
+      t: z.literal('happier.handoff.file.v1'),
+      filePath: z.string().min(1),
+      offsetBytes: z.number().int().nonnegative(),
+      sizeBytes: z.number().int().nonnegative(),
+    }).strict().optional(),
+  }).strict().refine((file) => Boolean(file.contentBase64) !== Boolean(file.contentFile))).min(1),
 }).strict();
 
 export type CodexSessionHandoffBundle = Readonly<
@@ -82,8 +96,10 @@ export class CodexSessionHandoffBundleValidationError extends Error {
 
 export type ValidatedCodexSessionHandoffFile = Readonly<{
   relativePath: string;
-  content: Buffer;
-}>;
+}> & (
+  | Readonly<{ content: Buffer; contentFile?: never }>
+  | Readonly<{ contentFile: CodexHandoffBundleFile; content?: never }>
+);
 
 function invalidCodexHandoffBundle(message: string): never {
   throw new CodexSessionHandoffBundleValidationError(message);
@@ -108,16 +124,28 @@ function decodeCanonicalBase64(value: string, relativePath: string): Buffer {
   return content;
 }
 
-function readCodexHandoffSessionMetaLine(content: Buffer): string | null {
+function readCodexHandoffSessionMetaLine(content: Buffer, totalSize = content.byteLength): string | null {
   const probe = content.subarray(0, Math.min(content.byteLength, CODEX_HANDOFF_SESSION_META_PROBE_BYTES));
   const newlineOffset = probe.indexOf(0x0a);
-  if (newlineOffset === -1 && content.byteLength > probe.byteLength) return null;
+  if (newlineOffset === -1 && totalSize > probe.byteLength) return null;
   const lineBytes = probe.subarray(0, newlineOffset === -1 ? probe.byteLength : newlineOffset);
   try {
     const line = new TextDecoder('utf-8', { fatal: true }).decode(lineBytes).trim();
     return line.length > 0 ? line : null;
   } catch {
     return null;
+  }
+}
+
+async function readCodexHandoffSessionMetaLineFromFile(file: CodexHandoffBundleFile): Promise<string | null> {
+  const source = await open(file.filePath, 'r');
+  try {
+    const probe = Buffer.alloc(Math.min(file.sizeBytes, CODEX_HANDOFF_SESSION_META_PROBE_BYTES));
+    const { bytesRead } = await source.read(probe, 0, probe.length, file.offsetBytes);
+    if (bytesRead !== probe.length) return null;
+    return readCodexHandoffSessionMetaLine(probe, file.sizeBytes);
+  } finally {
+    await source.close();
   }
 }
 
@@ -136,13 +164,12 @@ function assertCanonicalCodexHandoffRolloutPath(relativePath: string): void {
   }
 }
 
-function classifyCodexHandoffRollout(params: Readonly<{
+function classifyCodexHandoffRolloutLine(params: Readonly<{
   remoteSessionId: string;
   relativePath: string;
-  content: Buffer;
+  firstLine: string | null;
 }>): 'root' | 'sidechain' {
-  const firstLine = readCodexHandoffSessionMetaLine(params.content);
-  const metadata = firstLine ? parseCodexSessionMetaLine(firstLine) : null;
+  const metadata = params.firstLine ? parseCodexSessionMetaLine(params.firstLine) : null;
   const sessionId = readNonEmptyString(metadata?.id);
   const rootSessionId = readNonEmptyString(metadata?.session_id);
   if (!sessionId) {
@@ -171,23 +198,38 @@ function classifyCodexHandoffRollout(params: Readonly<{
  * CODEX_HOME or takes its per-session lock. The native metadata parser remains
  * the rollout owner's parser; this only adapts bounded transferred bytes to it.
  */
-export function validateCodexSessionHandoffFiles(
+export async function validateCodexSessionHandoffFiles(
   bundle: Pick<CodexSessionHandoffBundle, 'remoteSessionId' | 'files'>,
-): readonly ValidatedCodexSessionHandoffFile[] {
+): Promise<readonly ValidatedCodexSessionHandoffFile[]> {
   let hasRootRollout = false;
-  const validatedFiles = bundle.files.map((file) => {
+  const validatedFiles = await Promise.all(bundle.files.map(async (file) => {
     const relativePath = normalizeCodexHandoffBundleRelativePath(file.relativePath);
     assertCanonicalCodexHandoffRolloutPath(relativePath);
-    const content = decodeCanonicalBase64(file.contentBase64, relativePath);
-    if (classifyCodexHandoffRollout({
+    const content = file.contentBase64
+      ? decodeCanonicalBase64(file.contentBase64, relativePath)
+      : undefined;
+    let firstLine: string | null;
+    let validatedFile: ValidatedCodexSessionHandoffFile;
+    if (content) {
+      firstLine = readCodexHandoffSessionMetaLine(content);
+      validatedFile = { relativePath, content };
+    } else {
+      if (!file.contentFile) {
+        invalidCodexHandoffBundle(`Codex handoff rollout has no content: ${relativePath}`);
+      }
+      const contentFile: CodexHandoffBundleFile = file.contentFile;
+      firstLine = await readCodexHandoffSessionMetaLineFromFile(contentFile);
+      validatedFile = { relativePath, contentFile };
+    }
+    if (classifyCodexHandoffRolloutLine({
       remoteSessionId: bundle.remoteSessionId,
       relativePath,
-      content,
+      firstLine,
     }) === 'root') {
       hasRootRollout = true;
     }
-    return { relativePath, content } satisfies ValidatedCodexSessionHandoffFile;
-  });
+    return validatedFile;
+  }));
   if (!hasRootRollout) {
     invalidCodexHandoffBundle(
       `Codex handoff bundle has no root rollout for ${bundle.remoteSessionId}`,

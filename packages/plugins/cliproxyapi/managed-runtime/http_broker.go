@@ -176,7 +176,7 @@ func decodeBrokerEnvelope(status int, body []byte, output any) error {
 	if err := json.Unmarshal(rawOK, &ok); err != nil {
 		return fmt.Errorf("request-auth broker response has invalid ok")
 	}
-	if status >= 200 && status < 300 {
+	if status == http.StatusOK {
 		if !ok || len(envelope) != 2 {
 			return fmt.Errorf("request-auth broker success envelope is invalid")
 		}

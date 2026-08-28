@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 // The package compiles JSX with the classic runtime, so `React` must be in scope.
 import React, { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
@@ -56,7 +57,9 @@ function launchInput(
       observedAtMs: 1_760_000_700_000,
       locator: {
         v: 1,
-        webUrl: 'https://github.com/octo-org/example-app/pull/1284',
+        webUrl: kindId === 'issue'
+          ? 'https://github.com/octo-org/example-app/issues/1284'
+          : 'https://github.com/octo-org/example-app/pull/1284',
         displayPath: 'octo-org/example-app#1284',
         routingToken: 'octo-org/example-app',
       },
@@ -66,6 +69,13 @@ function launchInput(
         scopeLabel: 'octo-org/example-app',
         state,
         facts: [],
+        ...(kindId === 'pull-request' ? {
+          reviewRevision: {
+            baseSha: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+            headSha: OBSERVED_HEAD,
+            nativeRevision: OBSERVED_HEAD,
+          },
+        } : {}),
       },
       viewer: { involvement: ['reviewRequested'] },
       nativeRevision: OBSERVED_HEAD,
@@ -128,6 +138,53 @@ async function mountDetail(
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
+          if (action === 'reviews.comments.list') {
+            return {
+              items: [{
+                id: 'review-comment-1',
+                body: 'The implementation is ready to merge.',
+                serverRevision: 3,
+                anchor: { kind: 'line', filePath: 'src/index.ts', line: 12, side: 'after' },
+                snapshot: {
+                  kind: 'text',
+                  selectedLines: ['return ready;'],
+                  beforeContext: [],
+                  afterContext: [],
+                  selectedLinesHash: 'selected-hash',
+                  contextWindowHash: 'context-hash',
+                  capturedAt: 1_760_000_000_000,
+                  fileLength: 20,
+                  source: 'committed',
+                  commitSha: OBSERVED_HEAD,
+                  isUncommitted: false,
+                  isUntracked: false,
+                  truncated: false,
+                  hasBidiControls: false,
+                  likelyMinified: false,
+                  diffContext: {
+                    side: 'after',
+                    baseSha: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+                    headSha: OBSERVED_HEAD,
+                  },
+                },
+                linkedRefs: [{
+                  kind: kindId === 'issue' ? 'issue' : 'pullRequest',
+                  ...(kindId === 'issue' ? {
+                    id: createReviewCommentLinkedIssueIdV1({
+                      source: SOURCE_CONTRIBUTION,
+                      kindId,
+                      collisionScope: 'github:1296269',
+                      entryId: '1284',
+                    }),
+                  } : {}),
+                  url: kindId === 'issue'
+                    ? 'https://github.com/octo-org/example-app/issues/1284'
+                    : 'https://github.com/octo-org/example-app/pull/1284',
+                }],
+              }],
+              cursor: null,
+            } as JsonValue;
+          }
           return nextResult;
         },
       },
@@ -135,6 +192,30 @@ async function mountDetail(
   });
   mounted.push(fixture);
   return fixture;
+}
+
+async function waitForPublicationProposalRead(
+  detail: PluginUiTestkit,
+  role: 'checkbox' | 'radio' = 'checkbox',
+): Promise<void> {
+  try {
+    await vi.waitFor(async () => {
+      expect(await detail.queryByRole(role, {
+        name: 'The implementation is ready to merge.',
+      })).toBeDefined();
+    }, { timeout: 5_000 });
+  } catch (error) {
+    const status = {
+      loading: await detail.queryByText('Reading review proposals…') !== undefined,
+      failed: await detail.queryByText('Review proposals are unavailable') !== undefined,
+      empty: await detail.queryByText('No proposed review comment is linked to this pull request yet.') !== undefined
+        || await detail.queryByText('No proposed review comment is linked to this entry yet.') !== undefined,
+      listCalls: recorded.filter(({ action }) => action === 'reviews.comments.list').length,
+    };
+    throw new Error(`proposal read did not expose its returned item: ${JSON.stringify(status)}`, {
+      cause: error,
+    });
+  }
 }
 
 afterEach(async () => {
@@ -159,8 +240,13 @@ afterEach(async () => {
  * active here.
  */
 describe('the mounted GitHub write controls', () => {
-  it('mounts every approved pull-request mutation and keeps blocked review publication absent', async () => {
-    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Draft' });
+  it('mounts every approved Overview mutation including canonical review publication', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Draft' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    await waitForPublicationProposalRead(detail);
 
     for (const name of [
       'Merge pull request',
@@ -169,7 +255,8 @@ describe('the mounted GitHub write controls', () => {
       'Update branch',
       'Request review',
       'Withdraw review requests',
-      'Set thread resolution',
+      'Submit review',
+      'Publish selected comment',
     ]) {
       await expect(detail.getByRole('button', { name })).resolves.toMatchObject({ role: 'button' });
     }
@@ -177,12 +264,136 @@ describe('the mounted GitHub write controls', () => {
       .resolves.toMatchObject({ value: '' });
     await expect(detail.getByRole('textbox', { label: 'Reviewer team slugs' }))
       .resolves.toMatchObject({ value: '' });
-    await expect(detail.getByRole('textbox', { label: 'Review thread ID' }))
-      .resolves.toMatchObject({ value: '' });
-    await expect(detail.queryByRole('button', { name: 'Submit review' }))
-      .resolves.toBeUndefined();
-    await expect(detail.queryByRole('textbox', { label: 'Review summary' }))
-      .resolves.toBeUndefined();
+    await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+  });
+
+  it('dispatches the selected canonical proposal as a frozen comment-only publication plan', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    await waitForPublicationProposalRead(detail);
+    await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+    });
+    expect(recorded.at(-1)).toMatchObject({
+      action: {
+        pluginId: GITHUB_PLUGIN_ID,
+        localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview,
+      },
+      input: {
+        publicationPlan: {
+          target: {
+            providerId: 'github',
+            configuredAccountId: 'account-1',
+            subtarget: null,
+            entryRef: {
+              sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
+              kindId: 'pull-request',
+              collisionScope: 'github:1296269',
+              entryId: '1284',
+            },
+          },
+          baseRevision: '1b0847af63d5c1e299f2c1a7d4b6e08f3a5c9d2e',
+          headRevision: OBSERVED_HEAD,
+          entries: [{
+            happierCommentId: 'review-comment-1',
+            expectedServerRevision: 3,
+            anchor: { kind: 'line', filePath: 'src/index.ts', line: 12, side: 'after' },
+            body: 'The implementation is ready to merge.',
+          }],
+          verdict: null,
+        },
+      },
+    });
+  });
+
+  it('keeps approve inert until its separate verdict summary is supplied', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    await waitForPublicationProposalRead(detail);
+    await act(async () => {
+      await detail.press(await detail.findByRole('radio', { name: 'Approve' }));
+    });
+    const submit = await detail.getByRole('button', { name: 'Submit review' });
+    expect(submit.state?.disabled).toBe(true);
+    await expect(act(async () => { await detail.press(submit); })).rejects.toThrow();
+    expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
+  });
+
+  it('renders exact partial comment counts and the verdict outcome', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'P'.repeat(43),
+        entries: [
+          {
+            happierCommentId: 'review-comment-1',
+            publicationCorrelationId: 'A'.repeat(43),
+            outcome: { kind: 'published', externalRef: '991' },
+          },
+          {
+            happierCommentId: 'review-comment-2',
+            publicationCorrelationId: 'B'.repeat(43),
+            outcome: { kind: 'uncertain' },
+          },
+        ],
+        verdict: {
+          publicationCorrelationId: 'V'.repeat(43),
+          outcome: { kind: 'published', externalRef: '990' },
+        },
+      },
+    } as JsonValue;
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+    });
+    await expect(detail.getByText(
+      '1/2 review comments published; 1 unconfirmed; 0 not published. Verdict published.',
+    )).resolves.toMatchObject({
+      content: '1/2 review comments published; 1 unconfirmed; 0 not published. Verdict published.',
+    });
+    await expect(detail.getByText('Outcome unknown')).resolves.toMatchObject({
+      content: 'Outcome unknown',
+    });
+  });
+
+  it('labels a known failed publication as partial rather than unknown', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'pull-request',
+      [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    );
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'P'.repeat(43),
+        entries: [{
+          happierCommentId: 'review-comment-1',
+          publicationCorrelationId: 'A'.repeat(43),
+          outcome: { kind: 'failed', code: 'github_unprocessable' },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    } as JsonValue;
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+    });
+    await expect(detail.getByText('Review partially published')).resolves.toMatchObject({
+      content: 'Review partially published',
+    });
+    await expect(detail.queryByText('Outcome unknown')).resolves.toBeUndefined();
   });
 
   it('opens an exact linked Session through the incumbent host Action and exposes local failure', async () => {
@@ -205,6 +416,21 @@ describe('the mounted GitHub write controls', () => {
     });
   });
 
+  it('never exposes an opaque Session id when its user-facing title is unavailable', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'issue',
+      [{ sessionId: 'session-opaque-7f1c' }],
+    );
+    await act(async () => {
+      await detail.press(await detail.getByRole('tab', { name: 'Work Sessions' }));
+    });
+
+    await expect(detail.getByRole('button', { name: 'Open Session' }))
+      .resolves.toMatchObject({ role: 'button' });
+    await expect(detail.queryByText('session-opaque-7f1c')).resolves.toBeUndefined();
+  });
+
   it('mounts all four exact issue member deltas beside its state transition', async () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' }, 'issue');
 
@@ -215,6 +441,51 @@ describe('the mounted GitHub write controls', () => {
       .resolves.toMatchObject({ value: '' });
     await expect(detail.getByRole('textbox', { label: 'Label names' }))
       .resolves.toMatchObject({ value: '' });
+  });
+
+  it('mounts issue publication from one existing canonical proposal without inventing identity', async () => {
+    const detail = await mountDetail(
+      { presentation: 'active', nativeLabel: 'Open' },
+      'issue',
+      [{ sessionId: 'session-issue-1', displayTitle: 'Investigate this issue' }],
+    );
+    await waitForPublicationProposalRead(detail, 'radio');
+    await expect(detail.findByRole('radio', { name: 'The implementation is ready to merge.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
+    await expect(detail.findByRole('button', { name: 'Post selected issue comment' }))
+      .resolves.toMatchObject({ role: 'button' });
+
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'C'.repeat(43),
+        entries: [{
+          happierCommentId: 'review-comment-1',
+          publicationCorrelationId: 'B'.repeat(43),
+          outcome: { kind: 'published', externalRef: '701' },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    } as JsonValue;
+    await act(async () => {
+      await detail.press(await detail.findByRole('button', { name: 'Post selected issue comment' }));
+    });
+    expect(recorded.at(-1)).toMatchObject({
+      action: {
+        pluginId: GITHUB_PLUGIN_ID,
+        localId: GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueComment,
+      },
+      input: {
+        localRef: { kindId: 'issue', entryId: '1284' },
+        publicationPlan: {
+          target: { subtarget: null, entryRef: { kindId: 'issue', entryId: '1284' } },
+          baseRevision: null,
+          headRevision: null,
+          entries: [{ happierCommentId: 'review-comment-1' }],
+          verdict: null,
+        },
+      },
+    });
   });
 
   it('offers the open pull request its two writes and no third', async () => {
@@ -368,10 +639,10 @@ describe('the mounted GitHub write controls', () => {
 
   it('reobserves after the host cannot settle a dispatched GitHub write', async () => {
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
-    nextActionError = Object.assign(
-      new Error('The Action timed out after dispatch.'),
-      { code: 'timeout' },
-    );
+    nextActionError = new PluginError({
+      code: 'timeout',
+      message: 'The Action timed out after dispatch.',
+    });
 
     await act(async () => {
       await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));

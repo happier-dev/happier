@@ -1,4 +1,3 @@
-import { MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -29,8 +28,8 @@ import { runGithubTriageScan } from './scan.js';
 
 const REPOSITORY_KEY = `${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`.toLowerCase();
 
-/** The widest page the published scan input admits, and therefore the real geometry. */
-const CONTRACT_LIMIT = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1;
+/** Representative caller-selected geometry; the protocol has no feature-local maximum. */
+const CONTRACT_LIMIT = 64;
 
 function laneQueryOf(request: RecordedGithubRequest): string | null {
   return new URL(request.url).searchParams.get('q');
@@ -105,7 +104,7 @@ async function runWalk(input: Readonly<{
       {
         page: token === null
           ? { kind: 'initial', limit }
-          : { kind: 'continuation', token, maxLimit: CONTRACT_LIMIT },
+          : { kind: 'continuation', token },
         repositoryKey: REPOSITORY_KEY,
       },
       { client, now: fixedClock(1_000), signal: transport.context.signal },
@@ -276,7 +275,7 @@ describe('GitHub triage scan', () => {
 
     const result = await runGithubTriageScan(
       {
-        page: { kind: 'continuation', token: foreign, maxLimit: CONTRACT_LIMIT },
+        page: { kind: 'continuation', token: foreign },
         repositoryKey: REPOSITORY_KEY,
       },
       { client, now: fixedClock(1_000), signal: transport.context.signal },
@@ -312,7 +311,7 @@ describe('GitHub triage scan', () => {
 
     const result = await runGithubTriageScan(
       {
-        page: { kind: 'continuation', token, maxLimit: CONTRACT_LIMIT },
+        page: { kind: 'continuation', token },
         repositoryKey: REPOSITORY_KEY,
       },
       { client, now: fixedClock(1_000), signal: transport.context.signal },

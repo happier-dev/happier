@@ -1,12 +1,21 @@
 import {
   defineProtocolLiteral,
+  defineProtocolNumber,
   defineProtocolObject,
   defineProtocolUnion,
   defineProtocolUniqueArray,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
+  ReviewCommentPublicationResultV1ProtocolSchema,
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema,
+  ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+} from '@happier-dev/plugin-sdk/reviews';
+import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
+  MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TriageConfiguredSourceInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
   TriageSourceFailureV1Schema,
@@ -26,6 +35,80 @@ const CommitIdSchema = defineProtocolUtf8String({
   maxUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   minLength: 1,
 });
+const RoutingTokenSchema = defineProtocolUtf8String({
+  maxUtf8Bytes: MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
+  minLength: 1,
+});
+
+const revisionedPublicationPlanSchema =
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(CommitIdSchema);
+const revisionedSingleEntryPublicationPlanSchema =
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(CommitIdSchema);
+
+const publicationTargetShape = {
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
+} as const;
+
+/** Publishes an ordered frozen Reviews plan, comments first and the reviewer vote last. */
+export const AzureSubmitReviewInputV1Schema = defineProtocolObject(
+  { ...publicationTargetShape, publicationPlan: revisionedPublicationPlanSchema },
+  { policy: 'closed' },
+);
+export type AzureSubmitReviewInputV1 = ReturnType<typeof AzureSubmitReviewInputV1Schema.parse>;
+
+/** Creates one new Azure thread from one canonical review comment. */
+export const AzureThreadCommentCreateInputV1Schema = defineProtocolObject(
+  { ...publicationTargetShape, publicationPlan: revisionedSingleEntryPublicationPlanSchema },
+  { policy: 'closed' },
+);
+export type AzureThreadCommentCreateInputV1 = ReturnType<
+  typeof AzureThreadCommentCreateInputV1Schema.parse
+>;
+
+/** Replies to one exact Azure thread/comment using one unversioned canonical publication entry. */
+export const AzureThreadReplyInputV1Schema = defineProtocolObject({
+  ...publicationTargetShape,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  threadId: defineProtocolNumber({ integer: true, minimum: 1 }),
+  parentCommentId: defineProtocolNumber({ integer: true, minimum: 1 }),
+}, { policy: 'closed' });
+export type AzureThreadReplyInputV1 = ReturnType<typeof AzureThreadReplyInputV1Schema.parse>;
+
+/**
+ * Provider publication either returns the canonical exact-cardinality result or refuses before
+ * the generic Reviews dispatch claim. A claimed plan always settles, including partial/uncertain
+ * effects; it is never flattened into a coarse mutation boolean.
+ */
+export const AzureReviewPublicationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('settled'),
+    publication: ReviewCommentPublicationResultV1ProtocolSchema,
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('rejected'),
+    reason: defineProtocolUnion([
+      defineProtocolLiteral('invalid-input'),
+      defineProtocolLiteral('admission-failed'),
+      defineProtocolLiteral('base-advanced'),
+      defineProtocolLiteral('head-advanced'),
+      defineProtocolLiteral('state-changed'),
+      defineProtocolLiteral('dispatch-claim-failed'),
+      defineProtocolLiteral('unsupported-anchor'),
+      defineProtocolLiteral('thread-not-found'),
+      defineProtocolLiteral('provider-rejected'),
+    ]),
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+]);
+export type AzureReviewPublicationResultV1 = ReturnType<
+  typeof AzureReviewPublicationResultV1Schema.parse
+>;
 
 const BooleanSchema = defineProtocolUnion([
   defineProtocolLiteral(true),
@@ -44,6 +127,7 @@ export const AzureCompleteInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
   /** `lastMergeSourceCommit.commitId` as the user's own read reported it. */
   observedSourceCommitId: CommitIdSchema,
   /**
@@ -67,6 +151,7 @@ export const AzureAbandonInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
 export type AzureAbandonInputV1 = ReturnType<typeof AzureAbandonInputV1Schema.parse>;
 
@@ -81,17 +166,9 @@ export const AzureReactivateInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
 }, { policy: 'closed' });
 export type AzureReactivateInputV1 = ReturnType<typeof AzureReactivateInputV1Schema.parse>;
-
-/**
- * How many reviewers one additive request may name.
- *
- * It bounds one bulk `POST` body, which is the only thing it protects; it is not a policy about
- * how many reviewers a pull request may have. Azure publishes no documented ceiling for the route,
- * so this is this source's own bound on a single request a person composed by hand.
- */
-export const AZURE_MAX_REQUESTED_REVIEWERS_V1 = 10;
 
 const IdentityIdSchema = defineProtocolUtf8String({
   maxUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -114,12 +191,12 @@ export const AzureRequestReviewInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
   /** `lastMergeSourceCommit.commitId` as the user's own read reported it. */
   observedSourceCommitId: CommitIdSchema,
   /** One or more explicitly selected Azure DevOps identity ids. Duplicates are rejected. */
   reviewerIds: defineProtocolUniqueArray(IdentityIdSchema, {
     minItems: 1,
-    maxItems: AZURE_MAX_REQUESTED_REVIEWERS_V1,
   }),
 }, { policy: 'closed' });
 export type AzureRequestReviewInputV1 = ReturnType<typeof AzureRequestReviewInputV1Schema.parse>;
@@ -191,7 +268,10 @@ export const AzureMutationResultV1Schema = defineProtocolUnion([
     kind: defineProtocolLiteral('rejected'),
     reason: AzureMutationRejectionReasonV1Schema,
     /** Azure's own `mergeFailureMessage`, when it supplied one. */
-    detail: defineProtocolUtf8String({ maxUtf8Bytes: 512, minLength: 1 }).optional(),
+    detail: defineProtocolUtf8String({
+      maxUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+      minLength: 1,
+    }).optional(),
     observation: TriageSourceObservationV1Schema,
   }, { policy: 'closed' }),
   defineProtocolObject({
@@ -257,6 +337,7 @@ export const AzureThreadStatusInputV1Schema = defineProtocolObject({
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
   threadId: defineProtocolUtf8String({
     maxUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     minLength: 1,

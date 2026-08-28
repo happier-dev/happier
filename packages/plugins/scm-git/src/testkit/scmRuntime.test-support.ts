@@ -57,7 +57,11 @@ export function createEmptyScmHostingProviderRegistry(): ResolvedScmHostingProvi
         providersById: new Map(),
         diagnostics: [],
         getProvider: () => undefined,
-        getAdapter: () => undefined,
+        getRouting: () => undefined,
+        getPullRequests: () => undefined,
+        getPullRequestCheckout: () => undefined,
+        getRepositoryPublishing: () => undefined,
+        getRepositoryClone: () => undefined,
         detectRemote: (input) => ({
             kind: 'unknown',
             provider: {

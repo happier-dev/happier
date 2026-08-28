@@ -80,7 +80,7 @@ describe('Google daemon voice providers', () => {
 
     await expect(runtime.catalog!.list({ catalog: 'models' }, context)).resolves.toEqual([]);
     expect(request).toHaveBeenCalledWith({
-      url: 'https://generativelanguage.googleapis.com/v1beta/models',
+      url: 'https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000',
       method: 'GET',
       headers: { 'x-goog-api-key': 'google-secret' },
       redirect: 'error',
@@ -310,6 +310,8 @@ describe('Google daemon voice providers', () => {
     const geminiHttp = vi.fn(async () => jsonHttpResponse({ models: [
         { name: 'models/gemini-2.5-flash', displayName: 'Gemini Flash', supportedGenerationMethods: ['generateContent'] },
         { name: ' models/gemini-2.5-flash ', displayName: 'Duplicate', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/gemini-2.5-pro', displayName: 'Gemini Pro', supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/text-only-experimental', displayName: 'Unproven input modality', supportedGenerationMethods: ['generateContent'] },
         { name: 'models/embedding', displayName: 'Embedding', supportedGenerationMethods: ['embedContent'] },
       ] }));
     const cloudHttp = vi.fn(async () => jsonHttpResponse({ voices: [
@@ -323,6 +325,7 @@ describe('Google daemon voice providers', () => {
       credentialContext('AIzaSy-catalog-test-credential', undefined, undefined, geminiHttp),
     )).resolves.toEqual([
       { id: 'gemini-2.5-flash', name: 'Gemini Flash', metadata: { description: '' } },
+      { id: 'gemini-2.5-pro', name: 'Gemini Pro', metadata: { description: '' } },
     ]);
     const voices = await cloud.catalog!.list(
       { catalog: 'voices' },
@@ -334,6 +337,57 @@ describe('Google daemon voice providers', () => {
       metadata: { languageCodes: 'en-US,fr-FR', ssmlGender: 'FEMALE', naturalSampleRateHertz: 24000 },
     }]);
     expect(VoiceProviderCatalogItemSchema.safeParse(voices[0]).success).toBe(true);
+  });
+
+  it('paginates the Gemini catalog using the provider-defined page size and filters every page by known audio input support', async () => {
+    const httpRequest = vi.fn(async (
+      input: Parameters<VoiceSpeechOperationContext['http']['request']>[0],
+    ) => {
+      if (input.url.endsWith('?pageSize=1000')) {
+        return jsonHttpResponse({
+          models: [
+            { name: 'models/text-only-experimental', displayName: 'Unknown', supportedGenerationMethods: ['generateContent'] },
+            { name: 'models/gemini-2.5-flash', displayName: 'Gemini Flash', supportedGenerationMethods: ['generateContent'] },
+          ],
+          nextPageToken: 'page two',
+        });
+      }
+      expect(input.url).toBe('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&pageToken=page+two');
+      return jsonHttpResponse({
+        models: [
+          { name: 'models/gemini-2.5-flash-lite', displayName: 'Gemini Flash-Lite', supportedGenerationMethods: ['generateContent'] },
+        ],
+      });
+    });
+
+    await expect(createGoogleGeminiSttRuntime().catalog!.list(
+      { catalog: 'models' },
+      credentialContext('AIzaSy-paginated-models', undefined, undefined, httpRequest),
+    )).resolves.toEqual([
+      { id: 'gemini-2.5-flash', name: 'Gemini Flash', metadata: { description: '' } },
+      { id: 'gemini-2.5-flash-lite', name: 'Gemini Flash-Lite', metadata: { description: '' } },
+    ]);
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a repeated Gemini catalog page token instead of looping', async () => {
+    const httpRequest = vi.fn(async () => jsonHttpResponse({ models: [], nextPageToken: 'repeat' }));
+
+    await expect(createGoogleGeminiSttRuntime().catalog!.list(
+      { catalog: 'models' },
+      credentialContext('AIzaSy-repeated-page', undefined, undefined, httpRequest),
+    )).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    expect(httpRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a malformed Gemini catalog page token', async () => {
+    const httpRequest = vi.fn(async () => jsonHttpResponse({ models: [], nextPageToken: 42 }));
+
+    await expect(createGoogleGeminiSttRuntime().catalog!.list(
+      { catalog: 'models' },
+      credentialContext('AIzaSy-malformed-page', undefined, undefined, httpRequest),
+    )).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    expect(httpRequest).toHaveBeenCalledOnce();
   });
 
   it('separates a real empty catalog from a malformed catalog payload', async () => {

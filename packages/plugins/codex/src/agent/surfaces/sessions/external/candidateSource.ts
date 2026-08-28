@@ -656,8 +656,12 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   let activeOffset = params.cursor.active.offset;
   let archivedOffset = params.cursor.archived.offset;
   const emittedIds = new Set<string>();
+  const suppressedRolloutIds = new Set(params.cursor.suppressedRolloutIds);
   const rolloutRowsById = new Map(
     params.rolloutRows.map((row) => [row.remoteSessionId, row] as const),
+  );
+  const rolloutIndexesById = new Map(
+    params.rolloutRows.map((row, index) => [row.remoteSessionId, index] as const),
   );
   /**
    * A native row owns an overlap only when it is at least as new as the
@@ -701,7 +705,12 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   const nextRollout = (): CodexMergedOrderingRow | null => {
     while (rolloutOffset < params.rolloutRows.length) {
       const row = params.rolloutRows[rolloutOffset]!;
-      if (nativeIds.has(row.remoteSessionId) || emittedIds.has(row.remoteSessionId)) {
+      if (
+        nativeIds.has(row.remoteSessionId)
+        || suppressedRolloutIds.has(row.remoteSessionId)
+        || emittedIds.has(row.remoteSessionId)
+      ) {
+        suppressedRolloutIds.delete(row.remoteSessionId);
         rolloutOffset += 1;
         continue;
       }
@@ -750,6 +759,12 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
     if (!next) break;
     selected.push(next.row);
     emittedIds.add(next.row.remoteSessionId);
+    if (next.stream !== 'rollout') {
+      const rolloutIndex = rolloutIndexesById.get(next.row.remoteSessionId);
+      if (rolloutIndex !== undefined && rolloutIndex >= rolloutOffset) {
+        suppressedRolloutIds.add(next.row.remoteSessionId);
+      }
+    }
     if (next.stream === 'rollout') rolloutOffset += 1;
     if (next.stream === 'active') activeOffset += 1;
     if (next.stream === 'archived') archivedOffset += 1;
@@ -769,9 +784,10 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   return Object.freeze({
     rows: Object.freeze(selected),
     cursor: Object.freeze({
-      v: 5,
+      v: 6,
       kind: 'codexMergedCandidatePage',
       rolloutOffset,
+      suppressedRolloutIds: Object.freeze([...suppressedRolloutIds]),
       active,
       archived,
     }),
@@ -839,9 +855,10 @@ export async function listCodexSessionCandidates(params: Readonly<{
       candidates: await buildCodexMergedOrderingPage(pageRows, params),
       nextCursor: hasMore
         ? encodeCodexExternalSessionIndexCursor(Object.freeze({
-          v: 5 as const,
+          v: 6 as const,
           kind: 'codexMergedCandidatePage' as const,
           rolloutOffset: nextOffset,
+          suppressedRolloutIds: Object.freeze([]),
           active: terminalNativeCandidateCursorState(),
           archived: terminalNativeCandidateCursorState(),
         }))

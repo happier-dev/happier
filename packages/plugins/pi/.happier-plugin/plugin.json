@@ -32,14 +32,6 @@
               "versions": [
                 1
               ]
-            },
-            "usageLimitRecovery": {
-              "active": [
-                "checkNow"
-              ],
-              "inactive": [
-                "checkNow"
-              ]
             }
           },
           "surfaces": [

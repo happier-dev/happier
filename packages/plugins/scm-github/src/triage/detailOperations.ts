@@ -1,18 +1,20 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import {
+  fitActionResultPageV1,
+  fitActionResultSequenceV1,
+} from '@happier-dev/triage-sources/projection/actionResultSequence';
 
 import { admitGithubDetailInvocation } from './admission.js';
 import {
   GithubChangedFilesInputV1Schema,
   GithubChecksInputV1Schema,
-  GithubCommentsInputV1Schema,
   GithubFeedbackInputV1Schema,
   GithubFeedbackResultV1Schema,
   GithubReviewsInputV1Schema,
   GithubTimelineInputV1Schema,
   type GithubChangedFilesResultV1,
   type GithubChecksResultV1,
-  type GithubCommentsResultV1,
   type GithubFeedbackResultV1,
   type GithubReviewsResultV1,
   type GithubTimelineResultV1,
@@ -34,7 +36,6 @@ import {
 import {
   readGithubChangedFilesPage,
   readGithubChecksSurface,
-  readGithubIssueCommentsPage,
   readGithubReviewsSurface,
   readGithubTimelinePage,
   type GithubDetailPageV1,
@@ -202,44 +203,9 @@ export async function listGithubChangedFiles(
   });
 }
 
-/* ------------------------------------------------------------------- comments */
-
-/** One bounded page of the issue-level comment stream of a pull request or issue. */
-export async function listGithubComments(
-  input: unknown,
-  context: PluginInvocationContext,
-): Promise<GithubCommentsResultV1> {
-  const parsed = GithubCommentsInputV1Schema.safeParse(input);
-  if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
-  const request = parsed.data;
-  const position = resolvePage(request.continuation, request.limit);
-  if (!position.ok) return unavailable(CONTINUATION_UNREADABLE_FAILURE);
-
-  const admitted = await admitGithubDetailInvocation({
-    instance: request.instance,
-    localRef: request.localRef,
-    routingToken: request.routingToken,
-    admissibleKinds: ['pull-request', 'issue'],
-  }, context);
-  if (!admitted.ok) return unavailable(admitted.failure);
-
-  const page = await readGithubIssueCommentsPage({
-    route: admitted.route,
-    entryNumber: admitted.entryNumber,
-    perPage: request.limit,
-    page: position.page,
-  }, { client: admitted.client, now: Date.now });
-  if (!page.ok) return unavailable(toTriageFailure(page.failure));
-
-  return Object.freeze({
-    kind: 'comments' as const,
-    ...shapePage(page.value, request.limit),
-  });
-}
-
 /* ------------------------------------------------------------------- feedback */
 
-/** Reads exactly one independently paged GitHub pull-request feedback connection. */
+/** Reads one independently paged feedback connection; issues expose comments only. */
 export async function readGithubFeedback(
   input: unknown,
   context: PluginInvocationContext,
@@ -252,7 +218,9 @@ export async function readGithubFeedback(
     instance: request.instance,
     localRef: request.localRef,
     routingToken: request.routingToken,
-    admissibleKinds: ['pull-request'],
+    admissibleKinds: request.connection === 'comments'
+      ? ['pull-request', 'issue']
+      : ['pull-request'],
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
   const repositoryId = readGithubRepositoryIdFromCollisionScope(admitted.localRef.collisionScope);
@@ -262,40 +230,28 @@ export async function readGithubFeedback(
     route: admitted.route,
     repositoryId,
     number: admitted.entryNumber,
-    kindId: 'pull-request' as const,
     cursor: request.cursor ?? null,
   };
+  const connectionInput = admitted.kindId === 'issue'
+    ? { ...common, kindId: 'issue' as const, connection: 'comments' as const }
+    : request.connection === 'threadReplies'
+      ? {
+        ...common,
+        kindId: 'pull-request' as const,
+        connection: 'threadReplies' as const,
+        threadId: request.threadId,
+      }
+      : {
+        ...common,
+        kindId: 'pull-request' as const,
+        connection: request.connection,
+      };
   const result = await readGithubFeedbackConnection(
-    request.connection === 'threadReplies'
-      ? { ...common, connection: 'threadReplies', threadId: request.threadId }
-      : { ...common, connection: request.connection },
+    connectionInput,
     { client: admitted.client, now: Date.now, signal: admitted.signal },
   );
 
   if (result.kind === 'unavailable') return result;
-  if (result.kind === 'requests') {
-    return Object.freeze({
-      kind: result.kind,
-      rows: result.rows.map((row) => ({ ...row })),
-      ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }),
-    });
-  }
-  if (result.kind === 'reviews') {
-    return Object.freeze({
-      kind: result.kind,
-      rows: result.rows.map((row) => ({
-        id: row.id,
-        body: row.body,
-        state: row.state,
-        ...(row.author === null ? {} : { author: row.author }),
-        ...(row.submittedAtMs === null ? {} : { submittedAtMs: row.submittedAtMs }),
-        ...(row.url === null ? {} : { url: row.url }),
-        ...(row.truncated === true ? { truncated: true as const } : {}),
-      })),
-      ...(result.reviewDecision === null ? {} : { reviewDecision: result.reviewDecision }),
-      ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
-    });
-  }
   const shapeComment = (row: GithubFeedbackCommentV1) => ({
     id: row.id,
     body: row.body,
@@ -304,10 +260,48 @@ export async function readGithubFeedback(
     ...(row.url !== null ? { url: row.url } : {}),
     ...(row.truncated === true ? { truncated: true as const } : {}),
   });
+  if (result.kind === 'requests') {
+    return GithubFeedbackResultV1Schema.parse(fitActionResultPageV1(
+      result.rows,
+      result.nextCursor ?? undefined,
+      (rows, omittedRowCount, nextCursor, continuationOmitted) => Object.freeze({
+        kind: 'requests' as const,
+        rows: rows.map((row) => ({ ...row })),
+        omittedRowCount,
+        projectionTruncated: omittedRowCount > 0
+          || rows.some((row) => row.truncated === true),
+        ...(nextCursor === undefined ? {} : { nextCursor }),
+        ...(continuationOmitted ? { incomplete: 'continuationUnavailable' as const } : {}),
+      }),
+    ).result);
+  }
+  if (result.kind === 'reviews') {
+    const projectedRows = result.rows.map((row) => ({
+        id: row.id,
+        body: row.body,
+        state: row.state,
+        ...(row.author === null ? {} : { author: row.author }),
+        ...(row.submittedAtMs === null ? {} : { submittedAtMs: row.submittedAtMs }),
+        ...(row.url === null ? {} : { url: row.url }),
+        ...(row.truncated === true ? { truncated: true as const } : {}),
+      }));
+    return GithubFeedbackResultV1Schema.parse(fitActionResultPageV1(
+      projectedRows,
+      result.previousCursor ?? undefined,
+      (rows, omittedRowCount, previousCursor, continuationOmitted) => Object.freeze({
+        kind: 'reviews' as const,
+        rows,
+        ...(result.reviewDecision === null ? {} : { reviewDecision: result.reviewDecision }),
+        omittedRowCount,
+        projectionTruncated: omittedRowCount > 0
+          || rows.some((row) => row.truncated === true),
+        ...(previousCursor === undefined ? {} : { previousCursor }),
+        ...(continuationOmitted ? { incomplete: 'continuationUnavailable' as const } : {}),
+      }),
+    ).result);
+  }
   if (result.kind === 'threads') {
-    return GithubFeedbackResultV1Schema.parse({
-      kind: 'threads',
-      rows: result.rows.map((row) => ({
+    const projectedRows = result.rows.map((row) => ({
         id: row.id,
         isResolved: row.isResolved,
         replies: row.replies.map(shapeComment),
@@ -315,16 +309,36 @@ export async function readGithubFeedback(
         ...(row.line === null ? {} : { line: row.line }),
         ...(row.previousRepliesCursor === null ? {} : { previousRepliesCursor: row.previousRepliesCursor }),
         ...(row.truncated === true ? { truncated: true as const } : {}),
-      })),
-      ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
-    });
+      }));
+    return GithubFeedbackResultV1Schema.parse(fitActionResultPageV1(
+      projectedRows,
+      result.previousCursor ?? undefined,
+      (rows, omittedRowCount, previousCursor, continuationOmitted) => Object.freeze({
+        kind: 'threads' as const,
+        rows,
+        omittedRowCount,
+        projectionTruncated: omittedRowCount > 0
+          || rows.some((row) => row.truncated === true),
+        ...(previousCursor === undefined ? {} : { previousCursor }),
+        ...(continuationOmitted ? { incomplete: 'continuationUnavailable' as const } : {}),
+      }),
+    ).result);
   }
-  return GithubFeedbackResultV1Schema.parse({
-    kind: result.kind,
-    ...('threadId' in result ? { threadId: result.threadId } : {}),
-    rows: result.rows.map(shapeComment),
-    ...(result.previousCursor === null ? {} : { previousCursor: result.previousCursor }),
-  });
+  const projectedRows = result.rows.map(shapeComment);
+  return GithubFeedbackResultV1Schema.parse(fitActionResultPageV1(
+    projectedRows,
+    result.previousCursor ?? undefined,
+    (rows, omittedRowCount, previousCursor, continuationOmitted) => Object.freeze({
+      kind: result.kind,
+      ...('threadId' in result ? { threadId: result.threadId } : {}),
+      rows,
+      omittedRowCount,
+      projectionTruncated: omittedRowCount > 0
+        || rows.some((row) => row.truncated === true),
+      ...(previousCursor === undefined ? {} : { previousCursor }),
+      ...(continuationOmitted ? { incomplete: 'continuationUnavailable' as const } : {}),
+    }),
+  ).result);
 }
 
 /* --------------------------------------------------------------------- checks */
@@ -361,7 +375,7 @@ export async function readGithubChecks(
 
   const { headRevision, surface } = read.value;
   const projected = projectGithubCheckRows(surface.observations, GITHUB_DETAIL_BOUNDS_V1);
-  return Object.freeze({
+  return fitActionResultSequenceV1(projected.rows, (rows, omittedByEnvelope) => Object.freeze({
     kind: 'checks' as const,
     headRevision,
     state: surface.state,
@@ -370,7 +384,7 @@ export async function readGithubChecks(
     // say what GitHub reports as wrong in the same words the list row uses,
     // without deriving a second answer from the bounded rows below.
     ...(surface.rowState === null ? {} : { rowState: surface.rowState }),
-    rows: projected.rows,
+    rows,
     // A count is omitted rather than zeroed wherever a per-job breakdown is
     // unavailable: a rendered `0 failing` on a suite nobody could read is a
     // fabricated fact, not a conservative one.
@@ -383,9 +397,9 @@ export async function readGithubChecks(
     ...(surface.commitStatusFailure === null
       ? {}
       : { commitStatusFailure: toTriageFailure(surface.commitStatusFailure) }),
-    omittedRowCount: projected.omittedRowCount,
-    projectionTruncated: projected.projectionTruncated,
-  });
+    omittedRowCount: projected.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: projected.projectionTruncated || omittedByEnvelope > 0,
+  })).result;
 }
 
 /* -------------------------------------------------------------------- reviews */
@@ -430,10 +444,22 @@ export async function readGithubReviews(
     outstanding: surface.outstanding,
   }, GITHUB_DETAIL_BOUNDS_V1);
 
-  return Object.freeze({
+  // Fit both provider sequences through the one canonical Action-result byte
+  // owner. Their order is deliberate: completed review facts are authoritative
+  // history, while outstanding requests consume the remaining envelope. No
+  // source-local row count is invented for either collection.
+  const candidates = Object.freeze([
+    ...projected.reviewed.map((value) => Object.freeze({ kind: 'reviewed' as const, value })),
+    ...projected.requested.map((value) => Object.freeze({ kind: 'requested' as const, value })),
+  ]);
+  return fitActionResultSequenceV1(candidates, (included, omittedByEnvelope) => Object.freeze({
     kind: 'reviews' as const,
-    reviewed: projected.reviewed,
-    requested: projected.requested,
+    reviewed: included
+      .filter((candidate) => candidate.kind === 'reviewed')
+      .map((candidate) => candidate.value),
+    requested: included
+      .filter((candidate) => candidate.kind === 'requested')
+      .map((candidate) => candidate.value),
     // Omitted rather than defaulted: REST cannot prove GitHub's `REVIEW_REQUIRED`
     // arm, so an absent decision means the question was not answered.
     ...(surface.reviewDecision === null ? {} : { reviewDecision: surface.reviewDecision }),
@@ -445,7 +471,7 @@ export async function readGithubReviews(
       : { requestsFailure: toTriageFailure(surface.requestsFailure) }),
     ...(surface.reviewsIncomplete ? { reviewsIncomplete: true as const } : {}),
     ...(surface.requestsIncomplete ? { requestsIncomplete: true as const } : {}),
-    omittedRowCount: projected.omittedRowCount,
-    projectionTruncated: projected.projectionTruncated,
-  });
+    omittedRowCount: projected.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: projected.projectionTruncated || omittedByEnvelope > 0,
+  })).result;
 }

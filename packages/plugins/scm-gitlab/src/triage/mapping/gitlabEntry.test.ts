@@ -134,6 +134,12 @@ describe('issue mapping', () => {
     expect(projectGitlabIssueState(rowOf(issueList[2])))
       .toEqual({ presentation: 'unknown', nativeLabel: 'escalated' });
   });
+
+  it('preserves an unknown native state through the canonical text boundary', () => {
+    const state = 'future-state-'.repeat(20);
+    expect(projectGitlabIssueState({ state }))
+      .toEqual({ presentation: 'unknown', nativeLabel: state });
+  });
 });
 
 /**

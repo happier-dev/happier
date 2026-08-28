@@ -9,6 +9,7 @@ import {
 const CLAUDE_AGENT_TEAMS_SETTING_KEY = 'claudeCodeExperimentalAgentTeamsEnabled';
 const CLAUDE_ADVANCED_OPTIONS_SETTING_KEY = 'claudeRemoteAdvancedOptionsJson';
 const CLAUDE_AGENT_TEAMS_ENV_KEY = 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS';
+const CLAUDE_PROMPT_SUGGESTION_ENV_KEY = 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION';
 const CLAUDE_LOCAL_AUTH_USER_ENV_KEY = 'USER';
 const CLAUDE_EXTERNAL_SANDBOX_ENV_KEY = 'IS_SANDBOX';
 
@@ -124,6 +125,17 @@ export function resolveClaudeNativeBaseLaunchEnvironment(input: Readonly<{
     Object.assign(values, resolveClaudeExternalSandboxEnv(input.processEnv));
   }
   return values;
+}
+
+export function resolveClaudeUnifiedTerminalLaunchEnvironment(
+  launchEnv: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  return {
+    ...launchEnv,
+    // Claude suggestions look like composer input but are not user-authored drafts. Preserve the
+    // unified draft guard's fail-closed protection by removing that ambiguity at process launch.
+    [CLAUDE_PROMPT_SUGGESTION_ENV_KEY]: 'false',
+  };
 }
 
 export async function resolveClaudeNativeLaunchSettings(input: Readonly<{

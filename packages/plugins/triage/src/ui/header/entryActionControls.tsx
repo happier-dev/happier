@@ -1,5 +1,12 @@
 import * as React from 'react';
-import { Button, Row, Stack, Status } from '@happier-dev/plugin-ui';
+import {
+  Button,
+  Row,
+  Stack,
+  Status,
+  type PluginUiFocusTarget,
+  usePluginUiFocusTarget,
+} from '@happier-dev/plugin-ui';
 import type {
   TriageEntryRefV1,
   TriageSourceInstanceIdV1,
@@ -37,6 +44,8 @@ export type TriageEntryActionRequestV1 = Readonly<{
   action: TriageActionV1;
   entryRef: TriageEntryRefV1;
   sourceInstanceId: TriageSourceInstanceIdV1;
+  /** Present only for the exact formal-review control that was pressed. */
+  returnFocusTarget?: PluginUiFocusTarget;
 }>;
 
 export type TriageEntryActionControlsPropsV1 = Readonly<{
@@ -59,6 +68,35 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
 const NO_SELECTION_COPY = 'Select an entry to start a session from it.';
 const NO_PREPARATION_COPY =
   'This source cannot prepare a review workspace, so a pull request cannot be fixed here.';
+
+function TriageEntryActionButton(props: Readonly<{
+  action: TriageActionV1;
+  entryRef: TriageEntryRefV1;
+  sourceInstanceId: TriageSourceInstanceIdV1;
+  blocked: boolean;
+  onAction: (request: TriageEntryActionRequestV1) => void;
+}>): React.ReactElement {
+  const returnFocusTarget = usePluginUiFocusTarget();
+  const titleKey = readTriageActionTitleKeyV1(props.action);
+  const restoresReviewFocus = props.action.target.kind === 'reviewStart';
+  return (
+    <Button
+      {...(titleKey === null ? {} : { titleKey })}
+      title={props.action.label}
+      variant={props.action.workspaceMode === 'reference_only' ? 'secondary' : 'primary'}
+      disabled={props.blocked}
+      {...(restoresReviewFocus ? { focusTarget: returnFocusTarget } : {})}
+      onPress={() => {
+        props.onAction({
+          action: props.action,
+          entryRef: props.entryRef,
+          sourceInstanceId: props.sourceInstanceId,
+          ...(restoresReviewFocus ? { returnFocusTarget } : {}),
+        });
+      }}
+    />
+  );
+}
 
 export function TriageEntryActionControls(
   props: TriageEntryActionControlsPropsV1,
@@ -92,21 +130,20 @@ export function TriageEntryActionControls(
 
   return (
     <Stack gap="small">
-      <Row gap="small" align="center">
+      <Row gap="small" align="center" wrap>
         {offered.map((action) => {
           const blocked = action.workspaceMode === 'pull_request' && !preparesReviewWorkspace;
           // A renamed control shows the person's own words in every locale; a
           // still-shipped one keeps its translation. `titleKey` is therefore
           // resolved from the record, never stored in it.
-          const titleKey = readTriageActionTitleKeyV1(action);
           return (
-            <Button
+            <TriageEntryActionButton
               key={action.actionId}
-              {...(titleKey === null ? {} : { titleKey })}
-              title={action.label}
-              variant={action.workspaceMode === 'reference_only' ? 'secondary' : 'primary'}
-              disabled={blocked}
-              onPress={() => { onAction({ action, entryRef, sourceInstanceId }); }}
+              action={action}
+              entryRef={entryRef}
+              sourceInstanceId={sourceInstanceId}
+              blocked={blocked}
+              onAction={onAction}
             />
           );
         })}

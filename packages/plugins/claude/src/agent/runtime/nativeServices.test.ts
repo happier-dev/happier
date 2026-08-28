@@ -7,14 +7,19 @@ import {
 } from './nativeServices.js';
 
 describe('createClaudeNativeAgentSdkContext', () => {
-  it('preserves execution-run tool proposals when no session interception scope exists', async () => {
+  it('delegates tool proposals to the host Session interception service', async () => {
+    const before = vi.fn(async (request) => ({
+      status: 'continue' as const,
+      input: request.input,
+    }));
     const context = {
       services: {
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
         exec: {},
       },
-    };
-    const native = createClaudeNativeAgentSdkContext(context as never);
+      session: { services: { toolExecution: { before } } },
+    } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeAgentSdkContext(context);
 
     await expect(native.agentRuntime.toolExecution.before({
       callId: 'execution-run-call-1',
@@ -24,6 +29,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
       status: 'continue',
       input: { path: 'README.md' },
     });
+    expect(before).toHaveBeenCalledOnce();
   });
 
   it('does not discover workflow records outside a private native-session invocation', async () => {
@@ -34,7 +40,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
       },
       session: { services: {} },
     } as unknown as AgentSessionRuntimeContext;
-    const native = createClaudeNativeAgentSdkContext(context, context);
+    const native = createClaudeNativeAgentSdkContext(context);
 
     await expect(native.sessions.current.writeSystemRecord({
       namespace: 'activity',
@@ -107,7 +113,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
       },
       session: { services: {} },
     } as unknown as AgentSessionRuntimeContext;
-    const native = createClaudeNativeAgentSdkContext(context, context);
+    const native = createClaudeNativeAgentSdkContext(context);
 
     await expect(native.sessions.current.auth.services.refreshRuntimeAuth({
       agentId: 'claude',
@@ -137,7 +143,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const native = createClaudeNativeAgentSdkContext(context, context);
+    const native = createClaudeNativeAgentSdkContext(context);
     const event = {
       type: 'terminal-composer-draft-blocked' as const,
       reason: 'idle_draft_guard' as const,
@@ -183,7 +189,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const native = createClaudeNativeAgentSdkContext(context, context);
+    const native = createClaudeNativeAgentSdkContext(context);
 
     await expect(native.sessions.current.writeSystemRecord({
       namespace: 'activity',
@@ -220,7 +226,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
         },
       },
     } as unknown as AgentSessionRuntimeContext;
-    const native = createClaudeNativeAgentSdkContext(context, context);
+    const native = createClaudeNativeAgentSdkContext(context);
 
     expect(native.sessions.current).not.toHaveProperty('writeMetadata');
     await native.sessions.current.workflowActivity.publishHeadlines({

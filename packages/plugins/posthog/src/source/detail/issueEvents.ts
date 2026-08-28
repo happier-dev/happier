@@ -32,7 +32,6 @@ import {
     parsePosthogIssueEventsEnvelope,
 } from '../../api/types/events.js';
 import {
-    POSTHOG_SAMPLED_EVENT_BOUNDS_V1,
     projectPosthogIssueEvents,
     type PosthogProjectedIssueEvent,
 } from '../../ui/detail/issueEventProjection.js';
@@ -156,7 +155,7 @@ export async function readPosthogSampledIssueEvents(
     return {
         ok: true,
         value: {
-            events: projectPosthogIssueEvents(envelope.rawEvents, POSTHOG_SAMPLED_EVENT_BOUNDS_V1),
+            events: projectPosthogIssueEvents(envelope.rawEvents),
             omittedRowCount: envelope.skippedRowCount,
             walk,
             request,

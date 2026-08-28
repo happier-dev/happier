@@ -4,25 +4,34 @@ import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import type {
   TriageDetailSurfaceInputV1,
   TriageLinkedSessionProjectionV1,
-  TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
   TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
+  type TriageReadEntryDetailInputV1,
+  type TriageReadEntryDetailResultV1,
   TriageReadEntryDetailResultV1Schema,
 } from '../../actions/entryDetailProtocol.js';
+import { readTriageEntryDetail } from '../../actions/readEntryDetail.js';
+import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
 import { sameTriageEntryRefV1 } from '../state/surface.js';
+import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import { buildTriageDetailSurfaceInputV1 } from './input.js';
 
 /**
  * The selected entry's mounted detail input.
  *
  * Two of the three members the strict boundary requires are Account Collection
- * state, and a mounted surface holds a Host API with no storage member — so
- * this hook is the transport, through the plugin's own Action, and nothing here
+ * state. When the mounted Account data client is reachable this hook reads
+ * those members through the canonical Collection-backed domain owner; when it
+ * is not, the plugin's own Action remains the daemon transport. Neither path
  * reaches a provider. The third member, the applied observation, is already in
  * the reader's device-local projection and is passed in.
+ *
+ * Descriptor and operation/surface facts deliberately do not travel through
+ * this Action. The physical mount's exact targeted snapshot owns them, leaving
+ * this durable read available when no daemon is reachable.
  *
  * Every state it can be in is one a reader can be told truthfully, and the
  * unavailable ones are deliberately distinguishable: a connection that has been
@@ -36,13 +45,6 @@ export type TriageEntryDetailStateV1 =
   | Readonly<{
     kind: 'ready';
     input: TriageDetailSurfaceInputV1;
-    /**
-     * The entry's source's own declared descriptor, already parsed by the host
-     * with this target's schema and carried out of the admitted snapshot by the
-     * Action. `null` when that source has no currently admitted contribution;
-     * nothing here decodes it.
-     */
-    sourceDescriptor: TriageSourceDescriptorV1 | null;
     /** Every linked Session page this mount has answered, in Collection order. */
     linkedSessions: readonly TriageLinkedSessionProjectionV1[];
     /** The opaque Collection continuation, held only for this mount. */
@@ -66,6 +68,14 @@ const READING: TriageEntryDetailStateV1 = Object.freeze({ kind: 'reading' });
 const UNAVAILABLE: TriageEntryDetailStateV1 = Object.freeze({ kind: 'unavailable' });
 const UNREACHABLE: TriageEntryDetailStateV1 = Object.freeze({ kind: 'unreachable' });
 
+/** Settle any cursor this mounted walk already spent, including A→B→A. */
+export function isSpentTriageLinkedSessionCursorV1(
+  spent: ReadonlySet<string>,
+  nextCursor: string | undefined,
+): boolean {
+  return nextCursor !== undefined && spent.has(nextCursor);
+}
+
 /** What this read needs from a mount: the ability to invoke one own Action. */
 type TriageDetailHostV1 = Readonly<{
   executeAction(
@@ -74,6 +84,52 @@ type TriageDetailHostV1 = Readonly<{
     options?: PluginCancellationOptions,
   ): Promise<unknown>;
 }>;
+
+type TriageEntryDetailTransportV1 = Readonly<{
+  read(
+    input: TriageReadEntryDetailInputV1,
+    options?: PluginCancellationOptions,
+  ): Promise<TriageReadEntryDetailResultV1>;
+}>;
+
+function createActionTriageEntryDetailTransport(
+  host: TriageDetailHostV1,
+): TriageEntryDetailTransportV1 {
+  return Object.freeze({
+    async read(input, options) {
+      return TriageReadEntryDetailResultV1Schema.parse(await host.executeAction(
+        TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
+        input,
+        options,
+      ));
+    },
+  });
+}
+
+/**
+ * Read the durable half of detail directly from the mounted Account authority.
+ *
+ * This is the same domain owner the daemon Action calls, over the same three
+ * Collection handles and codecs. The UI does not execute a provider operation
+ * and does not recreate Session storage: when the generic Session summary
+ * service is unavailable in this realm, the link keeps its canonical
+ * `sessionId` and omits only presentation metadata, exactly as
+ * `readTriageEntryDetail` specifies for an unavailable summary boundary.
+ */
+function createDirectTriageEntryDetailTransport(
+  collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
+): TriageEntryDetailTransportV1 {
+  return Object.freeze({
+    async read(input, options) {
+      return await readTriageEntryDetail(input, {
+        sourceInstances: collections.sourceInstances,
+        sessionLinks: collections.sessionLinks,
+        readSessionSummary: async () => null,
+        ...(options?.signal ? { signal: options.signal } : {}),
+      });
+    },
+  });
+}
 
 export type TriageEntryDetailInputSourceV1 = Readonly<{
   selection: Pick<TriageSurfaceSelectionV1, 'entryRef' | 'sourceInstanceId'>;
@@ -86,17 +142,25 @@ export async function readTriageEntryDetailState(
   source: TriageEntryDetailInputSourceV1,
   options?: PluginCancellationOptions,
 ): Promise<TriageEntryDetailStateV1> {
-  let result: ReturnType<typeof TriageReadEntryDetailResultV1Schema.parse>;
+  return await readTriageEntryDetailStateThrough(
+    createActionTriageEntryDetailTransport(host),
+    source,
+    options,
+  );
+}
+
+async function readTriageEntryDetailStateThrough(
+  transport: TriageEntryDetailTransportV1,
+  source: TriageEntryDetailInputSourceV1,
+  options?: PluginCancellationOptions,
+): Promise<TriageEntryDetailStateV1> {
+  let result: TriageReadEntryDetailResultV1;
   try {
-    result = TriageReadEntryDetailResultV1Schema.parse(await host.executeAction(
-      TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
-      {
-        v: 1,
-        entryRef: source.selection.entryRef,
-        sourceInstanceId: source.selection.sourceInstanceId,
-      },
-      options,
-    ));
+    result = await transport.read({
+      v: 1,
+      entryRef: source.selection.entryRef,
+      sourceInstanceId: source.selection.sourceInstanceId,
+    }, options);
   } catch {
     return UNREACHABLE;
   }
@@ -116,7 +180,6 @@ export async function readTriageEntryDetailState(
     ? Object.freeze({
       kind: 'ready',
       input: built.input,
-      sourceDescriptor: result.sourceDescriptor ?? null,
       linkedSessions: result.linkedSessions,
       ...(result.linkedSessionsNextCursor === undefined
         ? {}
@@ -137,12 +200,21 @@ export function useTriageEntryDetail(
   source: TriageEntryDetailInputSourceV1 | null,
 ): TriageEntryDetailStateV1 | null {
   const hostApi = usePluginHostApi();
+  const durable = useTriageDurableAccount();
+  const transport = useMemo<TriageEntryDetailTransportV1>(
+    () => durable.collections === null
+      ? createActionTriageEntryDetailTransport(hostApi)
+      : createDirectTriageEntryDetailTransport(durable.collections),
+    [durable.collections, hostApi],
+  );
   const [state, setState] = useState<TriageEntryDetailStateV1 | null>(null);
   const stateRef = useRef<TriageEntryDetailStateV1 | null>(null);
   // Reads settle out of order across a fast selection change; only the newest
   // one may publish, or a reader can end up looking at the entry they left.
   const generation = useRef(0);
   const linkedSessionsController = useRef<AbortController | null>(null);
+  /** Cursors already spent by this selection's mount-local linked-session walk. */
+  const spentLinkedSessionCursors = useRef(new Set<string>());
 
   const entryRef = source?.selection.entryRef;
   const sourceInstanceId = source?.selection.sourceInstanceId;
@@ -164,6 +236,7 @@ export function useTriageEntryDetail(
 
     const currentGeneration = generation.current;
     const cursor = currentState.linkedSessionsNextCursor;
+    spentLinkedSessionCursors.current.add(cursor);
     const controller = new AbortController();
     linkedSessionsController.current?.abort();
     linkedSessionsController.current = controller;
@@ -172,16 +245,12 @@ export function useTriageEntryDetail(
     void (async () => {
       let result: ReturnType<typeof TriageReadEntryDetailResultV1Schema.parse>;
       try {
-        result = TriageReadEntryDetailResultV1Schema.parse(await hostApi.executeAction(
-          TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1,
-          {
-            v: 1,
-            entryRef,
-            sourceInstanceId,
-            linkedSessionsCursor: cursor,
-          },
-          { signal: controller.signal },
-        ));
+        result = await transport.read({
+          v: 1,
+          entryRef,
+          sourceInstanceId,
+          linkedSessionsCursor: cursor,
+        }, { signal: controller.signal });
       } catch {
         if (controller.signal.aborted || currentGeneration !== generation.current) return;
         const retained = stateRef.current;
@@ -223,6 +292,22 @@ export function useTriageEntryDetail(
         linkedSessions: Object.freeze([...retained.linkedSessions, ...appended]),
         linkedSessionsPageState: 'idle',
       });
+      if (isSpentTriageLinkedSessionCursorV1(
+        spentLinkedSessionCursors.current,
+        result.linkedSessionsNextCursor,
+      )) {
+        // Keep every linked Session this page admitted, but do not republish an
+        // cursor this mounted walk already spent as another available page.
+        // This settles both A→A and longer A→B→A cycles. Retry asks the current
+        // Account boundary again after it recovers; the set dies with this
+        // selection and is neither durable custody nor a second paging owner.
+        publish(Object.freeze({
+          ...accumulated,
+          linkedSessionsNextCursor: cursor,
+          linkedSessionsPageState: 'failed',
+        }));
+        return;
+      }
       if (result.linkedSessionsNextCursor === undefined) {
         const { linkedSessionsNextCursor: _completedCursor, ...completed } = accumulated;
         publish(Object.freeze(completed));
@@ -233,7 +318,7 @@ export function useTriageEntryDetail(
         }));
       }
     })();
-  }, [entryRef, hostApi, observation, publish, sourceInstanceId]);
+  }, [entryRef, observation, publish, sourceInstanceId, transport]);
 
   useEffect(() => {
     if (entryRef === undefined || sourceInstanceId === undefined || observation === undefined) {
@@ -244,6 +329,7 @@ export function useTriageEntryDetail(
     }
     generation.current += 1;
     linkedSessionsController.current?.abort();
+    spentLinkedSessionCursors.current.clear();
     const current = generation.current;
     const controller = new AbortController();
     const retained = stateRef.current;
@@ -255,8 +341,8 @@ export function useTriageEntryDetail(
         : READING
     );
     void (async () => {
-      const next = await readTriageEntryDetailState(
-        hostApi,
+      const next = await readTriageEntryDetailStateThrough(
+        transport,
         { selection: { entryRef, sourceInstanceId }, observation },
         { signal: controller.signal },
       );
@@ -267,7 +353,7 @@ export function useTriageEntryDetail(
       controller.abort();
       linkedSessionsController.current?.abort();
     };
-  }, [entryRef, hostApi, observation, publish, sourceInstanceId]);
+  }, [entryRef, observation, publish, sourceInstanceId, transport]);
 
   return useMemo(() => (
     state?.kind === 'ready'

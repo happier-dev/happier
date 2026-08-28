@@ -6,10 +6,11 @@ import type {
     SelectActionInputResult,
 } from '@happier-dev/plugin-sdk/ui';
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
-import type {
-    TriageEntryLocatorV1,
-    TriageEntryRefV1,
-    TriageSourceInstanceRefV1,
+import {
+    projectTriagePrepareReviewWorkspaceInputV1,
+    type TriageEntryLocatorV1,
+    type TriageEntryRefV1,
+    type TriageSourceInstanceRefV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { mintTriageOpaqueIdV1 } from '../../opaqueId.js';
@@ -38,9 +39,13 @@ import {
     readTriageProjectRegistryV1,
     type TriageProjectRegistryHostV1,
 } from '../../sessions/projectCandidates.js';
-import type { TriageActionV1 } from '../../settings/actions.js';
+import {
+    isTriageActionConfigurationCoherentV1,
+    type TriageActionV1,
+} from '../../settings/actions.js';
 import {
     projectTriageSessionPlacementCandidateV1,
+    projectTriagePreparedWorkspaceSelectionInputV1,
     projectTriageNewSessionDestinationV1,
     triageNewSessionDraftSeedV1,
     triageNewSessionWireMaterializationV1,
@@ -252,10 +257,11 @@ function unavailable(
 
 /** The side-effect-free refusal decided entirely by the action record. */
 export function triageActionImmediateRefusalV1(
-    action: Pick<TriageActionV1, 'target' | 'workspaceMode'>,
+    action: Pick<TriageActionV1, 'target' | 'workspaceMode' | 'appliesTo'>,
 ): TriageEntrySessionStartUnavailableReasonV1 | null {
-    void action;
-    return null;
+    return isTriageActionConfigurationCoherentV1(action)
+        ? null
+        : 'preparedWorkspaceUnsupported';
 }
 
 /**
@@ -311,7 +317,6 @@ type TriageStartHostV1 = TriageSessionStartHostV1
 type TriageEntrySessionStartCustodyV1 = Readonly<{
     /** Which press this belongs to; a different action or entry starts fresh. */
     actionId: string;
-    entryKey: string;
     input: TriageStartEntrySessionInputV1;
     /** The phase the settled start stopped at, when it stopped at one. */
     pending?: NonNullable<TriageStartEntrySessionInputV1['resume']>;
@@ -416,34 +421,75 @@ export function useTriageEntrySessionStart(
         // orchestrator's own rule — no Session id is disclosed — so the next
         // visible press is a new logical request with a new key.
         custody.current = result.type === 'creationPending'
-            ? { actionId: request.action.actionId, entryKey: input.entryRef.entryId, input }
+            ? {
+                actionId: request.action.actionId,
+                input,
+                pending: {
+                    phase: 'creationPending',
+                    ...(result.preparedReviewWorkspace === undefined
+                        ? {}
+                        : { preparedReviewWorkspace: result.preparedReviewWorkspace }),
+                },
+                ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
+            }
             : result.type === 'linkPending' || result.type === 'openPending'
                 ? {
                     actionId: request.action.actionId,
-                    entryKey: input.entryRef.entryId,
                     input,
-                    pending: {
-                        phase: result.type,
-                        sessionId: result.sessionId,
-                        disposition: result.disposition,
-                    },
+                    pending: result.delivery === 'outcomeUnknown' && input.destination.kind === 'new'
+                        ? {
+                            // The initial input was submitted atomically by
+                            // `session.spawn_new`. Resolve an ambiguous answer
+                            // by repeating that same creation identity, not by
+                            // sending through the distinct later-message key.
+                            phase: 'creationPending',
+                            ...(result.preparedReviewWorkspace === undefined
+                                ? {}
+                                : { preparedReviewWorkspace: result.preparedReviewWorkspace }),
+                        }
+                        : {
+                            phase: result.type,
+                            sessionId: result.sessionId,
+                            disposition: result.disposition,
+                            // `session.spawn_new` admitted the first input before
+                            // link/open. Carry that settled verdict into the phase
+                            // retry so it is not delivered as a second Message.
+                            ...(result.delivery === undefined || result.delivery === 'outcomeUnknown'
+                                ? {}
+                                : { delivery: result.delivery }),
+                            ...(result.preparedReviewWorkspace === undefined
+                                ? {}
+                                : { preparedReviewWorkspace: result.preparedReviewWorkspace }),
+                        },
                     ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
                 }
-                // The Session opened, but delivery did not settle. Reuse the
-                // incumbent open-pending resume arm: it re-delivers under the
-                // retained key, then idempotently re-opens the same Session.
+                // The Session opened, but delivery did not settle. Retry under
+                // the identity that submitted it: atomic spawn for a new
+                // Session, ordinary input admission for an existing one.
                 : result.type === 'opened'
                     && result.delivery === 'outcomeUnknown'
                     && input.delivery !== undefined
                     ? {
                         actionId: request.action.actionId,
-                        entryKey: input.entryRef.entryId,
                         input,
-                        pending: {
-                            phase: 'openPending',
-                            sessionId: result.sessionId,
-                            disposition: result.disposition,
-                        },
+                        pending: input.destination.kind === 'new'
+                            ? {
+                                // The opened Session's first-turn admission was
+                                // ambiguous. Rejoin the same atomic spawn so the
+                                // daemon retries the spawn-derived Message id.
+                                phase: 'creationPending',
+                                ...(result.preparedReviewWorkspace === undefined
+                                    ? {}
+                                    : { preparedReviewWorkspace: result.preparedReviewWorkspace }),
+                            }
+                            : {
+                                // Existing-Session delivery already used the
+                                // retained public key, so its ordinary send
+                                // retry remains the correct identity owner.
+                                phase: 'openPending',
+                                sessionId: result.sessionId,
+                                disposition: result.disposition,
+                            },
                         ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
                     }
                 : null;
@@ -482,9 +528,9 @@ export function useTriageEntrySessionStart(
         //    point of `target.kind` being a member: until now nothing read it,
         //    so a `reviewStart` action started an ordinary agent Session and
         //    called it a review. `review.start` scopes to the exact commits of
-        //    a pull request in a source-prepared worktree, and the reachable
-        //    start wire cannot request one — so the press is refused here, with
-        //    that stated, rather than silently becoming a different product.
+        //    a pull request in a source-prepared worktree. The mounted producer
+        //    can request that workspace, but only for the one coherent formal
+        //    arm/mode/subject combination admitted by the action owner.
         const immediateRefusal = triageActionImmediateRefusalV1(action);
         if (immediateRefusal !== null) {
             setPhase(unavailable(immediateRefusal));
@@ -503,11 +549,21 @@ export function useTriageEntrySessionStart(
             setPhase(STARTING);
             void (async () => {
                 try {
+                    // The selected provider operation was consumed by the
+                    // initial start. A phase resume carries only the owner's
+                    // returned prepared-workspace facts; replaying the
+                    // connected-account selection would turn a retry into a
+                    // second authorization attempt despite the start Action
+                    // deliberately ignoring it.
+                    const {
+                        prepareReviewWorkspaceSelection: _consumedSelection,
+                        ...retainedInput
+                    } = retained.input;
                     const input: TriageStartEntrySessionInputV1 = retained.pending === undefined
-                        ? retained.input
-                        : { ...retained.input, resume: retained.pending };
+                        ? retainedInput
+                        : { ...retainedInput, resume: retained.pending };
                     const result = await submitTriageEntrySessionStart(host, input);
-                    await settle(request, retained.input, result);
+                    await settle(request, retained.input, result, retained.reviewInstructions);
                 } catch {
                     if (!retired.current) setPhase(unavailable('dispatch'));
                 } finally {
@@ -597,9 +653,45 @@ export function useTriageEntrySessionStart(
                                 : { lastKnownLocator: request.lastKnownLocator }),
                         }],
                     });
+                    const placementCandidates = placement !== null && placement.kind === 'prefill'
+                        ? placement.candidates.map(projectTriageSessionPlacementCandidateV1)
+                        : placement !== null && placement.kind === 'launch'
+                            ? [projectTriageSessionPlacementCandidateV1(placement.candidate)]
+                            : [];
+                    let newSessionOptions: Parameters<typeof requestTriageNewSessionSeed>[2];
+                    if (checkout === 'preparedReviewWorkspace') {
+                        if (request.reviewWorkspace === undefined) {
+                            setPhase(unavailable('preparedWorkspaceUnsupported'));
+                            return;
+                        }
+                        setPhase(CHOOSING);
+                        const selected = await host.selectActionInput({
+                            operation: request.reviewWorkspace.operation,
+                            draft: projectTriagePreparedWorkspaceSelectionInputV1({
+                                preparation: request.reviewWorkspace.preparation,
+                                placement: executionPlacement,
+                                candidates: placementCandidates,
+                            }),
+                        });
+                        if (retired.current) return;
+                        if (selected.kind === 'cancelled') {
+                            setPhase(IDLE);
+                            return;
+                        }
+                        if (selected.kind !== 'submitted') {
+                            setPhase(unavailable('preparedWorkspaceUnsupported'));
+                            return;
+                        }
+                        newSessionOptions = {
+                            preparedReviewWorkspace: {
+                                operation: request.reviewWorkspace.operation,
+                                result: selected,
+                            },
+                        };
+                    }
                     const seed: TriageNewSessionSeedV1 = {
                         ...(delivery.kind === 'compose' && delivery.text !== undefined
-                            ? { prompt: { text: delivery.text, mode: 'replace' as const } }
+                            ? { prompt: delivery.text }
                             : {}),
                         ...(action.profileId === null ? {} : { profileId: action.profileId }),
                         checkoutIntent: checkout,
@@ -607,20 +699,21 @@ export function useTriageEntrySessionStart(
                             placement: {
                                 serverId: executionPlacement.executionTarget.serverId,
                                 machineId: executionPlacement.executionTarget.machineId,
-                                ...(executionPlacement.directory === undefined
+                                ...(checkout === 'preparedReviewWorkspace'
+                                    || executionPlacement.directory === undefined
                                     ? {}
                                     : { directory: executionPlacement.directory }),
                             },
                         }),
-                        ...(placement !== null && placement.kind === 'prefill' && placement.candidates.length > 0
-                            ? { candidates: placement.candidates.map(projectTriageSessionPlacementCandidateV1) }
+                        ...(placementCandidates.length > 0
+                            ? { candidates: placementCandidates }
                             : {}),
                         ...(delivery.kind === 'compose' && delivery.attachments.length > 0
                             ? { attachments: delivery.attachments }
                             : {}),
                     };
                     setPhase(CHOOSING);
-                    const seeded = await requestTriageNewSessionSeed(host, seed);
+                    const seeded = await requestTriageNewSessionSeed(host, seed, newSessionOptions);
                     if (retired.current) return;
                     setPhase(seeded.status === 'seeded'
                         ? IDLE
@@ -711,7 +804,9 @@ export function useTriageEntrySessionStart(
                     }
                     const selected = await host.selectActionInput({
                         operation: request.reviewWorkspace!.operation,
-                        draft: destination.destination.materialization.request,
+                        draft: projectTriagePrepareReviewWorkspaceInputV1(
+                            destination.destination.materialization.request,
+                        ),
                     });
                     if (retired.current) return;
                     if (selected.kind === 'cancelled') {

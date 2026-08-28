@@ -121,4 +121,26 @@ describe('the mounted Bitbucket pull-request detail tablist', () => {
     await expect(detail.getByText('diff --git a/src/provider.ts b/src/provider.ts'))
       .resolves.toBeDefined();
   });
+
+  it('shows when an Action result could not carry Bitbucket\'s next-page position', async () => {
+    const detail = await mountDetail(FIXTURE.detailInput as unknown as JsonValue, {
+      [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
+        kind: 'activity',
+        rows: [{
+          key: 'approval:1',
+          kind: 'approval',
+          rawKind: 'approval',
+          actor: 'Reviewer',
+        }],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+        incomplete: 'continuationUnavailable',
+      } as unknown as JsonValue,
+    });
+
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
+    await expect(detail.getByText(
+      'Bitbucket offered another page, but this build could not carry its position, so this list stops here.',
+    )).resolves.toBeDefined();
+  });
 });

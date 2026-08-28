@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol';
+import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    measureExternalActionResultResponseEnvelopeUtf8BytesV1,
+} from '@happier-dev/plugin-sdk/actions';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     buildMaximalSchemaValue,
@@ -10,6 +14,7 @@ import {
 } from '@happier-dev/triage-protocol/testing/v1';
 
 import {
+    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TriageReadConfiguredSourceInstancesInputV1Schema,
     TriageReadConfiguredSourceInstancesResultV1Schema,
     TriageSourceAdministrationActionInputV1Schema,
@@ -98,7 +103,6 @@ const structurallyBoundedSchemas = {
     listPinnedEntriesResult: TriageListPinnedEntriesResultV1Schema,
     linkEntryToSessionInput: TriageLinkEntryToSessionInputV1Schema,
     linkEntryToSessionResult: TriageLinkEntryToSessionActionResultV1Schema,
-    startEntrySessionResult: TriageStartEntrySessionResultV1Schema,
     unlinkEntryFromSessionInput: TriageUnlinkEntryFromSessionActionInputV1Schema,
     unlinkEntryFromSessionResult: TriageUnlinkEntryFromSessionActionResultV1Schema,
     readSavedViewsInput: TriageReadSavedViewsInputV1Schema,
@@ -112,7 +116,6 @@ const structurallyBoundedSchemas = {
     administerSourceInstanceInput: TriageSourceAdministrationActionInputV1Schema,
     administerSourceInstanceResult: TriageSourceAdministrationActionResultV1Schema,
     readConfiguredInstancesInput: TriageReadConfiguredSourceInstancesInputV1Schema,
-    readConfiguredInstancesResult: TriageReadConfiguredSourceInstancesResultV1Schema,
 } as const satisfies Readonly<Record<string, MeasurableSchemaV1>>;
 
 /**
@@ -146,14 +149,19 @@ const ownerBoundedSchemas = {
 } as const satisfies Readonly<Record<string, MeasurableSchemaV1>>;
 
 /**
- * Inputs with a deliberately unbounded member. They remain strict JSON, but a
+ * Values with a deliberately unbounded member. They remain strict JSON, but a
  * maximum encoded value cannot be derived without inventing a product quota.
  */
-const transportBoundedInputSchemas = {
+const structurallyUnboundedSchemas = {
     startEntrySessionInput: TriageStartEntrySessionInputV1Schema,
+    startEntrySessionResult: TriageStartEntrySessionResultV1Schema,
     listEntriesInput: TriageListEntriesInputV1Schema,
     administerSavedViewInput: TriageAdministerSavedViewInputV1Schema,
     administerActionInput: TriageAdministerActionInputV1Schema,
+    // The durable configured-source set has no product count ceiling. Its
+    // reader fits whole records against the canonical Action envelope and uses
+    // the published `truncated` status when the tail cannot cross it.
+    readConfiguredInstancesResult: TriageReadConfiguredSourceInstancesResultV1Schema,
 } as const satisfies Readonly<Record<string, MeasurableSchemaV1>>;
 
 /**
@@ -214,7 +222,7 @@ const MEASURED_LANE_COUNTS: readonly number[] = Object.freeze([
 const measuredSchemas = {
     ...structurallyBoundedSchemas,
     ...ownerBoundedSchemas,
-    ...transportBoundedInputSchemas,
+    ...structurallyUnboundedSchemas,
 };
 
 const derivedMaxima = deriveMaximumEncodedBytesByLabel({
@@ -243,33 +251,25 @@ describe('aggregate Action value shapes', () => {
         expect(unmeasured).toEqual([]);
     });
 
-    it('derives the exact maximum encoded bytes of every aggregate Action value', () => {
-        // Pinned so that a widened bound, a raised count, a new field or a new
-        // union arm reruns the derivation instead of silently consuming the
-        // remaining headroom.
-        expect(derivedMaxima).toEqual({
-            readEntryDetailInput: 5_695,
-            readEntryDetailResult: 537_816,
-            listEntriesResult: 20_121_056,
-            reobserveEntryInput: 3_823,
-            reobserveEntryResult: 12_464,
-            setEntryPinnedInput: 5_670,
-            setEntryPinnedResult: 27,
-            listPinnedEntriesInput: 4_126,
-            listPinnedEntriesResult: 322_264,
-            linkEntryToSessionInput: 6_359,
-            linkEntryToSessionResult: 25,
-            startEntrySessionResult: 629,
-            unlinkEntryFromSessionInput: 2_042,
-            unlinkEntryFromSessionResult: 27,
-            readActionsInput: 7,
-            readSavedViewsInput: 7,
-            administerSourceInstanceInput: 7_775,
-            administerSourceInstanceResult: 81,
-            readConfiguredInstancesInput: 7,
-            readConfiguredInstancesResult: 266_066,
-        });
-    });
+    it('derives the continuation ceiling from the complete aggregate Action envelope', () => {
+        const maximal = buildMaximalSchemaValue(
+            TriageListEntriesResultV1Schema.jsonSchema,
+            'listEntriesResult',
+        );
+        expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(maximal))
+            .toBeLessThanOrEqual(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+
+        const widened = structuredClone(TriageListEntriesResultV1Schema.jsonSchema);
+        const token = widened.properties?.window?.properties?.continuations
+            ?.items?.properties?.continuation?.properties?.token;
+        if (token?.['x-happier-max-utf8-bytes'] !== MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) {
+            throw new Error('the list continuation token no longer carries the shared byte ceiling');
+        }
+        token['x-happier-max-utf8-bytes'] = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1;
+        const oneByteWiderPerLane = buildMaximalSchemaValue(widened, 'widenedListEntriesResult');
+        expect(measureExternalActionResultResponseEnvelopeUtf8BytesV1(oneByteWiderPerLane))
+            .toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    }, 120_000);
 
     it('admits a valid resolved prompt beyond the removed aggregate ceiling', () => {
         const wider = structuredClone(TriageStartEntrySessionInputV1Schema.jsonSchema);

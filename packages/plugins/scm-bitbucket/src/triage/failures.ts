@@ -117,3 +117,8 @@ export function classifyBitbucketTransportFailure(error: unknown): BitbucketTria
   }
   return createBitbucketFailure('transient', 'transport-failure');
 }
+
+/** Preserves the caller-cancellation versus absolute-deadline distinction for pre-aborted paths. */
+export function classifyBitbucketAbortSignal(signal: AbortSignal): BitbucketTriageFailure {
+  return classifyBitbucketTransportFailure(signal.reason);
+}

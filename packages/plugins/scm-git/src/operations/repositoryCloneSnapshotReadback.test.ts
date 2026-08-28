@@ -290,7 +290,7 @@ describe('git repository clone snapshot readback', () => {
         const repositoryClone = getRepositoryCloneOperation({
             registry: {
                 getProvider: () => makeCloneTargetDescription(remotePath).repository.provider,
-                getAdapter: () => ({
+                getRepositoryClone: () => ({
                     describeCloneTargets: async () => {
                         symlinkSync(outside, destination, 'dir');
                         return makeCloneTargetDescription(remotePath);

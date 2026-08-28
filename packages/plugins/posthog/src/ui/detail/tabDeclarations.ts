@@ -36,6 +36,7 @@ export type PosthogDetailTabReadPlaneV1 =
 export type PosthogDetailTabDeclarationV1 = Readonly<{
     id: PosthogDetailTabIdV1;
     title: string;
+    titleKey: string;
     /** Stated on every concrete tab; never inherited from the shared default. */
     retention: 'retain' | 'discard';
     /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -49,6 +50,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
     Object.freeze({
         id: 'overview' as const,
         title: 'Overview',
+        titleKey: 'plugins.posthog.ui.tab.overview',
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll offset and settled presentation state for'
             + ' the current exact detail instance',
@@ -58,6 +60,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
     Object.freeze({
         id: 'occurrences' as const,
         title: 'Occurrences',
+        titleKey: 'plugins.posthog.ui.tab.occurrences',
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll anchor, list window and row focus; the'
             + ' selected occurrence and the sampled rows stay owned by the detail-root'
@@ -68,6 +71,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
     Object.freeze({
         id: 'stack-trace' as const,
         title: 'Stack trace',
+        titleKey: 'plugins.posthog.ui.tab.stackTrace',
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll anchor, list window and non-sensitive'
             + ' frame disclosure state for the controller’s selected occurrence',
@@ -77,6 +81,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
     Object.freeze({
         id: 'affected-sessions' as const,
         title: 'Affected sessions',
+        titleKey: 'plugins.posthog.ui.tab.affectedSessions',
         retention: 'retain' as const,
         retainedState: 'its one vertical scroll anchor and list window only; the'
             + ' session-to-row correlation is derived afresh on re-entry',
@@ -86,6 +91,7 @@ export const POSTHOG_DETAIL_TABS_V1: readonly PosthogDetailTabDeclarationV1[] = 
     Object.freeze({
         id: 'activity' as const,
         title: 'Activity',
+        titleKey: 'plugins.posthog.ui.tab.activity',
         // The only panel that keeps nothing. Its rows, page position, total and errors
         // belong to one active interval, so a leave discards them rather than showing a
         // reader a record set that is no longer being read.

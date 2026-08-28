@@ -5,6 +5,10 @@ export type CodexBackendMode = (typeof CODEX_BACKEND_MODES)[number];
 export function normalizeCodexBackendMode(value: unknown): CodexBackendMode | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
+  // Released persisted Codex descriptors used `mcp` for the predecessor
+  // runtime. Keep that read interpretation at this descriptor codec only;
+  // lifecycle/backendMode rejects the raw spelling before any current launch
+  // can silently select App Server.
   if (trimmed === 'mcp') return 'appServer';
   if (trimmed === 'appServer') return 'appServer';
   if (trimmed === 'acp' || trimmed === 'mcp_resume') return 'acp';

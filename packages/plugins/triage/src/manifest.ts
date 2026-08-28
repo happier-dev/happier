@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1,
@@ -109,6 +107,7 @@ import {
   CORPUS_USER_MARKS_COLLECTION_ID,
 } from './corpus/collections/ids.js';
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
+import { mintTriageOpaqueIdV1 } from './opaqueId.js';
 import { TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1 } from './settings/actionsContribution.js';
 import { TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1 } from './settings/savedViewsContribution.js';
 import {
@@ -274,7 +273,6 @@ function createTriagePlugin() {
         execution: { target: 'daemon' },
         inputSchema: TriageStartPullRequestReviewInputV1Schema,
         resultSchema: TriageStartPullRequestReviewResultV1Schema,
-        hostAccess: [],
         run: createTriageStartPullRequestReviewActionHandler(),
       },
       [TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1]: {
@@ -311,7 +309,7 @@ function createTriagePlugin() {
         // writer of it.
         hostAccess: ['account-storage'],
         run: createTriageAdministerSourceInstanceActionHandler({
-          mintSourceInstanceId: () => randomUUID(),
+          mintSourceInstanceId: mintTriageOpaqueIdV1,
           nowMs: () => Date.now(),
         }),
       },

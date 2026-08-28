@@ -6,7 +6,6 @@ import {
   decodeAzurePullRequestRow,
   decodeAzureRepositoryRow,
   decodeAzureRowPage,
-  truncateUtf8,
 } from './decode.js';
 import { mapAzurePullRequestEntry } from './mapping.js';
 import { normalizeAzureDevOpsBaseUrl } from './origin.js';
@@ -52,18 +51,6 @@ function rowAt(page: unknown, index: number): AzurePullRequestRow {
   if (!row) throw new Error(`fixture pull request ${index} must decode`);
   return row;
 }
-
-describe('truncateUtf8', () => {
-  it('shortens on a code-point boundary rather than splitting a character', () => {
-    const result = truncateUtf8('🚀🚀🚀', 5);
-    expect(result.truncated).toBe(true);
-    expect(result.value).toBe('🚀');
-  });
-
-  it('leaves a value inside the bound untouched', () => {
-    expect(truncateUtf8('short', 64)).toEqual({ value: 'short', truncated: false });
-  });
-});
 
 describe('provider row decoding', () => {
   it('decodes the recorded project, repository and connection-data shapes', () => {

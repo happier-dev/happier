@@ -15,6 +15,7 @@ describe('OLLAMA_PROVIDER_CONTRIBUTION', () => {
       ],
       catalog: {
         source: 'probe',
+        sourceRegistryVersion: 'ollama-tags/v1',
         probes: [{ endpointTemplateId: 'ollama-native', path: '/api/tags', parser: 'ollama-tags' }],
       },
       managedRuntime: {

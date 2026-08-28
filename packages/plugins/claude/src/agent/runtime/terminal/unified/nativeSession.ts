@@ -31,6 +31,7 @@ import {
 import {
   resolveClaudeNativeBaseLaunchEnvironment,
   resolveClaudeNativeLaunchSettings,
+  resolveClaudeUnifiedTerminalLaunchEnvironment,
 } from '../../launchSettings.js';
 import {
   isClaudeUltracodeSupportedModelId,
@@ -102,10 +103,7 @@ function createClaudeNativeUnifiedTerminalContext(
   if (!terminalHost) {
     throw new Error('Claude Unified Terminal requires the host terminal service.');
   }
-  const sdkContext = createClaudeNativeAgentSdkContext(
-    context,
-    context,
-  );
+  const sdkContext = createClaudeNativeAgentSdkContext(context);
   return {
     logger: sdkContext.logger,
     features: context.session.services.features,
@@ -124,6 +122,7 @@ function createClaudeNativeUnifiedTerminalContext(
       sessionHooks: sdkContext.agentRuntime.sessionHooks,
       transcripts: sdkContext.agentRuntime.transcripts,
       accountUsage: sdkContext.agentRuntime.accountUsage,
+      ...(sdkContext.agentRuntime.nativeHome ? { nativeHome: sdkContext.agentRuntime.nativeHome } : {}),
       toolExecution: sdkContext.agentRuntime.toolExecution,
     },
     sessions: {
@@ -207,7 +206,7 @@ export async function openClaudeNativeUnifiedTerminalSession(
     })),
     includeAdvancedOptions: false,
   });
-  const launchEnv = launchSettings.launchEnv;
+  const launchEnv = resolveClaudeUnifiedTerminalLaunchEnvironment(launchSettings.launchEnv);
   const initialModelId = input.request.providerBinding?.model.id
     ?? input.request.configuration?.model.value
     ?? null;

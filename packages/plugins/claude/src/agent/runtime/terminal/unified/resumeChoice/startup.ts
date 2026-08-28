@@ -10,9 +10,11 @@ import {
   type ClaudeUnifiedTerminalWorkspaceTrustPolicy,
 } from '../../../../../agentSettings/definition.js';
 import { normalizeClaudeUnifiedTerminalWorkspaceTrustPolicy } from '../../../../../protocol/remoteSettings.js';
-import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/protocol/agents/claude';
 
-import { CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID } from '../constants.js';
+import {
+  CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+  CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+} from '../constants.js';
 import type { ClaudeScreenState } from '../screenState.js';
 import { answerClaudeUnifiedRegisteredDialog } from '../tuiControls/dialogAnswer.js';
 import { captureScreenState } from '../tuiControls/controlRuntime.js';

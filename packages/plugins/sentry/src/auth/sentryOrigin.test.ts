@@ -56,6 +56,10 @@ describe('resolveSentrySelfHostedDeployment', () => {
       ok: false,
       reason: 'origin-scheme-unsupported',
     });
+    expect(resolveSentrySelfHostedDeployment('http://sentry.example.com')).toEqual({
+      ok: false,
+      reason: 'origin-scheme-unsupported',
+    });
     expect(resolveSentrySelfHostedDeployment('https://sentry.example.com/sentry')).toEqual({
       ok: false,
       reason: 'origin-not-canonical',

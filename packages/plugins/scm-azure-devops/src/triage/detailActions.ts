@@ -1,4 +1,9 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  fitActionResultPageV1,
+  fitActionResultSequenceV1,
+} from '@happier-dev/triage-sources/projection/actionResultSequence';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceEntryLocalRefV1,
@@ -28,9 +33,14 @@ import {
   type AzureDetailReadDependenciesV1,
 } from './detail/reads.js';
 import { createAzureSourceFailure, projectAzureSourceFailure } from './failureProjection.js';
-import { boundAzureInvocation, toAzureTransport } from './invocation.js';
-import { parseAzureEntryLocalRef, type AzureEntryAddress } from './localRef.js';
-import { authorizeClient, readPullRequestScope } from './operations.js';
+import { toAzureTransport } from './invocation.js';
+import { parseAzureEntryLocalRef } from './localRef.js';
+import {
+  authorizeClient,
+  readAzurePullRequestLocatorRoute,
+  rereadAzurePullRequest,
+  type AzurePullRequestScope,
+} from './operations.js';
 import type { AzureDevOpsApiClient } from './types.js';
 
 /**
@@ -119,9 +129,10 @@ function unavailable(failure: TriageSourceFailureV1): Readonly<{
 type AdmittedInvocation =
   | Readonly<{
     ok: true;
-    address: AzureEntryAddress;
+    address: Readonly<{ project: string; repositoryId: string; pullRequestId: number }>;
     client: AzureDevOpsApiClient;
     dependencies: AzureDetailReadDependenciesV1;
+    scope: AzurePullRequestScope;
     dispose(): void;
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
@@ -129,15 +140,17 @@ type AdmittedInvocation =
 /**
  * Admits one detail invocation against the exact configured base.
  *
- * The scope is rebuilt from the configured base plus the ref's own repository
- * GUID and compared byte-for-byte, so a ref minted against a different
- * deployment cannot route through this instance. The account is rematerialized
- * on every invocation and grants no standing authority.
+ * The locator is decoded by the same owner `get` uses, then one exact pull-request read proves its
+ * returned repository GUID/number against the public ref before any subresource is addressed.
+ * A ref minted against a different deployment or a stale/unusable locator therefore cannot route
+ * through this instance. The account is rematerialized on every invocation and grants no standing
+ * authority.
  */
 async function admitAzureDetailInvocation(
   request: Readonly<{
     instance: TriageConfiguredSourceInstanceV1;
     localRef: TriageSourceEntryLocalRefV1;
+    routingToken: string;
   }>,
   context: PluginInvocationContext,
 ): Promise<AdmittedInvocation> {
@@ -146,16 +159,24 @@ async function admitAzureDetailInvocation(
 
   const address = parseAzureEntryLocalRef(request.localRef, origin);
   if (address === null) return { ok: false, failure: entryOutsideInstance() };
+  const route = readAzurePullRequestLocatorRoute({
+    origin,
+    locator: { v: 1, routingToken: request.routingToken },
+    pullRequestId: address.pullRequestId,
+  });
+  if (route === null) return { ok: false, failure: entryOutsideInstance() };
 
-  // The same authorization owner `scan` and `get` use. The viewer read they add
-  // on top of it is deliberately not repeated here: no detail plane consumes
-  // provider account identity, so paying for it per mounted panel read would buy
-  // nothing.
+  // The same authorization owner `scan` and `get` use. Detail does not read viewer identity, but it
+  // does perform the exact locator-authorized pull-request read below: that read is the currentness
+  // and identity gate for every subresource request.
   // One bound for the whole invocation, installed before the first provider
   // boundary so account materialization is inside it too: a connection that
   // hangs while the credential is being materialized strands the panel exactly
   // as a hanging read does.
-  const bounded = boundAzureInvocation(context.signal, AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS,
+  });
 
   const authorized = await authorizeClient({
     services: {
@@ -172,12 +193,32 @@ async function admitAzureDetailInvocation(
     return { ok: false, failure: authorized.failure };
   }
 
+  const exact = await rereadAzurePullRequest({
+    client: authorized.client,
+    origin,
+    localRef: request.localRef,
+    route,
+    signal: bounded.signal,
+  });
+  if (exact.kind !== 'resolved') {
+    bounded.dispose();
+    return {
+      ok: false,
+      failure: exact.kind === 'unavailable' ? exact.failure : malformedPullRequest(),
+    };
+  }
+
   return {
     ok: true,
     dispose: bounded.dispose,
-    address,
+    address: {
+      project: route.project,
+      repositoryId: route.repositoryId,
+      pullRequestId: route.pullRequestId,
+    },
     client: authorized.client,
     dependencies: Object.freeze({ client: authorized.client, signal: bounded.signal }),
+    scope: exact.scope,
   };
 }
 
@@ -200,6 +241,7 @@ export async function readAzureDevOpsIterations(
   const admitted = await admitAzureDetailInvocation({
     instance: parsed.data.instance,
     localRef: parsed.data.localRef,
+    routingToken: parsed.data.routingToken,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
   try {
@@ -208,13 +250,13 @@ export async function readAzureDevOpsIterations(
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
 
   const { currentIterationId } = read.value;
-  return Object.freeze({
+  return fitActionResultSequenceV1(read.value.rows, (rows, omittedByEnvelope) => Object.freeze({
     kind: 'iterations' as const,
-    rows: read.value.rows,
+    rows,
     ...(currentIterationId === null ? {} : { currentIterationId }),
-    omittedRowCount: read.value.omittedRowCount,
-    projectionTruncated: read.value.projectionTruncated,
-  });
+    omittedRowCount: read.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: read.value.projectionTruncated || omittedByEnvelope > 0,
+  })).result;
   } finally { admitted.dispose(); }
 }
 
@@ -231,6 +273,7 @@ export async function listAzureDevOpsCommits(
   const admitted = await admitAzureDetailInvocation({
     instance: parsed.data.instance,
     localRef: parsed.data.localRef,
+    routingToken: parsed.data.routingToken,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
   try {
@@ -241,14 +284,26 @@ export async function listAzureDevOpsCommits(
   }, admitted.dependencies);
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
 
-  const { continuationToken } = read.value;
-  return Object.freeze({
-    kind: 'commits' as const,
-    rows: read.value.rows,
-    ...(continuationToken === null ? {} : { continuationToken }),
-    omittedRowCount: read.value.omittedRowCount,
-    projectionTruncated: read.value.projectionTruncated,
-  });
+  const continuationToken = read.value.continuationToken ?? undefined;
+  return fitActionResultPageV1(
+    read.value.rows,
+    continuationToken,
+    (
+      rows: typeof read.value.rows,
+      omittedByEnvelope: number,
+      fittedContinuationToken: string | undefined,
+      continuationOmitted: boolean,
+    ) => Object.freeze({
+      kind: 'commits' as const,
+      rows,
+      ...(fittedContinuationToken === undefined
+        ? {}
+        : { continuationToken: fittedContinuationToken }),
+      ...(continuationOmitted ? { incomplete: 'continuationUnavailable' as const } : {}),
+      omittedRowCount: read.value.omittedRowCount + omittedByEnvelope,
+      projectionTruncated: read.value.projectionTruncated || omittedByEnvelope > 0,
+    }),
+  ).result;
   } finally { admitted.dispose(); }
 }
 
@@ -272,6 +327,7 @@ export async function listAzureDevOpsIterationChanges(
   const admitted = await admitAzureDetailInvocation({
     instance: parsed.data.instance,
     localRef: parsed.data.localRef,
+    routingToken: parsed.data.routingToken,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
   try {
@@ -279,22 +335,22 @@ export async function listAzureDevOpsIterationChanges(
   const read = await readAzureIterationChangesPage({
     ...admitted.address,
     iterationId: parsed.data.iterationId,
-    skip: parsed.data.skip ?? 0,
-    top: parsed.data.top ?? AZURE_CHANGES_PAGE_SIZE_V1,
+    skip: 'skip' in parsed.data ? parsed.data.skip : 0,
+    top: 'top' in parsed.data ? parsed.data.top : AZURE_CHANGES_PAGE_SIZE_V1,
   }, admitted.dependencies);
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
 
   const { next } = read.value;
-  return Object.freeze({
+  return fitActionResultSequenceV1(read.value.rows, (rows, omittedByEnvelope) => Object.freeze({
     kind: 'iterationChanges' as const,
     iterationId: parsed.data.iterationId,
-    rows: read.value.rows,
+    rows,
     // Present together or absent together: half a position is an offset the
     // caller would have to complete by guessing.
     ...(next === null ? {} : { nextSkip: next.nextSkip, nextTop: next.nextTop }),
-    omittedRowCount: read.value.omittedRowCount,
-    projectionTruncated: read.value.projectionTruncated,
-  });
+    omittedRowCount: read.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: read.value.projectionTruncated || omittedByEnvelope > 0,
+  })).result;
   } finally { admitted.dispose(); }
 }
 
@@ -318,35 +374,38 @@ export async function readAzureDevOpsPolicies(
   const admitted = await admitAzureDetailInvocation({
     instance: parsed.data.instance,
     localRef: parsed.data.localRef,
+    routingToken: parsed.data.routingToken,
   }, context);
   if (!admitted.ok) return unavailable(admitted.failure);
   try {
 
-  const pullRequest = await admitted.client.request({
-    route: { resource: 'pullRequest', ...admitted.address },
-    signal: admitted.dependencies.signal,
-  });
-  if (!pullRequest.ok) {
-    return unavailable(projectAzureSourceFailure(pullRequest.failure));
-  }
-  const scope = readPullRequestScope(pullRequest.body);
-  if (scope === null) return unavailable(malformedPullRequest());
-
   const read = await readAzurePoliciesSurface({
     ...admitted.address,
-    project: scope.projectName,
-    projectId: scope.projectId,
+    projectId: admitted.scope.projectId,
   }, admitted.dependencies);
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
 
-  return Object.freeze({
-    kind: 'policies' as const,
-    statuses: read.value.statuses,
-    evaluations: read.value.evaluations,
-    evaluationsPartial: read.value.evaluationsPartial,
-    omittedRowCount: read.value.omittedRowCount,
-    projectionTruncated: read.value.projectionTruncated,
-  });
+  const candidates = Object.freeze([
+    ...read.value.statuses.map((value) => Object.freeze({ kind: 'status' as const, value })),
+    ...read.value.evaluations.map((value) => Object.freeze({ kind: 'evaluation' as const, value })),
+  ]);
+  return fitActionResultSequenceV1(candidates, (included) => {
+    const statuses = included
+      .filter((candidate) => candidate.kind === 'status')
+      .map((candidate) => candidate.value);
+    const evaluations = included
+      .filter((candidate) => candidate.kind === 'evaluation')
+      .map((candidate) => candidate.value);
+    const omittedByEnvelope = candidates.length - included.length;
+    return Object.freeze({
+      kind: 'policies' as const,
+      statuses,
+      evaluations,
+      evaluationsPartial: read.value.evaluationsPartial,
+      omittedRowCount: read.value.omittedRowCount + omittedByEnvelope,
+      projectionTruncated: read.value.projectionTruncated || omittedByEnvelope > 0,
+    });
+  }).result;
   } finally { admitted.dispose(); }
 }
 
@@ -366,19 +425,20 @@ export async function readAzureDevOpsThreads(
   const parsed = AzureThreadsInputV1Schema.safeParse(input);
   if (!parsed.success) return unavailable(invalidInput());
 
-  const admitted = await admitAzureDetailInvocation({
-    instance: parsed.data.instance,
-    localRef: parsed.data.localRef,
-  }, context);
-  if (!admitted.ok) return unavailable(admitted.failure);
-  try {
-
   const { iteration, baseIteration } = parsed.data;
   // A lens is a comparison: one half alone is not a narrower query, it is a
-  // broken one, so a partial lens is refused rather than half-applied.
+  // broken one, so a partial lens is refused before any provider request.
   if ((iteration === undefined) !== (baseIteration === undefined)) {
     return unavailable(invalidInput());
   }
+
+  const admitted = await admitAzureDetailInvocation({
+    instance: parsed.data.instance,
+    localRef: parsed.data.localRef,
+    routingToken: parsed.data.routingToken,
+  }, context);
+  if (!admitted.ok) return unavailable(admitted.failure);
+  try {
 
   const read = await readAzureThreads({
     ...admitted.address,
@@ -388,11 +448,11 @@ export async function readAzureDevOpsThreads(
   }, admitted.dependencies);
   if (!read.ok) return unavailable(projectAzureSourceFailure(read.failure));
 
-  return Object.freeze({
+  return fitActionResultSequenceV1(read.value.rows, (rows, omittedByEnvelope) => Object.freeze({
     kind: 'threads' as const,
-    rows: read.value.rows,
-    omittedRowCount: read.value.omittedRowCount,
-    projectionTruncated: read.value.projectionTruncated,
-  });
+    rows,
+    omittedRowCount: read.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: read.value.projectionTruncated || omittedByEnvelope > 0,
+  })).result;
   } finally { admitted.dispose(); }
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
-import { createGithubAutomationEventCheckpointRowV1 } from './observations/githubAutomationEventCheckpoint.js';
+import {
+  createGithubAutomationEventCheckpointRowId,
+  createGithubAutomationEventCheckpointRowV1,
+} from './observations/githubAutomationEventCheckpoint.js';
 import {
   PluginEventAutomationSetupResultV1Schema,
 } from '@happier-dev/plugin-sdk/events';
@@ -11,10 +14,10 @@ import {
   setupGithubRepositoryEventSource,
 } from './githubAutomationEventActions.js';
 import {
-  GITHUB_AUTOMATION_REPOSITORY_EVENT_ID,
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
   GITHUB_PLUGIN_ID,
 } from './observations/githubProviderContracts.js';
+import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from './githubAutomationEvents.js';
 
 const GITHUB_ACCOUNT = {
   service: {
@@ -44,6 +47,7 @@ function automationContext(params: Readonly<{
       qualifiedId: 'happier.scm.forge.github/actions/automation/setup-repository-event-v1',
     },
     surface: 'plugin',
+    invokedAtMs: 1_760_000_700_000,
     signal: params.signal ?? new AbortController().signal,
     // Boundary fixture intentionally supplies only the Action services exercised here.
     services: {
@@ -306,8 +310,9 @@ describe('GitHub Automation Event history-gap reset', () => {
   it('exhausts opaque source cursors beyond the former page ceiling without overriding the Action page size', async () => {
     const source = {
       automationId: 'automation-a',
-      templateVersion: 1,
-      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_REPOSITORY_EVENT_ID },
+      triggerId: 'trigger-a',
+      triggerRevision: 1,
+      eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push },
       sourceInstanceId: 'github:repository:77',
       sourceSelectorId: '00000000-0000-4000-8000-000000000001',
       sourceContractVersion: 1,
@@ -334,7 +339,15 @@ describe('GitHub Automation Event history-gap reset', () => {
       maximumObservationAgeMs: null,
     } satisfies Extract<PluginActionResultById['automation.event.sources.list'], Readonly<{ kind: 'page' }>>['definitions'][number];
     const row = createGithubAutomationEventCheckpointRowV1({
+      checkpointRowId: createGithubAutomationEventCheckpointRowId({
+        automationId: source.automationId,
+        triggerId: source.triggerId,
+        eventRef: source.eventRef,
+        sourceSelectorId: source.sourceSelectorId,
+      }),
       automationId: source.automationId,
+      triggerId: source.triggerId,
+      eventRef: source.eventRef,
       sourceSelectorId: source.sourceSelectorId,
       sourceInstanceId: source.sourceInstanceId,
       sourceContractVersion: source.sourceContractVersion,
@@ -347,7 +360,7 @@ describe('GitHub Automation Event history-gap reset', () => {
       },
       lastContiguousOccurrenceId: null,
       baseline: { kind: 'currentHead', establishedAt: 1 },
-      lastEvaluatedTemplateVersion: 1,
+      lastEvaluatedTriggerRevision: 1,
       continuity: {
         v: 1,
         endpointKind: 'repositoryEvents',
@@ -413,7 +426,8 @@ describe('GitHub Automation Event history-gap reset', () => {
 
     await expect(resetGithubRepositoryEventHistoryGap({
       automationId: source.automationId,
-      templateVersion: source.templateVersion,
+      triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'baselined' });
 

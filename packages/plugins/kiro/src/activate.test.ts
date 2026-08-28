@@ -1,11 +1,5 @@
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type {
-  AgentAcpRuntimeOptions,
-  AgentSessionOpenRequest,
-  AgentSessionRuntime,
-  AgentSessionRuntimeContext,
-} from '@happier-dev/plugin-sdk/agents/runtime';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
@@ -22,42 +16,19 @@ describe('Kiro activation', () => {
     }));
   });
 
-  it('registers its runtime through the public Agent activation API', async () => {
+  it('registers only the manifest-declared CLI auth callback at activation', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     expect(activation.registrations()).toContainEqual({ family: 'agents', localId: 'kiro' });
-    expect(activation.registration('agents', 'kiro')?.factory).toEqual(expect.any(Function));
+    expect(activation.registration('agents', 'kiro')).toMatchObject({
+      cliAuth: { detectAuthStatus: expect.any(Function) },
+    });
+    expect(activation.registration('agents', 'kiro')?.factory).toBeUndefined();
     await activation.dispose();
   });
 
-  it('opens Kiro through the native ACP composer without a V1 fallback', async () => {
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const factory = activation.registration('agents', 'kiro')?.factory;
-    if (!factory) throw new Error('Expected Kiro Agent factory');
-    const runtime = await factory({
-      plugin: { id: 'happier.agent.kiro', version: '0.0.0' },
-      agent: { id: 'kiro' },
-      signal: new AbortController().signal,
-    });
-    const session = {
-      send: vi.fn(async () => ({ status: 'admitted' as const })),
-      watch: () => ({ dispose: () => undefined }),
-      dispose: vi.fn(),
-    } satisfies AgentSessionRuntime;
-    const open = vi.fn(async (
-      _request: AgentSessionOpenRequest,
-      _options: AgentAcpRuntimeOptions,
-    ) => session);
-    const request: AgentSessionOpenRequest = {
-      kind: 'resume',
-      sessionId: 'session-kiro',
-      providerSessionId: 'kiro-provider-session',
-      cwd: '/workspace',
-    };
-
-    await expect(runtime.sessions.open(request, {
-      protocols: { acp: { open } },
-    } as AgentSessionRuntimeContext)).resolves.toBe(session);
-    expect(open).toHaveBeenCalledWith(request, {
+  it('leaves session execution to the host-owned declarative ACP composer', () => {
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.runtime).toEqual({
+      kind: 'acp',
       transport: {
         kind: 'stdio',
         executable: { kind: 'systemTool', id: 'kiro-cli' },
@@ -68,6 +39,5 @@ describe('Kiro activation', () => {
         stderrRules: expect.any(Object),
       }),
     });
-    await activation.dispose();
   });
 });

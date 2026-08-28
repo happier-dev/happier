@@ -194,8 +194,8 @@ export function buildOpenCodeQualifiedAuthContent(input: Readonly<{
     }
   }
   for (const provider of ['openai', 'anthropic'] as const) {
-    const key = input.directApiKeys?.[provider]?.trim() ?? '';
-    if (key) auth[provider] = { type: 'api', key };
+    const key = input.directApiKeys?.[provider] ?? '';
+    if (key.trim()) auth[provider] = { type: 'api', key };
   }
   return JSON.stringify(auth);
 }

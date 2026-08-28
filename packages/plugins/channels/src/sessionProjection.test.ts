@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ConversationOutwardDeliveryResult } from './outwardDelivery.js';
 import {
+  acceptConversationSessionProjectionBaseline,
   createConversationSessionProjectionCollectionStore,
   createConversationSessionProjectionFrontierRow,
   readConversationSessionProjectionNoHistoryBaseline,
@@ -82,6 +83,10 @@ class MemoryProjectionStore implements ConversationSessionProjectionStore {
     this.updates.push(input);
     this.currentFrontier = input.frontier;
     return { kind: 'updated' as const };
+  }
+
+  async recordHistoryGap() {
+    return { kind: 'recorded' as const };
   }
 }
 
@@ -369,7 +374,7 @@ describe('Conversation Session mirror projection', () => {
       bindingId: 'binding-1',
       signal: new AbortController().signal,
       deliver: async () => delivered(),
-    })).resolves.toEqual({ kind: 'historyGap', reason: 'cursorRejected' });
+    })).resolves.toEqual({ kind: 'historyGap', reason: 'cursorRejected', disposition: 'recorded' });
 
     expect(store.updates).toEqual([]);
   });
@@ -511,6 +516,60 @@ describe('Conversation Session projection no-history baseline', () => {
 });
 
 describe('Conversation Session projection retained frontier', () => {
+  it('accepts one exact persisted history gap at the current transcript tail', async () => {
+    const collection = new MemoryProjectionCollection();
+    collection.rows.set('binding-1', {
+      rowId: 'binding-1',
+      revision: 7,
+      value: {
+        id: 'binding-1',
+        'record-kind': 'binding',
+        'connection-id': 'connection-1',
+        'binding-id': 'binding-1',
+        payload: {
+          enabled: true,
+          deletionState: 'none',
+          target: { kind: 'session', sessionId: 'session-1', policy: { deliveryMode: 'mirrorSession' } },
+        },
+      },
+    });
+    const frontierRow = createConversationSessionProjectionFrontierRow({
+      bindingId: 'binding-1',
+      targetSessionId: 'session-1',
+      transcriptCursor: { kind: 'historyGap', reason: 'cursorRejected', reportedAt: 100 },
+      lastScannedSeq: 8,
+      revision: 5,
+      now: 100,
+    });
+    collection.rows.set(frontierRow.id, {
+      rowId: frontierRow.id,
+      revision: 3,
+      value: frontierRow,
+    });
+    const actionService = actions({
+      ok: true,
+      projection: 'externalShareableV1',
+      sessionId: 'session-1',
+      scannedThroughSeq: 12,
+      nextCursor: '12',
+      hasMore: false,
+      items: [],
+    });
+
+    await expect(acceptConversationSessionProjectionBaseline({
+      actions: actionService,
+      stateCollection: collection as never,
+      bindingId: 'binding-1',
+      expectedBindingRevision: 7,
+      expectedFrontierRevision: 3,
+      signal: new AbortController().signal,
+      now: 200,
+    })).resolves.toEqual({ bindingRevision: 7, frontierRevision: 4 });
+    expect(collection.rows.get(frontierRow.id)?.value).toMatchObject({
+      payload: { transcriptCursor: '12', lastScannedSeq: 12, revision: 6 },
+    });
+  });
+
   it('reads the canonical binding/frontier pair and advances only with its binding-revision guard', async () => {
     const collection = new MemoryProjectionCollection();
     collection.rows.set('binding-1', {

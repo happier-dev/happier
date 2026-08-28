@@ -9,10 +9,11 @@ import type {
   TargetedContributionSnapshot,
   TargetedContributionsService,
 } from '@happier-dev/plugin-sdk';
-import type {
-  PluginCollectionBatchMeasurement,
-  PluginCollectionLimits,
-  PluginCollectionMutation,
+import {
+  PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1,
+  type PluginCollectionBatchMeasurement,
+  type PluginCollectionLimits,
+  type PluginCollectionMutation,
 } from '@happier-dev/plugin-sdk/collections';
 import {
   compilePluginJsonSchema,
@@ -77,6 +78,24 @@ function sentUserTextRequest(
     throw new Error('Expected Channels ingress to send a user-text request.');
   }
   return request;
+}
+
+function pendingPermissionRequest(input: Readonly<{
+  requestId: string;
+  turnId: string;
+  createdAtMs: number;
+  allowedScopes: readonly ('request' | 'session')[];
+}>) {
+  return {
+    kind: 'permission' as const,
+    ...input,
+    agentRequestSummary: {
+      kind: 'permission' as const,
+      toolLabel: 'Bash',
+      title: 'Run a command',
+      detail: 'Command: git',
+    },
+  };
 }
 
 function payloadTransportOrigin(
@@ -675,7 +694,6 @@ function setAutomationBindingWithoutFinalResult(rows: Map<string, StoredStateRow
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        templateVersion: 3,
         policy: { resultDelivery: 'none' },
       },
     },
@@ -697,7 +715,6 @@ function setAutomationBindingWithFinalResult(
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        templateVersion: 3,
         policy: { resultDelivery: 'finalResult' },
       },
     },
@@ -991,14 +1008,25 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
         }
         return false;
       }).sort((left, right) => {
-        if (request.index !== 'by-ingress-due') return 0;
+        if (request.index !== 'by-ingress-due') {
+          return left.rowId === right.rowId ? 0 : left.rowId < right.rowId ? -1 : 1;
+        }
         const leftDueAt = Number(left.value['due-at']);
         const rightDueAt = Number(right.value['due-at']);
-        return (leftDueAt - rightDueAt) * (request.order === 'desc' ? -1 : 1);
+        return ((leftDueAt - rightDueAt) * (request.order === 'desc' ? -1 : 1))
+          || (left.rowId === right.rowId ? 0 : left.rowId < right.rowId ? -1 : 1);
       });
+      const cursorIndex = request.cursor === undefined
+        ? -1
+        : matched.findIndex((row) => row.rowId === request.cursor);
+      const pageStart = cursorIndex + 1;
+      const pageRows = matched.slice(pageStart, pageStart + request.limit);
       return {
-        rows: matched.slice(0, request.limit),
+        rows: pageRows,
         changeCursor: 1,
+        ...(pageStart + pageRows.length < matched.length && pageRows.length > 0
+          ? { nextCursor: pageRows.at(-1)!.rowId }
+          : {}),
       };
     },
     async limits() {
@@ -1110,6 +1138,7 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
     },
   } as unknown as PluginServices;
   const context: PluginInvocationContext = {
+    invokedAtMs: 1_700_000_000_000,
     plugin: { id: 'happier.channels', version: '0.0.0' },
     contribution: {
       id: 'provider/observation-ingest-v1',
@@ -1815,7 +1844,7 @@ describe('Conversation provider observation ingress', () => {
     const harness = createIngressHarness({
       execute: async (actionId): Promise<JsonValue> => {
         if (actionId === 'session.permission.remote.pending.list') {
-          return { requests: [], truncated: false };
+          return { requests: [], truncated: false, nextCursor: null };
         }
         throw new Error(`Unexpected Action '${actionId}'.`);
       },
@@ -1952,20 +1981,21 @@ describe('Conversation provider observation ingress', () => {
         if (actionId === 'session.permission.remote.pending.list') {
           return {
             requests: [
-              {
+              pendingPermissionRequest({
                 requestId: 'permission-request-0',
                 turnId: 'turn-1',
                 createdAtMs: 1,
                 allowedScopes: ['request'],
-              },
-              {
+              }),
+              pendingPermissionRequest({
                 requestId: 'permission-request-1',
                 turnId: 'turn-9',
                 createdAtMs: 2,
                 allowedScopes: ['request', 'session'],
-              },
+              }),
             ],
             truncated: false,
+            nextCursor: null,
           };
         }
         if (actionId === 'session.permission.remote.respond') {
@@ -2054,6 +2084,7 @@ describe('Conversation provider observation ingress', () => {
               },
             }],
             truncated: false,
+            nextCursor: null,
           };
         }
         if (actionId === 'session.user_action.remote.answer') {
@@ -2138,8 +2169,9 @@ describe('Conversation provider observation ingress', () => {
                 },
               }],
               truncated: false,
+              nextCursor: null,
             }
-            : { requests: [], truncated: false };
+            : { requests: [], truncated: false, nextCursor: null };
         }
         if (actionId !== 'session.user_action.remote.answer') {
           throw new Error(`Unexpected Action '${actionId}'.`);
@@ -2201,13 +2233,14 @@ describe('Conversation provider observation ingress', () => {
         actionIds.push(actionId);
         if (actionId === 'session.permission.remote.pending.list') {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 2,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
+            nextCursor: null,
           };
         }
         return {
@@ -2258,13 +2291,14 @@ describe('Conversation provider observation ingress', () => {
       execute: async (actionId, input): Promise<JsonValue> => {
         if (actionId === 'session.permission.remote.pending.list') {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 2,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
+            nextCursor: null,
           };
         }
         respondInputs.push(input);
@@ -2309,15 +2343,16 @@ describe('Conversation provider observation ingress', () => {
         if (actionId === 'session.permission.remote.pending.list') {
           return requestStillPending
             ? {
-              requests: [{
+              requests: [pendingPermissionRequest({
                 requestId: 'permission-request-1',
                 turnId: 'turn-9',
                 createdAtMs: 2,
                 allowedScopes: ['request'],
-              }],
+              })],
               truncated: false,
+              nextCursor: null,
             }
-            : { requests: [], truncated: false };
+            : { requests: [], truncated: false, nextCursor: null };
         }
         if (actionId !== 'session.permission.remote.respond') {
           throw new Error(`Unexpected Action '${actionId}'.`);
@@ -2394,7 +2429,7 @@ describe('Conversation provider observation ingress', () => {
           cursors.push(typeof cursor === 'string' ? cursor : null);
           if (cursor === undefined) {
             return {
-              requests: Array.from({ length: 32 }, (_unused, index) => ({
+              requests: Array.from({ length: 32 }, (_unused, index) => pendingPermissionRequest({
                 requestId: `older-request-${index}`,
                 turnId: `turn-${index}`,
                 createdAtMs: index + 1,
@@ -2405,12 +2440,12 @@ describe('Conversation provider observation ingress', () => {
             };
           }
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 64,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
             nextCursor: null,
           };
@@ -2463,12 +2498,12 @@ describe('Conversation provider observation ingress', () => {
         }
         listCalls += 1;
         return {
-          requests: [{
+          requests: [pendingPermissionRequest({
             requestId: 'older-request',
             turnId: 'turn-1',
             createdAtMs: 1,
             allowedScopes: ['request'],
-          }],
+          })],
           truncated: false,
           nextCursor: 'stuck',
         };
@@ -2536,7 +2571,7 @@ describe('Conversation provider observation ingress', () => {
       execute: async (actionId): Promise<JsonValue> => {
         actionIds.push(actionId);
         if (actionId === 'session.permission.remote.pending.list') {
-          return { requests: [], truncated: false };
+          return { requests: [], truncated: false, nextCursor: null };
         }
         throw new Error(`A complete negative projection must not reach ${actionId}.`);
       },
@@ -2569,13 +2604,14 @@ describe('Conversation provider observation ingress', () => {
       execute: async (actionId): Promise<JsonValue> => {
         if (actionId === 'session.permission.remote.pending.list') {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 2,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
+            nextCursor: null,
           };
         }
         return {
@@ -2614,13 +2650,14 @@ describe('Conversation provider observation ingress', () => {
       execute: async (actionId): Promise<JsonValue> => {
         if (actionId === 'session.permission.remote.pending.list') {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 2,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
+            nextCursor: null,
           };
         }
         respondCalls += 1;
@@ -2663,13 +2700,14 @@ describe('Conversation provider observation ingress', () => {
       execute: async (actionId): Promise<JsonValue> => {
         if (actionId === 'session.permission.remote.pending.list') {
           return {
-            requests: [{
+            requests: [pendingPermissionRequest({
               requestId: 'permission-request-1',
               turnId: 'turn-9',
               createdAtMs: 2,
               allowedScopes: ['request'],
-            }],
+            })],
             truncated: false,
+            nextCursor: null,
           };
         }
         return { status: 'rejected', code: 'mediationStateUnavailable' };
@@ -3028,7 +3066,6 @@ describe('Conversation provider observation ingress', () => {
         expect(input).toEqual({
           automationId: 'automation-1',
           bindingId: 'binding-1',
-          templateVersion: 3,
           occurrenceId: 'telegram:update:9001',
           occurredAt: expect.any(Number),
           sender: {
@@ -3060,7 +3097,6 @@ describe('Conversation provider observation ingress', () => {
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        templateVersion: 3,
         resultDelivery: { kind: 'none' },
       },
       lifecycle: { phase: 'terminal' },
@@ -3074,7 +3110,6 @@ describe('Conversation provider observation ingress', () => {
       expect(actionInput).toMatchObject({
         automationId: 'automation-1',
         bindingId: 'binding-1',
-        templateVersion: 3,
         resultDelivery: {
           kind: 'finalResult',
           actionRef: { pluginId: 'happier.channels', localId: 'automation/result-deliver-v1' },
@@ -3130,7 +3165,6 @@ describe('Conversation provider observation ingress', () => {
     const finalResultTarget = {
       kind: 'automation',
       automationId: 'automation-1',
-      templateVersion: 3,
       policy: { resultDelivery: 'finalResult' },
     } as const;
     harness.rows.set(binding.rowId, stateRow({
@@ -3146,7 +3180,6 @@ describe('Conversation provider observation ingress', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           occurrenceKey: 'telegram:update:9001',
           resultDelivery: {
             kind: 'finalResult',
@@ -3195,7 +3228,6 @@ describe('Conversation provider observation ingress', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           occurrenceKey: 'telegram:update:9001',
           resultDelivery: {
             kind: 'finalResult',
@@ -4639,7 +4671,7 @@ describe('Conversation provider observation ingress', () => {
     }
   });
 
-  it('expires an actionless mention-gated non-admission with its full-text census at the frozen replay horizon', async () => {
+  it('compacts an actionless mention-gated non-admission before expiring its minimal explanation at the replay horizon', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -4680,6 +4712,27 @@ describe('Conversation provider observation ingress', () => {
       });
       expect(harness.send).not.toHaveBeenCalled();
 
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+      expect(JSON.stringify(harness.rows.get(censusId)?.value)).not.toContain('Hello from Telegram');
+      expect(record(record(harness.rows.get(censusId)?.value ?? {}).payload)).toMatchObject({
+        eventCandidate: null,
+        matchedBindings: [],
+        compacted: { retainedAttentionObligationRowIds: [obligation.rowId] },
+      });
+      expect(harness.rows.get(obligation.rowId)).toMatchObject({
+        value: {
+          terminal: true,
+          attention: true,
+          payload: {
+            target: null,
+            lifecycle: { phase: 'terminal' },
+            disposition: 'rejected',
+            nonAdmission: { reason: 'notAddressed' },
+          },
+        },
+      });
+
       await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 0 });
       expect(harness.rows.get(censusId)?.deleted).not.toBe(true);
@@ -4688,6 +4741,65 @@ describe('Conversation provider observation ingress', () => {
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(censusId)?.deleted).toBe(true);
       expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retires retained terminal attention when a compacted occurrence later becomes contradictory', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const occurrenceId = 'telegram:update:retention-attention-replay-conflict';
+      const harness = createIngressHarness({ connection: socketChannelConnection() });
+      setSharedMentionGatedBinding(harness.rows);
+      await ingestConversationProviderObservationForInvocation(
+        sharedGroupObservation({
+          occurrenceId,
+          messageRevision: 'retention:attention-replay-conflict',
+          messageText: 'Original private body',
+          occurredAt: 1_000,
+          transport: 'socket',
+        }),
+        harness.context,
+      );
+      const obligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (obligation === undefined) throw new Error('Expected the terminal attention obligation.');
+      const censusId = record(obligation.value.payload).censusId;
+      if (typeof censusId !== 'string') throw new Error('Expected the obligation census identity.');
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+      expect(record(record(record(harness.rows.get(censusId)?.value ?? {}).payload).compacted))
+        .toMatchObject({ retainedAttentionObligationRowIds: [obligation.rowId] });
+
+      vi.setSystemTime(2_001);
+      await expect(ingestConversationProviderObservationForInvocation(
+        sharedGroupObservation({
+          occurrenceId,
+          messageRevision: 'retention:attention-replay-conflict',
+          messageText: 'Contradictory private body',
+          occurredAt: 1_000,
+          transport: 'socket',
+        }),
+        harness.context,
+      )).rejects.toMatchObject({ code: 'channels_ingress_occurrence_conflict' });
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_002, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      const retained = record(record(harness.rows.get(censusId)?.value ?? {}).payload);
+      expect(retained).toMatchObject({
+        conflict: { kind: 'occurrenceEvidenceMismatch' },
+        normalizedIngress: null,
+        eventCandidate: null,
+        matchedBindings: [],
+        compacted: { retainedAttentionObligationRowIds: [] },
+      });
+      expect(JSON.stringify(retained)).not.toContain('Original private body');
+      expect(JSON.stringify(retained)).not.toContain('Contradictory private body');
     } finally {
       vi.useRealTimers();
     }
@@ -4717,7 +4829,7 @@ describe('Conversation provider observation ingress', () => {
     }
   });
 
-  it('covers a census whose checkpoint committed while a member was blocked, so a manual retry can retire it', async () => {
+  it('recovers checkpoint-covered blocked custody after restart, then compacts and retires it', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -4797,6 +4909,14 @@ describe('Conversation provider observation ingress', () => {
       expect(record(record(harness.rows.get(censusId)?.value).payload).checkpointCoveredAt)
         .toEqual(expect.any(Number));
 
+      // A fresh invocation context represents the next plugin generation after
+      // restart. It carries no ingress cache or checkpoint-local recovery state:
+      // the retained census and blocked obligation remain the complete input to
+      // the same owner Action the surface exposes.
+      const restartedContext: PluginInvocationContext = {
+        ...harness.context,
+        signal: new AbortController().signal,
+      };
       // The owner runs the only recovery the surface offers; the occurrence is
       // never presented by a poll again.
       const retryAt = 30_000;
@@ -4804,8 +4924,8 @@ describe('Conversation provider observation ingress', () => {
       await expect(retryConversationIngressForInvocation({
         obligationId: blocked.rowId,
         expectedRevision: blocked.revision,
-      }, harness.context)).resolves.toMatchObject({ kind: 'retryScheduled' });
-      await expect(runConversationIngressDueWorkForInvocation({ now: retryAt }, harness.context))
+      }, restartedContext)).resolves.toMatchObject({ kind: 'retryScheduled' });
+      await expect(runConversationIngressDueWorkForInvocation({ now: retryAt }, restartedContext))
         .resolves.toBe(1);
       expect(harness.rows.get(blocked.rowId)?.value).toMatchObject({
         terminal: true,
@@ -4813,9 +4933,9 @@ describe('Conversation provider observation ingress', () => {
         payload: { lifecycle: { phase: 'terminal' }, disposition: 'admitted' },
       });
 
-      await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, harness.context))
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_000, limit: 1 }, restartedContext))
         .resolves.toMatchObject({ deletedCensuses: 0 });
-      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, restartedContext))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(censusId)?.deleted).toBe(true);
       expect(harness.rows.get(blocked.rowId)?.deleted).toBe(true);
@@ -5178,6 +5298,58 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 0 });
 
+      expect(harness.rows.get(conflicted.rowId)?.deleted).not.toBe(true);
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not orphan a terminal attention member when its conflict census becomes the retained explanation', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const harness = createIngressHarness({ connection: socketChannelConnection() });
+      setSharedMentionGatedBinding(harness.rows);
+      await ingestConversationProviderObservationForInvocation(
+        sharedGroupObservation({
+          messageRevision: 'retention:conflict-attention',
+          occurredAt: 1_000,
+          transport: 'socket',
+        }),
+        harness.context,
+      );
+      const obligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (obligation === undefined) throw new Error('Expected the terminal attention obligation.');
+      expect(obligation.value).toMatchObject({
+        terminal: true,
+        attention: true,
+        payload: { nonAdmission: { reason: 'notAddressed' } },
+      });
+      const conflicted = markIngressCensusOccurrenceConflict(harness.rows);
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+
+      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(conflicted.rowId)).toMatchObject({
+        value: {
+          attention: true,
+          payload: {
+            normalizedIngress: null,
+            conflict: { kind: 'occurrenceEvidenceMismatch' },
+            matchedBindings: [],
+            eventCandidate: null,
+            compacted: { retainedAttentionObligationRowIds: [] },
+          },
+        },
+      });
+      expect(JSON.stringify(harness.rows.get(conflicted.rowId)?.value)).not.toContain('Hello from Telegram');
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 0 });
       expect(harness.rows.get(conflicted.rowId)?.deleted).not.toBe(true);
       expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
     } finally {
@@ -7624,6 +7796,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           occurrenceId: 'telegram:update:event-retry',
           occurredAt: 1_000,
           observationReceivedAt: 1_000,
+          observedDelta: 1,
         },
         {
           connectionId: 'connection-1',
@@ -7631,6 +7804,7 @@ describe('Conversation checkpointed-poll ingress', () => {
           occurrenceId: 'telegram:update:event-retry',
           occurredAt: 1_000,
           observationReceivedAt: 1_000,
+          observedDelta: 0,
         },
       ]);
       expect(currentCheckpoint(harness.rows)?.value.payload).toMatchObject({
@@ -7742,7 +7916,7 @@ describe('Conversation checkpointed-poll ingress', () => {
     }
   });
 
-  it('does not clear a replacement baseline when blocked ingress becomes attempting before its final batch', async () => {
+  it('lets blocked recovery continue independently when it becomes attempting during baseline commit', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
@@ -7794,13 +7968,12 @@ describe('Conversation checkpointed-poll ingress', () => {
       await expect(acceptConversationStreamBaselineForInvocation({
         connectionId: 'connection-1',
         expectedRevision: gapConnection.revision,
-      }, harness.context)).rejects.toMatchObject({
-        code: 'channels_stream_baseline_conflict',
-        retryable: true,
-      });
+      }, harness.context)).resolves.toMatchObject({ kind: 'updated' });
 
-      expect(currentCheckpoint(harness.rows)).toBeUndefined();
-      expect(record(record(harness.rows.get('connection-1')?.value ?? {}).payload).historyGap).not.toBeNull();
+      expect(currentCheckpoint(harness.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'baseline-race' } } },
+      });
+      expect(record(record(harness.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
       expect(record(record(harness.rows.get(retryDue.rowId)?.value ?? {}).payload).lifecycle)
         .toMatchObject({ phase: 'attempting' });
     } finally {
@@ -8400,12 +8573,12 @@ describe('Conversation history baseline acceptance', () => {
     }
   });
 
-  it('settles replayable preparing and prepared census members atomically before advancing a replacement checkpoint', async () => {
+  it('settles replayable preparing and prepared census members under the gap before advancing its checkpoint', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);
     try {
       let armed = true;
-      let baselineBatch: readonly CollectionMutation[] | undefined;
+      const baselineBatches: Array<readonly CollectionMutation[]> = [];
       const harness = createIngressHarness({
         beforeBatch: ({ operations }) => {
           const preparesCensus = operations.some((operation) => (
@@ -8416,7 +8589,13 @@ describe('Conversation history baseline acceptance', () => {
             armed = false;
             throw new Error('Simulated Account Collection failure on the prepared census write.');
           }
-          if (operations.some(isCheckpointPut)) baselineBatch = operations;
+          if (operations.some((operation) => (
+            operation.kind === 'put'
+            && operation.value['record-kind'] === 'ingress-obligation'
+            && record(operation.value.payload).disposition === 'staleAuthority'
+          )) || operations.some(isIngressCensusPut) || operations.some(isCheckpointPut)) {
+            baselineBatches.push(operations);
+          }
         },
         pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } },
       });
@@ -8481,6 +8660,9 @@ describe('Conversation history baseline acceptance', () => {
         },
       }, preparedReadyObligation.revision + 1));
 
+      // Setup ingress has its own census preparation writes. From this point
+      // onward the capture describes only the replacement-baseline stages.
+      baselineBatches.length = 0;
       const gapConnection = setConnectionHistoryGap(harness.rows);
       await expect(acceptConversationStreamBaselineForInvocation({
         connectionId: 'connection-1',
@@ -8510,13 +8692,312 @@ describe('Conversation history baseline acceptance', () => {
       });
       expect(record(record(harness.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
 
-      const terminalizations = baselineBatch?.filter((operation) => (
+      const terminalizations = baselineBatches.flatMap((operations) => operations.filter((operation) => (
         operation.kind === 'put'
         && operation.value['record-kind'] === 'ingress-obligation'
         && record(operation.value.payload).disposition === 'staleAuthority'
-      ));
+      )));
       expect(terminalizations).toHaveLength(2);
-      expect(baselineBatch?.filter(isIngressCensusPut)).toHaveLength(3);
+      const coverage = baselineBatches.flatMap((operations) => (
+        operations.some(isCheckpointPut) ? [] : operations.filter(isIngressCensusPut)
+      ));
+      expect(coverage).toHaveLength(3);
+      const checkpointBatch = baselineBatches.find((operations) => operations.some(isCheckpointPut));
+      expect(checkpointBatch?.filter(isIngressCensusPut)).toEqual([]);
+      expect(checkpointBatch?.filter((operation) => (
+        operation.kind === 'put' && operation.value['record-kind'] === 'ingress-obligation'
+      ))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('excludes covered history and stages uncovered coverage under the in-force lower batch limit', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const retainedCount = PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1 - 1;
+      const covered = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'replacement' } },
+      });
+      for (let index = 0; index < retainedCount; index += 1) {
+        await ingestConversationProviderObservationForInvocation(
+          observation({
+            occurrenceId: `telegram:update:covered-history:${index}`,
+            messageRevision: `covered-history:${index}`,
+            occurredAt: 1_000,
+          }),
+          covered.context,
+        );
+      }
+      const uncoveredRows = new Map(covered.rows);
+      for (const [rowId, row] of covered.rows) {
+        if (row.deleted === true || row.value['record-kind'] !== 'ingress-census') continue;
+        const value = record(row.value);
+        covered.rows.set(rowId, stateRow({
+          ...value,
+          'updated-at': 1_000,
+          payload: { ...record(value.payload), checkpointCoveredAt: 1_000 },
+        }, row.revision + 1));
+      }
+      // Historical attention remains visible to its own owner, but cannot
+      // make a later unrelated provider gap globally head-of-line blocked.
+      markIngressCensusOccurrenceConflict(covered.rows);
+
+      const coveredGap = setConnectionHistoryGap(covered.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: coveredGap.revision,
+      }, covered.context)).resolves.toMatchObject({ kind: 'updated' });
+      expect(record(record(covered.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
+      expect(currentCheckpoint(covered.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'replacement' } } },
+      });
+
+      const coverageBatches: Array<readonly CollectionMutation[]> = [];
+      const baselineTransitions: Array<'checkpoint' | 'coverage' | 'clear'> = [];
+      const uncovered = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'lowered-limit' } },
+        collectionLimits: deploymentLimits({ maxBatchRows: 4, maxBatchBytes: 16 * 1024 * 1024 }),
+        beforeBatch: ({ operations }) => {
+          if (operations.some(isCheckpointPut)) {
+            baselineTransitions.push('checkpoint');
+          } else if (operations.some(isIngressCensusPut)) {
+            baselineTransitions.push('coverage');
+            coverageBatches.push(operations);
+          } else if (operations.some((operation) => (
+            operation.kind === 'put'
+            && operation.value['record-kind'] === 'connection'
+            && record(operation.value.payload).historyGap === null
+          ))) {
+            baselineTransitions.push('clear');
+          }
+        },
+      });
+      uncovered.rows.clear();
+      for (const [rowId, row] of uncoveredRows) uncovered.rows.set(rowId, row);
+      const uncoveredGap = setConnectionHistoryGap(uncovered.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: uncoveredGap.revision,
+      }, uncovered.context)).resolves.toMatchObject({ kind: 'updated' });
+      expect(coverageBatches.length).toBeGreaterThan(1);
+      expect(coverageBatches.every((operations) => operations.length <= 4)).toBe(true);
+      expect(baselineTransitions[0]).toBe('checkpoint');
+      expect(baselineTransitions.at(-1)).toBe('clear');
+      expect(baselineTransitions.slice(1, -1).every((transition) => transition === 'coverage')).toBe(true);
+      expect(currentCheckpoint(uncovered.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'lowered-limit' } } },
+      });
+      expect(record(record(uncovered.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
+
+      const crashed = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'crash-rejoin' } },
+        loseNextUpdatedBatchResponse: true,
+      });
+      crashed.rows.clear();
+      for (const [rowId, row] of uncoveredRows) crashed.rows.set(rowId, row);
+      const crashedGap = setConnectionHistoryGap(crashed.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: crashedGap.revision,
+      }, crashed.context)).rejects.toThrow('Simulated Account Collection response loss.');
+      expect(currentCheckpoint(crashed.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'crash-rejoin' } } },
+      });
+      expect([...crashed.rows.values()].filter((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-census'
+        && record(row.value.payload).checkpointCoveredAt !== null
+      ))).toEqual([]);
+      expect(record(record(crashed.rows.get('connection-1')?.value ?? {}).payload).historyGap).not.toBeNull();
+
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: crashedGap.revision,
+      }, crashed.context)).resolves.toMatchObject({ kind: 'updated' });
+      expect(record(record(crashed.rows.get('connection-1')?.value ?? {}).payload).historyGap).toBeNull();
+
+      let resetOnCoverage = true;
+      const reset = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'coverage-reset' } },
+        beforeBatch: ({ rows, operations }) => {
+          if (!resetOnCoverage || !operations.some(isIngressCensusPut) || operations.some(isCheckpointPut)) return;
+          resetOnCoverage = false;
+          advanceConnectionAuthorityEpoch(rows);
+        },
+      });
+      reset.rows.clear();
+      for (const [rowId, row] of uncoveredRows) reset.rows.set(rowId, row);
+      const resetGap = setConnectionHistoryGap(reset.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: resetGap.revision,
+      }, reset.context)).rejects.toMatchObject({
+        code: 'channels_stream_baseline_conflict',
+        retryable: true,
+      });
+      expect(currentCheckpoint(reset.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'coverage-reset' } } },
+      });
+      expect(record(record(reset.rows.get('connection-1')?.value ?? {}).payload).historyGap).not.toBeNull();
+      expect([...reset.rows.values()].filter((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-census'
+        && record(row.value.payload).checkpointCoveredAt !== null
+      ))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stages one maximum-fanout census before the bounded replacement-checkpoint commit', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const baselineBatches: Array<readonly CollectionMutation[]> = [];
+      const source = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'replacement' } },
+        beforeBatch: ({ operations }) => {
+          if (operations.some((operation) => (
+            operation.kind === 'put'
+            && operation.value['record-kind'] === 'ingress-obligation'
+            && record(operation.value.payload).disposition === 'staleAuthority'
+          )) || operations.some(isCheckpointPut)) baselineBatches.push(operations);
+        },
+      });
+      for (let index = 2; index <= 256; index += 1) {
+        addMatchingBinding(source.rows, `binding-${index}`);
+      }
+      await ingestConversationProviderObservationForInvocation(
+        observation({
+          occurrenceId: 'telegram:update:baseline-maximum-fanout',
+          messageRevision: 'baseline:maximum-fanout',
+          occurredAt: 1_000,
+        }),
+        source.context,
+      );
+      const obligations = [...source.rows.values()].filter((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      expect(obligations).toHaveLength(256);
+      for (const obligation of obligations) {
+        const value = record(obligation.value);
+        source.rows.set(obligation.rowId, stateRow({
+          ...value,
+          terminal: false,
+          attention: false,
+          'due-at': 1_000,
+          payload: {
+            ...record(value.payload),
+            lifecycle: { phase: 'ready', attemptCount: 0, dueAt: 1_000 },
+            disposition: null,
+            nonAdmission: null,
+          },
+        }, obligation.revision + 1));
+      }
+      const concurrentRows = new Map(source.rows);
+
+      const gap = setConnectionHistoryGap(source.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: gap.revision,
+      }, source.context)).resolves.toMatchObject({ kind: 'updated' });
+
+      const terminalizationBatches = baselineBatches.filter((operations) => operations.some((operation) => (
+        operation.kind === 'put' && operation.value['record-kind'] === 'ingress-obligation'
+      )));
+      expect(terminalizationBatches.length).toBeGreaterThan(1);
+      for (const operations of terminalizationBatches) {
+        expect(operations.length).toBeLessThanOrEqual(PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1);
+        expect(operations[0]).toMatchObject({
+          kind: 'assert',
+          rowId: 'connection-1',
+          expectedRevision: gap.revision,
+        });
+      }
+      expect([...source.rows.values()].filter((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-obligation'
+        && row.value.terminal !== true
+      ))).toEqual([]);
+      expect(currentCheckpoint(source.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'replacement' } } },
+      });
+      const finalBatch = baselineBatches.find((operations) => operations.some(isCheckpointPut));
+      expect(finalBatch?.filter((operation) => (
+        operation.kind === 'put' && operation.value['record-kind'] === 'ingress-obligation'
+      ))).toEqual([]);
+
+      let resetOnStaging = true;
+      const concurrent = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'must-not-commit' } },
+        beforeBatch: ({ rows, operations }) => {
+          if (!resetOnStaging || !operations.some((operation) => (
+            operation.kind === 'put'
+            && operation.value['record-kind'] === 'ingress-obligation'
+            && record(operation.value.payload).disposition === 'staleAuthority'
+          ))) return;
+          resetOnStaging = false;
+          advanceConnectionAuthorityEpoch(rows);
+        },
+      });
+      concurrent.rows.clear();
+      for (const [rowId, row] of concurrentRows) concurrent.rows.set(rowId, row);
+      const concurrentGap = setConnectionHistoryGap(concurrent.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: concurrentGap.revision,
+      }, concurrent.context)).rejects.toMatchObject({
+        code: 'channels_stream_baseline_conflict',
+        retryable: true,
+      });
+      expect(currentCheckpoint(concurrent.rows)).toBeUndefined();
+      expect([...concurrent.rows.values()].filter((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-obligation'
+        && row.value.terminal === true
+      ))).toEqual([]);
+
+      const blocked = createIngressHarness({
+        pollResult: { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'blocked-recovery' } },
+      });
+      blocked.rows.clear();
+      for (const [rowId, row] of concurrentRows) blocked.rows.set(rowId, row);
+      for (const obligation of [...blocked.rows.values()].filter((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ))) {
+        const value = record(obligation.value);
+        const { ['due-at']: _dueAt, ...withoutDueAt } = value;
+        blocked.rows.set(obligation.rowId, stateRow({
+          ...withoutDueAt,
+          terminal: false,
+          attention: true,
+          payload: {
+            ...record(value.payload),
+            lifecycle: { phase: 'blocked', attemptCount: 5, dueAt: null },
+            disposition: null,
+            nonAdmission: null,
+          },
+        }, obligation.revision + 1));
+      }
+      const blockedGap = setConnectionHistoryGap(blocked.rows);
+      await expect(acceptConversationStreamBaselineForInvocation({
+        connectionId: 'connection-1',
+        expectedRevision: blockedGap.revision,
+      }, blocked.context)).resolves.toMatchObject({ kind: 'updated' });
+      const retainedBlocked = [...blocked.rows.values()].filter((row) => (
+        row.deleted !== true
+        && row.value['record-kind'] === 'ingress-obligation'
+        && row.value.attention === true
+      ));
+      expect(retainedBlocked).toHaveLength(256);
+      expect(retainedBlocked.every((row) => (
+        record(record(record(row.value).payload).lifecycle).phase === 'blocked'
+      ))).toBe(true);
+      expect(currentCheckpoint(blocked.rows)).toMatchObject({
+        value: { payload: { opaqueToken: { cursor: 'blocked-recovery' } } },
+      });
     } finally {
       vi.useRealTimers();
     }

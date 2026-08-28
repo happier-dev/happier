@@ -1,4 +1,8 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -78,7 +82,7 @@ function planeInput(overrides: Readonly<Record<string, unknown>> = {}) {
     v: 1,
     instance: configuredInstance(),
     localRef: localRef(),
-    routingToken: `${REPOSITORY_ID}/${String(PULL_REQUEST_ID)}`,
+    routingToken: 'acme/Payments/checkout',
     ...overrides,
   };
 }
@@ -128,7 +132,30 @@ function harness(respond: (url: string) => Route | undefined) {
     http: {
       async request(request: Readonly<{ url: string }>) {
         urls.push(request.url);
-        const route = respond(request.url);
+        const route = respond(request.url) ?? (
+          request.url.includes('/Payments/_apis/git/repositories/checkout/pullrequests/17?')
+            ? {
+              body: {
+                pullRequestId: PULL_REQUEST_ID,
+                repository: {
+                  id: REPOSITORY_ID,
+                  name: 'checkout',
+                  project: { id: PROJECT_ID, name: 'Payments' },
+                },
+                title: 'Tighten the completion gate',
+                status: 'active',
+                isDraft: false,
+                createdBy: { id: 'viewer-1', displayName: 'Alex' },
+                creationDate: '2026-08-01T00:00:00Z',
+                sourceRefName: 'refs/heads/feature',
+                targetRefName: 'refs/heads/main',
+                mergeStatus: 'succeeded',
+                lastMergeSourceCommit: { commitId: 'a'.repeat(40) },
+                reviewers: [],
+              },
+            }
+            : undefined
+        );
         if (route === undefined) throw new Error(`unexpected request: ${request.url}`);
         return {
           status: route.status ?? 200,
@@ -194,10 +221,43 @@ describe('Azure iterations read', () => {
     expect(settled).not.toHaveProperty('currentIterationId');
   });
 
+  it('keeps the real current iteration after more than one hundred source pushes', async () => {
+    const iterations = Array.from({ length: 101 }, (_, index) => ({
+      id: index + 1,
+      description: `push-${String(index + 1)}`,
+    }));
+    const seam = harness((url) => (
+      url.includes('/iterations') ? collection(iterations) : undefined
+    ));
+
+    const settled = AzureIterationsResultV1Schema.parse(
+      await readAzureDevOpsIterations(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'iterations') throw new Error('the iteration read must settle');
+    expect(settled.rows).toHaveLength(101);
+    expect(settled.currentIterationId).toBe(101);
+    expect(settled.omittedRowCount).toBe(0);
+    expect(settled.projectionTruncated).toBe(false);
+  });
+
   it('pins its api-version rather than letting the server choose a contract', async () => {
     const seam = harness((url) => (url.includes('/iterations') ? collection([]) : undefined));
     await readAzureDevOpsIterations(planeInput(), seam.context);
-    expect(seam.urls[0]).toContain('api-version=7.1');
+    expect(seam.urls.at(-1)).toContain('api-version=7.1');
+  });
+
+  it('refuses an unusable routing token before authorizing or contacting Azure', async () => {
+    const seam = harness(() => undefined);
+    const settled = AzureIterationsResultV1Schema.parse(
+      await readAzureDevOpsIterations(
+        planeInput({ routingToken: `${REPOSITORY_ID}/${String(PULL_REQUEST_ID)}` }),
+        seam.context,
+      ),
+    );
+
+    expect(settled.kind).toBe('unavailable');
+    expect(seam.urls).toHaveLength(0);
   });
 });
 
@@ -224,8 +284,8 @@ describe('Azure iteration changes plane', () => {
     // offset it was given.
     expect(settled.nextSkip).toBe(100);
     expect(settled.nextTop).toBe(100);
-    expect(seam.urls[0]).toContain('$skip=0');
-    expect(seam.urls[0]).toContain('$compareTo=0');
+    expect(seam.urls.at(-1)).toContain('$skip=0');
+    expect(seam.urls.at(-1)).toContain('$compareTo=0');
   });
 
   it('ends the walk when Azure issues two zeroes rather than inventing the next offset', async () => {
@@ -238,6 +298,32 @@ describe('Azure iteration changes plane', () => {
       await listAzureDevOpsIterationChanges(planeInput({ iterationId: 2 }), seam.context),
     );
     if (settled.kind !== 'iterationChanges') throw new Error('the changes page must settle');
+    expect(settled).not.toHaveProperty('nextSkip');
+    expect(settled).not.toHaveProperty('nextTop');
+  });
+
+  it('refuses a caller-supplied half-position before contacting Azure DevOps', async () => {
+    const seam = harness(() => undefined);
+    const settled = AzureIterationChangesResultV1Schema.parse(
+      await listAzureDevOpsIterationChanges(
+        planeInput({ iterationId: 2, skip: 100 }),
+        seam.context,
+      ),
+    );
+    expect(settled.kind).toBe('unavailable');
+    expect(seam.urls).toHaveLength(0);
+  });
+
+  it('refuses a provider-issued half-position rather than manufacturing its missing member', async () => {
+    const seam = harness((url) => (
+      url.includes('/iterations/2/changes')
+        ? { body: { changeEntries: [CHANGE], nextSkip: 100 } }
+        : undefined
+    ));
+    const settled = AzureIterationChangesResultV1Schema.parse(
+      await listAzureDevOpsIterationChanges(planeInput({ iterationId: 2 }), seam.context),
+    );
+    expect(settled.kind).toBe('unavailable');
     expect(settled).not.toHaveProperty('nextSkip');
     expect(settled).not.toHaveProperty('nextTop');
   });
@@ -400,7 +486,8 @@ describe('Azure policies plane', () => {
     const otherRoutes = respondWith(collection([]));
     const seam = harness((url) => {
       if (!url.includes('/policy/evaluations')) return otherRoutes(url);
-      return collection(url.includes('$skip=100') ? evaluations.slice(100) : evaluations.slice(0, 100));
+      const skip = Number(new URL(url).searchParams.get('$skip') ?? '0');
+      return collection(evaluations.slice(skip, skip === 0 ? 100 : undefined));
     });
 
     const settled = AzurePoliciesResultV1Schema.parse(
@@ -408,12 +495,41 @@ describe('Azure policies plane', () => {
     );
 
     if (settled.kind !== 'policies') throw new Error('the policies read must settle');
-    expect(settled.evaluations).toHaveLength(100);
+    expect(settled.evaluations).toHaveLength(101);
     expect(settled.evaluationsPartial).toBe(false);
-    expect(settled.omittedRowCount).toBe(1);
-    expect(settled.projectionTruncated).toBe(true);
-    expect(seam.urls.filter((url) => url.includes('/policy/evaluations'))).toHaveLength(2);
+    expect(settled.omittedRowCount).toBe(0);
+    expect(settled.projectionTruncated).toBe(false);
+    expect(seam.urls.filter((url) => url.includes('/policy/evaluations'))).toHaveLength(3);
     expect(seam.urls.some((url) => url.includes('$skip=100'))).toBe(true);
+    expect(seam.urls.some((url) => url.includes('$skip=101'))).toBe(true);
+    expect(seam.urls.filter((url) => url.includes('/policy/evaluations')).every((url) => (
+      !url.includes('$top=')
+    ))).toBe(true);
+  });
+
+  it('settles a policy walk that repeats a full page without accumulating duplicates', async () => {
+    const evaluations = Array.from({ length: 100 }, (_, index) => ({
+      evaluationId: `evaluation-${String(index + 1)}`,
+      status: 'approved',
+      configuration: { isBlocking: false, type: { id: `type-${String(index + 1)}` } },
+    }));
+    const otherRoutes = respondWith(collection([]));
+    let evaluationReads = 0;
+    const seam = harness((url) => {
+      if (!url.includes('/policy/evaluations')) return otherRoutes(url);
+      evaluationReads += 1;
+      if (evaluationReads > 2) return { status: 503, body: { message: 'loop guard did not settle' } };
+      return collection(evaluations);
+    });
+
+    const settled = AzurePoliciesResultV1Schema.parse(
+      await readAzureDevOpsPolicies(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'policies') throw new Error('the policies read must settle');
+    expect(evaluationReads).toBe(2);
+    expect(settled.evaluations).toHaveLength(100);
+    expect(settled.evaluationsPartial).toBe(true);
   });
 });
 
@@ -474,6 +590,67 @@ describe('Azure threads read', () => {
     expect(settled.rows[0]?.omittedCommentCount).toBe(0);
   });
 
+  it('keeps every returned thread instead of applying a source-invented row ceiling', async () => {
+    const threads = Array.from({ length: 201 }, (_, index) => ({
+      id: index + 1,
+      status: 'active',
+      comments: [{ id: 1, content: `thread-${String(index + 1)}` }],
+    }));
+    const seam = harness((url) => (
+      url.includes('/threads') ? collection(threads) : undefined
+    ));
+
+    const settled = AzureThreadsResultV1Schema.parse(
+      await readAzureDevOpsThreads(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'threads') throw new Error('the threads read must settle');
+    expect(settled.rows).toHaveLength(201);
+    expect(settled.rows.at(-1)?.comments[0]?.content).toBe('thread-201');
+    expect(settled.omittedRowCount).toBe(0);
+    expect(settled.projectionTruncated).toBe(false);
+  });
+
+  it('keeps a provider comment body beyond the old local byte ceiling', async () => {
+    const content = '🧪'.repeat(3_000);
+    const seam = harness((url) => (
+      url.includes('/threads')
+        ? collection([{ id: 1, status: 'active', comments: [{ id: 1, content }] }])
+        : undefined
+    ));
+
+    const settled = AzureThreadsResultV1Schema.parse(
+      await readAzureDevOpsThreads(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'threads') throw new Error('the threads read must settle');
+    expect(settled.rows[0]?.comments[0]?.content).toBe(content);
+    expect(settled.rows[0]?.comments[0]).not.toHaveProperty('truncated');
+  });
+
+  it('fits returned threads to the canonical Action envelope without rejecting the whole plane', async () => {
+    const oversizedContent = 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const seam = harness((url) => (
+      url.includes('/threads')
+        ? collection([
+          { id: 1, status: 'active', comments: [{ id: 1, content: 'retained' }] },
+          { id: 2, status: 'active', comments: [{ id: 1, content: oversizedContent }] },
+        ])
+        : undefined
+    ));
+
+    const settled = AzureThreadsResultV1Schema.parse(
+      await readAzureDevOpsThreads(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'threads') throw new Error('the threads read must settle');
+    expect(settled.rows).toHaveLength(1);
+    expect(settled.rows[0]?.comments[0]?.content).toBe('retained');
+    expect(settled.omittedRowCount).toBe(1);
+    expect(settled.projectionTruncated).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
+  });
+
   it('publishes no cursor, because the documented endpoint issues none', async () => {
     const seam = harness((url) => (url.includes('/threads') ? collection([]) : undefined));
     const settled = AzureThreadsResultV1Schema.parse(
@@ -481,8 +658,8 @@ describe('Azure threads read', () => {
     );
     // A continuation member here would be pagination this product invented.
     expect(settled).not.toHaveProperty('continuation');
-    expect(seam.urls[0]).not.toContain('top=');
-    expect(seam.urls[0]).not.toContain('continuationToken');
+    expect(seam.urls.at(-1)).not.toContain('top=');
+    expect(seam.urls.at(-1)).not.toContain('continuationToken');
   });
 
   it('sends the iteration lens with its literal dollar signs', async () => {
@@ -493,8 +670,8 @@ describe('Azure threads read', () => {
     );
     // Dropping the `$` is how every thread comes back unfiltered while the
     // caller believes the lens was applied.
-    expect(seam.urls[0]).toContain('$iteration=2');
-    expect(seam.urls[0]).toContain('$baseIteration=1');
+    expect(seam.urls.at(-1)).toContain('$iteration=2');
+    expect(seam.urls.at(-1)).toContain('$baseIteration=1');
   });
 
   it('refuses half an iteration lens rather than applying a broken comparison', async () => {
@@ -536,7 +713,48 @@ describe('Azure commits plane', () => {
     if (settled.kind !== 'commits') throw new Error('the commits page must settle');
     expect(settled.continuationToken).toBe('opaque-token');
     expect(settled.rows[0]?.comment).toBe('Fix the thing');
-    expect(seam.urls[0]).toContain('$top=30');
+    expect(seam.urls.at(-1)).toContain('$top=30');
+  });
+
+  it('carries an opaque provider continuation beyond the old local byte ceiling', async () => {
+    const continuationToken = 'cursor'.repeat(300);
+    const seam = harness((url) => (
+      url.includes('/commits')
+        ? {
+          headers: { 'x-ms-continuationtoken': continuationToken },
+          body: { count: 0, value: [] },
+        }
+        : undefined
+    ));
+
+    const settled = AzureCommitsResultV1Schema.parse(
+      await listAzureDevOpsCommits(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'commits') throw new Error('the commits read must settle');
+    expect(settled.continuationToken).toBe(continuationToken);
+  });
+
+  it('omits a provider continuation that alone exceeds the canonical Action envelope', async () => {
+    const continuationToken = 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
+    const seam = harness((url) => (
+      url.includes('/commits')
+        ? {
+          headers: { 'x-ms-continuationtoken': continuationToken },
+          body: { count: 0, value: [] },
+        }
+        : undefined
+    ));
+
+    const settled = AzureCommitsResultV1Schema.parse(
+      await listAzureDevOpsCommits(planeInput(), seam.context),
+    );
+
+    if (settled.kind !== 'commits') throw new Error('the commits read must settle');
+    expect(settled).not.toHaveProperty('continuationToken');
+    expect(settled.incomplete).toBe('continuationUnavailable');
+    expect(settled.projectionTruncated).toBe(false);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(settled)).toBe(true);
   });
 
   it('ends the walk when Azure issues no continuation token', async () => {
@@ -552,6 +770,41 @@ describe('Azure commits plane', () => {
 /* ----------------------------------------------------------------- admission */
 
 describe('Azure detail admission', () => {
+  it('routes through the source locator and validates its returned repository identity', async () => {
+    const wrongRepositoryId = '11111111-2222-4333-8444-555555555555';
+    const seam = harness((url) => {
+      if (url.includes('/pullrequests/17?')) {
+        return {
+          body: {
+            pullRequestId: PULL_REQUEST_ID,
+            repository: {
+              id: wrongRepositoryId,
+              name: 'checkout',
+              project: { id: PROJECT_ID, name: 'Payments' },
+            },
+            title: 'Different repository',
+            status: 'active',
+            createdBy: { id: 'viewer-1' },
+            creationDate: '2026-08-01T00:00:00Z',
+            sourceRefName: 'refs/heads/feature',
+            targetRefName: 'refs/heads/main',
+            reviewers: [],
+          },
+        };
+      }
+      return url.includes('/threads') ? collection([]) : undefined;
+    });
+
+    const settled = AzureThreadsResultV1Schema.parse(
+      await readAzureDevOpsThreads(planeInput(), seam.context),
+    );
+
+    expect(settled.kind).toBe('unavailable');
+    expect(seam.urls[0]).toContain('/Payments/_apis/git/repositories/checkout/pullrequests/17?');
+    expect(seam.urls[0]).not.toContain(REPOSITORY_ID);
+    expect(seam.urls.some((url) => url.includes('/threads'))).toBe(false);
+  });
+
   it('refuses an entry keyed against another deployment before any provider call', async () => {
     const seam = harness(() => undefined);
     const settled = AzureThreadsResultV1Schema.parse(await readAzureDevOpsThreads(planeInput({

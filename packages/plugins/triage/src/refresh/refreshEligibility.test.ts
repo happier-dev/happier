@@ -137,7 +137,7 @@ describe('triage refresh pacing', () => {
         expect(permission).toEqual(TRIAGE_REFRESH_BACKOFF_IDLE_V1);
     });
 
-    it('bounds a source-stated deadline to the retry horizon, so no provider header can park a manual Refresh', () => {
+    it('preserves the source-stated absolute deadline without inventing a retry horizon', () => {
         const ONE_HOUR_MS = 60 * 60 * 1_000;
         const hostile = recordRefreshFailure({
             backoff: TRIAGE_REFRESH_BACKOFF_IDLE_V1,
@@ -149,21 +149,23 @@ describe('triage refresh pacing', () => {
             nowMs: NOW_MS,
             random: () => 1,
         });
-        expect(hostile.retryNotBeforeMs).toBe(NOW_MS + ONE_HOUR_MS);
+        expect(hostile.retryNotBeforeMs).toBe(NOW_MS + (30 * 24 * ONE_HOUR_MS));
 
-        // The press this protects. A source-stated deadline is still honoured —
-        // `core/CORPUS.md` §4.2 requires surfacing the wait rather than bypassing
-        // provider authority — but a skewed, mis-scaled or rewritten header cannot
-        // hold the user's own Refresh past the horizon.
+        // The provider owns this fact. Triage cannot silently replace it with a
+        // picked horizon and then claim the provider admitted an earlier retry.
         expect(evaluateRefreshEligibility({
             trigger: 'manual',
             nowMs: NOW_MS + ONE_HOUR_MS,
             lastReadStartedAtMs: null,
             backoff: hostile,
-        })).toEqual({ kind: 'eligible' });
+        })).toEqual({
+            kind: 'blocked',
+            reason: 'sourceRetryDeadline',
+            nextEligibleAtMs: NOW_MS + (30 * 24 * ONE_HOUR_MS),
+        });
 
-        // Inside the horizon the provider's own instant is carried exactly, not
-        // rounded to the bound: the bound is a ceiling, not a schedule.
+        // Ordinary provider deadlines are carried by the same path; there is no
+        // second short-deadline branch.
         expect(recordRefreshFailure({
             backoff: TRIAGE_REFRESH_BACKOFF_IDLE_V1,
             failure: failure({ class: 'rateLimit', code: 'secondary-limit', retryNotBeforeMs: NOW_MS + 90_000 }),

@@ -11,7 +11,6 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { activate } from './activate.js';
-import { OPENCODE_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from './agent/providerBinding/adapter.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -68,10 +67,17 @@ describe('activate', () => {
             secretEntries: ['OPENCODE_AUTH_CONTENT', 'auth.json'],
           },
         }),
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: [
+            'native_to_connected',
+            'connected_to_native',
+            'connected_to_connected',
+          ],
+        },
       });
       expect(activation.registration('agents', 'opencode')?.connectedAccountLaunch?.stateSharingDescriptor)
         .not.toHaveProperty('providerId');
-      expect(OPENCODE_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
     } finally {
       await activation.dispose();
     }
@@ -262,7 +268,7 @@ describe('activate', () => {
     await activation.dispose();
   });
 
-  it('opens native execution runs through the same ACP session owner and admits the initial input', async () => {
+  it('opens the native ACP Session owner and admits input for host-derived finite Runs', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = activation.registration('agents', 'opencode')?.factory;
     if (!factory) throw new Error('Expected OpenCode Agent factory');
@@ -282,12 +288,10 @@ describe('activate', () => {
       dispose: vi.fn(),
     } satisfies AgentSessionRuntime;
     const open = vi.fn(async () => session);
-    const execution = await runtime.executionRuns?.open({
+    const openedSession = await runtime.sessions.open({
       kind: 'create',
-      runId: 'opencode-run-1',
+      sessionId: 'opencode-run-1',
       cwd: '/workspace',
-      profile: { pluginId: 'happier.agent.opencode', localId: 'default' },
-      input: { text: 'Implement the change' },
       launchEnvironment: {
         values: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
         unset: [],
@@ -297,7 +301,7 @@ describe('activate', () => {
       services: { connectedAccounts: createUnboundConnectedAccounts() },
     } as never);
 
-    expect(execution).toBeDefined();
+    expect(openedSession).toMatchObject({ send });
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
       kind: 'create',
       sessionId: 'opencode-run-1',
@@ -308,12 +312,13 @@ describe('activate', () => {
         args: ['acp'],
       }),
     }));
-    expect(send).toHaveBeenCalledWith({
-      inputIds: ['opencode-run-1-input-1'],
+    await expect(openedSession.send({
+      inputIds: ['opencode-input-1'],
       input: { text: 'Implement the change' },
-      delivery: { kind: 'newTurn', turnId: 'opencode-run-1-turn-1' },
-    }, undefined);
-    await execution?.dispose();
+      delivery: { kind: 'newTurn', turnId: 'opencode-turn-1' },
+    })).resolves.toEqual({ status: 'admitted' });
+    expect(send).toHaveBeenCalledOnce();
+    await openedSession.dispose();
     await activation.dispose();
   });
 });

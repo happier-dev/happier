@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -16,6 +16,7 @@ import type { AzureProjectedThreadRowV1 } from '../../triage/detail/projection.j
 
 import {
   advanceAzureThreadReplyWindow,
+  projectAzureActivityChronology,
   projectAzureThreadSubtitle,
   renderSurface,
 } from '../renderSurface.js';
@@ -37,6 +38,7 @@ import { readReviewerIds } from './mutations.js';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const FIXTURE = createTriageSourceV1Fixture();
+const ROUTING_TOKEN = FIXTURE.detailInput.observation.locator.routingToken ?? '';
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
@@ -106,6 +108,29 @@ const POLICIES_RESULT = {
   projectionTruncated: false,
 } as unknown as JsonValue;
 
+const ITERATIONS_RESULT = {
+  kind: 'iterations',
+  rows: [{ id: 2, createdAtMs: 200, reason: 'push' }],
+  currentIterationId: 2,
+  omittedRowCount: 0,
+  projectionTruncated: false,
+} as unknown as JsonValue;
+
+const COMMITS_RESULT = {
+  kind: 'commits',
+  rows: [{ commitId: 'abcdef123456', comment: 'Current change', authoredAtMs: 100 }],
+  omittedRowCount: 0,
+  projectionTruncated: false,
+} as unknown as JsonValue;
+
+const CHANGES_RESULT = {
+  kind: 'iterationChanges',
+  iterationId: 2,
+  rows: [{ path: '/src/retained.ts', changeType: 'edit', isFolder: false }],
+  omittedRowCount: 0,
+  projectionTruncated: false,
+} as unknown as JsonValue;
+
 /** The mounted observation of a pull request Azure reports as abandoned. */
 const ABANDONED_INPUT = {
   ...FIXTURE.detailInput,
@@ -123,6 +148,41 @@ const LOCAL_REF = {
   collisionScope: FIXTURE.detailInput.observation.entryRef.collisionScope,
   entryId: FIXTURE.detailInput.observation.entryRef.entryId,
 };
+
+const REVIEW_PROPOSAL = {
+  id: 'azure-review-comment-1',
+  body: 'Please keep this branch explicit.',
+  serverRevision: 3,
+  anchor: { kind: 'line', filePath: '/src/retained.ts', line: 12, side: 'after' },
+  snapshot: {
+    kind: 'text',
+    selectedLines: ['return retained;'],
+    beforeContext: [],
+    afterContext: [],
+    selectedLinesHash: 'selected-hash',
+    contextWindowHash: 'context-hash',
+    capturedAt: 1_760_000_000_000,
+    fileLength: 20,
+    source: 'committed',
+    commitSha: FIXTURE.detailInput.observation.snapshot.reviewRevision?.headSha,
+    isUncommitted: false,
+    isUntracked: false,
+    truncated: false,
+    hasBidiControls: false,
+    likelyMinified: false,
+    diffContext: {
+      side: 'after',
+      baseSha: FIXTURE.detailInput.observation.snapshot.reviewRevision?.baseSha,
+      headSha: FIXTURE.detailInput.observation.snapshot.reviewRevision?.headSha,
+    },
+  },
+  linkedRefs: [{ kind: 'pullRequest', url: FIXTURE.detailInput.observation.locator.webUrl }],
+} as unknown as JsonValue;
+
+const REVIEW_INPUT = {
+  ...FIXTURE.detailInput,
+  linkedSessions: [{ sessionId: 'session-azure-review', displayTitle: 'Review this pull request' }],
+} as unknown as JsonValue;
 
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
@@ -150,6 +210,9 @@ async function mountDetail(
         executeAction: async ({ action, input }) => {
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
+          if (action === 'reviews.comments.list') {
+            return { items: [REVIEW_PROPOSAL], cursor: null } as JsonValue;
+          }
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
           return readResults[localId] ?? nextResult;
         },
@@ -188,10 +251,10 @@ describe('the mounted Azure DevOps pull-request writes', () => {
 
   it('hands an unknown dispatch outcome to the target-owned re-observation seam', async () => {
     const detail = await mountDetail();
-    nextActionError = Object.assign(
-      new Error('The Action timed out after dispatch.'),
-      { code: 'timeout' },
-    );
+    nextActionError = new PluginError({
+      code: 'timeout',
+      message: 'The Action timed out after dispatch.',
+    });
 
     await detail.press(await detail.getByRole('button', { name: 'Abandon' }));
 
@@ -210,7 +273,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
         pluginId: AZURE_DEVOPS_PLUGIN_ID,
         localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.abandon,
       },
-      input: { v: 1, instance: FIXTURE.detailInput.instance, localRef: LOCAL_REF },
+      input: { v: 1, instance: FIXTURE.detailInput.instance, localRef: LOCAL_REF, routingToken: ROUTING_TOKEN },
     }]);
   });
 
@@ -232,6 +295,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
         v: 1,
         instance: FIXTURE.detailInput.instance,
         localRef: LOCAL_REF,
+        routingToken: ROUTING_TOKEN,
         observedSourceCommitId: FIXTURE.detailInput.observation.nativeRevision,
         deleteSourceBranch: true,
       },
@@ -381,7 +445,7 @@ describe('the mounted Azure DevOps reactivation', () => {
       },
       // No head pin and no options: reactivating is head-independent, and resending completion
       // options here would re-decide a branch outcome nobody asked about.
-      input: { v: 1, instance: FIXTURE.detailInput.instance, localRef: LOCAL_REF },
+      input: { v: 1, instance: FIXTURE.detailInput.instance, localRef: LOCAL_REF, routingToken: ROUTING_TOKEN },
     }]);
   });
 
@@ -445,6 +509,150 @@ describe('the mounted Azure DevOps review request', () => {
   });
 });
 
+describe('the mounted Azure DevOps review publication', () => {
+  it('mounts review and one-comment publication against the frozen comparison', async () => {
+    const detail = await mountDetail(REVIEW_INPUT);
+
+    await expect(detail.getByRole('option', { name: 'Please keep this branch explicit.' }))
+      .resolves.toMatchObject({ state: { selected: true } });
+    await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
+
+    const revision = FIXTURE.detailInput.observation.snapshot.reviewRevision;
+    expect(recordedWrites().at(-1)).toMatchObject({
+      action: {
+        pluginId: AZURE_DEVOPS_PLUGIN_ID,
+        localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadCommentCreate,
+      },
+      input: {
+        v: 1,
+        instance: FIXTURE.detailInput.instance,
+        localRef: LOCAL_REF,
+        routingToken: ROUTING_TOKEN,
+        publicationPlan: {
+          target: {
+            providerId: 'azure-devops',
+            configuredAccountId: FIXTURE.detailInput.instance.binding.account.accountId,
+            entryRef: {
+              sourceId: `${AZURE_DEVOPS_PLUGIN_ID}/azure-devops-forge`,
+              kindId: LOCAL_REF.kindId,
+              collisionScope: LOCAL_REF.collisionScope,
+              entryId: LOCAL_REF.entryId,
+            },
+          },
+          baseRevision: revision?.baseSha,
+          headRevision: revision?.headSha,
+          entries: [{
+            happierCommentId: 'azure-review-comment-1',
+            expectedServerRevision: 3,
+            body: 'Please keep this branch explicit.',
+          }],
+          verdict: null,
+        },
+      },
+    });
+  });
+
+  it('replies to the exact rendered thread and latest parent comment with an unversioned plan', async () => {
+    readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: THREADS_RESULT };
+    const detail = await mountDetail(REVIEW_INPUT);
+
+    await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
+    await detail.press(await detail.getByRole('button', { name: 'Reply to thread 7' }));
+    await detail.press(await detail.getByRole('option', { name: 'Please keep this branch explicit.' }));
+    await detail.press(await detail.getByRole('button', { name: 'Publish reply' }));
+
+    expect(recordedWrites().at(-1)).toMatchObject({
+      action: {
+        pluginId: AZURE_DEVOPS_PLUGIN_ID,
+        localId: AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS.threadReply,
+      },
+      input: {
+        threadId: 7,
+        parentCommentId: 1,
+        publicationPlan: {
+          target: { subtarget: { kindId: 'review-thread', targetId: '7' } },
+          baseRevision: null,
+          headRevision: null,
+          entries: [{ happierCommentId: 'azure-review-comment-1' }],
+          verdict: null,
+        },
+      },
+    });
+  });
+
+  it('renders exact partial counts and keeps an uncertain verdict separate', async () => {
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'P'.repeat(43),
+        entries: [{
+          happierCommentId: 'azure-review-comment-1',
+          publicationCorrelationId: 'A'.repeat(43),
+          outcome: { kind: 'published', externalRef: 'thread:41' },
+        }],
+        verdict: {
+          publicationCorrelationId: 'V'.repeat(43),
+          outcome: { kind: 'uncertain' },
+        },
+      },
+    } as unknown as JsonValue;
+    const detail = await mountDetail(REVIEW_INPUT);
+
+    await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+
+    await expect(detail.queryByText(
+      '1/1 comments published; 0 unconfirmed; 0 failed; 0 not attempted. Verdict: uncertain.',
+    )).resolves.toBeDefined();
+    await expect(detail.queryByText('Publication outcome unknown')).resolves.toBeDefined();
+    expect(completedMutations).toBe(1);
+  });
+
+  it('re-observes when a failed vote still left the confirmed review summary visible', async () => {
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'P'.repeat(43),
+        entries: [{
+          happierCommentId: 'azure-review-comment-1',
+          publicationCorrelationId: 'A'.repeat(43),
+          outcome: { kind: 'published', externalRef: 'thread:41' },
+        }],
+        verdict: {
+          publicationCorrelationId: 'V'.repeat(43),
+          outcome: {
+            kind: 'failed',
+            code: 'azure-devops/server-error',
+            externalRef: 'thread:42',
+          },
+        },
+      },
+    } as unknown as JsonValue;
+    const detail = await mountDetail(REVIEW_INPUT);
+
+    await detail.press(await detail.getByRole('button', { name: 'Submit review' }));
+
+    await expect(detail.queryByText(
+      '1/1 comments published; 0 unconfirmed; 0 failed; 0 not attempted. Verdict: failed. The review summary was published.',
+    )).resolves.toBeDefined();
+    expect(completedMutations).toBe(1);
+  });
+
+  it('re-observes and prevents a repeat when a success result is unreadable', async () => {
+    nextResult = { kind: 'unexpected-publication-result' } as unknown as JsonValue;
+    const detail = await mountDetail(REVIEW_INPUT);
+
+    await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
+
+    await expect(detail.queryByText(
+      'This build could not read what Azure DevOps answered.',
+    )).resolves.toBeDefined();
+    await expect(detail.getByRole('button', { name: 'Publish as new thread' })).resolves.toMatchObject({
+      state: { disabled: true },
+    });
+    expect(completedMutations).toBe(1);
+  });
+});
+
 describe('the mounted Azure DevOps thread status', () => {
   it('sends the status alone for the thread it was opened from', async () => {
     readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: THREADS_RESULT };
@@ -467,6 +675,7 @@ describe('the mounted Azure DevOps thread status', () => {
         v: 1,
         instance: FIXTURE.detailInput.instance,
         localRef: LOCAL_REF,
+        routingToken: ROUTING_TOKEN,
         threadId: '7',
         status: 'fixed',
       },
@@ -509,25 +718,117 @@ describe('the mounted Azure DevOps thread status', () => {
 });
 
 describe('the mounted Azure DevOps detail read presentation', () => {
+  it('refreshes the shared iteration snapshot and commits through one Activity gesture', async () => {
+    readResults = {
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: ITERATIONS_RESULT,
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits]: COMMITS_RESULT,
+    };
+    const detail = await mountDetail();
+    await detail.press(await detail.getByRole('tab', { name: 'Activity' }));
+    await expect(detail.queryByText('Current change')).resolves.toBeDefined();
+
+    await detail.press(await detail.getByRole('button', {
+      name: 'Re-read the commits from Azure DevOps',
+    }));
+
+    const reads = recorded.map(({ action }) => (
+      (action as Readonly<{ localId?: string }>).localId
+    ));
+    expect(reads.filter((id) => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations))
+      .toHaveLength(2);
+    expect(reads.filter((id) => id === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits))
+      .toHaveLength(2);
+  });
+
+  it('keeps last-known-good policy rows and names a failed warm refresh inline', async () => {
+    readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies]: POLICIES_RESULT };
+    const detail = await mountDetail();
+    await detail.press(await detail.getByRole('tab', { name: 'Policies' }));
+    await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
+
+    nextActionError = new PluginError({
+      code: 'azure-refresh-failed',
+      message: 'Azure became temporarily unavailable.',
+    });
+    await detail.press(await detail.getByRole('button', {
+      name: 'Re-read the policies from Azure DevOps',
+    }));
+
+    await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
+    await expect(detail.queryByText('Showing what was read so far'))
+      .resolves.toBeDefined();
+  });
+
+  it('retains the Files parsed walk and provider position across a tab leave and return', async () => {
+    readResults = {
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: ITERATIONS_RESULT,
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges]: CHANGES_RESULT,
+      [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readPolicies]: POLICIES_RESULT,
+    };
+    const detail = await mountDetail();
+    await detail.press(await detail.getByRole('tab', { name: 'Files' }));
+    await expect(detail.queryByText('/src/retained.ts')).resolves.toBeDefined();
+    await detail.press(await detail.getByRole('tab', { name: 'Policies' }));
+    await detail.press(await detail.getByRole('tab', { name: 'Files' }));
+
+    await expect(detail.queryByText('/src/retained.ts')).resolves.toBeDefined();
+    expect(recorded.filter(({ action }) => (
+      (action as Readonly<{ localId?: string }>).localId
+        === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listIterationChanges
+    ))).toHaveLength(1);
+  });
+
+  it('merges iterations and commits by native timestamps without reordering either provider resource', () => {
+    const chronology = projectAzureActivityChronology(
+      [
+        { id: 3, createdAtMs: 300, reason: 'push' },
+        { id: 2, createdAtMs: 100, reason: 'push' },
+      ],
+      [
+        { commitId: 'new', comment: '', authoredAtMs: 250 },
+        { commitId: 'old', comment: '', authoredAtMs: 50 },
+      ],
+    );
+    expect(chronology.map((event) => (
+      event.kind === 'iteration' ? `iteration:${String(event.row.id)}` : `commit:${event.row.commitId}`
+    ))).toEqual(['iteration:3', 'commit:new', 'iteration:2', 'commit:old']);
+
+    const ascending = projectAzureActivityChronology(
+      [{ id: 1, createdAtMs: 100 }, { id: 2, createdAtMs: 300 }],
+      [
+        { commitId: 'old', comment: '', authoredAtMs: 50 },
+        { commitId: 'new', comment: '', authoredAtMs: 250 },
+      ],
+    );
+    expect(ascending.map((event) => (
+      event.kind === 'iteration' ? `iteration:${String(event.row.id)}` : `commit:${event.row.commitId}`
+    ))).toEqual(['commit:old', 'iteration:1', 'commit:new', 'iteration:2']);
+  });
+
   it('expands one embedded thread by two until its first reply is visible without another provider read', async () => {
     readResults = { [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads]: LONG_THREAD_RESULT };
     const detail = await mountDetail();
 
     await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
-    await expect(detail.queryByText(/reply-1(?:\D|$)/)).resolves.toBeUndefined();
 
     const row = (LONG_THREAD_RESULT as unknown as Readonly<{
       rows: readonly AzureProjectedThreadRowV1[];
     }>).rows[0];
     if (row === undefined) throw new Error('the long-thread fixture must contain one row');
+    const fullyExpandedSubtitle = projectAzureThreadSubtitle(row, row.comments.length);
+    await expect(detail.queryByText(fullyExpandedSubtitle)).resolves.toBeUndefined();
+
     let replyWindow = 2;
     while (replyWindow < row.comments.length) {
-      replyWindow = advanceAzureThreadReplyWindow(replyWindow, row.comments.length);
+      const nextWindow = advanceAzureThreadReplyWindow(replyWindow, row.comments.length);
+      await detail.press(await detail.getByRole('button', {
+        name: `Show ${String(nextWindow - replyWindow)} earlier replies`,
+      }));
+      replyWindow = nextWindow;
     }
 
-    expect(projectAzureThreadSubtitle(row, replyWindow)).toMatch(/reply-1(?:\D|$)/);
-    await detail.press(await detail.getByRole('button', { name: /Show 2 earlier replies/ }));
-    await expect(detail.queryByText(/reply-99(?:\D|$)/)).resolves.toBeDefined();
+    expect(projectAzureThreadSubtitle(row, replyWindow)).toBe(fullyExpandedSubtitle);
+    await expect(detail.queryByText(fullyExpandedSubtitle)).resolves.toBeDefined();
     expect(recorded.filter(({ action }) => (
       (action as Readonly<{ localId?: string }>).localId
         === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads
@@ -544,19 +845,19 @@ describe('the mounted Azure DevOps detail read presentation', () => {
       name: 'Statuses reported against this Azure DevOps pull request',
     })).resolves.toMatchObject({
       role: 'list',
-      label: 'Statuses reported against this Azure DevOps pull request',
+      name: 'Statuses reported against this Azure DevOps pull request',
     });
     await expect(detail.getByRole('list', {
       name: 'Policies for this Azure DevOps pull request',
     })).resolves.toMatchObject({
       role: 'list',
-      label: 'Policies for this Azure DevOps pull request',
+      name: 'Policies for this Azure DevOps pull request',
     });
     await expect(detail.getByRole('list', {
       name: 'Build validations for this Azure DevOps pull request',
     })).resolves.toMatchObject({
       role: 'list',
-      label: 'Build validations for this Azure DevOps pull request',
+      name: 'Build validations for this Azure DevOps pull request',
     });
     await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
     await expect(detail.queryByText('queued · optional')).resolves.toBeDefined();

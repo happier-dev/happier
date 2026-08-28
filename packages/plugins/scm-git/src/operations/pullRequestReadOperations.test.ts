@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
+  HostingProviderPullRequestsCapability,
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmPullRequestSummary,
@@ -99,12 +100,23 @@ function createSnapshot(): ScmWorkingSnapshot {
     };
 }
 
-function createRegistry(adapter: Readonly<Record<string, unknown>>, input?: Readonly<{
+function createRegistry(adapter: Partial<HostingProviderPullRequestsCapability>, input?: Readonly<{
     compareUrl?: string;
 }>) {
+    const capability: HostingProviderPullRequestsCapability | undefined = Object.keys(adapter).length === 0
+        ? undefined
+        : {
+            getPullRequestAuthProfileKey: () => null,
+            listPullRequests: async () => [],
+            getPullRequest: async () => null,
+            createPullRequest: async () => {
+                throw new Error('Pull request creation is not used by this read-operation fixture');
+            },
+            ...adapter,
+        };
     return {
-        getAdapter(id: string) {
-            return id === provider.id ? adapter : undefined;
+        getPullRequests(id: string) {
+            return id === provider.id ? capability : undefined;
         },
         buildCompareUrl() {
             return {
@@ -417,7 +429,7 @@ describe('git pull request read operations', () => {
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
     });
 
-    it('does not resolve explicit numeric references from the current head list when get hook is missing', async () => {
+    it('uses the grouped exact-get result instead of guessing from the current head list for numeric references', async () => {
         const operations = createGitPullRequestReadOperations({
             cache: createPrStatusCache({ now: () => 1000 }),
             registry: createRegistry({
@@ -435,11 +447,10 @@ describe('git pull request read operations', () => {
             },
         });
 
-        expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response).toEqual({ success: true, pullRequest: null });
     });
 
-    it('does not resolve explicit URL references from the current head list when get hook is missing', async () => {
+    it('uses the grouped exact-get result instead of guessing from the current head list for URL references', async () => {
         const operations = createGitPullRequestReadOperations({
             cache: createPrStatusCache({ now: () => 1000 }),
             registry: createRegistry({
@@ -457,7 +468,6 @@ describe('git pull request read operations', () => {
             },
         });
 
-        expect(response.success).toBe(false);
-        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response).toEqual({ success: true, pullRequest: null });
     });
 });

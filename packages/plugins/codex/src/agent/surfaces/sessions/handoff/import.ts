@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
@@ -101,13 +101,107 @@ function resolveContainedCodexPath(codexHome: string, relativePath: string): str
   return candidate;
 }
 
-type PreparedCodexImportFile = Readonly<{
+type PreparedCodexImportFile = ValidatedCodexSessionHandoffFile & Readonly<{
   relativePath: string;
   destinationPath: string;
-  content: Buffer;
 }>;
 
 const CODEX_NATIVE_SESSION_IMPORT_LOCK_TIMEOUT_MS = 15_000;
+const HANDOFF_COPY_CHUNK_BYTES = 1024 * 1024;
+type CodexContentReader = (offsetBytes: number, buffer: Buffer) => Promise<number>;
+
+function contentSize(file: ValidatedCodexSessionHandoffFile): number {
+  return file.content ? file.content.length : file.contentFile.sizeBytes;
+}
+
+async function withContentReader<TResult>(
+  file: ValidatedCodexSessionHandoffFile,
+  effect: (reader: CodexContentReader) => Promise<TResult>,
+): Promise<TResult> {
+  if (file.content) {
+    return await effect(async (offsetBytes, buffer) => {
+      const bytes = Math.min(buffer.length, Math.max(0, file.content!.length - offsetBytes));
+      file.content!.copy(buffer, 0, offsetBytes, offsetBytes + bytes);
+      return bytes;
+    });
+  }
+  const source = await open(file.contentFile.filePath, 'r');
+  try {
+    return await effect(async (offsetBytes, buffer) => {
+      const bytes = Math.min(buffer.length, Math.max(0, file.contentFile.sizeBytes - offsetBytes));
+      if (bytes === 0) return 0;
+      return (await source.read(buffer, 0, bytes, file.contentFile.offsetBytes + offsetBytes)).bytesRead;
+    });
+  } finally {
+    await source.close();
+  }
+}
+
+async function contentsEqual(
+  left: ValidatedCodexSessionHandoffFile,
+  right: ValidatedCodexSessionHandoffFile,
+): Promise<boolean> {
+  const size = contentSize(left);
+  if (size !== contentSize(right)) return false;
+  return await withContentReader(left, async (readLeft) => await withContentReader(right, async (readRight) => {
+    const leftBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+    const rightBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+    for (let offset = 0; offset < size; offset += HANDOFF_COPY_CHUNK_BYTES) {
+      const [leftBytes, rightBytes] = await Promise.all([
+        readLeft(offset, leftBuffer),
+        readRight(offset, rightBuffer),
+      ]);
+      if (leftBytes !== rightBytes || !leftBuffer.subarray(0, leftBytes).equals(rightBuffer.subarray(0, rightBytes))) {
+        return false;
+      }
+    }
+    return true;
+  }));
+}
+
+async function contentEqualsFile(file: ValidatedCodexSessionHandoffFile, path: string): Promise<boolean> {
+  const entry = await lstat(path);
+  if (!entry.isFile() || entry.size !== contentSize(file)) return false;
+  const target = await open(path, 'r');
+  try {
+    return await withContentReader(file, async (readContentChunk) => {
+      const sourceBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+      const targetBuffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+      for (let offset = 0; offset < entry.size; offset += HANDOFF_COPY_CHUNK_BYTES) {
+        const requested = Math.min(HANDOFF_COPY_CHUNK_BYTES, entry.size - offset);
+        const [sourceBytes, targetRead] = await Promise.all([
+          readContentChunk(offset, sourceBuffer),
+          target.read(targetBuffer, 0, requested, offset),
+        ]);
+        if (
+          sourceBytes !== requested
+          || targetRead.bytesRead !== requested
+          || !sourceBuffer.subarray(0, requested).equals(targetBuffer.subarray(0, requested))
+        ) return false;
+      }
+      return true;
+    });
+  } finally {
+    await target.close();
+  }
+}
+
+async function writeContentExclusive(file: ValidatedCodexSessionHandoffFile, path: string): Promise<void> {
+  const target = await open(path, 'wx', 0o600);
+  try {
+    await withContentReader(file, async (readContentChunk) => {
+      const buffer = Buffer.allocUnsafe(HANDOFF_COPY_CHUNK_BYTES);
+      const size = contentSize(file);
+      for (let offset = 0; offset < size; offset += HANDOFF_COPY_CHUNK_BYTES) {
+        const bytesRead = await readContentChunk(offset, buffer);
+        if (bytesRead === 0) throw new Error('Invalid session handoff transfer payload');
+        await target.write(buffer.subarray(0, bytesRead));
+      }
+    });
+  } finally {
+    await target.close();
+  }
+}
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (!signal?.aborted) return;
@@ -128,22 +222,22 @@ function targetIdentityConflict(relativePath: string, reason: string, cause?: un
   }, cause === undefined ? undefined : { cause });
 }
 
-function prepareCodexImportFiles(
+async function prepareCodexImportFiles(
   codexHome: string,
   files: readonly ValidatedCodexSessionHandoffFile[],
-): readonly PreparedCodexImportFile[] {
+): Promise<readonly PreparedCodexImportFile[]> {
   const filesByDestination = new Map<string, PreparedCodexImportFile>();
 
   for (const file of files) {
     const relativePath = normalizeCodexHandoffBundleRelativePath(file.relativePath);
     const prepared = {
+      ...file,
       relativePath,
       destinationPath: resolveContainedCodexPath(codexHome, relativePath),
-      content: file.content,
     } satisfies PreparedCodexImportFile;
     const previous = filesByDestination.get(prepared.destinationPath);
     if (previous) {
-      if (!previous.content.equals(prepared.content)) {
+      if (!await contentsEqual(previous, prepared)) {
         throw targetIdentityConflict(relativePath, 'the bundle contains divergent content for one destination');
       }
       continue;
@@ -249,14 +343,13 @@ async function inspectCodexImportDestination(
     throw targetIdentityConflict(file.relativePath, 'the existing destination is not a regular file');
   }
 
-  let existingContent: Buffer;
   try {
-    existingContent = await readFile(file.destinationPath);
+    if (!await contentEqualsFile(file, file.destinationPath)) {
+      throw targetIdentityConflict(file.relativePath, 'the existing file has divergent content');
+    }
   } catch (error) {
+    if (isPluginError(error)) throw error;
     throw targetIdentityConflict(file.relativePath, 'the existing destination could not be compared safely', error);
-  }
-  if (!existingContent.equals(file.content)) {
-    throw targetIdentityConflict(file.relativePath, 'the existing file has divergent content');
   }
   return 'identical';
 }
@@ -271,7 +364,7 @@ async function createMissingCodexImportFile(
   throwIfAborted(signal);
   try {
     throwIfAborted(signal);
-    await writeFile(file.destinationPath, file.content, { flag: 'wx' });
+    await writeContentExclusive(file, file.destinationPath);
     throwIfAborted(signal);
   } catch (error) {
     if (!isNodeErrorWithCode(error, 'EEXIST')) throw error;
@@ -291,7 +384,7 @@ export async function importCodexSessionBundle(params: Readonly<{
 }>): Promise<ImportedCodexSessionHandoffBundle> {
   throwIfAborted(params.signal);
   const bundle = CodexSessionHandoffBundleSchema.parse(normalizeLegacyCodexHandoffBundle(params.bundle)) as CodexSessionHandoffBundle;
-  const validatedFiles = validateCodexSessionHandoffFiles(bundle);
+  const validatedFiles = await validateCodexSessionHandoffFiles(bundle);
   const codexHome = resolveCodexHome(params.env);
   const runtimeBackendMode = normalizeCodexBackendMode(bundle.affinity?.backendMode) ?? 'appServer';
   const importedRuntimeDescriptor = readCanonicalCodexAgentRuntimeDescriptorV1(bundle.affinity?.runtimeDescriptor);
@@ -336,7 +429,7 @@ export async function importCodexSessionBundle(params: Readonly<{
     bundle.remoteSessionId,
     params.signal,
     async (physicalCodexHome) => {
-      const preparedFiles = prepareCodexImportFiles(physicalCodexHome, validatedFiles);
+      const preparedFiles = await prepareCodexImportFiles(physicalCodexHome, validatedFiles);
       throwIfAborted(params.signal);
       await assertExistingCodexNativeSessionBelongsToBundle(
         physicalCodexHome,
@@ -385,7 +478,6 @@ export async function importCodexSessionBundle(params: Readonly<{
     resume: {
       directory: params.targetPath,
       environmentVariables: resolveCodexHomeEnvironment(params.env, codexHome),
-      resumePlanOptions: { codexBackendMode: runtimeBackendMode },
     },
   };
 }

@@ -147,6 +147,11 @@ describe('classifyGitlabFailure', () => {
     // GitLab publishes no minimum backoff, so a headerless 429 carries no deadline.
     expect(classifyGitlabFailure(429, createGitlabResponseHeaders({}), NOW_MS))
       .toEqual({ class: 'rateLimit', code: 'too-many-requests' });
+    expect(classifyGitlabFailure(
+      429,
+      createGitlabResponseHeaders({ 'Retry-After': String(Number.MAX_SAFE_INTEGER) }),
+      NOW_MS,
+    )).toEqual({ class: 'rateLimit', code: 'too-many-requests' });
     expect(classifyGitlabFailure(401, headers, NOW_MS))
       .toEqual({ class: 'authentication', code: 'unauthorized' });
     expect(classifyGitlabFailure(503, headers, NOW_MS))

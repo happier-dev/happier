@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  AgentRuntimeContext,
   AgentSessionConfigurationSnapshot,
   AgentSessionRuntimeContext,
   AgentSessionRuntime,
@@ -10,7 +9,6 @@ import type {
 
 import {
   createAntigravityNativeRuntime,
-  type AntigravityNativeExecutionRunFactory,
   type AntigravityNativeSessionFactory,
 } from './nativeRuntime.js';
 
@@ -68,17 +66,13 @@ function createConnectedAccountsFixture(binding: unknown = null) {
   };
 }
 
-const openExecutionRunAdapter: AntigravityNativeExecutionRunFactory = ({ request }) => (
-  createNativeSession(request.sessionId)
-);
-
 function createContext(connectedAccounts = createConnectedAccountsFixture()): AgentSessionRuntimeContext {
   return {
     signal: new AbortController().signal,
     services: { connectedAccounts },
     session: { id: 'session-1', services: {} },
     workState: {},
-  } as unknown as AgentRuntimeContext;
+  } as unknown as AgentSessionRuntimeContext;
 }
 
 describe('createAntigravityNativeRuntime', () => {
@@ -88,7 +82,6 @@ describe('createAntigravityNativeRuntime', () => {
     });
     const runtime = createAntigravityNativeRuntime({
       openSession,
-      openExecutionRun: openExecutionRunAdapter,
     });
     const context = createContext();
 
@@ -125,77 +118,35 @@ describe('createAntigravityNativeRuntime', () => {
     });
   });
 
-  it('opens detached SDK execution runs through the operation-scoped entry without fabricating a Session', async () => {
+  it('passes the complete host Session context through the only native opener', async () => {
     const openSession = vi.fn<AntigravityNativeSessionFactory>(({ request }) => (
       createNativeSession(request.sessionId)
     ));
-    const openExecutionRun = vi.fn(({ request }) => (
-      createNativeSession(request.sessionId)
-    ));
-    const runtime = createAntigravityNativeRuntime({ openSession, openExecutionRun });
+    const runtime = createAntigravityNativeRuntime({ openSession });
     const context = createContext();
 
-    const executionRun = await runtime.executionRuns?.open({
+    const session = await runtime.sessions?.open({
       kind: 'create',
-      runId: 'run-1',
+      sessionId: 'session-1',
       cwd: '/repo',
-      profile: { pluginId: 'happier.agent.antigravity', localId: 'default' },
       launchEnvironment: {
         values: { HAPPIER_ANTIGRAVITY_RUNTIME_MODE: 'sdk' },
         unset: [],
       },
-      input: { text: 'review this' },
     }, context);
-    const events: string[] = [];
-    executionRun?.watch((event) => events.push(event.kind));
+    const events: AgentSessionRuntimeEvent[] = [];
+    session?.watch((event) => events.push(event));
+    await session?.send({
+      inputIds: ['input-session-1'],
+      input: { text: 'review this' },
+      delivery: { kind: 'newTurn', turnId: 'turn-session-1' },
+    });
 
-    expect(openExecutionRun).toHaveBeenCalledWith(expect.objectContaining({
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({
       mode: 'sdk',
       context,
     }));
-    expect(openSession).not.toHaveBeenCalled();
-    expect(events).toEqual(expect.arrayContaining(['run-start', 'output-delta']));
-  });
-
-  it('terminalizes a rejected initial execution-run admission before disposing its session', async () => {
-    const disposeSession = vi.fn();
-    const disposeSubscription = vi.fn();
-    const cancel = vi.fn(async () => ({ status: 'requested' as const, turnId: 'unexpected-turn' }));
-    const rejectedSession: AgentSessionRuntime = {
-      send: vi.fn(async () => ({
-        status: 'rejected' as const,
-        retryable: false,
-        diagnostic: {
-          code: 'antigravity_initial_admission_rejected',
-          severity: 'error' as const,
-        },
-      })),
-      cancel,
-      watch: vi.fn(() => ({ dispose: disposeSubscription })),
-      dispose: disposeSession,
-    };
-    const runtime = createAntigravityNativeRuntime({
-      openSession: ({ request }) => createNativeSession(request.sessionId),
-      openExecutionRun: vi.fn(async () => rejectedSession),
-    });
-
-    const execution = await runtime.executionRuns?.open({
-      kind: 'create',
-      runId: 'rejected-execution-run',
-      cwd: '/repo',
-      profile: { pluginId: 'happier.agent.antigravity', localId: 'default' },
-      input: { text: 'Reject this initial prompt.' },
-    }, createContext());
-    if (!execution) throw new Error('Expected an execution run');
-
-    const events: string[] = [];
-    execution.watch((event) => events.push(event.kind));
-
-    expect(events).toEqual(['run-start', 'run-failed']);
-    await expect(execution.stop()).resolves.toEqual({ status: 'notRunning' });
-    expect(cancel).not.toHaveBeenCalled();
-    expect(disposeSubscription).toHaveBeenCalledOnce();
-    expect(disposeSession).toHaveBeenCalledOnce();
+    expect(events.map((event) => event.kind)).toEqual(['input-accepted', 'message-delta']);
   });
 
   it('keeps exact vendor resume on cliPrint even when account configuration selects SDK mode', async () => {
@@ -204,7 +155,6 @@ describe('createAntigravityNativeRuntime', () => {
     ));
     const runtime = createAntigravityNativeRuntime({
       openSession,
-      openExecutionRun: openExecutionRunAdapter,
       resolveMode: async () => 'sdk',
     });
     const context = createContext();
@@ -229,7 +179,6 @@ describe('createAntigravityNativeRuntime', () => {
   it('declares the data-only terminal launch surface on the same native runtime', async () => {
     const runtime = createAntigravityNativeRuntime({
       openSession: ({ request }) => createNativeSession(request.sessionId),
-      openExecutionRun: openExecutionRunAdapter,
     });
 
     await expect(Promise.resolve(runtime.surfaces?.terminal?.resolveLaunch({
@@ -278,12 +227,13 @@ describe('createAntigravityNativeRuntime', () => {
     ));
     const runtime = createAntigravityNativeRuntime({
       openSession,
-      openExecutionRun: openExecutionRunAdapter,
     });
     const context = {
       signal,
       services: { connectedAccounts },
-    } as unknown as AgentRuntimeContext;
+      session: { id: 'qualified-cli-session', services: {} },
+      workState: {},
+    } as unknown as AgentSessionRuntimeContext;
 
     await runtime.sessions?.open({
       kind: 'create',
@@ -326,7 +276,6 @@ describe('createAntigravityNativeRuntime', () => {
     ));
     const runtime = createAntigravityNativeRuntime({
       openSession,
-      openExecutionRun: openExecutionRunAdapter,
     });
 
     await runtime.sessions?.open({
@@ -365,7 +314,6 @@ describe('createAntigravityNativeRuntime', () => {
         ...createNativeSession(request.sessionId),
         dispose: disposeSession,
       }),
-      openExecutionRun: openExecutionRunAdapter,
     });
     const session = await runtime.sessions?.open({
       kind: 'create',
@@ -385,5 +333,41 @@ describe('createAntigravityNativeRuntime', () => {
     await session?.dispose();
     expect(disposeSession).toHaveBeenCalledTimes(1);
     expect(disposeSubscription).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a Session open and disposes when account currentness changes while opening', async () => {
+    let resync: (() => void) | null = null;
+    const disposeSubscription = vi.fn();
+    const connectedAccounts = {
+      ...createConnectedAccountsFixture(),
+      watch: vi.fn((_purpose: string, listener: () => void) => {
+        resync = listener;
+        return { dispose: disposeSubscription };
+      }),
+    };
+    let finishOpen!: (session: AgentSessionRuntime) => void;
+    const disposeSession = vi.fn();
+    const openSession = vi.fn<AntigravityNativeSessionFactory>(async () => (
+      await new Promise<AgentSessionRuntime>((resolve) => { finishOpen = resolve; })
+    ));
+    const runtime = createAntigravityNativeRuntime({ openSession });
+
+    const opening = runtime.sessions?.open({
+      kind: 'create',
+      sessionId: 'invalidated-opening-session',
+      cwd: '/repo',
+    }, createContext(connectedAccounts));
+    await vi.waitFor(() => expect(openSession).toHaveBeenCalledOnce());
+    resync?.();
+    resync?.();
+    finishOpen({
+      ...createNativeSession('invalidated-opening-session'),
+      dispose: disposeSession,
+    });
+
+    await expect(opening).rejects.toThrow('invalidated while opening');
+    expect(disposeSession).toHaveBeenCalledOnce();
+    expect(disposeSession).toHaveBeenCalledWith('runtime_recovery');
+    expect(disposeSubscription).toHaveBeenCalledOnce();
   });
 });

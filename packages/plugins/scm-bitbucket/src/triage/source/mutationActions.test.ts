@@ -186,12 +186,31 @@ describe('Bitbucket pull-request merge', () => {
     expect(writesTo(requests, MERGE_URL)).toBe(1);
   });
 
+  it('preserves a merge message beyond the retired local comment-body cap', async () => {
+    const message = 'merge context '.repeat(768);
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (url === MERGE_URL ? { status: 200, body: pullRequest('MERGED') } : undefined),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput({ message }), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(requests.find((request) => request.url === MERGE_URL)?.body)
+      .toMatchObject({ message });
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
   it('never reports a queued merge as merged while the pull request still reads OPEN', async () => {
-    const { context } = harness({
-      reads: [pullRequest('OPEN')],
+    const statusUrl = `${PULL_REQUEST_URL}/merge/task-status/1`;
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('OPEN')],
       write: (url) => (
         url === MERGE_URL
-          ? { status: 202, headers: { location: `${PULL_REQUEST_URL}/merge/task-status/1` } }
+          ? { status: 202, headers: { location: statusUrl } }
+          : url === statusUrl ? { body: { task_status: 'PENDING' } }
           : undefined
       ),
     });
@@ -203,6 +222,71 @@ describe('Bitbucket pull-request merge', () => {
     // The merge was accepted, not observed. `applied` here would be the UI telling someone their
     // branch landed while Bitbucket is still deciding whether it can.
     expect(settled.kind).toBe('pending');
+    expect(requests.filter((request) => request.url === statusUrl)).toHaveLength(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
+  it('reads one successful merge task and then proves the result through the exact pull request', async () => {
+    const statusUrl = `${PULL_REQUEST_URL}/merge/task-status/1`;
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (
+        url === MERGE_URL
+          ? { status: 202, headers: { location: statusUrl } }
+          : url === statusUrl ? { body: { task_status: 'SUCCESS', merge_result: pullRequest('MERGED') } }
+          : undefined
+      ),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    expect(settled.kind).toBe('applied');
+    expect(requests.filter((request) => request.url === statusUrl)).toHaveLength(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
+  it('reads the case-insensitive Location header through the shared header owner', async () => {
+    const statusUrl = `${PULL_REQUEST_URL}/merge/task-status/1`;
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (
+        url === MERGE_URL
+          ? { status: 202, headers: { LoCaTiOn: statusUrl } }
+          : url === statusUrl ? { body: { task_status: 'SUCCESS' } }
+          : undefined
+      ),
+    });
+
+    await expect(mergeBitbucketPullRequestAction(mergeInput(), context))
+      .resolves.toMatchObject({ kind: 'applied' });
+    expect(requests.filter((request) => request.url === statusUrl)).toHaveLength(1);
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
+  it('keeps a merge task rejection authoritative over an unrelated merged reread', async () => {
+    const statusUrl = `${PULL_REQUEST_URL}/merge/task-status/1`;
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('MERGED')],
+      write: (url) => (
+        url === MERGE_URL
+          ? { status: 202, headers: { location: statusUrl } }
+          : url === statusUrl ? { body: { type: 'error', error: { message: 'merge failed' } } }
+          : undefined
+      ),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    expect(settled).toMatchObject({ kind: 'rejected', reason: 'provider-rejected' });
+    expect(requests.filter((request) => request.url === statusUrl)).toHaveLength(1);
+    expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
   });
 
   it('refuses to act on a queued merge whose location is not a Bitbucket API location', async () => {
@@ -297,6 +381,24 @@ describe('Bitbucket pull-request merge', () => {
     expect(requests.filter((request) => request.url === PULL_REQUEST_URL)).toHaveLength(2);
   });
 
+  it('keeps an answer-lost merge uncertain when the confirming read cannot prove it landed', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('OPEN')],
+      write: (url) => (
+        url === MERGE_URL ? { status: 502, body: { error: { message: 'gateway' } } } : undefined
+      ),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await mergeBitbucketPullRequestAction(mergeInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost merge cannot become unchanged');
+    expect(settled.failure?.code).toBe('server-error');
+    expect(writesTo(requests, MERGE_URL)).toBe(1);
+  });
+
   it('stops after caller cancellation racing a dispatched merge and reports the outcome as uncertain', async () => {
     const caller = new AbortController();
     const { context, requests } = harness({
@@ -366,6 +468,24 @@ describe('Bitbucket pull-request decline', () => {
     );
 
     expect(settled.kind).toBe('applied');
+    expect(writesTo(requests, DECLINE_URL)).toBe(1);
+  });
+
+  it('keeps an answer-lost decline uncertain when the confirming read cannot prove it landed', async () => {
+    const { context, requests } = harness({
+      reads: [pullRequest('OPEN'), pullRequest('OPEN')],
+      write: (url) => (
+        url === DECLINE_URL ? { status: 502, body: { error: { message: 'gateway' } } } : undefined
+      ),
+    });
+
+    const settled = BitbucketMutationResultV1Schema.parse(
+      await declineBitbucketPullRequestAction(declineInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost decline cannot become unchanged');
+    expect(settled.failure?.code).toBe('server-error');
     expect(writesTo(requests, DECLINE_URL)).toBe(1);
   });
 });
@@ -549,6 +669,22 @@ describe('Bitbucket comment resolution', () => {
     expect(requests.filter((request) => request.url === COMMENT_URL)).toHaveLength(2);
   });
 
+  it('keeps an answer-lost comment resolution uncertain when the reread cannot prove it landed', async () => {
+    const { context, requests } = commentHarness({
+      reads: [comment('unresolved'), comment('unresolved')],
+      write: () => ({ status: 502, body: { error: { message: 'gateway' } } }),
+    });
+
+    const settled = BitbucketCommentResolutionResultV1Schema.parse(
+      await resolveBitbucketCommentAction(commentInput(), context),
+    );
+
+    expect(settled.kind).toBe('uncertain');
+    if (settled.kind !== 'uncertain') throw new Error('an answer-lost resolve cannot become unchanged');
+    expect(settled.failure?.code).toBe('server-error');
+    expect(writesTo(requests, COMMENT_RESOLUTION_URL)).toBe(1);
+  });
+
   it('refuses a comment id it could not have minted, before any request exists', async () => {
     const { context, requests } = commentHarness({ reads: [comment('unresolved')] });
 
@@ -590,7 +726,12 @@ describe('Bitbucket pull-request write declarations', () => {
       expect(declaration.surfaces).not.toContain('mcp');
       expect(declaration.surfaces).not.toContain('cli');
       expect(declaration.dangerLevel).not.toBe('safe');
-      expect(declaration.confirmation?.title).toBeTypeOf('string');
+      // Confirmation copy is host-rendered and therefore uses the manifest's canonical localized
+      // message shape rather than baking one English-only string into every locale.
+      expect(declaration.confirmation?.title).toMatchObject({
+        key: expect.stringMatching(/^plugins\.bitbucket\.ui\.mutations\./u),
+        fallback: expect.any(String),
+      });
     }
   });
 

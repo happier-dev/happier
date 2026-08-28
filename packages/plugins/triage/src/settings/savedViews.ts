@@ -1,7 +1,10 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
-import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
+import {
+    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1,
+    type ScopedSettingsService,
+} from '@happier-dev/plugin-sdk/settings';
 import {
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -53,8 +56,6 @@ import { readExactKeys } from './storedValue.js';
 /** The one versioned Account Settings key this document owns. */
 export const TRIAGE_SAVED_VIEWS_SETTING_ID_V1 = 'triage.savedViews';
 
-/** Label bound, measured in UTF-8 bytes after trimming, not in characters. */
-export const MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1 = 128;
 /**
  * The whole serialized `triage.savedViews` value.
  *
@@ -62,10 +63,12 @@ export const MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1 = 128;
  * of individually valid views is exactly how a Settings record overflows. The
  * generic Account-document structural ceiling is a host safeguard around every
  * Settings value and is deliberately not restated here: it is not this key's
- * bound, and treating its 256-member limit as "256 views" would be wrong by an
- * order of magnitude.
+ * member-count bound, and treating its 256-field limit as "256 views" would be
+ * wrong by an order of magnitude. The byte boundary below is the Settings
+ * owner's public field boundary, not a second Triage-specific 64-KiB decision.
  */
-export const MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1 = 64 * 1024;
+export const MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1 =
+    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFieldEncodedBytes;
 
 export type CorpusSavedViewV1 = Readonly<{
     /** Target-minted opaque id; neither an entry/source identity nor a storage tag. */
@@ -169,6 +172,12 @@ function readBoundedString(value: unknown, maxUtf8Bytes: number): string | null 
     const normalized = normalizeTriageSingleLineV1(value);
     if (normalized.length === 0) return null;
     return utf8ByteLength(normalized) > maxUtf8Bytes ? null : normalized;
+}
+
+function readSingleLineString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = normalizeTriageSingleLineV1(value);
+    return normalized.length === 0 ? null : normalized;
 }
 
 function readSource(value: unknown): PluginContributionIdentity | null {
@@ -298,7 +307,9 @@ function readView(viewId: string, draft: Readonly<{
     order: unknown;
     smartPolicy: unknown;
 }>): ViewOutcome {
-    const label = readBoundedString(draft.label, MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1);
+    // The complete Account Settings field has the canonical storage boundary.
+    // Labels have no independent provider, transport, or product ceiling.
+    const label = readSingleLineString(draft.label);
     if (label === null) return { ok: false, reason: 'label' };
     const order = readClosedValue(ORDERS)(draft.order);
     if (order === null) return { ok: false, reason: 'order' };

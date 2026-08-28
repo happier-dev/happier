@@ -34,6 +34,11 @@ export type ProjectedObservationV1 = Readonly<{
             viewer: TriageSourceViewerFactsV1;
             sourceUpdatedAtMs?: number;
             /**
+             * Source-declared currentness evidence used only while folding one
+             * process-local pass. It deliberately does not cross the list wire.
+             */
+            nativeRevision?: string;
+            /**
              * The forge repository this entry belongs to, when its source
              * declared one. It is the left half of the launch-placement join
              * (`sessions/launchPlacement.ts`) and is carried on the observation

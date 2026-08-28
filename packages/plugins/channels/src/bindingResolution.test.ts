@@ -189,6 +189,7 @@ function invocationContext(input: Readonly<{
   // Storage, action execution, and targeted contribution admission are the
   // genuine host boundaries; the owner itself remains unmocked.
   return {
+    invokedAtMs: 1_700_000_000_000,
     signal: new AbortController().signal,
     services: {
       actions: {
@@ -481,7 +482,7 @@ describe('Conversation binding resolution and creation', () => {
       expect(actionId).toBe('automation.conversation.target.verify');
       expect(finalProviderCurrentnessRead).toBe(false);
       automationTargetVerified = true;
-      return { kind: 'verified' as const, templateVersion: 7 };
+      return { kind: 'verified' as const };
     });
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown) => {
       if (action === endpointResolveAction) {
@@ -507,7 +508,6 @@ describe('Conversation binding resolution and creation', () => {
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         policy: { resultDelivery: 'none' },
       },
     }, invocationContext({
@@ -524,7 +524,7 @@ describe('Conversation binding resolution and creation', () => {
       ),
     }))).resolves.toMatchObject({
       kind: 'created',
-      binding: { target: { kind: 'automation', templateVersion: 7 } },
+      binding: { target: { kind: 'automation', automationId: 'automation-1' } },
     });
 
     expect(execute).toHaveBeenCalledOnce();

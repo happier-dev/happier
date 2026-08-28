@@ -74,6 +74,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
               origin: 'https://api.openai.com',
               headerNames: ['authorization'],
             },
+            requiredHeaderNames: ['authorization'],
             allowedHeaderNames: ['authorization'],
           }],
         }, {
@@ -88,6 +89,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
               origin: 'https://api.openai.com',
               headerNames: ['authorization', 'chatgpt-account-id'],
             },
+            requiredHeaderNames: ['authorization'],
             allowedHeaderNames: ['authorization', 'chatgpt-account-id'],
           }],
         }],

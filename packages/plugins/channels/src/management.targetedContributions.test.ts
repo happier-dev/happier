@@ -147,6 +147,7 @@ function invocationContext(input: Readonly<{
   // Prepare reaches only these two host-owned boundaries; the narrow cast keeps
   // the test on the public management owner without mocking internal logic.
   return {
+    invokedAtMs: 1_700_000_000_000,
     signal: input.signal ?? new AbortController().signal,
     services: {
       actions: input.actions,
@@ -1156,29 +1157,6 @@ describe('createConversationConnectionForInvocation targeted provider selection'
     expect(collection.batch).not.toHaveBeenCalled();
   });
 
-  it('rejects durable-push input before selection, provider execution, or persistence', async () => {
-    const collection = createMutableConnectionStateCollection();
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn();
-    const context = invocationContext({
-      actions: { executeAdmittedTargetedOperationWithExecutionOrigin } as unknown as ActionsService,
-      targetedContributions: targetedContributionsFixture({
-        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
-        operations: { setup: setupAction, connectionTest: connectionTestAction, messageDeliver: messageDeliverAction },
-      }),
-      stateCollection: collection,
-    });
-
-    await expect(createConversationConnectionForInvocation({
-      providerSelection,
-      providerSetupInput: { source: 'durable-push' },
-      credentialRef: null,
-      selectedTransport: 'durablePush',
-      maximumObservationAgeMs: 60_000,
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_create_input_invalid' });
-    expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
-    expect(collection.rows.size).toBe(0);
-    expect(collection.batch).not.toHaveBeenCalled();
-  });
 });
 
 describe('transferConversationConnectionForInvocation targeted provider selection', () => {

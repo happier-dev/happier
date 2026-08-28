@@ -4,7 +4,6 @@ export * from './manifest.js';
 export { PLUGIN_MANIFEST as manifest } from './manifest.js';
 export * from './pullRequests/authChain.js';
 export * from './pullRequests/checkoutReference.js';
-export * from './pullRequests/defaultBranch.js';
 export * from './pullRequests/mapping.js';
 export * from './pullRequests/restAdapter.js';
 export * from './repositoryProvisioning/index.js';

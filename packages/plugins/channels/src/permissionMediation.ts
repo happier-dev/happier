@@ -7,59 +7,7 @@ type PendingPermissionList = PluginActionResultById['session.permission.remote.p
 
 type CurrentConversationPendingPermissionRequest = PendingPermissionList['requests'][number];
 
-/**
- * The supported pre-semantic permission projection. It is normalized at this
- * sole reader boundary so every Channels consumer continues to share one
- * pending list rather than growing a per-consumer compatibility branch.
- */
-type LegacyConversationPendingPermissionRequest = Readonly<{
-  kind: 'legacy_permission';
-  requestId: string;
-  turnId: string;
-  createdAtMs: number;
-  allowedScopes: readonly ('request' | 'session')[];
-}>;
-
-export type ConversationPendingPermissionRequest =
-  | CurrentConversationPendingPermissionRequest
-  | LegacyConversationPendingPermissionRequest;
-
-function asRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-function readLegacyConversationPendingPermissionRequest(
-  value: unknown,
-): LegacyConversationPendingPermissionRequest | null {
-  const record = asRecord(value);
-  if (record === null || record.kind !== undefined) return null;
-  const { requestId, turnId, createdAtMs, allowedScopes } = record;
-  if (
-    typeof requestId !== 'string'
-    || typeof turnId !== 'string'
-    || typeof createdAtMs !== 'number'
-    || !Number.isSafeInteger(createdAtMs)
-    || createdAtMs < 0
-    || !Array.isArray(allowedScopes)
-    || !allowedScopes.every((scope) => scope === 'request' || scope === 'session')
-  ) return null;
-  return {
-    kind: 'legacy_permission',
-    requestId,
-    turnId,
-    createdAtMs,
-    allowedScopes,
-  };
-}
-
-function normalizeConversationPendingPermissionRequest(
-  request: CurrentConversationPendingPermissionRequest,
-): ConversationPendingPermissionRequest | null {
-  if (request.kind === 'permission' || request.kind === 'user_action') return request;
-  return readLegacyConversationPendingPermissionRequest(request as unknown);
-}
+export type ConversationPendingPermissionRequest = CurrentConversationPendingPermissionRequest;
 
 /** The exact binding-scoped source authority the canonical projection is keyed by. */
 export type ConversationPendingPermissionSource = Readonly<{
@@ -105,16 +53,7 @@ export async function readConversationPendingPermissions(input: Readonly<{
       },
       { signal: input.signal },
     );
-    for (const candidate of page.requests) {
-      const request = normalizeConversationPendingPermissionRequest(candidate);
-      if (request === null) {
-        // An unknown page member cannot be safely treated as absent. Keep the
-        // existing custody instead of suppressing an answerable request.
-        truncated = true;
-        continue;
-      }
-      requests.push(request);
-    }
+    requests.push(...page.requests);
     truncated = truncated || page.truncated;
     const next = page.nextCursor;
     // The keyset advances strictly past the last projected request, so the end

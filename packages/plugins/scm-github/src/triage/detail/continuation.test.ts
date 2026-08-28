@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1,
   decodeGithubDetailContinuation,
   encodeGithubDetailContinuation,
 } from './continuation.js';
@@ -12,8 +11,6 @@ describe('GitHub detail continuation codec', () => {
     const token = encodeGithubDetailContinuation({ v: 1, page: 4, perPage: 50 });
     expect(token).not.toBeNull();
     expect(decodeGithubDetailContinuation(token ?? '')).toEqual({ v: 1, page: 4, perPage: 50 });
-    expect(new TextEncoder().encode(token ?? '').length)
-      .toBeLessThanOrEqual(MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1);
   });
 
   it('refuses a provider URL, another version and an out-of-geometry page', () => {
@@ -43,10 +40,5 @@ describe('GitHub detail continuation codec', () => {
       page: 2,
       perPage: GITHUB_MAX_DETAIL_PAGE_SIZE_V1 + 1,
     })).toBeNull();
-  });
-
-  it('refuses an oversized token before parsing it', () => {
-    const oversized = `${'x'.repeat(MAX_GITHUB_DETAIL_CONTINUATION_UTF8_BYTES_V1)}`;
-    expect(decodeGithubDetailContinuation(oversized)).toBeNull();
   });
 });

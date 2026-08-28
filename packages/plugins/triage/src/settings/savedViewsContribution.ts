@@ -1,9 +1,6 @@
 import type { PluginSettingsContribution } from '@happier-dev/plugin-sdk/settings';
 
-import {
-    MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
-    TRIAGE_SAVED_VIEWS_SETTING_ID_V1,
-} from './savedViews.js';
+import { TRIAGE_SAVED_VIEWS_SETTING_ID_V1 } from './savedViews.js';
 
 /**
  * The one declared Account Settings field this document owns.
@@ -57,7 +54,6 @@ export const TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1 = {
                             label: {
                                 type: 'string',
                                 minLength: 1,
-                                maxLength: MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
                             },
                             filters: {
                                 type: 'object',

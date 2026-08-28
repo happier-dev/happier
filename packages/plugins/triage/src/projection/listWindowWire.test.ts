@@ -51,6 +51,7 @@ function observation(input: Readonly<{
     observedAtMs?: number;
     title?: string;
     involvement?: TriageSourceViewerFactsV1['involvement'];
+    nativeRevision?: string;
 }>): CorpusQualifiedObservationV1 {
     return {
         entryRef: ENTRY_REF,
@@ -59,6 +60,7 @@ function observation(input: Readonly<{
         outcome: testkitPresentOutcome({
             snapshot: testkitSnapshot({ title: input.title ?? 'Replace the duplicated normalizer' }),
             viewer: testkitViewer({ involvement: input.involvement ?? [] }),
+            ...(input.nativeRevision === undefined ? {} : { nativeRevision: input.nativeRevision }),
         }),
     };
 }
@@ -240,6 +242,17 @@ describe('the list window on the wire', () => {
 
         expect(rows[0]?.observedByCount).toBe(1);
         expect(rows[0]?.otherObservations).toEqual([]);
+    });
+
+    it('keeps native revision evidence process-local rather than publishing it on the list wire', () => {
+        const row = toTriageListWireRows(fold([
+            observation({
+                sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID,
+                nativeRevision: 'head-a',
+            }),
+        ]))[0];
+
+        expect(row?.observation.outcome).not.toHaveProperty('nativeRevision');
     });
 
     /**

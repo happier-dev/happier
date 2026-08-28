@@ -1,6 +1,7 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
+import { fitActionResultSequenceV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import {
     type TriageConfiguredSourceInstanceRecordV1,
     type TriageReadConfiguredSourceInstancesInputV1,
@@ -15,7 +16,10 @@ import {
 } from '../corpus/collections/ids.js';
 import { fromCorpusStoredRow } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
-import { configuredSourceInstanceIsOwnedBy } from '../corpus/configuration/administerConfiguredSourceInstance.js';
+import {
+    advanceConfiguredSourceCollectionCursor,
+    configuredSourceInstanceIsOwnedBy,
+} from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSource } from './callerSource.js';
 
@@ -51,6 +55,17 @@ function recordFrom(row: CorpusSourceInstanceRowV1): TriageConfiguredSourceInsta
     });
 }
 
+/** Fits whole configured-instance records through the canonical Action owner. */
+export function fitTriageConfiguredSourceInstancesResult(
+    instances: readonly TriageConfiguredSourceInstanceRecordV1[],
+): TriageReadConfiguredSourceInstancesResultV1 {
+    return fitActionResultSequenceV1(instances, (included, omittedCount) => Object.freeze({
+        kind: 'read' as const,
+        instances: Object.freeze([...included]),
+        status: omittedCount === 0 ? 'complete' as const : 'truncated' as const,
+    })).result;
+}
+
 export type TriageReadConfiguredSourceInstancesDepsV1 = Readonly<{
     /** The `source-instances` Collection. This Action never writes it. */
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
@@ -78,6 +93,7 @@ export async function readTriageConfiguredSourceInstances(
         ? { signal: deps.signal }
         : undefined;
     const owned: TriageConfiguredSourceInstanceRecordV1[] = [];
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     do {
         const page = await deps.sourceInstances.query({
@@ -90,14 +106,10 @@ export async function readTriageConfiguredSourceInstances(
             if (!configuredSourceInstanceIsOwnedBy(row, source)) continue;
             owned.push(recordFrom(row));
         }
-        cursor = page.nextCursor;
+        cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
     } while (cursor !== undefined);
 
-    return Object.freeze({
-        kind: 'read',
-        instances: Object.freeze(owned),
-        status: 'complete',
-    });
+    return fitTriageConfiguredSourceInstancesResult(owned);
 }
 
 export function createTriageReadConfiguredSourceInstancesActionHandler(): ActionHandler<

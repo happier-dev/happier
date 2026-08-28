@@ -89,6 +89,9 @@ export function validateGithubFollowUpPageUrl(
 
   const page = Number(next.searchParams.get('page'));
   if (!Number.isSafeInteger(page) || page < 1) return null;
+  const requestedPageText = requested.searchParams.get('page');
+  const requestedPage = requestedPageText === null ? 1 : Number(requestedPageText);
+  if (!Number.isSafeInteger(requestedPage) || requestedPage < 1 || page <= requestedPage) return null;
 
   const comparable = (url: URL): string => {
     const parameters = new URLSearchParams(url.searchParams);

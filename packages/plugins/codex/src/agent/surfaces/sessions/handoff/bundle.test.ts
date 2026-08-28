@@ -1,4 +1,4 @@
-import { access, mkdtemp, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, realpath, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -83,7 +83,12 @@ describe('codex session handoff bundle', () => {
     expect(result.files).toEqual([
       {
         relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_1.jsonl',
-        contentBase64: content.toString('base64'),
+        contentFile: {
+          t: 'happier.handoff.file.v1',
+          filePath: rolloutPath,
+          offsetBytes: 0,
+          sizeBytes: content.length,
+        },
       },
     ]);
     expect('codexBackendMode' in result).toBe(false);
@@ -118,7 +123,12 @@ describe('codex session handoff bundle', () => {
     expect(result.files).toEqual([
       {
         relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_bytes.jsonl',
-        contentBase64: bytes.toString('base64'),
+        contentFile: {
+          t: 'happier.handoff.file.v1',
+          filePath: rolloutPath,
+          offsetBytes: 0,
+          sizeBytes: bytes.length,
+        },
       },
     ]);
   });
@@ -151,8 +161,14 @@ describe('codex session handoff bundle', () => {
       activeServerDir: '/active-server',
     })).resolves.toMatchObject({
       files: expect.arrayContaining([
-        { relativePath: rootRelativePath, contentBase64: rootContent.toString('base64') },
-        { relativePath: sidechainRelativePath, contentBase64: sidechainContent.toString('base64') },
+        {
+          relativePath: rootRelativePath,
+          contentFile: expect.objectContaining({ filePath: join(codexHome, rootRelativePath), sizeBytes: rootContent.length }),
+        },
+        {
+          relativePath: sidechainRelativePath,
+          contentFile: expect.objectContaining({ filePath: join(codexHome, sidechainRelativePath), sizeBytes: sidechainContent.length }),
+        },
       ]),
     });
   });
@@ -229,7 +245,12 @@ describe('codex session handoff bundle', () => {
     expect(result.files).toEqual([
       {
         relativePath: 'sessions/2026/03/08/rollout-2026-03-08T10-00-00-thread_connected.jsonl',
-        contentBase64: content.toString('base64'),
+        contentFile: {
+          t: 'happier.handoff.file.v1',
+          filePath: await realpath(rolloutPath),
+          offsetBytes: 0,
+          sizeBytes: content.length,
+        },
       },
     ]);
     expect(result.affinity).toMatchObject({
@@ -484,11 +505,45 @@ describe('codex session handoff bundle', () => {
         CODEX_HOME: codexHome,
         CODEX_SQLITE_HOME: codexHome,
       },
-      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
 
     const importedPath = join(codexHome, 'sessions', '2026', '03', '08', 'rollout-2026-03-08T10-00-00-thread_1.jsonl');
     await expect(readFile(importedPath)).resolves.toEqual(content);
+  });
+
+  it('streams a large file-backed rollout into the target codex home', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-handoff-import-file-'));
+    const codexHome = join(root, 'codex-target');
+    const sourcePath = join(root, 'rollout-source.jsonl');
+    const content = nativeRolloutContent({
+      sessionId: 'thread_file_large',
+      body: { event: 'large', payload: 'x'.repeat(5 * 1024 * 1024) },
+    });
+    await writeFile(sourcePath, content);
+
+    await importCodexSessionBundle({
+      bundle: {
+        agentId: 'codex',
+        remoteSessionId: 'thread_file_large',
+        files: [{
+          relativePath: 'sessions/2026/08/27/rollout-thread_file_large.jsonl',
+          contentFile: {
+            t: 'happier.handoff.file.v1',
+            filePath: sourcePath,
+            offsetBytes: 0,
+            sizeBytes: content.length,
+          },
+        }],
+      },
+      targetPath: join(root, 'workspace'),
+      env: { CODEX_HOME: codexHome },
+    });
+
+    const importedContent = await readFile(join(
+      codexHome,
+      'sessions/2026/08/27/rollout-thread_file_large.jsonl',
+    ));
+    expect(importedContent.equals(content)).toBe(true);
   });
 
   it('rejects empty, non-rollout, and foreign-session bundles before creating CODEX_HOME', async () => {
@@ -1006,7 +1061,6 @@ describe('codex session handoff bundle', () => {
       environmentVariables: {
         CODEX_HOME: codexHome,
       },
-      resumePlanOptions: { codexBackendMode: 'appServer' },
     });
   });
 
@@ -1035,8 +1089,9 @@ describe('codex session handoff bundle', () => {
       },
     });
 
-    expect(result.resume).toMatchObject({
-      resumePlanOptions: { codexBackendMode: 'acp' },
+    expect(result.runtimeDescriptorV1).toMatchObject({
+      agentId: 'codex',
+      agent: { backendMode: 'acp' },
     });
   });
 
@@ -1136,9 +1191,6 @@ describe('codex session handoff bundle', () => {
       },
     });
 
-    expect(result.resume).toMatchObject({
-      resumePlanOptions: { codexBackendMode: 'appServer' },
-    });
     expect(result.runtimeDescriptorV1).toMatchObject({
       v: 1,
       agentId: 'codex',
@@ -1177,9 +1229,6 @@ describe('codex session handoff bundle', () => {
       },
     });
 
-    expect(result.resume).toMatchObject({
-      resumePlanOptions: { codexBackendMode: 'appServer' },
-    });
     expect(result.runtimeDescriptorV1).toMatchObject({
       agentId: 'codex',
       agent: {

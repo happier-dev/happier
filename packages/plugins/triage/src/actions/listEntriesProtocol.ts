@@ -32,9 +32,9 @@ import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
  * The most configured sources one `entries/list-v1` invocation carries.
  *
  * This is a transport batch, not a configured-source membership limit. The
- * schema-derived worst-case response for this shape is 20,121,056 bytes
- * (`maximumEncodedActionValue.test.ts`), below the host Action response's
- * 24,000,000-byte serialized limit and its 25,000,000-byte relay buffer. A
+ * schema-derived worst-case response for this shape is measured by
+ * `maximumEncodedActionValue.test.ts` against the canonical public Action
+ * response envelope. A
  * mounted store pages the Collection through this same Action and schedules
  * successive selected batches through its one refresh coordinator.
  */
@@ -226,11 +226,10 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
      * frontier. The predecessor admitted a single token only for a request that
      * selected exactly one instance, on the arithmetic that thirty-two maximal
      * tokens would exceed a stale host gate. That derivation was circular:
-     * `MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1` is generous precisely because it
-     * is "never multiplied", and multiplying it to manufacture a product
-     * restriction is what the ruling in `PLAN.md` §0a A9 withdrew. The fixed
-     * Action batch is instead measured against the real response transport
-     * boundary before the walk — see `triageListRowBudgetV1`.
+     * A prior feature-local token ceiling was multiplied by the lane count to
+     * manufacture a product restriction. The fixed Action batch is instead
+     * measured against the real response transport boundary before the walk —
+     * see `triageListRowBudgetV1`.
      *
      * A token naming a connection this request does not walk is ignored rather
      * than refused. It is a stale frontier, not a malformed request, and

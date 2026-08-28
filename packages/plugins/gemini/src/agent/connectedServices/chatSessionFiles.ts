@@ -147,7 +147,6 @@ export async function importGeminiChatSessionForResume(params: Readonly<{
   sourceEnv: Readonly<Record<string, string | undefined>>;
   cwd: string | null;
   vendorResumeId: string | null;
-  candidatePersistedSessionFile?: string | null;
 }>): Promise<GeminiChatSessionImportResult> {
   const sessionId = asNonEmptyString(params.vendorResumeId);
   if (!sessionId) return { imported: false, reason: 'no_vendor_resume_id' };
@@ -162,20 +161,14 @@ export async function importGeminiChatSessionForResume(params: Readonly<{
 
   let sourceFilePath: string | null = null;
   let sourceSlug: string | null = null;
-  const candidate = asNonEmptyString(params.candidatePersistedSessionFile);
-  if (candidate && await readGeminiChatSessionFileSessionId(candidate) === sessionId) {
-    sourceFilePath = candidate;
-  }
-  if (!sourceFilePath) {
-    const sourceMatch = await findGeminiChatSessionFile({
-      geminiDir: resolveGeminiDirForEnv(params.sourceEnv),
-      sessionId,
-      cwd,
-    });
-    if (sourceMatch) {
-      sourceFilePath = sourceMatch.filePath;
-      sourceSlug = sourceMatch.projectSlug;
-    }
+  const sourceMatch = await findGeminiChatSessionFile({
+    geminiDir: resolveGeminiDirForEnv(params.sourceEnv),
+    sessionId,
+    cwd,
+  });
+  if (sourceMatch) {
+    sourceFilePath = sourceMatch.filePath;
+    sourceSlug = sourceMatch.projectSlug;
   }
   if (!sourceFilePath) return { imported: false, reason: 'source_session_file_not_found' };
 

@@ -20,6 +20,20 @@ export const CONVERSATION_DELIVERY_CUSTODY_STATES = [
   'connectionDeleted',
 ] as const;
 
+/**
+ * The one custody-state vocabulary whose content may be replaced by the
+ * keyed replay fingerprint. Archive-recoverable `notDelivered` custody is a
+ * narrower runtime exception because retry still needs the original body.
+ */
+export const CONVERSATION_DELIVERY_CONTENT_FREE_STATES = [
+  'delivered',
+  'notDelivered',
+  'suppressed',
+  'resolvedAccepted',
+  'resolvedDiscarded',
+  'connectionDeleted',
+] as const satisfies readonly ConversationDeliveryCustodyState[];
+
 export type ConversationDeliveryCustodyState =
   (typeof CONVERSATION_DELIVERY_CUSTODY_STATES)[number];
 
@@ -294,12 +308,24 @@ export function deriveConversationDeliveryProjection(custody: ConversationDelive
 }
 
 export function isConversationDeliveryRetentionEligible(custody: ConversationDeliveryCustody): boolean {
-  return custody.state === 'delivered'
-    || custody.state === 'notDelivered'
-    || custody.state === 'suppressed'
-    || custody.state === 'resolvedAccepted'
-    || custody.state === 'resolvedDiscarded'
-    || custody.state === 'connectionDeleted';
+  return (CONVERSATION_DELIVERY_CONTENT_FREE_STATES as readonly string[]).includes(custody.state);
+}
+
+/**
+ * The one canonical body-required/body-free predicate. A custody body may be
+ * replaced by its keyed replay fingerprint exactly when its state is in the
+ * content-free vocabulary and no owner-led archive retry can still consume
+ * the original body — the `notDelivered` arm that an owner can unarchive and
+ * resend keeps its bytes. The declared `channel-deliveries` Collection schema
+ * encodes this same predicate on its body-free arm, so runtime compaction and
+ * schema admission can never disagree about which terminal rows may lose
+ * their content. It is deliberately narrower than retention eligibility
+ * ({@link isConversationDeliveryRetentionEligible}): deletion needs no body,
+ * so every content-free state expires with its row either way.
+ */
+export function isConversationDeliveryContentFree(custody: ConversationDeliveryCustody): boolean {
+  return isConversationDeliveryRetentionEligible(custody)
+    && retryConversationDeliveryAfterArchiveRecovery({ custody }).kind !== 'retryReady';
 }
 
 /**

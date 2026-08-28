@@ -115,7 +115,7 @@ function textFact(
  * without the participants projection reports `review-evidence-unprojected` at the walk instead
  * of publishing that silence here.
  */
-function readViewerReviewVerdict(
+export function readViewerReviewVerdict(
   entry: BitbucketPullRequestEntry,
   viewerAccountUuid: string,
 ): BitbucketParticipantFact['state'] {

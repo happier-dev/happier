@@ -1,6 +1,12 @@
 import type { AzureRequestableThreadStatusV1 } from './contracts.js';
 import type { AzureDevOpsApiClient, AzureDevOpsFailure } from '../types.js';
 
+type AzurePullRequestRouteAddress = Readonly<{
+  project: string;
+  repositoryId: string;
+  pullRequestId: number;
+}>;
+
 /**
  * The enabled Azure DevOps pull-request writes, at the provider boundary.
  *
@@ -65,6 +71,10 @@ export type AzureWriteOutcomeV1 =
   | Readonly<{ ok: true }>
   | Readonly<{ ok: false; failure: AzureDevOpsFailure }>;
 
+export type AzureCreatedCommentOutcomeV1 =
+  | Readonly<{ ok: true; externalRef: string }>
+  | Readonly<{ ok: false; failure: AzureDevOpsFailure }>;
+
 /**
  * `PATCH …/pullRequests/{id}` with `status: 'completed'` and the full completion options.
  *
@@ -74,7 +84,7 @@ export type AzureWriteOutcomeV1 =
 export async function completeAzurePullRequest(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     completionOptions: AzureCompletionOptionsRequestV1;
     signal: AbortSignal;
   }>,
@@ -82,6 +92,7 @@ export async function completeAzurePullRequest(
   const response = await input.client.request({
     route: {
       resource: 'pullRequest',
+      project: input.address.project,
       repositoryId: input.address.repositoryId,
       pullRequestId: input.address.pullRequestId,
     },
@@ -104,7 +115,7 @@ export async function completeAzurePullRequest(
 export async function abandonAzurePullRequest(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     signal: AbortSignal;
   }>,
 ): Promise<AzureWriteOutcomeV1> {
@@ -121,7 +132,7 @@ export async function abandonAzurePullRequest(
 export async function reactivateAzurePullRequest(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     signal: AbortSignal;
   }>,
 ): Promise<AzureWriteOutcomeV1> {
@@ -131,7 +142,7 @@ export async function reactivateAzurePullRequest(
 async function patchAzurePullRequestStatus(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     signal: AbortSignal;
   }>,
   status: 'abandoned' | 'active',
@@ -139,6 +150,7 @@ async function patchAzurePullRequestStatus(
   const response = await input.client.request({
     route: {
       resource: 'pullRequest',
+      project: input.address.project,
       repositoryId: input.address.repositoryId,
       pullRequestId: input.address.pullRequestId,
     },
@@ -184,7 +196,7 @@ export function encodeAzureReviewerAdditions(
 export async function addAzurePullRequestReviewers(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     reviewers: readonly Readonly<{ id: string }>[];
     signal: AbortSignal;
   }>,
@@ -192,11 +204,86 @@ export async function addAzurePullRequestReviewers(
   const response = await input.client.request({
     route: {
       resource: 'reviewers',
+      project: input.address.project,
       repositoryId: input.address.repositoryId,
       pullRequestId: input.address.pullRequestId,
     },
     method: 'POST',
     body: input.reviewers,
+    signal: input.signal,
+  });
+  return response.ok ? { ok: true } : { ok: false, failure: response.failure };
+}
+
+function positiveInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+/** Creates one new thread and returns its provider-native thread/comment pair. */
+export async function createAzurePullRequestThread(input: Readonly<{
+  client: AzureDevOpsApiClient;
+  address: AzurePullRequestRouteAddress;
+  body: Readonly<Record<string, unknown>>;
+  signal: AbortSignal;
+}>): Promise<AzureCreatedCommentOutcomeV1> {
+  const response = await input.client.request({
+    route: { resource: 'threads', ...input.address },
+    method: 'POST',
+    body: input.body,
+    signal: input.signal,
+  });
+  if (!response.ok) return response;
+  const record = typeof response.body === 'object' && response.body !== null
+    ? response.body as Readonly<Record<string, unknown>>
+    : null;
+  const threadId = positiveInteger(record?.id);
+  const comments = Array.isArray(record?.comments) ? record.comments : [];
+  const first = typeof comments[0] === 'object' && comments[0] !== null
+    ? comments[0] as Readonly<Record<string, unknown>>
+    : null;
+  const commentId = positiveInteger(first?.id);
+  return threadId === null || commentId === null
+    ? { ok: false, failure: { class: 'malformedResponse', status: response.status, detail: 'Azure DevOps created a thread without a usable thread/comment id.', typeKey: null, retryNotBeforeMs: null, rateLimit: null } }
+    : { ok: true, externalRef: `${String(threadId)}:${String(commentId)}` };
+}
+
+/** Creates one reply under one exact Azure thread comment. */
+export async function createAzurePullRequestThreadReply(input: Readonly<{
+  client: AzureDevOpsApiClient;
+  address: AzurePullRequestRouteAddress;
+  threadId: number;
+  parentCommentId: number;
+  content: string;
+  signal: AbortSignal;
+}>): Promise<AzureCreatedCommentOutcomeV1> {
+  const response = await input.client.request({
+    route: { resource: 'threads', ...input.address, threadId: input.threadId, comments: true },
+    method: 'POST',
+    body: { content: input.content, parentCommentId: input.parentCommentId, commentType: 1 },
+    signal: input.signal,
+  });
+  if (!response.ok) return response;
+  const record = typeof response.body === 'object' && response.body !== null
+    ? response.body as Readonly<Record<string, unknown>>
+    : null;
+  const commentId = positiveInteger(record?.id);
+  return commentId === null
+    ? { ok: false, failure: { class: 'malformedResponse', status: response.status, detail: 'Azure DevOps created a reply without a usable comment id.', typeKey: null, retryNotBeforeMs: null, rateLimit: null } }
+    : { ok: true, externalRef: `${String(input.threadId)}:${String(commentId)}` };
+}
+
+/** Casts the authenticated viewer's explicit review verdict. */
+export async function setAzurePullRequestReviewerVote(input: Readonly<{
+  client: AzureDevOpsApiClient;
+  address: AzurePullRequestRouteAddress;
+  reviewerId: string;
+  vote: 10 | -10;
+  signal: AbortSignal;
+}>): Promise<AzureWriteOutcomeV1> {
+  const response = await input.client.request({
+    route: { resource: 'reviewers', ...input.address, reviewerId: input.reviewerId },
+    method: 'PUT',
+    body: { id: input.reviewerId, vote: input.vote },
     signal: input.signal,
   });
   return response.ok ? { ok: true } : { ok: false, failure: response.failure };
@@ -239,7 +326,7 @@ export type AzureThreadReadOutcomeV1 =
 export async function readAzurePullRequestThread(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     threadId: number;
     signal: AbortSignal;
   }>,
@@ -247,6 +334,7 @@ export async function readAzurePullRequestThread(
   const response = await input.client.request({
     route: {
       resource: 'threads',
+      project: input.address.project,
       repositoryId: input.address.repositoryId,
       pullRequestId: input.address.pullRequestId,
       threadId: input.threadId,
@@ -267,7 +355,7 @@ export async function readAzurePullRequestThread(
 export async function setAzurePullRequestThreadStatus(
   input: Readonly<{
     client: AzureDevOpsApiClient;
-    address: Readonly<{ repositoryId: string; pullRequestId: number }>;
+    address: AzurePullRequestRouteAddress;
     threadId: number;
     status: AzureRequestableThreadStatusV1;
     signal: AbortSignal;
@@ -276,6 +364,7 @@ export async function setAzurePullRequestThreadStatus(
   const response = await input.client.request({
     route: {
       resource: 'threads',
+      project: input.address.project,
       repositoryId: input.address.repositoryId,
       pullRequestId: input.address.pullRequestId,
       threadId: input.threadId,

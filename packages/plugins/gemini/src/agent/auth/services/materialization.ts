@@ -152,7 +152,6 @@ export async function materializeGeminiAuthEnvironment(
         sourceEnv: readStringRecord(input.processEnv) ?? process.env,
         cwd: readString(input.sessionDirectory),
         vendorResumeId,
-        candidatePersistedSessionFile: readString(input.candidatePersistedSessionFile),
       });
       if (!importResult.imported && importResult.reason && importResult.reason !== 'already_present') {
         diagnostics.push({

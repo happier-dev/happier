@@ -1,4 +1,5 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 
 import {
   TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -17,45 +18,24 @@ import type { TriageRefreshTriggerV1 } from '../../refresh/refreshEligibility.js
 /**
  * The acquisition seam for the mounted PRs & Issues window.
  *
- * A surface reads rows by invoking this plugin's own aggregate list Action
- * through the Host API object its mount was given. That object is the scope:
- * the host builds exactly one per mount and rebuilds it whenever the mount's
- * Account lifetime changes, so two surfaces hold the same object only when they
- * are the same mount of the same Account under the same generation. The plugin
- * therefore never needs — and is never given — an Account id to tell two scopes
- * apart, which is the only way an id-free author can key anything at all.
+ * The host owns the Account + plugin + immutable-generation lifetime and offers
+ * that exact scope to every artifact of the generation. Triage stores its one
+ * existing list-window store beneath one versioned plugin-local key. The shell
+ * and Composer picker therefore share rows, continuations, pacing and
+ * single-flight even though their JavaScript modules are separate realms.
  *
- * That is why the window is per host object rather than per module. A single
- * module-global window would be wrong in both directions:
- *
- * - it would let a surface mounted for one Account join a window another
- *   Account's surface built, and dispatch its own reads through that other
- *   mount's Host API — a disclosure, not a caching artifact;
- * - it would let a retired mount's in-flight pass keep publishing into the
- *   window a live mount is reading, because the retiring lease was not the one
- *   holding the store alive.
- *
- * Within one scope the single-window property is unchanged and still structural:
- * a consumer acquires by naming only its own host and receives a lease whose
- * sole capability is releasing itself; reading, refreshing and re-lensing are
- * module functions over the window *of a named host*, so there is no store
- * handle to hold, pass, replace or dispose; the store is created on that scope's
- * first live acquisition and disposed on its last release.
- *
- * Across UI artifacts there is nothing to coordinate here at all. The shell page
- * and the Composer picker are separate artifacts, and the host's module registry
- * keys a loaded module by contribution, so each already runs its own realm with
- * its own copy of this module. Parking the window on a cross-realm global to
- * reunite them would replace an Account-scoped lifetime with one that outlives
- * every Account — the exact disclosure above, in exchange for a saved pass.
+ * The scope is intentionally opaque: Triage receives no Account id and cannot
+ * accidentally key one Account's rows into another's. There is no `globalThis`
+ * fallback, durable corpus, second cache, or second scheduler. A renderer that
+ * cannot provide the host scope stays cold at that real platform boundary.
  */
 
 /**
  * What the window needs from a mounted surface: the ability to invoke this
  * plugin's own aggregate list Action. It is deliberately not the whole Host API
- * — nothing else about a mount takes part in assembling the window — but it is
- * the same object identity the host stamps per mount and Account lifetime, so
- * it doubles as this seam's scope key.
+ * — nothing else about a mount takes part in assembling the window. Its object
+ * identity addresses only this artifact's registration; the separate
+ * host-owned scope supplies Account/plugin/generation identity.
  */
 export type TriageListWindowHostV1 = Readonly<{
   executeAction(
@@ -69,12 +49,32 @@ export type TriageListWindowHostV1 = Readonly<{
 export type TriageListWindowLeaseV1 = Readonly<{ release(): void }>;
 
 type MountedWindow = {
-  readonly store: TriageListWindowStoreV1;
-  /** Live acquisitions of this one scope; the store outlives none of them. */
+  readonly shared: SharedMountedWindow;
+  readonly sharedLease: Readonly<{ release(): void }>;
+  readonly unregisterClient: () => void;
+  /** Live acquisitions in this artifact realm for this exact Host API. */
   leases: number;
 };
 
-const mountedByHost = new Map<TriageListWindowHostV1, MountedWindow>();
+const mountedByHost = new Map<
+  TriageListWindowHostV1,
+  Map<PluginUiEphemeralSharedScope, MountedWindow>
+>();
+const TRIAGE_LIST_WINDOW_SHARED_KEY_V1 = 'triage.list-window.v1';
+
+type SharedMountedWindow = Readonly<{
+  store: TriageListWindowStoreV1;
+  registerClient(host: TriageListWindowHostV1): () => void;
+}>;
+
+function mountedFor(
+  host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
+): MountedWindow | undefined {
+  const byScope = mountedByHost.get(host);
+  if (scope === null || byScope === undefined) return undefined;
+  return byScope.get(scope);
+}
 
 /**
  * What a consumer reads before its surface has acquired the window. It is a
@@ -103,23 +103,86 @@ async function readEntriesThrough(
 }
 
 /**
- * Acquire the window of one mounted surface.
+ * Acquire the generation's mounted window from one surface artifact.
  *
- * The scope's first live acquisition creates its store; a later acquisition of
- * the same host joins it. The caller cannot influence which window it gets,
- * cannot supply one, and cannot reach another scope's.
+ * The scope's first live acquisition creates its store; later acquisitions in
+ * this or another artifact join it. The caller cannot supply a value or reach
+ * another scope's. A missing/refused host scope yields an inert lease and no
+ * local substitute.
  */
-export function acquireTriageListWindow(host: TriageListWindowHostV1): TriageListWindowLeaseV1 {
-  const existing = mountedByHost.get(host);
-  const mounted: MountedWindow = existing ?? {
-    store: createTriageListWindowStore({
-      readEntries: (input, options) => readEntriesThrough(host, input, options),
-      nowMs: () => Date.now(),
-    }),
-    leases: 0,
-  };
+export function acquireTriageListWindow(
+  host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
+): TriageListWindowLeaseV1 {
+  if (scope === null) return Object.freeze({ release() {} });
+  const byScope = mountedByHost.get(host);
+  const existing = byScope?.get(scope);
+
+  let mounted = existing;
+  if (mounted === undefined) {
+    const sharedLease = scope?.acquire<SharedMountedWindow>(
+      TRIAGE_LIST_WINDOW_SHARED_KEY_V1,
+      () => {
+        const clients = new Map<TriageListWindowHostV1, number>();
+        const store = createTriageListWindowStore({
+          readEntries: async (input, options) => {
+            const client = clients.keys().next().value as TriageListWindowHostV1 | undefined;
+            if (client === undefined) throw new Error('No live Triage list-window client is mounted.');
+            try {
+              return await readEntriesThrough(client, input, options);
+            } catch (error) {
+              // This is a safe aggregate read, not an outward mutation. If the
+              // artifact carrying it retired while the Action was in flight,
+              // finish the shared pass through one still-live artifact. An
+              // error from a client that remains registered is authoritative
+              // and is never blindly retried.
+              if (clients.has(client) || options?.signal?.aborted === true) throw error;
+              const replacement = clients.keys().next().value as TriageListWindowHostV1 | undefined;
+              if (replacement === undefined) throw error;
+              return await readEntriesThrough(replacement, input, options);
+            }
+          },
+          nowMs: () => Date.now(),
+        });
+        const value: SharedMountedWindow = Object.freeze({
+          store,
+          registerClient(client) {
+            clients.set(client, (clients.get(client) ?? 0) + 1);
+            let registered = true;
+            return () => {
+              if (!registered) return;
+              registered = false;
+              const remaining = (clients.get(client) ?? 1) - 1;
+              if (remaining > 0) clients.set(client, remaining);
+              else clients.delete(client);
+            };
+          },
+        });
+        return Object.freeze({
+          value,
+          dispose() {
+            clients.clear();
+            store.dispose();
+          },
+        });
+      },
+    );
+    if (sharedLease === null || sharedLease === undefined) {
+      return Object.freeze({ release() {} });
+    }
+    mounted = {
+      shared: sharedLease.value,
+      sharedLease,
+      unregisterClient: sharedLease.value.registerClient(host),
+      leases: 0,
+    };
+  }
   mounted.leases += 1;
-  if (existing === undefined) mountedByHost.set(host, mounted);
+  if (existing === undefined) {
+    const target = byScope ?? new Map<PluginUiEphemeralSharedScope, MountedWindow>();
+    target.set(scope, mounted);
+    if (byScope === undefined) mountedByHost.set(host, target);
+  }
 
   let released = false;
   return Object.freeze({
@@ -128,62 +191,64 @@ export function acquireTriageListWindow(host: TriageListWindowHostV1): TriageLis
       released = true;
       mounted.leases -= 1;
       if (mounted.leases > 0) return;
-      // Only this scope retires; another Account's mount keeps its own window.
-      if (mountedByHost.get(host) === mounted) mountedByHost.delete(host);
-      mounted.store.dispose();
+      const currentByScope = mountedByHost.get(host);
+      if (currentByScope?.get(scope) === mounted) currentByScope.delete(scope);
+      if (currentByScope?.size === 0) mountedByHost.delete(host);
+      mounted.unregisterClient();
+      mounted.sharedLease.release();
     },
   });
 }
 
-/** Observe one surface's window. Listening does not keep it alive; a lease does. */
+/** Observe the shared window through this artifact's lease. */
 export function subscribeToTriageListWindow(
   host: TriageListWindowHostV1,
   listener: () => void,
+  scope: PluginUiEphemeralSharedScope | null,
 ): () => void {
-  const store = mountedByHost.get(host)?.store;
+  const store = mountedFor(host, scope)?.shared.store;
   if (store === undefined) return () => {};
   return store.subscribe(listener);
 }
 
 export function readTriageListWindowSnapshot(
   host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
 ): TriageListWindowSnapshotV1 {
-  return mountedByHost.get(host)?.store.getSnapshot() ?? UNMOUNTED_SNAPSHOT;
+  return mountedFor(host, scope)?.shared.store.getSnapshot() ?? UNMOUNTED_SNAPSHOT;
 }
 
 /**
  * The only path from a surface to provider work. Pacing, single-flight and
  * last-known-good retention all stay with the store and its coordinator.
  *
- * Naming a host addresses that surface's window. Every demand must name its
- * exact scope: there is no "current" scope to guess at, and reading through
- * another mount's Host API is the very thing this seam exists to prevent.
+ * Naming a host addresses this artifact's lease; the one shared store chooses
+ * a currently registered mount client when a pass actually crosses the Action
+ * boundary.
  */
 export function refreshTriageListWindow(
   trigger: TriageRefreshTriggerV1,
   host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
 ): Promise<void> {
-  return mountedByHost.get(host)?.store.refresh(trigger) ?? Promise.resolve();
+  return mountedFor(host, scope)?.shared.store.refresh(trigger) ?? Promise.resolve();
 }
 
 /**
- * Append one more bounded window to a named surface's mount, or retry the
- * append that failed.
- *
- * It names a host because the read leaves through that mount's own Host API.
- * Depth is what one reader asked *this* surface for by pressing its own
- * continuation row; deepening every mounted window because one of them was
- * pressed would make another surface pay for a page nobody asked it for.
+ * Append one more bounded window to the shared mount, or retry the append that
+ * failed. Both artifacts consequently observe the same continuation depth.
  */
 export function loadMoreTriageListWindow(
   host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
 ): Promise<void> {
-  return mountedByHost.get(host)?.store.loadMore() ?? Promise.resolve();
+  return mountedFor(host, scope)?.shared.store.loadMore() ?? Promise.resolve();
 }
 
 export function setTriageListWindowLens(
   lens: TriageListLensV1,
   host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope | null,
 ): void {
-  mountedByHost.get(host)?.store.setLens(lens);
+  mountedFor(host, scope)?.shared.store.setLens(lens);
 }

@@ -1,12 +1,12 @@
-import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { DisposableCodexAppServerClient } from './client.js';
 import { registerCodexAppServerInteractionHandlers } from './interactions.js';
 import { createCodexAppServerRealtimeConversation } from './realtime.js';
 
-type PluginInteractions = AgentRuntimeContext['services']['interactions'];
-type SessionMcp = NonNullable<AgentRuntimeContext['services']['sessions']['current']>['mcp'];
+type PluginInteractions = AgentSessionRuntimeContext['services']['interactions'];
+type SessionMcp = NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>['mcp'];
 
 let interactionSequence = 0;
 
@@ -510,6 +510,7 @@ describe('Codex app-server canonical interaction bridge', () => {
     await vi.waitFor(() => expect(fixture.request).toHaveBeenCalledWith(
       'thread/realtime/start',
       expect.any(Object),
+      undefined,
     ));
     fixture.publish('thread/realtime/started', {
       threadId: 'thread-1',

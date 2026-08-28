@@ -29,14 +29,6 @@ describe('Claude session surface declarations', () => {
         ]);
     });
 
-    it('declares the macOS security keychain system tool used by native auth materialization', () => {
-        expect(PLUGIN_MANIFEST.contributes.systemTools).toContainEqual({
-            id: 'macos-security',
-            title: 'macOS Keychain security',
-            executableNames: ['security'],
-        });
-    });
-
     it('keeps handoff bundle leaves in the plugin module without the retired takeover carrier', () => {
         expect(getClaudeBackend()).not.toHaveProperty('surfaceHandlers');
         for (const exportName of [

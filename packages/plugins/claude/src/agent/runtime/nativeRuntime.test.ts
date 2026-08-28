@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import type {
-  AgentExecutionRunEvent,
-  AgentRuntimeContext,
   AgentSessionOpenRequest,
   AgentSessionProviderBinding,
   AgentSessionRuntimeContext,
@@ -16,7 +11,6 @@ import {
   createClaudeAgentRuntime,
   createClaudeNativeSessionOpener,
   createClaudeNativeRuntime,
-  prepareClaudeQualifiedConnectedAccountLaunch,
   resolveClaudeInstalledEffortSupport,
   type ClaudeNativeSessionOperations,
   type ClaudeNativeSessionFactory,
@@ -144,9 +138,10 @@ const context = {
       activeInput: {
         bind: () => ({ dispose() {} }),
       },
+      models: { bind: () => ({ dispose() {} }) },
     },
   },
-} as unknown as AgentRuntimeContext;
+} as unknown as AgentSessionRuntimeContext;
 
 describe('createClaudeNativeRuntime', () => {
   it('publishes provider handoff through the AgentRuntime surface', () => {
@@ -158,18 +153,6 @@ describe('createClaudeNativeRuntime', () => {
   it('publishes the effective Claude config directory in a merged runtime descriptor', async () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: () => createNativeOperations('descriptor-session').runtime,
-      prepareLaunchEnvironment: async () => ({
-        launchEnvironment: {
-          values: {
-            CLAUDE_CONFIG_DIR: '/effective/claude',
-            ANTHROPIC_API_KEY: 'must-not-be-described',
-          },
-          unset: [],
-        },
-        isInvalidated: () => false,
-        armInvalidation() {},
-        async dispose() {},
-      }),
     });
 
     const session = await runtime.sessions.open({
@@ -177,7 +160,10 @@ describe('createClaudeNativeRuntime', () => {
       sessionId: 'descriptor-session',
       cwd: '/repo/project',
       launchEnvironment: {
-        values: { CLAUDE_CONFIG_DIR: '/stale/claude' },
+        values: {
+          CLAUDE_CONFIG_DIR: '/effective/claude',
+          ANTHROPIC_API_KEY: 'must-not-be-described',
+        },
         unset: [],
       },
       runtimeDescriptorV1: {
@@ -201,6 +187,52 @@ describe('createClaudeNativeRuntime', () => {
     });
   });
 
+  it('opens with the exact host-prepared isolated Claude environment without recustodying credentials', async () => {
+    const openSession = vi.fn<ClaudeNativeSessionFactory>(
+      () => createNativeOperations('host-prepared-claude').runtime,
+    );
+    const runtime = createTestClaudeNativeRuntime({ openSession });
+    const connectedAccounts = {
+      getBinding: vi.fn(),
+      requestSelection: vi.fn(),
+      materialize: vi.fn(),
+      watch: vi.fn(),
+    };
+    const request: AgentSessionOpenRequest = {
+      kind: 'create',
+      sessionId: 'host-prepared-claude',
+      cwd: '/repo/project',
+      providerBinding: {
+        connectionId: ProviderConnectionIdSchema.parse('pc_host_prepared_claude'),
+        model: { id: 'gateway-claude', name: 'Gateway Claude' },
+        upstream: {
+          protocol: 'anthropic',
+          normalizedUrl: 'https://gateway.example/v1',
+          credential: 'none',
+        },
+        materialization: { v: 1, kind: 'spawnEnv' },
+      },
+      stateSharing: { configMode: 'linked', stateMode: 'shared' },
+      launchEnvironment: {
+        values: { CLAUDE_CONFIG_DIR: '/host/materialized/claude-home' },
+        unset: ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'],
+      },
+    };
+    const sessionContext = {
+      ...context,
+      signal: new AbortController().signal,
+      services: { connectedAccounts },
+    } as unknown as AgentSessionRuntimeContext;
+
+    await runtime.sessions.open(request, sessionContext);
+
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ request }));
+    expect(openSession.mock.calls[0]?.[0].request).toBe(request);
+    expect(connectedAccounts.watch).not.toHaveBeenCalled();
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
+  });
+
   it('declares a real pre-effect Agent tool interception boundary', () => {
     const runtime = createTestClaudeNativeRuntime({
       openSession: async () => createNativeOperations('session-tool-lifecycle').runtime,
@@ -211,20 +243,12 @@ describe('createClaudeNativeRuntime', () => {
 
   it('opens create, resume, and fork through the public runtime API with no host-only opener', async () => {
     const observedSessionInputs: Readonly<Record<string, unknown>>[] = [];
-    const observedExecutionInputs: Readonly<Record<string, unknown>>[] = [];
     const openSession = vi.fn(async (input: Readonly<Record<string, unknown>>) => {
       observedSessionInputs.push(input);
       const request = input.request as AgentSessionOpenRequest;
       return createNativeOperations(request.sessionId).runtime;
     }) as unknown as ClaudeNativeSessionFactory;
-    const openExecutionSession = vi.fn(async (input: Readonly<Record<string, unknown>>) => {
-      observedExecutionInputs.push(input);
-      return createNativeOperations('execution-ordinary').runtime;
-    });
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      openExecutionSession: openExecutionSession as never,
-    });
+    const runtime = createTestClaudeNativeRuntime({ openSession });
     const sessionContext = context as unknown as AgentSessionRuntimeContext;
     const requests: readonly AgentSessionOpenRequest[] = [
       { kind: 'create', sessionId: 'public-create', cwd: '/repo' },
@@ -250,677 +274,22 @@ describe('createClaudeNativeRuntime', () => {
       await session.dispose();
     }
 
-    const executionRun = await runtime.executionRuns?.open({
-      kind: 'create',
-      runId: 'ordinary-execution-run',
-      cwd: '/repo',
-      input: { text: 'ordinary execution' },
-    }, context);
-    await executionRun?.dispose();
-
     expect(observedSessionInputs).toHaveLength(3);
     expect(observedSessionInputs).not.toContainEqual(
       expect.objectContaining({ workflowRunRecords: expect.anything() }),
     );
-    expect(observedExecutionInputs).toHaveLength(1);
-    expect(observedExecutionInputs).not.toContainEqual(
-      expect.objectContaining({ workflowRunRecords: expect.anything() }),
-    );
+    expect(observedSessionInputs.every((input) => input.context === sessionContext)).toBe(true);
     expect(Reflect.get(
       claudeNativeRuntimeModule,
       'openClaudeAgentSessionWithWorkflowRunRecordPortForHost',
     )).toBeUndefined();
   });
 
-  it('does not wait for initial qualified-purpose observations after caller cancellation', async () => {
-    const controller = new AbortController();
-    controller.abort(new Error('caller cancelled'));
-    const dispose = vi.fn();
-
-    await expect(prepareClaudeQualifiedConnectedAccountLaunch({
-      request: { cwd: '/repo' },
-      context: {
-        signal: controller.signal,
-        services: {
-          connectedAccounts: {
-            getBinding: vi.fn(),
-            materialize: vi.fn(),
-            requestSelection: vi.fn(),
-            watch: vi.fn(() => ({ dispose })),
-          },
-        },
-      } as unknown as AgentRuntimeContext,
-    })).rejects.toThrow('caller cancelled');
-    expect(dispose).toHaveBeenCalledTimes(2);
-  }, 1_000);
-
-  it('materializes the qualified Claude Subscription before create/resume and fences changes', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const listeners = new Map<string, (event: { kind: 'resync' }) => unknown>();
-    const disposeWatch = vi.fn();
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => ({
-        purpose,
-        service: purpose === 'model_upstream'
-          ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
-          : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-        account: {
-          service: purpose === 'model_upstream'
-            ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
-            : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-          accountId: purpose === 'model_upstream' ? 'subscription-account' : 'anthropic-account',
-        },
-        target: { kind: 'account' as const, displayName: 'Claude account' },
-      })),
-      materialize: vi.fn(async (purpose: string, request: { kind: string }) => {
-        if (purpose !== 'model_upstream') throw new Error('Anthropic fallback must not materialize');
-        return request.kind === 'environment'
-          ? { kind: 'environment' as const, env: {} }
-          : {
-              kind: 'files' as const,
-              files: {
-                '.credentials.json': new TextEncoder().encode(JSON.stringify({
-                  claudeAiOauth: { accessToken: 'setup-token', scopes: ['user:inference'] },
-                })),
-              },
-            };
-      }),
-      requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        listeners.set(purpose, listener);
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose: disposeWatch };
-      }),
-    };
-    const sessionContext = {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-    } as unknown as AgentSessionRuntimeContext;
+  it('carries bounded Provider launch inputs into the Session owner', async () => {
+    const operations = createNativeOperations('provider-session').runtime;
+    const openSession = vi.fn(() => operations);
     const runtime = createTestClaudeNativeRuntime({
       openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const session = await runtime.sessions.open({
-      kind: 'resume',
-      sessionId: 'qualified-subscription',
-      providerSessionId: 'claude-provider-session',
-      cwd: '/repo',
-      launchEnvironment: {
-        values: { ANTHROPIC_API_KEY: 'legacy-key', KEEP: 'yes' },
-        unset: [],
-      },
-    }, sessionContext);
-
-    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(
-      'model_upstream',
-      expect.objectContaining({ signal: sessionContext.signal }),
-    );
-    expect(connectedAccounts.getBinding).not.toHaveBeenCalledWith(
-      'model_upstream_api_key',
-      expect.anything(),
-    );
-    expect(connectedAccounts.materialize).toHaveBeenNthCalledWith(
-      1,
-      'model_upstream',
-      { kind: 'files', fileIds: ['.credentials.json'] },
-      expect.objectContaining({
-        signal: sessionContext.signal,
-        expectedAccount: {
-          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-          accountId: 'subscription-account',
-        },
-      }),
-    );
-    expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values).toMatchObject({
-      KEEP: 'yes',
-      CLAUDE_CONFIG_DIR: expect.any(String),
-    });
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values)
-      .not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values)
-      .not.toHaveProperty('ANTHROPIC_API_KEY');
-
-    expect(disposeWatch).not.toHaveBeenCalled();
-    await listeners.get('model_upstream')?.({ kind: 'resync' });
-    await vi.waitFor(() => expect(disposeWatch).toHaveBeenCalledTimes(2));
-    await session.dispose();
-  });
-
-  it('does not open Claude after a qualified account invalidates between materialization and the external opener', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const account = {
-      service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-      accountId: 'subscription-account',
-    } as const;
-    const listeners = new Map<string, (event: { kind: 'resync' }) => unknown>();
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
-        ? {
-            purpose,
-            service: account.service,
-            account,
-            target: { kind: 'account' as const, displayName: 'Claude account' },
-          }
-        : null),
-      materialize: vi.fn(async () => ({
-        kind: 'files' as const,
-        files: {
-          '.credentials.json': new TextEncoder().encode(JSON.stringify({
-            claudeAiOauth: { accessToken: 'setup-token' },
-          })),
-        },
-      })),
-      requestSelection: vi.fn(),
-      watch: vi.fn((purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        listeners.set(purpose, listener);
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-      resolveSupportsEffort: async () => {
-        await listeners.get('model_upstream')?.({ kind: 'resync' });
-        return true;
-      },
-    });
-
-    await expect(runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'invalidated-before-open',
-      cwd: '/repo',
-    }, {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-    } as unknown as AgentSessionRuntimeContext)).rejects.toThrow('invalidated before opening');
-
-    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
-      'model_upstream',
-      { kind: 'files', fileIds: ['.credentials.json'] },
-      expect.objectContaining({ expectedAccount: account }),
-    );
-    expect(openSession).not.toHaveBeenCalled();
-  });
-
-  it('writes qualified Claude OAuth material for create and removes it on dispose', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const credentialBytes = new TextEncoder().encode(JSON.stringify({
-      claudeAiOauth: { accessToken: 'oauth-access', scopes: ['user:inference'] },
-    }));
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
-        ? {
-            purpose,
-            service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-            target: { kind: 'account' as const, displayName: 'Claude OAuth' },
-          }
-        : null),
-      materialize: vi.fn(async (_purpose: string, request: { kind: string }) => (
-        request.kind === 'environment'
-          ? { kind: 'environment' as const, env: {} }
-          : { kind: 'files' as const, files: { '.credentials.json': credentialBytes } }
-      )),
-      requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const sessionContext = {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-    } as unknown as AgentSessionRuntimeContext;
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const session = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'qualified-oauth',
-      cwd: '/repo',
-    }, sessionContext);
-    const configDir = openSession.mock.calls[0]?.[0].request.launchEnvironment?.values.CLAUDE_CONFIG_DIR;
-    if (!configDir) throw new Error('Expected a qualified Claude config directory');
-    expect(await readFile(`${configDir}/.credentials.json`, 'utf8')).toBe(
-      new TextDecoder().decode(credentialBytes),
-    );
-    expect((await stat(`${configDir}/.credentials.json`)).mode & 0o777).toBe(0o600);
-
-    await session.dispose();
-    await expect(stat(configDir)).rejects.toThrow();
-  });
-
-  it('uses qualified Anthropic only when Claude Subscription is unbound and preserves native auth otherwise', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    let bindAnthropic = true;
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => {
-        if (purpose === 'model_upstream') return null;
-        return bindAnthropic
-          ? {
-              purpose,
-              service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-              target: { kind: 'account' as const, displayName: 'Anthropic API key' },
-            }
-          : null;
-      }),
-      materialize: vi.fn(async () => ({
-        kind: 'environment' as const,
-        env: { ANTHROPIC_API_KEY: 'qualified-anthropic-key' },
-      })),
-      requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const sessionContext = {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-    } as unknown as AgentSessionRuntimeContext;
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const anthropicSession = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'qualified-anthropic',
-      cwd: '/repo',
-      launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'legacy-token' }, unset: [] },
-    }, sessionContext);
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values).toMatchObject({
-      ANTHROPIC_API_KEY: 'qualified-anthropic-key',
-      CLAUDE_CONFIG_DIR: expect.any(String),
-    });
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment?.values)
-      .not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
-    await anthropicSession.dispose();
-
-    bindAnthropic = false;
-    const nativeSession = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'native-auth',
-      cwd: '/repo',
-      launchEnvironment: { values: { ANTHROPIC_API_KEY: 'native-key' }, unset: [] },
-    }, sessionContext);
-    expect(openSession.mock.calls[1]?.[0].request.launchEnvironment?.values).toEqual({
-      ANTHROPIC_API_KEY: 'native-key',
-    });
-    await nativeSession.dispose();
-  });
-
-  it('materializes qualified Anthropic before execution-run open', async () => {
-    const operations = createNativeOperations('qualified-execution').runtime;
-    const openExecutionSession = vi.fn(() => operations);
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
-        ? null
-        : {
-            purpose,
-            service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-            target: { kind: 'account' as const, displayName: 'Anthropic API key' },
-          }),
-      materialize: vi.fn(async () => ({
-        kind: 'environment' as const,
-        env: { ANTHROPIC_API_KEY: 'execution-key' },
-      })),
-      requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const runtime = createTestClaudeNativeRuntime({
-      openSession: vi.fn(),
-      openExecutionSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const run = await runtime.executionRuns?.open({
-      kind: 'create',
-      runId: 'qualified-execution',
-      cwd: '/repo',
-      input: { text: 'hello' },
-    }, {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-    } as unknown as AgentRuntimeContext);
-
-    expect(openExecutionSession.mock.calls[0]?.[0].request.launchEnvironment?.values).toMatchObject({
-      ANTHROPIC_API_KEY: 'execution-key',
-      CLAUDE_CONFIG_DIR: expect.any(String),
-    });
-    await run?.dispose();
-  });
-
-  it('preserves Provider session authority without consulting a selected Claude Subscription', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => ({
-        purpose,
-        service: purpose === 'model_upstream'
-          ? { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }
-          : { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-        target: { kind: 'account' as const, displayName: 'Native Claude authority' },
-      })),
-      materialize: vi.fn(async () => ({
-        kind: 'files' as const,
-        files: {
-          '.credentials.json': new TextEncoder().encode(JSON.stringify({
-            claudeAiOauth: { accessToken: 'native-subscription-token' },
-          })),
-        },
-      })),
-      requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const providerBinding: AgentSessionProviderBinding = {
-      connectionId: ProviderConnectionIdSchema.parse('pc_provider_session_authority'),
-      model: { id: 'claude-sonnet-4-6', name: 'Provider Sonnet' },
-      upstream: {
-        protocol: 'anthropic',
-        normalizedUrl: 'https://gateway.example/v1',
-        credential: 'apiKey',
-      },
-      materialization: { v: 1, kind: 'spawnEnv' },
-    };
-    const providerLaunchEnvironment = Object.freeze({
-      values: Object.freeze({
-        ANTHROPIC_BASE_URL: 'https://gateway.example/v1',
-        ANTHROPIC_API_KEY: 'provider-session-key',
-        ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: provider-session',
-      }),
-      unset: Object.freeze(['ANTHROPIC_AUTH_TOKEN']),
-    });
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const session = await runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'provider-session-authority',
-      cwd: '/repo',
-      providerBinding,
-      launchEnvironment: providerLaunchEnvironment,
-    }, {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-      session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-    } as unknown as AgentSessionRuntimeContext);
-
-    expect(openSession.mock.calls[0]?.[0].request).toMatchObject({ providerBinding });
-    expect(openSession.mock.calls[0]?.[0].request.launchEnvironment).toBe(providerLaunchEnvironment);
-    expect(connectedAccounts.watch).not.toHaveBeenCalled();
-    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
-    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
-    await session.dispose();
-  });
-
-  it('pins an isolated shared-config root when a credential-less Provider binding keeps Claude Code on Anthropic', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const connectedAccounts = {
-      getBinding: vi.fn(),
-      materialize: vi.fn(),
-      requestSelection: vi.fn(),
-      watch: vi.fn(() => ({ dispose() {} })),
-    };
-    const userConfigDir = await mkdtemp(join(tmpdir(), 'claude-user-config-'));
-    await mkdir(join(userConfigDir, 'skills'), { recursive: true });
-    await mkdir(join(userConfigDir, 'projects'), { recursive: true });
-    await writeFile(join(userConfigDir, 'projects', 'kept.jsonl'), '{}\n');
-    await writeFile(join(userConfigDir, 'CLAUDE.md'), '# user memory\n');
-    await writeFile(
-      join(userConfigDir, '.credentials.json'),
-      JSON.stringify({ claudeAiOauth: { accessToken: 'personal-oauth' } }),
-    );
-    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = userConfigDir;
-
-    const providerBinding: AgentSessionProviderBinding = {
-      connectionId: ProviderConnectionIdSchema.parse('pc_uncredentialed_gateway'),
-      model: { id: 'local-claude', name: 'Local Claude' },
-      upstream: {
-        protocol: 'anthropic',
-        normalizedUrl: 'https://api.anthropic.com',
-        credential: 'none',
-      },
-      materialization: { v: 1, kind: 'spawnEnv' },
-    };
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    let pinnedRootDir: string;
-    try {
-      const session = await runtime.sessions.open({
-        kind: 'create',
-        sessionId: 'uncredentialed-gateway',
-        cwd: '/repo',
-        providerBinding,
-        launchEnvironment: {
-          values: {
-            ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
-            CLAUDE_CONFIG_DIR: userConfigDir,
-            KEEP: 'yes',
-          },
-          unset: [],
-        },
-      }, {
-        signal: new AbortController().signal,
-        services: { connectedAccounts },
-        session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-      } as unknown as AgentSessionRuntimeContext);
-
-      const launched = openSession.mock.calls[0]?.[0].request.launchEnvironment;
-      pinnedRootDir = launched?.values.CLAUDE_CONFIG_DIR ?? '';
-      expect(pinnedRootDir).not.toBe('');
-      expect(pinnedRootDir).not.toBe(userConfigDir);
-      expect(launched?.values.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
-      expect(launched?.values.KEEP).toBe('yes');
-      // The pinned root carries no account identity...
-      await expect(stat(join(pinnedRootDir, '.credentials.json'))).rejects.toThrow();
-      // ...but still resolves the user's own Claude configuration.
-      expect(await readFile(join(pinnedRootDir, 'CLAUDE.md'), 'utf8')).toBe('# user memory\n');
-      expect((await stat(join(pinnedRootDir, 'skills'))).isDirectory()).toBe(true);
-      // A request that carries no resolved policy takes the mode the canonical
-      // settings owner itself defaults to: provider state stays shared.
-      expect(
-        await readFile(join(pinnedRootDir, 'projects', 'kept.jsonl'), 'utf8'),
-      ).toBe('{}\n');
-
-      await session.dispose();
-    } finally {
-      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-      await rm(userConfigDir, { recursive: true, force: true });
-    }
-    await expect(stat(pinnedRootDir)).rejects.toThrow();
-  });
-
-  it('honours the account state-sharing choice the host resolved for the pinned root', async () => {
-    const openSession = vi.fn<ClaudeNativeSessionFactory>(
-      ({ request }) => createNativeOperations(request.sessionId).runtime,
-    );
-    const connectedAccounts = {
-      getBinding: vi.fn(),
-      materialize: vi.fn(),
-      requestSelection: vi.fn(),
-      watch: vi.fn(() => ({ dispose() {} })),
-    };
-    const userConfigDir = await mkdtemp(join(tmpdir(), 'claude-user-config-'));
-    await mkdir(join(userConfigDir, 'skills'), { recursive: true });
-    await mkdir(join(userConfigDir, 'projects'), { recursive: true });
-    await writeFile(join(userConfigDir, 'projects', 'private.jsonl'), '{}\n');
-    await writeFile(join(userConfigDir, 'settings.json'), JSON.stringify({
-      apiKeyHelper: '/usr/local/bin/print-my-anthropic-key',
-      env: { ANTHROPIC_BASE_URL: 'https://personal.example.test', EDITOR: 'vim' },
-    }));
-    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
-    process.env.CLAUDE_CONFIG_DIR = userConfigDir;
-
-    const providerBinding: AgentSessionProviderBinding = {
-      connectionId: ProviderConnectionIdSchema.parse('pc_isolated_state_gateway'),
-      model: { id: 'local-claude', name: 'Local Claude' },
-      upstream: {
-        protocol: 'anthropic',
-        normalizedUrl: 'http://localhost:1234',
-        credential: 'none',
-      },
-      materialization: { v: 1, kind: 'spawnEnv' },
-    };
-    const runtime = createTestClaudeNativeRuntime({
-      openSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    try {
-      const session = await runtime.sessions.open({
-        kind: 'create',
-        sessionId: 'isolated-state-gateway',
-        cwd: '/repo',
-        providerBinding,
-        stateSharing: { configMode: 'linked', stateMode: 'isolated' },
-        launchEnvironment: { values: { CLAUDE_CONFIG_DIR: userConfigDir }, unset: [] },
-      }, {
-        signal: new AbortController().signal,
-        services: { connectedAccounts },
-        session: { services: { activeInput: { bind: () => ({ dispose() {} }) } } },
-      } as unknown as AgentSessionRuntimeContext);
-
-      const pinnedRootDir = openSession.mock.calls[0]?.[0].request
-        .launchEnvironment?.values.CLAUDE_CONFIG_DIR ?? '';
-      expect(pinnedRootDir).not.toBe('');
-      expect(pinnedRootDir).not.toBe(userConfigDir);
-      // The descriptor's state entry is the user's conversation history: an
-      // explicit `isolated` choice must reach this launch shape too.
-      await expect(stat(join(pinnedRootDir, 'projects'))).rejects.toThrow();
-      // Isolating history never isolates the workspace configuration...
-      expect((await stat(join(pinnedRootDir, 'skills'))).isDirectory()).toBe(true);
-      // ...and never re-admits the credential-resolving settings keys.
-      const settings = JSON.parse(
-        await readFile(join(pinnedRootDir, 'settings.json'), 'utf8'),
-      ) as Record<string, unknown>;
-      expect(settings.apiKeyHelper).toBeUndefined();
-      expect(settings.env).toEqual({ EDITOR: 'vim' });
-
-      await session.dispose();
-    } finally {
-      if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
-      else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
-      await rm(userConfigDir, { recursive: true, force: true });
-    }
-  });
-
-  it('preserves Provider execution authority without consulting a selected Anthropic account', async () => {
-    const openExecutionSession = vi.fn(
-      () => createNativeOperations('provider-execution-authority').runtime,
-    );
-    const connectedAccounts = {
-      getBinding: vi.fn(async (purpose: string) => purpose === 'model_upstream'
-        ? null
-        : {
-            purpose,
-            service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
-            target: { kind: 'account' as const, displayName: 'Native Anthropic authority' },
-          }),
-      materialize: vi.fn(async () => ({
-        kind: 'environment' as const,
-        env: { ANTHROPIC_API_KEY: 'native-anthropic-key' },
-      })),
-      requestSelection: vi.fn(),
-      watch: vi.fn((_purpose: string, listener: (event: { kind: 'resync' }) => unknown) => {
-        queueMicrotask(() => { void listener({ kind: 'resync' }); });
-        return { dispose() {} };
-      }),
-    };
-    const providerBinding: AgentSessionProviderBinding = {
-      connectionId: ProviderConnectionIdSchema.parse('pc_provider_execution_authority'),
-      model: { id: 'gateway-claude', name: 'Gateway Claude' },
-      upstream: {
-        protocol: 'anthropic',
-        normalizedUrl: 'https://gateway.example/v1',
-        credential: 'apiKey',
-      },
-      materialization: { v: 1, kind: 'spawnEnv' },
-    };
-    const providerLaunchEnvironment = Object.freeze({
-      values: Object.freeze({
-        ANTHROPIC_BASE_URL: 'https://gateway.example/v1',
-        ANTHROPIC_AUTH_TOKEN: 'provider-execution-token',
-        ANTHROPIC_CUSTOM_HEADERS: 'X-Tenant: provider-execution',
-      }),
-      unset: Object.freeze(['ANTHROPIC_API_KEY']),
-    });
-    const runtime = createTestClaudeNativeRuntime({
-      openSession: vi.fn(),
-      openExecutionSession,
-      prepareLaunchEnvironment: prepareClaudeQualifiedConnectedAccountLaunch,
-    });
-
-    const run = await runtime.executionRuns?.open({
-      kind: 'create',
-      runId: 'provider-execution-authority',
-      cwd: '/repo',
-      input: { text: 'hello' },
-      providerBinding,
-      launchEnvironment: providerLaunchEnvironment,
-    }, {
-      signal: new AbortController().signal,
-      services: { connectedAccounts },
-    } as unknown as AgentRuntimeContext);
-
-    expect(openExecutionSession.mock.calls[0]?.[0].request).toMatchObject({ providerBinding });
-    expect(openExecutionSession.mock.calls[0]?.[0].request.launchEnvironment)
-      .toBe(providerLaunchEnvironment);
-    expect(connectedAccounts.watch).not.toHaveBeenCalled();
-    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
-    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
-    await run?.dispose();
-  });
-
-  it('carries bounded Provider launch inputs into the execution session owner', async () => {
-    const operations = createNativeOperations('provider-execution').runtime;
-    const openExecutionSession = vi.fn(() => operations);
-    // The launch preparer is the only reader of the session-shaped request an
-    // execution run builds, and the resolved state-sharing policy is one of the
-    // bounded open inputs it has to see.
-    const prepareLaunchEnvironment = vi.fn(async ({ request }) => Object.freeze({
-      launchEnvironment: request.launchEnvironment
-        ?? Object.freeze({ values: Object.freeze({}), unset: Object.freeze([]) }),
-      isInvalidated: () => false,
-      armInvalidation() {},
-      async dispose() {},
-    }));
-    const runtime = createTestClaudeNativeRuntime({
-      openSession: vi.fn(),
-      openExecutionSession,
-      prepareLaunchEnvironment,
     });
     const providerConnectionId = ProviderConnectionIdSchema.parse('pc_claude');
     const configuration = {
@@ -940,11 +309,10 @@ describe('createClaudeNativeRuntime', () => {
       materialization: { v: 1, kind: 'spawnEnv' },
     };
 
-    const run = await runtime.executionRuns?.open({
+    const session = await runtime.sessions.open({
       kind: 'create',
-      runId: 'provider-execution',
+      sessionId: 'provider-session',
       cwd: '/repo',
-      input: { text: 'hello' },
       modelSelection: {
         agentTargetKey: 'backend:claude',
         providerConnectionId,
@@ -953,45 +321,45 @@ describe('createClaudeNativeRuntime', () => {
       configuration,
       providerBinding,
       stateSharing: { configMode: 'linked', stateMode: 'isolated' },
-    }, {} as AgentRuntimeContext);
+    }, context as unknown as AgentSessionRuntimeContext);
 
-    expect(openExecutionSession).toHaveBeenCalledWith(expect.objectContaining({
-      request: expect.objectContaining({ configuration, providerBinding }),
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        configuration,
+        providerBinding,
+        stateSharing: { configMode: 'linked', stateMode: 'isolated' },
+      }),
     }));
-    expect(prepareLaunchEnvironment.mock.calls[0]?.[0].request.stateSharing)
-      .toEqual({ configMode: 'linked', stateMode: 'isolated' });
-    await run?.dispose();
+    await session.dispose();
   });
 
-  it('fails closed on effort controls for execution runs when the installed CLI lacks support', async () => {
-    const operations = createNativeOperations('execution-effort-unsupported').runtime;
-    const openExecutionSession = vi.fn(() => operations);
+  it('fails closed on effort controls when the installed CLI lacks support', async () => {
+    const operations = createNativeOperations('session-effort-unsupported').runtime;
+    const openSession = vi.fn(() => operations);
     const resolveSupportsEffort = vi.fn(async () => false);
     const runtimeOptions = {
-      openSession: vi.fn(),
-      openExecutionSession,
+      openSession,
       resolveSupportsEffort,
     };
     const runtime = createTestClaudeNativeRuntime(runtimeOptions);
 
-    const run = await runtime.executionRuns?.open({
+    const session = await runtime.sessions.open({
       kind: 'create',
-      runId: 'execution-effort-unsupported',
+      sessionId: 'session-effort-unsupported',
       cwd: '/repo',
-      input: { text: 'hello' },
       configuration: {
         mode: { value: null, updatedAtMs: 1 },
         model: { value: 'claude-opus-4-8', updatedAtMs: 1 },
         permissionIntent: { value: 'default' as const, updatedAtMs: 1 },
         options: { reasoning_effort: { value: 'xhigh', updatedAtMs: 1 } },
       },
-    }, {} as AgentRuntimeContext);
+    }, context as unknown as AgentSessionRuntimeContext);
 
     expect(resolveSupportsEffort).toHaveBeenCalledTimes(1);
-    expect(openExecutionSession).toHaveBeenCalledWith(expect.objectContaining({
+    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({
       supportsEffort: false,
     }));
-    await run?.dispose();
+    await session.dispose();
   });
 
   it('opens the selected Unified Terminal implementation through the production native factory', async () => {
@@ -1072,6 +440,7 @@ describe('createClaudeNativeRuntime', () => {
         services: {
           features: { isEnabled: vi.fn(() => true) },
           activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
@@ -1199,6 +568,7 @@ describe('createClaudeNativeRuntime', () => {
         services: {
           features: { isEnabled: vi.fn(() => true) },
           activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
@@ -1250,6 +620,7 @@ describe('createClaudeNativeRuntime', () => {
         services: {
           features: { isEnabled: vi.fn(() => featureEnabled) },
           activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
@@ -1289,6 +660,7 @@ describe('createClaudeNativeRuntime', () => {
         services: {
           features: { isEnabled: vi.fn(() => true) },
           activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
@@ -1510,6 +882,7 @@ describe('createClaudeNativeRuntime', () => {
       session: {
         services: {
           activeInput: { bind, publishStatus: vi.fn() },
+          models: { bind: () => ({ dispose() {} }) },
         },
       },
     } as unknown as AgentSessionRuntimeContext;
@@ -1561,7 +934,7 @@ describe('createClaudeNativeRuntime', () => {
       kind: 'create',
       sessionId: 'session-connected-service-settlement',
       cwd: '/repo',
-    });
+    }, context as unknown as AgentSessionRuntimeContext);
 
     await session.connectedServiceApplicationSettled?.({
       serviceId: 'claude-subscription',
@@ -2859,7 +2232,7 @@ describe('createClaudeNativeRuntime', () => {
     }));
   });
 
-  it('publishes the Claude provider session identity as the declared execution-run checkpoint', async () => {
+  it('publishes the Claude provider session identity through the Session-native boundary', async () => {
     const native = createNativeOperations('execution-run-checkpoint');
     const sendProviderTurnPrompt = vi.fn(async () => {
       native.publish({
@@ -2872,60 +2245,64 @@ describe('createClaudeNativeRuntime', () => {
       return { kind: 'accepted' } as const;
     });
     const runtime = createTestClaudeNativeRuntime({
-      openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
-      openExecutionSession: () => ({
+      openSession: () => ({
         ...native.runtime,
         sendProviderTurnPrompt,
       }),
     });
 
-    const run = await runtime.executionRuns?.open({
+    const session = await runtime.sessions.open({
       kind: 'create',
-      runId: 'execution-run-checkpoint',
+      sessionId: 'execution-run-checkpoint',
       cwd: '/repo',
-      profile: { pluginId: 'claude', contributionId: 'claude' },
+    }, context as unknown as AgentSessionRuntimeContext);
+    const events: AgentSessionRuntimeEvent[] = [];
+    session.watch((event) => events.push(event));
+    await session.send({
+      inputIds: ['checkpoint-input'],
       input: { text: 'run this' },
-    }, context);
-    const events: AgentExecutionRunEvent[] = [];
-    run?.watch((event) => events.push(event));
+      delivery: { kind: 'newTurn', turnId: 'checkpoint-turn' },
+    });
 
     expect(events).toContainEqual(expect.objectContaining({
-      kind: 'checkpoint',
-      checkpointId: 'claude-checkpoint-1',
+      kind: 'provider-session-id',
+      providerSessionId: 'claude-checkpoint-1',
     }));
-    await run?.dispose();
+    await session.dispose();
   });
 
-  it('uses the same exact transport outcome for execution-run input', async () => {
+  it('uses the same exact transport outcome for Session input', async () => {
     const native = createNativeOperations('execution-run-transport-unknown');
     const transport = deferred<Readonly<{ kind: 'accepted' }>>();
     const runtime = createTestClaudeNativeRuntime({
-      openSession: ({ request }) => createNativeOperations(request.sessionId).runtime,
-      openExecutionSession: () => ({
+      openSession: () => ({
         ...native.runtime,
         async sendProviderTurnPrompt() {
           return await transport.promise;
         },
       }),
     });
-    const open = runtime.executionRuns?.open({
+    const session = await runtime.sessions.open({
       kind: 'create',
-      runId: 'execution-run-exact-transport',
+      sessionId: 'execution-run-exact-transport',
       cwd: '/repo',
-      profile: { pluginId: 'claude', contributionId: 'claude' },
+    }, context as unknown as AgentSessionRuntimeContext);
+    let didSend = false;
+    const send = session.send({
+      inputIds: ['exact-transport-input'],
       input: { text: 'run this' },
-    }, context);
-    let didOpen = false;
-    void open?.then(() => {
-      didOpen = true;
+      delivery: { kind: 'newTurn', turnId: 'exact-transport-turn' },
+    });
+    void send.then(() => {
+      didSend = true;
     });
 
     await Promise.resolve();
-    expect(didOpen).toBe(false);
+    expect(didSend).toBe(false);
     transport.resolve({ kind: 'accepted' });
-    const run = await open;
-    expect(didOpen).toBe(true);
-    await run?.dispose();
+    await expect(send).resolves.toEqual({ status: 'admitted' });
+    expect(didSend).toBe(true);
+    await session.dispose();
   });
 
   it('keeps ambiguous Claude delivery as custody-unknown without leaking a buffered lifecycle', async () => {

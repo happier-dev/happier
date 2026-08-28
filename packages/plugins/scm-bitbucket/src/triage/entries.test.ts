@@ -6,7 +6,6 @@ import pullRequestSelf from './fixtures/pullRequestSelf.json' with { type: 'json
 import workspacesPage from './fixtures/userWorkspacesPage.json' with { type: 'json' };
 import repositoriesPage from './fixtures/workspaceRepositoriesPage.json' with { type: 'json' };
 import {
-  MAX_BITBUCKET_TEXT_UTF8_BYTES,
   decodeBitbucketPullRequestRow,
   decodeBitbucketRepositoryRow,
   decodeBitbucketWorkspaceAccessRow,
@@ -133,15 +132,14 @@ describe('Bitbucket pull-request row mapping', () => {
     expect(malformedDate.ok && malformedDate.entry.updatedAtMs).toBeNull();
   });
 
-  it('keeps an oversize but identity-valid entry visible, truncated on a UTF-8 boundary, and flagged', () => {
-    const decoded = decodeBitbucketPullRequestRow({ ...openRow, title: '☂'.repeat(4_000) });
+  it('keeps provider text intact until the canonical observation projection boundary', () => {
+    const title = '☂'.repeat(4_000);
+    const decoded = decodeBitbucketPullRequestRow({ ...openRow, title });
     expect(decoded.ok).toBe(true);
     if (!decoded.ok) return;
 
-    const titleBytes = new TextEncoder().encode(decoded.entry.title).byteLength;
-    expect(titleBytes).toBeLessThanOrEqual(MAX_BITBUCKET_TEXT_UTF8_BYTES);
-    expect(decoded.entry.title.endsWith('�')).toBe(false);
-    expect(decoded.entry.projectionTruncated).toBe(true);
+    expect(decoded.entry.title).toBe(title);
+    expect(decoded.entry.projectionTruncated).toBe(false);
     expect(decoded.entry.entryId).toBe('42');
   });
 

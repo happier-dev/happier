@@ -10,7 +10,6 @@ import {
     TriageConfiguredSourceInstanceV1Schema,
     TriageEntryRefV1Schema,
     TriageLinkedSessionProjectionV1Schema,
-    TriageSourceDescriptorV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
@@ -18,13 +17,13 @@ import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 /**
  * The durable half of one mounted detail input.
  *
- * A mounted surface holds a Host API with no storage member, so an Action is
- * the only transport into an Account Collection. Two of the three members the
- * published `TriageDetailSurfaceInputV1` requires are exactly that — the
- * configured source instance and the entry's Session links — while the third,
- * the applied observation, is already in the reader's own device-local
- * projection. This Action returns the two the surface cannot reach, and the
- * surface composes them into the strict input through the one boundary builder.
+ * Two of the three members the published `TriageDetailSurfaceInputV1` requires
+ * are Account Collection state: the configured source instance and the entry's
+ * Session links. A mounted UI that has the generic Account data client reads
+ * them through the same domain owner directly; this Action is the daemon
+ * transport when that client is unavailable. The third member, the applied
+ * observation, is already in the reader's device-local projection. Both paths
+ * compose the strict input through the one boundary builder.
  *
  * It is declared here rather than in `@happier-dev/triage-protocol` for the same
  * reason the aggregate list Action is: it has exactly one caller family — this
@@ -66,18 +65,11 @@ export const TriageReadEntryDetailInputV1JsonSchema: PluginJsonSchema =
  * `CONTRACT.md` §7 requires; no reader may infer that such a Session was never
  * linked.
  *
- * `sourceDescriptor` is the entry's own source's declared descriptor, exactly
- * as the target parsed it from the admitted snapshot — the same typed value the
- * aggregate list Action reads its declared kind vocabulary from. It is carried
- * here rather than on the aggregate list result because it is bounded per
- * *entry* here and per *configured connection* there. Keeping the descriptor on
- * detail avoids repeating a large source vocabulary in every aggregate list
- * result without taking that vocabulary away from the reader.
- *
- * It is optional and absent means "no admitted V1 contribution from that source
- * right now" — never a placeholder, and never a claim that the source declared
- * nothing. The reader that has it names the source and the entry kind in the
- * source's own words; the reader that does not says neither.
+ * Source descriptor and operation/surface facts do not cross this wire. The
+ * mounted host already supplies their one exact generation in
+ * `SurfaceContext.targetedContributions`; rereading them here would create a
+ * second descriptor authority and make this durable Account read require a
+ * daemon.
  */
 export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -88,7 +80,6 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
         }),
         /** The Collection owner's opaque continuation; absent means this page completed the relation. */
         linkedSessionsNextCursor: TriageCollectionCursorV1Schema.optional(),
-        sourceDescriptor: TriageSourceDescriptorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

@@ -55,6 +55,7 @@ export type CodexExternalSessionTranscriptSourcePage = Readonly<{
     | 'source_unavailable';
   diagnostics?: readonly Readonly<{
     code: string;
+    severity: 'benign' | 'required';
     count: number;
     positions: readonly number[];
   }>[];

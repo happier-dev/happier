@@ -101,7 +101,7 @@ function graphqlDataFor(document: string) {
 }
 
 describe('the GitHub feedback fetcher', () => {
-  it('pages every root connection and a nested thread on only its own cursor', async () => {
+  it('keeps issue comment history at its issue-local 40-row window', async () => {
     const stub = createStubGithubTransport({
       respond: (request) => {
         if (new URL(request.url).pathname !== '/graphql') return undefined;
@@ -109,30 +109,61 @@ describe('the GitHub feedback fetcher', () => {
           query: string;
           variables: Readonly<Record<string, unknown>>;
         };
-        if (body.variables.commentCursor === 'issue-comments-cursor') {
-          return {
-            status: 200,
-            body: {
-              data: {
-                repository: {
-                  databaseId: 4210,
-                  issue: {
-                    comments: {
-                      nodes: [{
-                        id: 'IC_3',
-                        author: { login: 'latest' },
-                        body: 'latest issue reply',
-                        createdAt: '2026-08-13T12:00:00Z',
-                        url: 'https://github.com/o/r/issues/1284#issuecomment-3',
-                      }],
-                      pageInfo: { hasPreviousPage: true, startCursor: 'issue-comments-before' },
-                    },
+        expect(body.query).toContain('issue(number: $number)');
+        expect(body.query).not.toContain('pullRequest(number: $number)');
+        expect(body.variables).toMatchObject({
+          commentCount: 40,
+          commentCursor: 'issue-comments-cursor',
+        });
+        return {
+          status: 200,
+          body: {
+            data: {
+              repository: {
+                databaseId: 4210,
+                issue: {
+                  comments: {
+                    nodes: [{
+                      id: 'IC_3',
+                      author: { login: 'latest' },
+                      body: 'latest issue reply',
+                      createdAt: '2026-08-13T12:00:00Z',
+                      url: 'https://github.com/o/r/issues/1284#issuecomment-3',
+                    }],
+                    pageInfo: { hasPreviousPage: true, startCursor: 'issue-comments-before' },
                   },
                 },
               },
             },
-          };
-        }
+          },
+        };
+      },
+    });
+    const client = await createTestGithubApiClient(stub);
+    const result = await readGithubFeedbackConnection({
+      route: ROUTE,
+      repositoryId: '4210',
+      number: '1284',
+      connection: 'comments',
+      cursor: 'issue-comments-cursor',
+      kindId: 'issue',
+    }, { client, now: () => 1_000, signal: new AbortController().signal });
+
+    expect(result).toMatchObject({
+      kind: 'comments',
+      previousCursor: 'issue-comments-before',
+      rows: [{ id: 'IC_3', body: 'latest issue reply' }],
+    });
+  });
+
+  it('pages every pull-request root connection and a nested thread on only its own cursor', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        if (new URL(request.url).pathname !== '/graphql') return undefined;
+        const body = readRecordedJsonBody(request) as {
+          query: string;
+          variables: Readonly<Record<string, unknown>>;
+        };
         return { status: 200, body: { data: graphqlDataFor(body.query) } };
       },
     });
@@ -141,9 +172,6 @@ describe('the GitHub feedback fetcher', () => {
 
     const comments = await readGithubFeedbackConnection({
       route: ROUTE, repositoryId: '4210', number: '1284', connection: 'comments', cursor: 'comments-cursor', kindId: 'pull-request',
-    }, dependencies);
-    const issueComments = await readGithubFeedbackConnection({
-      route: ROUTE, repositoryId: '4210', number: '1284', connection: 'comments', cursor: 'issue-comments-cursor', kindId: 'issue',
     }, dependencies);
     const threads = await readGithubFeedbackConnection({
       route: ROUTE, repositoryId: '4210', number: '1284', connection: 'threads', cursor: 'threads-cursor', kindId: 'pull-request',
@@ -162,11 +190,6 @@ describe('the GitHub feedback fetcher', () => {
       kind: 'comments',
       previousCursor: 'comments-before',
       rows: [{ id: 'IC_1' }, { id: 'IC_2' }],
-    });
-    expect(issueComments).toMatchObject({
-      kind: 'comments',
-      previousCursor: 'issue-comments-before',
-      rows: [{ id: 'IC_3', body: 'latest issue reply' }],
     });
     expect(threads).toMatchObject({
       kind: 'threads',
@@ -198,16 +221,13 @@ describe('the GitHub feedback fetcher', () => {
       readRecordedJsonBody(request) as { query: string }
     ).query);
     expect(variables).toEqual([
-      expect.objectContaining({ commentCursor: 'comments-cursor', commentCount: 40 }),
-      expect.objectContaining({ commentCursor: 'issue-comments-cursor', commentCount: 40 }),
+      expect.objectContaining({ commentCursor: 'comments-cursor', commentCount: 24 }),
       expect.objectContaining({ threadCursor: 'threads-cursor', threadCount: 12, replyCount: 3 }),
       expect.objectContaining({ reviewCursor: 'reviews-cursor', reviewCount: 8 }),
       expect.objectContaining({ requestCursor: 'requests-cursor', requestCount: 16 }),
       expect.objectContaining({ threadId: 'PRRT_1', replyCursor: 'replies-cursor', replyCount: 3 }),
     ]);
-    expect(documents[1]).toContain('issue(number: $number)');
-    expect(documents[1]).not.toContain('pullRequest(number: $number)');
-    expect(documents[5]).toContain('node(id: $threadId)');
-    expect(documents[5]).not.toContain('reviewThreads(first:');
+    expect(documents[4]).toContain('node(id: $threadId)');
+    expect(documents[4]).not.toContain('reviewThreads(first:');
   });
 });

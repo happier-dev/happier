@@ -76,16 +76,16 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
           dialogId: 'switch_model',
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
           dialogId: 'usage_limit',
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
@@ -96,24 +96,24 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
           },
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
           dialogId: 'safeguard_pause',
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
           dialogId: 'effort_change',
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
@@ -127,20 +127,20 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
           },
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
         {
           dialogId: 'unrecognized_confirmation',
           terminalNotice: {
-            headerKey: 'tools.askUserQuestion.claudeDialogNotice.header',
-            questionKey: 'tools.askUserQuestion.claudeDialogNotice.question',
+            headerKey: 'tools.askUserQuestion.attachedTerminalNotice.header',
+            questionKey: 'tools.askUserQuestion.attachedTerminalNotice.question',
           },
           terminalSecondaryAction: {
             kind: 'openAttachedTerminal',
-            labelKey: 'tools.askUserQuestion.claudeDialogNotice.openTerminal',
-            descriptionKey: 'tools.askUserQuestion.claudeDialogNotice.description',
+            labelKey: 'tools.askUserQuestion.attachedTerminalNotice.openTerminal',
+            descriptionKey: 'tools.askUserQuestion.attachedTerminalNotice.description',
           },
         },
       ],
@@ -235,10 +235,6 @@ export const CLAUDE_UI_DESCRIPTOR = Object.freeze({
         },
       },
     },
-    providerBehaviorDescriptorId: 'claude.sessionProviderBehavior.v1',
-    participantDescriptorId: 'claude.teamParticipants.v1',
-    subagentDescriptorId: 'claude.teamSubagents.v1',
-    autoRecipientPolicyId: 'claude.teamMemberAutoRecipient.v1',
     visibleMessages: {
       kind: 'session.visibleMessages.v1',
       subagentKinds: ['agent_team_member'],

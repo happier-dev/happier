@@ -73,4 +73,11 @@ describe('the PostHog surface catalog', () => {
         expect(referenced.size).toBeGreaterThan(40);
         expect([...referenced].filter((key) => ENGLISH[key] === undefined).sort()).toEqual([]);
     });
+
+    it('does not leave authored metadata labels as raw literals in renderers', () => {
+        const root = fileURLToPath(new URL('.', import.meta.url));
+        for (const relative of ['renderSurface.tsx', 'settings/renderSettingsSurface.tsx']) {
+            expect(readFileSync(join(root, relative), 'utf8'), relative).not.toMatch(/\blabel:\s*['"]/u);
+        }
+    });
 });

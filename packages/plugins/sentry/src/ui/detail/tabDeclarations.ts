@@ -110,7 +110,7 @@ export const SENTRY_DETAIL_TABS_V1: readonly SentryDetailTabDeclarationV1[] = Ob
       + ' event projection stays in the detail-root controller and every expansion'
       + ' derivative is discarded when the panel becomes inactive',
     readPlane: 'selectedEvent' as const,
-    scrollOwner: 'scrollArea' as const,
+    scrollOwner: 'list' as const,
     // Present only while the current selected projection carries an exception or
     // stacktrace section. A performance or feedback issue with no trace is not
     // given an empty error-specific tab.

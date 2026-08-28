@@ -126,6 +126,33 @@ describe('the filter rail facet plan', () => {
     expect(facetOf(plan, 'scopes').options).toEqual([]);
   });
 
+  it('offers the pre-filter Type and Scope census even after the active lens excludes its rows', () => {
+    const plan = planTriageFilterFacetsV1({
+      configuredSources: [configured(GITHUB, 'instance-1', 'acme/widgets')],
+      facetCensus: {
+        types: [
+          { source: GITHUB, kindId: 'issue' },
+          { source: GITHUB, kindId: 'pull-request' },
+        ],
+        scopes: [
+          { source: GITHUB, collisionScope: 'acme/api' },
+          { source: GITHUB, collisionScope: 'acme/widgets' },
+        ],
+        coverage: 'partial',
+      },
+      filters: {
+        ...TRIAGE_LIST_NO_FILTERS_V1,
+        types: [{ source: GITHUB, kindId: 'pull-request' }],
+        scopes: [{ source: GITHUB, collisionScope: 'acme/widgets' }],
+      },
+    });
+
+    expect(facetOf(plan, 'types').options.map((option) => [option.label, option.selected]))
+      .toEqual([['issue', false], ['pull-request', true]]);
+    expect(facetOf(plan, 'scopes').options.map((option) => [option.label, option.selected]))
+      .toEqual([['acme/api', false], ['acme/widgets', true]]);
+  });
+
   it('names the source of an active Type when two sources constrain the same kind', () => {
     const plan = planTriageFilterFacetsV1({
       configuredSources: [

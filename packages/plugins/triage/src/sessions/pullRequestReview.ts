@@ -12,6 +12,10 @@ import {
 
 import type { TriageEntrySessionStartResultV1 } from './entrySessionOrchestrator.js';
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+import {
+    readAvailableEngineOptions,
+    type TriageReviewEngineOptionV1,
+} from './reviewEngineOptions.js';
 
 /**
  * Whether a settled Triage Session start may go on to ask for an agent review.
@@ -115,8 +119,7 @@ export type TriagePullRequestReviewStartDepsV1 = Readonly<{
     execute: (actionId: string, input: unknown) => Promise<unknown>;
     selectEngineIds: (input: Readonly<{
         sessionId: SessionId;
-        availableEngineIds: readonly string[];
-        engineListResult: unknown;
+        options: readonly TriageReviewEngineOptionV1[];
         scope: ScmPullRequestReviewScopeV1;
     }>) => Promise<readonly string[]>;
 }>;
@@ -137,26 +140,6 @@ function sameEntryRef(left: TriageEntryRefV1, right: TriageEntryRefV1): boolean 
         && left.kindId === right.kindId
         && left.collisionScope === right.collisionScope
         && left.entryId === right.entryId;
-}
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readAvailableEngineIds(value: unknown, sessionId: SessionId): readonly string[] | null {
-    if (!isRecord(value) || !Array.isArray(value.items)) return null;
-    if (value.sessionId !== undefined && value.sessionId !== sessionId) return null;
-
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    for (const item of value.items) {
-        if (!isRecord(item) || typeof item.engineId !== 'string') return null;
-        const engineId = item.engineId.trim();
-        if (engineId.length === 0 || seen.has(engineId)) return null;
-        seen.add(engineId);
-        if (item.enabled !== false) ids.push(engineId);
-    }
-    return ids;
 }
 
 /**
@@ -212,17 +195,16 @@ export async function startPullRequestReview(
     const engineListResult = await deps.execute('review.engines.list', {
         sessionId: eligible.sessionId,
     });
-    const availableEngineIds = readAvailableEngineIds(engineListResult, eligible.sessionId);
-    if (availableEngineIds === null) {
+    const options = readAvailableEngineOptions(engineListResult, eligible.sessionId);
+    if (options === null) {
         return { status: 'refused', reason: 'engineListMalformed' };
     }
     const engineIds = await deps.selectEngineIds({
         sessionId: eligible.sessionId,
-        availableEngineIds,
-        engineListResult,
+        options,
         scope: produced.scope,
     });
-    const available = new Set(availableEngineIds);
+    const available = new Set(options.map((option) => option.value));
     if (
         engineIds.length === 0
         || new Set(engineIds).size !== engineIds.length

@@ -3,6 +3,7 @@ import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { GithubGetDependenciesV1 } from '../get.js';
 import type { GithubRepositoryRouteV1 } from '../locator.js';
 import type { GithubTriageEntryLocalRefV1 } from '../types.js';
+import { GITHUB_MAX_PAGE_SIZE_V1 } from '../types.js';
 
 import type { GithubObservedReviewThreadV1 } from './contracts.js';
 import { sendGithubGraphqlRequest } from './graphql.js';
@@ -101,6 +102,29 @@ const UNRESOLVE_THREAD_MUTATION = `mutation GithubUnresolveReviewThread($threadI
   }
 }`;
 
+const REPLY_TO_THREAD_MUTATION = `mutation GithubReplyToReviewThread($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+    comment { id body }
+  }
+}`;
+
+const REVIEW_THREAD_PUBLICATION_COMMENTS_QUERY = `query GithubReviewThreadPublicationComments(
+  $threadId: ID!, $count: Int!, $cursor: String
+) {
+  node(id: $threadId) {
+    __typename
+    ... on PullRequestReviewThread {
+      id
+      isResolved
+      pullRequest { number repository { name owner { login } } }
+      comments(last: $count, before: $cursor) {
+        nodes { id body }
+        pageInfo { hasPreviousPage startCursor }
+      }
+    }
+  }
+}`;
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -190,6 +214,88 @@ function belongsToEntry(
   return read.owner.toLowerCase() === route.owner.toLowerCase()
     && read.repository.toLowerCase() === route.name.toLowerCase()
     && read.entryNumber === localRef.entryId;
+}
+
+/** Exact GraphQL identity preflight shared by resolution and publication. */
+export async function preflightGithubReviewThread(
+  input: Readonly<{
+    localRef: GithubTriageEntryLocalRefV1;
+    route: GithubRepositoryRouteV1;
+    threadId: string;
+  }>,
+  dependencies: GithubReviewThreadDependenciesV1,
+): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>> {
+  const current = await readGithubReviewThread(input.threadId, dependencies);
+  if (!current.ok) return current;
+  return belongsToEntry(current.read, input.localRef, input.route)
+    ? Object.freeze({ ok: true as const })
+    : Object.freeze({ ok: false as const, failure: THREAD_NOT_ON_ENTRY_FAILURE });
+}
+
+/** One GraphQL reply dispatch; callers own Reviews claim and reconciliation. */
+export async function sendGithubReviewThreadReply(
+  input: Readonly<{ threadId: string; body: string }>,
+  dependencies: GithubReviewThreadDependenciesV1,
+): Promise<Readonly<{ ok: true }> | Readonly<{
+  ok: false;
+  failure: TriageSourceFailureV1;
+  mayHaveChanged: boolean;
+}>> {
+  const answered = await sendGithubGraphqlRequest({
+    query: REPLY_TO_THREAD_MUTATION,
+    variables: { threadId: input.threadId, body: input.body },
+  }, dependencies);
+  return answered.ok ? Object.freeze({ ok: true as const }) : answered;
+}
+
+/** Exhausts one exact GraphQL thread for response-loss marker reconciliation. */
+export async function readGithubReviewThreadReplyPublicationRecords(
+  input: Readonly<{
+    localRef: GithubTriageEntryLocalRefV1;
+    route: GithubRepositoryRouteV1;
+    threadId: string;
+  }>,
+  dependencies: GithubReviewThreadDependenciesV1,
+): Promise<Readonly<{
+  comments: readonly Readonly<{ providerId: string; body: string }>[];
+  failure: TriageSourceFailureV1 | null;
+  incomplete: boolean;
+}>> {
+  const comments: Array<Readonly<{ providerId: string; body: string }>> = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const answered = await sendGithubGraphqlRequest({
+      query: REVIEW_THREAD_PUBLICATION_COMMENTS_QUERY,
+      variables: { threadId: input.threadId, count: GITHUB_MAX_PAGE_SIZE_V1, cursor },
+    }, dependencies);
+    if (!answered.ok) {
+      return Object.freeze({ comments: Object.freeze(comments), failure: answered.failure, incomplete: true });
+    }
+    const read = decodeReviewThread(answered.data);
+    if (read === null || !belongsToEntry(read, input.localRef, input.route)) {
+      return Object.freeze({ comments: Object.freeze(comments), failure: THREAD_NOT_ON_ENTRY_FAILURE, incomplete: true });
+    }
+    const node = answered.data.node;
+    const connection = isRecord(node) ? node.comments : null;
+    const nodes = isRecord(connection) && Array.isArray(connection.nodes) ? connection.nodes : null;
+    const pageInfo = isRecord(connection) ? connection.pageInfo : null;
+    if (nodes === null || !isRecord(pageInfo) || typeof pageInfo.hasPreviousPage !== 'boolean') {
+      return Object.freeze({ comments: Object.freeze(comments), failure: THREAD_RESPONSE_INVALID_FAILURE, incomplete: true });
+    }
+    for (const raw of nodes) {
+      if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.body !== 'string') continue;
+      comments.push(Object.freeze({ providerId: raw.id, body: raw.body }));
+    }
+    if (!pageInfo.hasPreviousPage) cursor = null;
+    else if (typeof pageInfo.startCursor !== 'string' || !pageInfo.startCursor || seen.has(pageInfo.startCursor)) {
+      return Object.freeze({ comments: Object.freeze(comments), failure: THREAD_RESPONSE_INVALID_FAILURE, incomplete: true });
+    } else {
+      seen.add(pageInfo.startCursor);
+      cursor = pageInfo.startCursor;
+    }
+  } while (cursor !== null);
+  return Object.freeze({ comments: Object.freeze(comments), failure: null, incomplete: false });
 }
 
 /**

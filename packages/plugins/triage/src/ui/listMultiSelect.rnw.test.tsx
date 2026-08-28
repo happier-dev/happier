@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, cloneElement, type ReactElement } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
+import type { PluginUiAccountSettings, PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -42,8 +44,10 @@ import {
 } from '../corpus/testkit/observations.test-support.js';
 import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
 import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
+import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
 /**
@@ -65,6 +69,19 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 const SOURCE_PROTOCOL = Object.freeze({
     id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
+});
+const PREPARE_REVIEW_WORKSPACE_OPERATION = Object.freeze({
+    point: {
+        pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
+        protocol: SOURCE_PROTOCOL,
+    },
+    contributor: {
+        pluginId: SOURCE.pluginId,
+        contributionId: SOURCE.localId,
+        immutableGenerationId: 'example-forge-generation',
+    },
+    role: 'prepareReviewWorkspace',
+    action: { pluginId: SOURCE.pluginId, localId: 'prepare-review-workspace' },
 });
 
 /**
@@ -102,7 +119,7 @@ const SOURCE_TARGETED_CONTRIBUTIONS = {
                         displayName: 'Issue',
                     }],
                 },
-                operations: [],
+                operations: [PREPARE_REVIEW_WORKSPACE_OPERATION],
                 surfaces: [],
             }],
         }],
@@ -142,6 +159,8 @@ function createHarness(options: Readonly<{
     profiles?: JsonValue;
     /** Host settlement returned for a New Session seed request. */
     newSessionSeedResult?: unknown;
+    /** One-based spawn invocation whose transport answer is lost once. */
+    failSpawnAttempt?: number;
 }> = {}) {
     const kindId = options.kindId ?? 'pull-request';
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
@@ -150,14 +169,39 @@ function createHarness(options: Readonly<{
     );
     const referenceReads: string[] = [];
     const newSessionSeeds: unknown[] = [];
+    const preparedNewSessionSelections: unknown[] = [];
     const lifecycle: string[] = [];
     const composerTransactions: unknown[] = [];
     const spawnInputs: unknown[] = [];
     const sentInputs: unknown[] = [];
     let nextSessionNumber = 1;
+    let spawnAttempt = 0;
     let retired = false;
     let retireMounted: (() => Promise<void>) | null = null;
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
+    const collectionsById = new Map<string, unknown>([
+        ['source-instances', collections.sourceInstances],
+        ['session-links', collections.sessionLinks],
+        ['user-marks', collections.userMarks],
+    ]);
+    const settings: PluginUiAccountSettings = {
+        snapshot: (request) => accountSettings.settings.snapshot(request),
+        get: (id, request) => accountSettings.settings.get(id, request),
+        set: (id, value, request) => accountSettings.settings.set(id, value, request),
+        reset: (id, request) => accountSettings.settings.reset(id, request),
+    };
+    const dataClient = {
+        collection(definition: Readonly<{ id: string }>) {
+            const collection = collectionsById.get(definition.id);
+            if (collection === undefined) throw new Error(`Undeclared Collection: ${definition.id}`);
+            return collection as ReturnType<PluginUiDataClient['collection']>;
+        },
+        async openCollectionQuery() {
+            throw new Error('This mounted journey opens no declared UI query.');
+        },
+        accountKv: createUnavailablePluginUiAccountKv(),
+        accountSettings: settings,
+    } as unknown as PluginUiDataClient;
 
     // The actual Session-link writer runs below. This records its real durable
     // Collection boundary, including the primary link that travels inside the
@@ -180,6 +224,10 @@ function createHarness(options: Readonly<{
         if (actionId === 'session.spawn_new') {
             lifecycle.push('session.spawn_new');
             spawnInputs.push(input);
+            spawnAttempt += 1;
+            if (spawnAttempt === options.failSpawnAttempt) {
+                throw new Error('triage:test:spawnAnswerLost');
+            }
             const sessionId = `session-${nextSessionNumber}`;
             nextSessionNumber += 1;
             return {
@@ -252,21 +300,30 @@ function createHarness(options: Readonly<{
                 kind: 'present',
                 localRef: { kindId, collisionScope: 'example/repository', entryId: '17' },
                 locator: testkitLocator(),
-                snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
+                snapshot: {
+                    ...testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
+                    reviewRevision: { baseSha: 'base', headSha: 'head-17', nativeRevision: 'rev-17' },
+                },
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 3_000,
             }, {
                 kind: 'present',
                 localRef: { kindId, collisionScope: 'example/repository', entryId: '18' },
                 locator: testkitLocator(),
-                snapshot: testkitSnapshot({ title: 'Extract the selection reducer' }),
+                snapshot: {
+                    ...testkitSnapshot({ title: 'Extract the selection reducer' }),
+                    reviewRevision: { baseSha: 'base', headSha: 'head-18', nativeRevision: 'rev-18' },
+                },
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 2_000,
             }, {
                 kind: 'present',
                 localRef: { kindId, collisionScope: 'example/repository', entryId: '19' },
                 locator: testkitLocator(),
-                snapshot: testkitSnapshot({ title: 'Migrate the sessions list' }),
+                snapshot: {
+                    ...testkitSnapshot({ title: 'Migrate the sessions list' }),
+                    reviewRevision: { baseSha: 'base', headSha: 'head-19', nativeRevision: 'rev-19' },
+                },
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 1_000,
             }],
@@ -338,8 +395,10 @@ function createHarness(options: Readonly<{
 
     return {
         collections,
+        dataClient,
         executeAction,
         newSessionSeeds,
+        preparedNewSessionSelections,
         referenceReads,
         lifecycle,
         composerTransactions,
@@ -367,6 +426,11 @@ async function mountShell(
     locations: readonly string[];
 }>> {
     const locations: string[] = [];
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+    const surfaceWithDataClient: RenderSurface = (context) => cloneElement(
+        renderShellSurface(context) as ReactElement<{ dataClient?: PluginUiDataClient }>,
+        { dataClient: harness.dataClient },
+    );
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -376,20 +440,36 @@ async function mountShell(
                 viewId: 'triage',
                 generation: 'triage-list-mount',
             },
-            surface: renderShellSurface,
+            surface: surfaceWithDataClient,
             surfaceContext: createSurfaceContextFixture(
                 options.sourceContributions === 'absent'
                     ? {}
                     : { targetedContributions: SOURCE_TARGETED_CONTRIBUTIONS },
             ),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                openNewSession: async ({ request, preparedReviewWorkspace }) => {
+                    harness.newSessionSeeds.push(request);
+                    if (preparedReviewWorkspace !== undefined) {
+                        harness.preparedNewSessionSelections.push(preparedReviewWorkspace);
+                    }
+                    if (harness.newSessionSeedResult !== undefined) throw new Error('New Session unavailable');
+                },
                 selectActionInput: async ({ request }) => {
-                    if ('seed' in request) {
-                        harness.newSessionSeeds.push(request.seed);
-                        return (harness.newSessionSeedResult ?? { kind: 'newSessionSeeded' }) as never;
+                    if ('operation' in request) {
+                        return {
+                            kind: 'submitted',
+                            action: request.operation.action,
+                            input: request.draft ?? {},
+                            selection: {
+                                target: SOURCE_TARGETED_CONTRIBUTIONS.target,
+                                point: request.operation.point,
+                                contributor: request.operation.contributor,
+                            },
+                            connectedAccount: { kind: 'none' },
+                        } as never;
                     }
                     return {
                         kind: 'serverStartDraft',
@@ -451,7 +531,9 @@ async function mountShell(
     // regression cases therefore fail if any bulk continuation is scheduled
     // after automatic open, just as it does in the live host.
     harness.setMountRetirement(async () => { await fixture.retire('session_opened'); });
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return { shell: fixture, locations };
 }
 
@@ -724,7 +806,6 @@ describe('selecting several PRs & Issues rows', () => {
             }],
         });
         const { shell } = await mountShell(harness);
-
         await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
         await pressRow('Extract the selection reducer', { ctrlKey: true });
         await act(async () => {
@@ -744,7 +825,7 @@ describe('selecting several PRs & Issues rows', () => {
         });
     });
 
-    it('leaves every entry unstarted when New Session refuses an unmaterialized prepared review workspace', async () => {
+    it('refuses a multi-PR prepared workspace before choosing one entry as the checkout owner', async () => {
         const harness = createHarness({
             actions: {
                 v: 1,
@@ -758,10 +839,6 @@ describe('selecting several PRs & Issues rows', () => {
                     target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
                 }],
             },
-            newSessionSeedResult: {
-                code: 'unavailable',
-                diagnostics: ['prepared_review_workspace_unavailable'],
-            },
         });
         const { shell, locations } = await mountShell(harness);
 
@@ -772,9 +849,8 @@ describe('selecting several PRs & Issues rows', () => {
         });
         await settle();
 
-        expect(harness.newSessionSeeds).toEqual([
-            expect.objectContaining({ checkoutIntent: 'preparedReviewWorkspace' }),
-        ]);
+        expect(harness.newSessionSeeds).toEqual([]);
+        expect(harness.preparedNewSessionSelections).toEqual([]);
         expect(harness.lifecycle).toEqual([]);
         expect(harness.wasRetired).toBe(false);
         expect(locations).toEqual([]);
@@ -782,12 +858,52 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain('2 could not be used');
     });
 
-    it('completes a one-session compose unit before its one open retires the mount', async () => {
-        // This deliberately retires the mounted shell as soon as the generic
-        // `session.open` resolves. The old sequence opened after linking only
-        // the primary entry, so the secondary link and composer transaction
-        // were never able to run. A merely mocked start result cannot expose
-        // that lifecycle loss; this drives the real mounted start Action.
+    it('carries one bulk-selected PR through the exact prepared-workspace operation', async () => {
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'attach-prepared-review',
+                    label: 'Attach in prepared review workspace',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'pull_request',
+                    target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+                }],
+            },
+        });
+        const { shell } = await mountShell(harness);
+        // Prepared checkout joins the current admitted source operation with
+        // the durable configured-source row. Let that canonical Account read
+        // settle before exercising the press.
+        await settle();
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Attach to New Session' }));
+        });
+        await settle();
+
+        expect(harness.newSessionSeeds).toEqual([
+            expect.objectContaining({
+                checkoutIntent: 'preparedReviewWorkspace',
+            }),
+        ]);
+        expect((harness.newSessionSeeds[0] as { placement?: { directory?: string } })
+            .placement?.directory).toBeUndefined();
+        expect(harness.preparedNewSessionSelections).toEqual([
+            expect.objectContaining({ operation: PREPARE_REVIEW_WORKSPACE_OPERATION }),
+        ]);
+        expect(harness.lifecycle).toEqual([]);
+    });
+
+    it('refuses a direct compose destination before a Session starts', async () => {
+        // A compose action is authoring: its prompt and attachments must be in
+        // the canonical New Session draft before spawn. The host currently
+        // owns one such draft, not one draft per bulk unit, so this destination
+        // must fail closed instead of spawning an empty Session and patching
+        // its composer after the runtime may already have started.
         const harness = createHarness({
             actions: {
                 v: 1,
@@ -815,42 +931,22 @@ describe('selecting several PRs & Issues rows', () => {
         });
         await settle();
 
-        // A single owner-created Session gets both durable links and its whole
-        // compose payload before the only navigation can retire this mount.
-        expect(harness.lifecycle).toEqual([
-            'session.spawn_new',
-            'link',
-            'link',
-            'composer.read',
-            'composer.apply',
-            'session.open',
-        ]);
-        expect(harness.composerTransactions).toHaveLength(1);
-        expect(harness.composerTransactions[0]).toMatchObject({
-            ref: { kind: 'session', sessionId: 'session-1' },
-            transaction: {
-                expectedRevision: 1,
-                operations: [
-                    { kind: 'text.set', text: 'Investigate the selected entries.' },
-                    {
-                        kind: 'attachment.add',
-                        value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } },
-                    },
-                    {
-                        kind: 'attachment.add',
-                        value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } },
-                    },
-                ],
-            },
-        });
-        expect(harness.wasRetired).toBe(true);
+        expect(harness.lifecycle).toEqual([]);
+        expect(harness.spawnInputs).toEqual([]);
+        expect(harness.composerTransactions).toEqual([]);
+        expect(harness.wasRetired).toBe(false);
+        expect(document.body.textContent).toContain(
+            'Use Attach to New Session so its prompt and entries are ready before anything starts.',
+        );
     });
 
-    it('keeps the mount alive until every per-entry structured send has settled', async () => {
+    it('admits every per-entry structured input before its Session can run', async () => {
         // The per-entry destination has no honest final destination to open:
         // guessing a first or last Session both retires the batch's owner and
-        // drops the other units. The settled phase is therefore observable
-        // before any navigation, with distinct creation identities and sends.
+        // drops the other units. Each unit therefore starts independently,
+        // with its prompt and attachment atomically admitted on spawn. A
+        // follow-up send here would recreate the race where the runtime starts
+        // empty before Triage context arrives.
         const harness = createHarness({
             actions: {
                 v: 1,
@@ -881,19 +977,72 @@ describe('selecting several PRs & Issues rows', () => {
         expect(harness.lifecycle).toEqual([
             'session.spawn_new',
             'link',
-            'session.message.send',
             'session.spawn_new',
             'link',
-            'session.message.send',
         ]);
         expect(harness.spawnInputs).toHaveLength(2);
-        expect(harness.sentInputs).toHaveLength(2);
-        expect(harness.sentInputs).toMatchObject([
-            { attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } } }] },
-            { attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } } }] },
+        expect(harness.spawnInputs).toMatchObject([
+            {
+                initialInput: {
+                    text: 'Investigate the selected entries.',
+                    attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '17' }) } } }],
+                },
+            },
+            {
+                initialInput: {
+                    text: 'Investigate the selected entries.',
+                    attachments: [{ value: { value: { entryRef: expect.objectContaining({ entryId: '18' }) } } }],
+                },
+            },
         ]);
+        expect(harness.sentInputs).toEqual([]);
         expect(harness.wasRetired).toBe(false);
         expect(document.body.textContent).toContain('2 started, 0 unconfirmed, 0 not started, 0 could not be used');
+    });
+
+    it('lets the reader retry only unfinished per-entry units with their original creation key', async () => {
+        const harness = createHarness({
+            failSpawnAttempt: 2,
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'send-each',
+                    label: 'Send each',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'reference_only',
+                    target: {
+                        kind: 'agent',
+                        promptInvocationId: 'prompt-1',
+                        delivery: 'send',
+                    },
+                }],
+            },
+        });
+        const { shell } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'A session each' }));
+        });
+        await settle();
+
+        expect(harness.spawnInputs).toHaveLength(2);
+        const firstCreationKey = (harness.spawnInputs[0] as { creationKey: string }).creationKey;
+        const unfinishedCreationKey = (harness.spawnInputs[1] as { creationKey: string }).creationKey;
+        const retry = await shell.getByRole('button', { name: 'Try again' });
+
+        await act(async () => { await shell.press(retry); });
+        await settle();
+
+        expect(harness.spawnInputs).toHaveLength(3);
+        expect((harness.spawnInputs[2] as { creationKey: string }).creationKey).toBe(unfinishedCreationKey);
+        expect((harness.spawnInputs[2] as { creationKey: string }).creationKey).not.toBe(firstCreationKey);
+        expect(document.body.textContent).toContain(
+            '2 started, 0 unconfirmed, 0 not started, 0 could not be used',
+        );
     });
 
     it('still opens a detail on an unmodified press while no set is being built', async () => {

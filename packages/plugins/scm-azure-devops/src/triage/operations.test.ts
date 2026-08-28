@@ -9,19 +9,21 @@ import {
   TriageListInstancesResultV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanResultV1Schema,
+  TriageVerifyReviewWorkspaceResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
   type TriagePrepareReviewWorkspaceInputV1,
+  type TriageVerifyReviewWorkspaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
 import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
 import {
-  AZURE_NATIVE_PAGE_SIZE,
   runAzureTriageGet,
   runAzureTriageListInstances,
   runAzureTriagePrepareReviewWorkspace,
   runAzureTriageScan,
+  runAzureTriageVerifyReviewWorkspace,
   type AzureTriageAccountService,
   type AzureTriageReadServices,
 } from './operations.js';
@@ -38,6 +40,7 @@ const VIEWER_ID = 'a0d31c2e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
 const PROJECT_ID = '5feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d';
 const REPOSITORY_ID = 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b';
 const FORK_REPOSITORY_ID = '4dc8d8ef-4a33-4179-9e5e-4774e4e84b77';
+const FULL_PAGE_FIXTURE_SIZE = 30;
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
@@ -138,8 +141,9 @@ function createRecorder(
   respond: (request: AzureDevOpsHttpRequest) => Route,
   options: Readonly<{
     now?: number;
-    publishedBases?: readonly string[];
+    publishedBases?: readonly string[] | (() => readonly string[]);
     accountListing?: ConnectedAccountMetadataList;
+    onMaterialize?: () => void;
   }> = {},
 ): Recorder {
   const urls: string[] = [];
@@ -159,7 +163,9 @@ function createRecorder(
               displayName: 'Acme',
               state: 'connected' as const,
               connectedAccountOrigins: [SERVICES_ORIGIN, SERVER_ORIGIN],
-              connectedAccountBases: options.publishedBases ?? PUBLISHED_BASES,
+              connectedAccountBases: typeof options.publishedBases === 'function'
+                ? options.publishedBases()
+                : options.publishedBases ?? PUBLISHED_BASES,
             }],
           };
         },
@@ -177,6 +183,7 @@ function createRecorder(
             throw new Error('the source must ask for HTTP headers');
           }
           materializedOrigins.push(request.materialization.origin);
+          options.onMaterialize?.();
           return { kind: 'httpHeaders', headers: { authorization: 'Basic <pat>' } };
         },
       },
@@ -473,6 +480,7 @@ describe('Azure DevOps Triage scan', () => {
     expect(recorder.urls.some((url) => url.includes('_apis/git/repositories?'))).toBe(true);
     expect(recorder.urls.filter((url) => url.includes('searchCriteria.creatorId'))).toHaveLength(1);
     expect(recorder.urls.filter((url) => url.includes('searchCriteria.reviewerId'))).toHaveLength(1);
+    expect(recorder.urls.find((url) => url.includes('searchCriteria.creatorId'))).toContain('$top=32');
     for (const url of recorder.urls) expect(url).toContain('api-version=');
     // Every request is built beneath the configured organization base, while the credential is
     // materialized for the bare origin HostAccess admits.
@@ -515,6 +523,32 @@ describe('Azure DevOps Triage scan', () => {
     // Zero of both: no credential was minted for the new organization, and no path under the
     // old one was requested.
     expect(recorder.materializedAccounts).toHaveLength(0);
+    expect(recorder.urls).toHaveLength(0);
+  });
+
+  it('refuses a configured base retargeted while its credential is materializing', async () => {
+    let publishedBases: readonly string[] = [BASE_URL];
+    const recorder = createRecorder(happyPath(), {
+      publishedBases: () => publishedBases,
+      onMaterialize: () => {
+        publishedBases = ['https://dev.azure.com/other-org'];
+      },
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: 32 },
+      },
+      signal: new AbortController().signal,
+    });
+
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') throw new Error('a retargeted configured base must not be read');
+    expect(result.failure.code).toBe('azure-devops/configured-base-stale');
+    expect(recorder.materializedAccounts).toEqual([accountRef('account-1')]);
     expect(recorder.urls).toHaveLength(0);
   });
 
@@ -621,27 +655,38 @@ describe('Azure DevOps Triage scan', () => {
       if (request.url.includes('searchCriteria.creatorId')) {
         const skip = Number(new URL(request.url).searchParams.get('$skip') ?? '0');
         return skip === 0
-          ? page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+          ? page(Array.from({ length: 64 }, (_unused, index) => (
             pullRequest(100 + index)
           )))
-          : page([pullRequest(200)]);
+          : skip === 64 ? page([pullRequest(200)]) : page([]);
       }
       if (request.url.includes('searchCriteria.reviewerId')) return page([]);
       throw new Error(`unexpected request: ${request.url}`);
     });
-    const result = await runAzureTriageScan({
+    const first = await runAzureTriageScan({
       services: recorder.services,
       request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 64 } },
+      signal: new AbortController().signal,
+    });
+    if (first.kind !== 'page') throw new Error('expected a resumable first page');
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: first.continuation },
+      },
       signal: new AbortController().signal,
     });
 
     expect(TriageScanResultV1Schema.parse(result)).toEqual(result);
     if (result.kind === 'failed') throw new Error(`unexpected failure: ${result.failure.code}`);
-    expect(result.observations.length).toBe(AZURE_NATIVE_PAGE_SIZE + 1);
+    expect(first.observations).toHaveLength(64);
+    expect(result.observations).toHaveLength(1);
     // $top/$skip over a mutating list skips and duplicates by construction, so a lane that
     // needed a second page can only claim `moving`.
     expect(result.evidence.kind).toBe('moving');
-    const advanced = recorder.urls.filter((url) => url.includes(`$skip=${AZURE_NATIVE_PAGE_SIZE}`));
+    const advanced = recorder.urls.filter((url) => url.includes('$skip=64'));
     expect(advanced.length).toBe(1);
   });
 
@@ -677,18 +722,28 @@ describe('Azure DevOps Triage scan', () => {
         }
         const skip = Number(new URL(request.url).searchParams.get('$skip') ?? '0');
         return skip === 0
-          ? page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+          ? page(Array.from({ length: 64 }, (_unused, index) => (
             pullRequest(100 + index)
           )))
-          : page([pullRequest(200)]);
+          : skip === 64 ? page([pullRequest(200)]) : page([]);
       }
       if (request.url.includes('searchCriteria.reviewerId')) return page([]);
       throw new Error(`unexpected request: ${request.url}`);
     });
 
-    const result = await runAzureTriageScan({
+    const first = await runAzureTriageScan({
       services: recorder.services,
       request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 64 } },
+      signal: new AbortController().signal,
+    });
+    if (first.kind !== 'page') throw new Error('expected a resumable first page');
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: first.continuation },
+      },
       signal: new AbortController().signal,
     });
 
@@ -699,7 +754,7 @@ describe('Azure DevOps Triage scan', () => {
     expect(result.evidence).toEqual({ kind: 'moving', reason: 'offset-paging' });
   });
 
-  it('visits every open lane once before letting one lane take a second page', async () => {
+  it('gives the next lane only the caller budget remaining after a short provider page', async () => {
     // `sources/SCM.md` §2.8b: lane selection is round-robin over the lanes still open — one
     // native page from each open lane before any lane deep-pages again. With a first lane that
     // always has another page, a first-open-lane walk never reaches the reviewer lane at all.
@@ -708,19 +763,21 @@ describe('Azure DevOps Triage scan', () => {
       if (request.url.includes('_apis/projects')) return page([project()]);
       if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
       if (request.url.includes('searchCriteria.creatorId')) {
-        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+        return page(Array.from({ length: FULL_PAGE_FIXTURE_SIZE }, (_unused, index) => (
           pullRequest(100 + index)
         )));
       }
       if (request.url.includes('searchCriteria.reviewerId')) {
-        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+        const top = Number(new URL(request.url).searchParams.get('$top'));
+        return page(Array.from({ length: top }, (_unused, index) => (
           pullRequest(500 + index)
         )));
       }
       throw new Error(`unexpected request: ${request.url}`);
     });
 
-    // 64 admits exactly two 30-row native pages; the third does not fit.
+    // The authored lane returns a short page. The reviewer lane receives exactly the remainder,
+    // so even a provider that fills `$top` cannot push the contract result beyond its limit.
     const result = await runAzureTriageScan({
       services: recorder.services,
       request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 64 } },
@@ -731,6 +788,7 @@ describe('Azure DevOps Triage scan', () => {
     if (result.kind === 'failed') throw new Error(`unexpected failure: ${result.failure.code}`);
     expect(recorder.urls.filter((url) => url.includes('searchCriteria.creatorId'))).toHaveLength(1);
     expect(recorder.urls.filter((url) => url.includes('searchCriteria.reviewerId'))).toHaveLength(1);
+    expect(recorder.urls.find((url) => url.includes('searchCriteria.reviewerId'))).toContain('$top=34');
     const entryIds = result.observations.map((observation) => (
       observation.kind === 'present' ? Number(observation.localRef.entryId) : -1
     ));
@@ -748,12 +806,12 @@ describe('Azure DevOps Triage scan', () => {
       if (request.url.includes('_apis/projects')) return page([project()]);
       if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
       if (request.url.includes('searchCriteria.creatorId')) {
-        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+        return page(Array.from({ length: FULL_PAGE_FIXTURE_SIZE }, (_unused, index) => (
           pullRequest(100 + index)
         )));
       }
       if (request.url.includes('searchCriteria.reviewerId')) {
-        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+        return page(Array.from({ length: FULL_PAGE_FIXTURE_SIZE }, (_unused, index) => (
           pullRequest(500 + index)
         )));
       }
@@ -766,7 +824,7 @@ describe('Azure DevOps Triage scan', () => {
       request: {
         v: 1,
         instance: configuredInstance(),
-        page: { kind: 'initial', limit: AZURE_NATIVE_PAGE_SIZE },
+        page: { kind: 'initial', limit: FULL_PAGE_FIXTURE_SIZE },
       },
       signal: new AbortController().signal,
     });
@@ -806,7 +864,7 @@ describe('Azure DevOps Triage scan', () => {
       if (request.url.includes('_apis/projects')) return page([project()]);
       if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
       if (request.url.includes('searchCriteria.creatorId')) {
-        return page(Array.from({ length: AZURE_NATIVE_PAGE_SIZE }, (_unused, index) => (
+        return page(Array.from({ length: FULL_PAGE_FIXTURE_SIZE }, (_unused, index) => (
           pullRequest(100 + index)
         )));
       }
@@ -818,7 +876,7 @@ describe('Azure DevOps Triage scan', () => {
       request: {
         v: 1,
         instance: configuredInstance(),
-        page: { kind: 'initial', limit: AZURE_NATIVE_PAGE_SIZE },
+        page: { kind: 'initial', limit: FULL_PAGE_FIXTURE_SIZE },
       },
       signal: new AbortController().signal,
     });
@@ -851,6 +909,61 @@ describe('Azure DevOps Triage scan', () => {
     expect(firstResumedLaneUrl).toContain(REPOSITORY_ID);
     expect(firstResumedLaneUrl).toContain('searchCriteria.reviewerId');
     expect(firstResumedLaneUrl).not.toContain(INSERTED_REPOSITORY_ID);
+  });
+
+  it('does not replay an inserted repository when the active continuation repository disappeared', async () => {
+    const INSERTED_REPOSITORY_ID = '11111111-2222-4333-8444-555555555555';
+    const LATER_REPOSITORY_ID = 'ffb7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b';
+    const first = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/projects')) return page([project()]);
+      if (request.url.includes('_apis/git/repositories?')) return page([repository()]);
+      if (request.url.includes('searchCriteria.creatorId')) {
+        return page(Array.from({ length: FULL_PAGE_FIXTURE_SIZE }, (_unused, index) => (
+          pullRequest(100 + index)
+        )));
+      }
+      if (request.url.includes('searchCriteria.reviewerId')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+    const firstResult = await runAzureTriageScan({
+      services: first.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'initial', limit: FULL_PAGE_FIXTURE_SIZE },
+      },
+      signal: new AbortController().signal,
+    });
+    if (firstResult.kind !== 'page') throw new Error('expected a resumable first page');
+
+    const second = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/git/repositories?')) {
+        return page([
+          repository(INSERTED_REPOSITORY_ID, 'inserted'),
+          repository(LATER_REPOSITORY_ID, 'later'),
+        ]);
+      }
+      if (request.url.includes('searchCriteria.creatorId')) return page([]);
+      if (request.url.includes('searchCriteria.reviewerId')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+    const secondResult = await runAzureTriageScan({
+      services: second.services,
+      request: {
+        v: 1,
+        instance: configuredInstance(),
+        page: { kind: 'continuation', continuation: firstResult.continuation },
+      },
+      signal: new AbortController().signal,
+    });
+
+    if (secondResult.kind === 'failed') throw new Error(secondResult.failure.code);
+    expect(secondResult.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
+    const firstResumedLaneUrl = second.urls.find((url) => url.includes('searchCriteria.'));
+    expect(firstResumedLaneUrl).toContain(LATER_REPOSITORY_ID);
+    expect(second.urls.some((url) => url.includes(INSERTED_REPOSITORY_ID))).toBe(false);
   });
 
   it('charges the page budget in raw provider rows so omitted rows cannot overfill the page', async () => {
@@ -961,6 +1074,78 @@ describe('Azure DevOps Triage scan', () => {
     expect(rejected.kind).toBe('failed');
     if (rejected.kind !== 'failed') throw new Error('expected failed');
     expect(rejected.failure.class).toBe('unsupportedContract');
+  });
+
+  it('settles partial when Azure repeats the project position just consumed', async () => {
+    let projectReads = 0;
+    const repeated = 'same-project-position';
+    const recorder = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/projects')) {
+        projectReads += 1;
+        if (projectReads > 2) throw new Error('the repeated project position must not spin');
+        return {
+          headers: { 'x-ms-continuationtoken': repeated },
+          body: {
+            count: 1,
+            value: [project(
+              projectReads === 1
+                ? PROJECT_ID
+                : '6feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5e',
+              `Project ${String(projectReads)}`,
+            )],
+          },
+        };
+      }
+      if (request.url.includes('_apis/git/repositories?')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 8 } },
+      signal: new AbortController().signal,
+    });
+
+    expect(projectReads).toBe(2);
+    expect(result.kind).toBe('complete');
+    if (result.kind === 'failed') throw new Error('the walk should settle with evidence');
+    expect(result.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
+  });
+
+  it('settles partial when Azure cycles between previously consumed project positions', async () => {
+    const issued = ['project-a', 'project-b', 'project-a'] as const;
+    let projectReads = 0;
+    const recorder = createRecorder((request) => {
+      if (request.url.includes('_apis/connectionData')) return { body: CONNECTION_DATA };
+      if (request.url.includes('_apis/projects')) {
+        if (projectReads >= issued.length) throw new Error('the project-position cycle must settle');
+        const continuationToken = issued[projectReads];
+        projectReads += 1;
+        return {
+          headers: { 'x-ms-continuationtoken': continuationToken },
+          body: {
+            count: 1,
+            value: [project(
+              `${String(projectReads)}feb1c2d-3e4f-4a5b-8c9d-0e1f2a3b4c5d`,
+              `Project ${String(projectReads)}`,
+            )],
+          },
+        };
+      }
+      if (request.url.includes('_apis/git/repositories?')) return page([]);
+      throw new Error(`unexpected request: ${request.url}`);
+    });
+
+    const result = await runAzureTriageScan({
+      services: recorder.services,
+      request: { v: 1, instance: configuredInstance(), page: { kind: 'initial', limit: 8 } },
+      signal: new AbortController().signal,
+    });
+
+    expect(projectReads).toBe(3);
+    if (result.kind === 'failed') throw new Error('the walk should settle with evidence');
+    expect(result.evidence).toMatchObject({ kind: 'partial', reason: 'lane-unresolved' });
   });
 
   it('settles a throttled provider response as failed with its own absolute deadline', async () => {
@@ -1245,6 +1430,36 @@ describe('Azure DevOps review-workspace preparation', () => {
     );
   });
 
+  it('fails closed when preparation receives the read-only verification success arm', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
+      return {
+        body: pullRequest(17, {
+          sourceRepository: {
+            id: REPOSITORY_ID,
+            remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          },
+          lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+          lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+        }),
+      };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/workspace/.happier/worktrees/feature',
+        sourceHeadSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+      },
+    }));
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a moved observed head before the generic local materializer runs', async () => {
     const recorder = createRecorder((request) => {
       if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
@@ -1398,13 +1613,226 @@ describe('Azure DevOps review-workspace preparation', () => {
       throw new Error(`workspaceRequired must not read the provider: ${request.url}`);
     });
     const execute = vi.fn();
+    const { workspace: _workspace, ...withoutWorkspace } = input();
 
     await expect(runAzureTriagePrepareReviewWorkspace({
       services: workspaceServices(recorder, execute),
-      request: input({ workspace: null }),
+      request: withoutWorkspace,
       signal: new AbortController().signal,
     })).resolves.toEqual({ kind: 'workspaceRequired' });
     expect(recorder.materializedAccounts).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe('Azure DevOps final review-workspace verification', () => {
+  function scopeFor(): string {
+    const origin = configuredOrigin();
+    return `azure-devops:${Buffer.from(origin.baseUrl, 'utf8').toString('base64url')}:${REPOSITORY_ID}`;
+  }
+
+  function input(overrides: Partial<TriageVerifyReviewWorkspaceInputV1> = {}) {
+    const instance = configuredInstance();
+    return {
+      v: 1 as const,
+      instance,
+      entryRef: {
+        source: instance.instance.source,
+        kindId: 'pull-request',
+        collisionScope: scopeFor(),
+        entryId: '17',
+      },
+      lastKnownLocator: { v: 1 as const, routingToken: 'acme/Payments/checkout' },
+      observed: {
+        baseSha: 'a1b2c3d4e5f6789012345678901234567890abcd',
+        headSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+        nativeRevision: 'b3f1c0a9d2e4789012345678901234567890abcd',
+        observedAtMs: 1_760_000_000_000,
+      },
+      workspace: {
+        serverId: 'server-1',
+        machineId: 'machine-1',
+        rootPath: '/selected/workspace',
+      },
+      prepared: {
+        repositoryPath: '/selected/workspace/.happier/worktrees/feature',
+        pullRequest: { number: 17 },
+      },
+      ...overrides,
+    } satisfies TriageVerifyReviewWorkspaceInputV1;
+  }
+
+  function providerRow(overrides: Record<string, unknown> = {}) {
+    return pullRequest(17, {
+      sourceRefName: 'refs/heads/feature',
+      sourceRepository: {
+        id: REPOSITORY_ID,
+        remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+      },
+      lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+      lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+      ...overrides,
+    });
+  }
+
+  it('rereads the exact PR and asks the canonical SCM owner to verify the prepared local HEAD', async () => {
+    const recorder = createRecorder((request) => {
+      if (!request.url.includes('/pullrequests/17?')) throw new Error(`unexpected request: ${request.url}`);
+      return { body: providerRow() };
+    });
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/workspace/.happier/worktrees/feature',
+        sourceHeadSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+      },
+    }));
+    const signal = new AbortController().signal;
+
+    const result = await runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal,
+    });
+
+    expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).toEqual(result);
+    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 17 } });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/workspace',
+        displayName: 'feature',
+        sourceTip: {
+          repository: {
+            kind: 'azure-devops',
+            deployment: 'https://dev.azure.com/acme',
+            repository: 'acme/Payments/checkout',
+          },
+          cloneUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+          branch: 'feature',
+          sourceHeadSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+          fetchRef: 'refs/heads/feature',
+        },
+        verification: { targetPath: '/selected/workspace/.happier/worktrees/feature' },
+      },
+      { signal },
+    );
+  });
+
+  it('refuses a changed provider revision before touching local SCM', async () => {
+    const recorder = createRecorder(() => ({
+      body: providerRow({
+        lastMergeSourceCommit: { commitId: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' },
+      }),
+    }));
+    const execute = vi.fn();
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { number: 18 },
+    { number: 17, url: 'https://example.invalid/not-the-canonical-azure-ref' },
+  ])('refuses a prepared PR reference that is not the exact Azure PR reread: %j', async (pullRequest) => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const execute = vi.fn();
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input({ prepared: {
+        repositoryPath: '/selected/workspace/.happier/worktrees/feature',
+        pullRequest,
+      } }),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses when canonical SCM resolves a different local HEAD', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/workspace/.happier/worktrees/feature',
+        sourceHeadSha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      },
+    }));
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+  });
+
+  it('refuses a canonical SCM verification for a different prepared path', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/workspace/.happier/worktrees/other',
+        sourceHeadSha: 'b3f1c0a9d2e4789012345678901234567890abcd',
+      },
+    }));
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'workspaceMismatch' });
+  });
+
+  it('maps an unavailable canonical SCM verifier without retrying or rereading', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const execute = vi.fn(async () => ({
+      success: false as const,
+      error: 'SCM prepared review-workspace verification is unavailable',
+      errorCode: 'FEATURE_UNSUPPORTED' as const,
+    }));
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(recorder.urls.filter((url) => url.includes('/pullrequests/17?'))).toHaveLength(1);
+  });
+
+  it('maps a non-cancellation SCM transport rejection to typed unavailability', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const execute = vi.fn(async () => {
+      throw new Error('daemon transport unavailable');
+    });
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves cancellation from the canonical SCM verifier', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const controller = new AbortController();
+    const aborted = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    const execute = vi.fn(async () => {
+      controller.abort(aborted);
+      throw aborted;
+    });
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: controller.signal,
+    })).rejects.toBe(aborted);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });

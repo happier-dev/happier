@@ -3,6 +3,7 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -15,9 +16,6 @@ import {
 
 import {
   AZURE_DETAIL_BOUNDS_V1,
-  AZURE_MAX_DETAIL_ROWS_V1,
-  AZURE_MAX_ITERATION_ROWS_V1,
-  AZURE_MAX_THREAD_ROWS_V1,
 } from './projection.js';
 
 /**
@@ -46,7 +44,7 @@ const IdentifierSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.labelUtf8Bytes,
+  maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.textUtf8Bytes,
   minLength: 1,
 });
 const TextSchema = defineProtocolUtf8String({
@@ -54,7 +52,7 @@ const TextSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 const PathSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.pathUtf8Bytes,
+  maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.locationUtf8Bytes,
   minLength: 1,
 });
 const LocationSchema = defineProtocolUtf8String({
@@ -62,9 +60,7 @@ const LocationSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 /** A comment body may be empty: an attachment-only comment is still a comment. */
-const CommentBodySchema = defineProtocolUtf8String({
-  maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.commentBodyUtf8Bytes,
-});
+const CommentBodySchema = defineProtocolString();
 /** A commit comment may be empty; Azure accepts an empty commit message. */
 const CommitMessageSchema = defineProtocolUtf8String({
   maxUtf8Bytes: AZURE_DETAIL_BOUNDS_V1.textUtf8Bytes,
@@ -79,10 +75,7 @@ const RoutingTokenSchema = defineProtocolUtf8String({
   minLength: 1,
 });
 /** Azure's own continuation token, carried verbatim and never constructed. */
-const ContinuationTokenSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: 1_024,
-  minLength: 1,
-});
+const ContinuationTokenSchema = defineProtocolString({ minLength: 1 });
 
 const entryInput = defineProtocolObject({
   v: defineProtocolLiteral(1),
@@ -114,9 +107,7 @@ export const AzureProjectedIterationRowV1Schema = defineProtocolObject({
 export const AzureIterationsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('iterations'),
-    rows: defineProtocolArray(AzureProjectedIterationRowV1Schema, {
-      maxItems: AZURE_MAX_ITERATION_ROWS_V1,
-    }),
+    rows: defineProtocolArray(AzureProjectedIterationRowV1Schema),
     /**
      * The real 1-based iteration `Files` compares against.
      *
@@ -156,11 +147,11 @@ export const AzureProjectedCommitRowV1Schema = defineProtocolObject({
 export const AzureCommitsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('commits'),
-    rows: defineProtocolArray(AzureProjectedCommitRowV1Schema, {
-      maxItems: AZURE_MAX_DETAIL_ROWS_V1,
-    }),
+    rows: defineProtocolArray(AzureProjectedCommitRowV1Schema),
     /** Absent when Azure issued no continuation token for this response. */
     continuationToken: ContinuationTokenSchema.optional(),
+    /** Present only when an issued provider continuation could not cross the Action envelope. */
+    incomplete: defineProtocolLiteral('continuationUnavailable').optional(),
     omittedRowCount: CountSchema,
     projectionTruncated: AzureBooleanSchema,
   }, { policy: 'closed' }),
@@ -170,7 +161,7 @@ export type AzureCommitsResultV1 = ReturnType<typeof AzureCommitsResultV1Schema.
 
 /* --------------------------------------------------------- iteration changes */
 
-export const AzureIterationChangesInputV1Schema = defineProtocolObject({
+const azureIterationChangesInputShape = {
   v: defineProtocolLiteral(1),
   instance: TriageConfiguredSourceInstanceV1Schema,
   localRef: TriageSourceEntryLocalRefV1Schema,
@@ -181,10 +172,17 @@ export const AzureIterationChangesInputV1Schema = defineProtocolObject({
    * see the same snapshot.
    */
   iterationId: IterationIdSchema,
-  /** Both are provider-issued. A caller that computed them is refused by shape. */
-  skip: CountSchema.optional(),
-  top: CountSchema.optional(),
-}, { policy: 'closed' });
+} as const;
+
+export const AzureIterationChangesInputV1Schema = defineProtocolUnion([
+  defineProtocolObject(azureIterationChangesInputShape, { policy: 'closed' }),
+  defineProtocolObject({
+    ...azureIterationChangesInputShape,
+    /** Both are provider-issued. A half-position is invalid, not completed locally. */
+    skip: CountSchema,
+    top: CountSchema,
+  }, { policy: 'closed' }),
+]);
 export type AzureIterationChangesInputV1 = ReturnType<
   typeof AzureIterationChangesInputV1Schema.parse
 >;
@@ -201,16 +199,21 @@ export const AzureIterationChangesResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('iterationChanges'),
     iterationId: IterationIdSchema,
-    rows: defineProtocolArray(AzureProjectedChangedFileRowV1Schema, {
-      maxItems: AZURE_MAX_DETAIL_ROWS_V1,
-    }),
+    rows: defineProtocolArray(AzureProjectedChangedFileRowV1Schema),
+    omittedRowCount: CountSchema,
+    projectionTruncated: AzureBooleanSchema,
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('iterationChanges'),
+    iterationId: IterationIdSchema,
+    rows: defineProtocolArray(AzureProjectedChangedFileRowV1Schema),
     /**
      * The next window, exactly as Azure issued it. Both are present together or
      * absent together: a caller that received one and computed the other would
      * silently re-read or skip files.
      */
-    nextSkip: CountSchema.optional(),
-    nextTop: CountSchema.optional(),
+    nextSkip: CountSchema,
+    nextTop: CountSchema,
     omittedRowCount: CountSchema,
     projectionTruncated: AzureBooleanSchema,
   }, { policy: 'closed' }),
@@ -252,12 +255,8 @@ export const AzureProjectedPolicyEvaluationRowV1Schema = defineProtocolObject({
 export const AzurePoliciesResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('policies'),
-    statuses: defineProtocolArray(AzureProjectedStatusRowV1Schema, {
-      maxItems: AZURE_MAX_DETAIL_ROWS_V1,
-    }),
-    evaluations: defineProtocolArray(AzureProjectedPolicyEvaluationRowV1Schema, {
-      maxItems: AZURE_MAX_DETAIL_ROWS_V1,
-    }),
+    statuses: defineProtocolArray(AzureProjectedStatusRowV1Schema),
+    evaluations: defineProtocolArray(AzureProjectedPolicyEvaluationRowV1Schema),
     /**
      * True when the evaluation read failed after the statuses succeeded. Only
      * that half is short; the statuses are real and stay.
@@ -321,9 +320,7 @@ export const AzureProjectedThreadRowV1Schema = defineProtocolObject({
 export const AzureThreadsResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
     kind: defineProtocolLiteral('threads'),
-    rows: defineProtocolArray(AzureProjectedThreadRowV1Schema, {
-      maxItems: AZURE_MAX_THREAD_ROWS_V1,
-    }),
+    rows: defineProtocolArray(AzureProjectedThreadRowV1Schema),
     omittedRowCount: CountSchema,
     projectionTruncated: AzureBooleanSchema,
   }, { policy: 'closed' }),

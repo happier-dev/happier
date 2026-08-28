@@ -45,6 +45,7 @@ import {
   listBitbucketInstancesAction,
   prepareBitbucketReviewWorkspaceAction,
   scanBitbucketSourceAction,
+  verifyBitbucketReviewWorkspaceAction,
 } from './triage/source/actions.js';
 import {
   BITBUCKET_TRIAGE_DETAIL_ACTION_IDS,
@@ -68,9 +69,12 @@ import {
 } from './triage/source/detailContracts.js';
 import {
   BITBUCKET_TRIAGE_MUTATION_ACTION_IDS,
+  createBitbucketPullRequestReviewCommentAction,
   declineBitbucketPullRequestAction,
   mergeBitbucketPullRequestAction,
   resolveBitbucketCommentAction,
+  publishBitbucketPullRequestReviewAction,
+  replyToBitbucketPullRequestReviewCommentAction,
   unresolveBitbucketCommentAction,
 } from './triage/source/mutationActions.js';
 import {
@@ -79,6 +83,10 @@ import {
   BitbucketDeclineInputV1Schema,
   BitbucketMergeInputV1Schema,
   BitbucketMutationResultV1Schema,
+  BitbucketReviewPublicationInputV1Schema,
+  BitbucketReviewPublicationResultV1Schema,
+  BitbucketReviewCommentCreateInputV1Schema,
+  BitbucketReviewCommentReplyInputV1Schema,
 } from './triage/source/mutationContracts.js';
 
 /** The local id of this plugin's one Triage source contribution. */
@@ -255,6 +263,19 @@ export const BITBUCKET_PLUGIN = definePlugin({
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: prepareBitbucketReviewWorkspaceAction,
     },
+    [BITBUCKET_TRIAGE_ACTION_IDS.verifyReviewWorkspace]: {
+      title: 'Verify a Bitbucket Cloud pull-request review workspace',
+      description: 'Rereads one Bitbucket Cloud pull request and verifies the already prepared local workspace before review starts.',
+      scopes: ['global'],
+      surfaces: sources.operations.verifyReviewWorkspace.declaration.surfaces,
+      execution: { target: 'daemon' },
+      dangerLevel: sources.operations.verifyReviewWorkspace.declaration.dangerLevel,
+      inputSchema: sources.operations.verifyReviewWorkspace.declaration.input.schema.jsonSchema,
+      resultSchema: sources.operations.verifyReviewWorkspace.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: verifyBitbucketReviewWorkspaceAction,
+    },
     // The three source-native detail planes. Their published surface is
     // `plugin`, so the only caller that reaches them is this plugin's own
     // mounted detail artifact.
@@ -353,11 +374,19 @@ export const BITBUCKET_PLUGIN = definePlugin({
       // consequences a user cannot take back — the merge itself, and the branch decision they made
       // — rather than asking "are you sure" about an unnamed effect.
       confirmation: {
-        title: 'Merge this pull request?',
-        body: 'Merging is permanent on Bitbucket. The source branch is deleted only if you chose'
-          + ' that, and the merge runs against the commit shown here — if new commits arrive first,'
-          + ' nothing is merged and you are asked again.',
-        confirmLabel: 'Merge',
+        title: {
+          key: 'plugins.bitbucket.ui.mutations.merge.button',
+          fallback: 'Merge this pull request?',
+        },
+        body: {
+          key: 'plugins.bitbucket.ui.mutations.merge.strategyRequired',
+          fallback: 'Merging permanently writes the selected strategy into this repository.'
+            + ' If new commits arrive first, nothing is merged.',
+        },
+        confirmLabel: {
+          key: 'plugins.bitbucket.ui.mutations.merge.button',
+          fallback: 'Merge',
+        },
       },
       inputSchema: BitbucketMergeInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
@@ -378,10 +407,18 @@ export const BITBUCKET_PLUGIN = definePlugin({
       // `/reopen` path exists. The confirmation says exactly that, because a user who expects the
       // GitHub or GitLab affordance would otherwise assume they can undo this.
       confirmation: {
-        title: 'Decline this pull request?',
-        body: 'Bitbucket cannot reopen a declined pull request through its API. To bring this work'
-          + ' back you would have to open a new pull request.',
-        confirmLabel: 'Decline',
+        title: {
+          key: 'plugins.bitbucket.ui.mutations.decline.button',
+          fallback: 'Decline this pull request?',
+        },
+        body: {
+          key: 'plugins.bitbucket.ui.mutations.decline.description',
+          fallback: 'Bitbucket cannot reopen a declined pull request through its API.',
+        },
+        confirmLabel: {
+          key: 'plugins.bitbucket.ui.mutations.decline.button',
+          fallback: 'Decline',
+        },
       },
       inputSchema: BitbucketDeclineInputV1Schema.jsonSchema,
       resultSchema: BitbucketMutationResultV1Schema.jsonSchema,
@@ -399,10 +436,18 @@ export const BITBUCKET_PLUGIN = definePlugin({
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
       confirmation: {
-        title: 'Resolve this comment thread?',
-        body: 'Everyone on the pull request sees it as resolved. Nothing in the conversation is'
-          + ' changed, and it can be reopened afterwards.',
-        confirmLabel: 'Resolve',
+        title: {
+          key: 'plugins.bitbucket.ui.mutations.comment.resolve',
+          fallback: 'Resolve this comment thread?',
+        },
+        body: {
+          key: 'plugins.bitbucket.ui.mutations.comment.resolveConfirmation',
+          fallback: 'Everyone on the pull request will see this thread as resolved. It can be reopened.',
+        },
+        confirmLabel: {
+          key: 'plugins.bitbucket.ui.mutations.comment.resolve',
+          fallback: 'Resolve',
+        },
       },
       // One input for both directions: the entry, and the comment. What separates resolve from
       // reopen is the verb the handler sends, which is not a value a caller supplies.
@@ -425,16 +470,90 @@ export const BITBUCKET_PLUGIN = definePlugin({
       execution: { target: 'daemon' },
       dangerLevel: 'writesRemote',
       confirmation: {
-        title: 'Reopen this comment thread?',
-        body: 'Everyone on the pull request sees it as open again. Nothing in the conversation is'
-          + ' changed, and it can be resolved again afterwards.',
-        confirmLabel: 'Reopen',
+        title: {
+          key: 'plugins.bitbucket.ui.mutations.comment.reopen',
+          fallback: 'Reopen this comment thread?',
+        },
+        body: {
+          key: 'plugins.bitbucket.ui.mutations.comment.reopenConfirmation',
+          fallback: 'Everyone on the pull request will see this thread as open again. It can be resolved again.',
+        },
+        confirmLabel: {
+          key: 'plugins.bitbucket.ui.mutations.comment.reopen',
+          fallback: 'Reopen',
+        },
       },
       inputSchema: BitbucketCommentResolutionInputV1Schema.jsonSchema,
       resultSchema: BitbucketCommentResolutionResultV1Schema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: unresolveBitbucketCommentAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
+      title: 'Submit this Bitbucket pull-request review',
+      description: 'Publishes the selected canonical Happier review comments in order, then applies the requested Bitbucket verdict against the exact base and head revisions shown.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: {
+          key: 'plugins.bitbucket.ui.mutations.review.confirmation.title',
+          fallback: 'Submit this review?',
+        },
+        body: {
+          key: 'plugins.bitbucket.ui.mutations.review.confirmation.body',
+          fallback: 'This publishes the selected comments and then your verdict on Bitbucket. If the pull request comparison moved, nothing is written.',
+        },
+        confirmLabel: {
+          key: 'plugins.bitbucket.ui.mutations.review.submit',
+          fallback: 'Submit review',
+        },
+      },
+      inputSchema: BitbucketReviewPublicationInputV1Schema.jsonSchema,
+      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: publishBitbucketPullRequestReviewAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment]: {
+      title: 'Publish this Bitbucket review comment',
+      description: 'Publishes one canonical Happier proposal at its exact pinned Bitbucket diff anchor.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'externalSideEffect',
+      confirmation: {
+        title: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.title', fallback: 'Publish this review comment?' },
+        body: { key: 'plugins.bitbucket.ui.mutations.reviewComment.confirmation.body', fallback: 'This posts the selected comment on Bitbucket at the exact pull request comparison you reviewed.' },
+        confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewComment.publish', fallback: 'Publish comment' },
+      },
+      inputSchema: BitbucketReviewCommentCreateInputV1Schema.jsonSchema,
+      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: createBitbucketPullRequestReviewCommentAction,
+    },
+    [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment]: {
+      title: 'Reply to this Bitbucket review comment',
+      description: 'Publishes one canonical Happier proposal beneath one exact Bitbucket pull-request comment.',
+      scopes: ['global'],
+      surfaces: ['ui', 'plugin'],
+      placementBindings: ['detailsPanel'],
+      execution: { target: 'daemon' },
+      dangerLevel: 'writesRemote',
+      confirmation: {
+        title: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.title', fallback: 'Post this reply?' },
+        body: { key: 'plugins.bitbucket.ui.mutations.reviewReply.confirmation.body', fallback: 'This reply becomes visible beneath the selected Bitbucket pull-request comment.' },
+        confirmLabel: { key: 'plugins.bitbucket.ui.mutations.reviewReply.publish', fallback: 'Post reply' },
+      },
+      inputSchema: BitbucketReviewCommentReplyInputV1Schema.jsonSchema,
+      resultSchema: BitbucketReviewPublicationResultV1Schema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: replyToBitbucketPullRequestReviewCommentAction,
     },
   },
   scmHostingProviders: {
@@ -446,7 +565,14 @@ export const BITBUCKET_PLUGIN = definePlugin({
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID,
       },
-      runtime: { adapter: bitbucketApiAdapter },
+      runtime: {
+        adapter: {
+          routing: bitbucketApiAdapter,
+          pullRequests: bitbucketApiAdapter,
+          pullRequestCheckout: bitbucketApiAdapter,
+          repositoryPublishing: bitbucketApiAdapter,
+        },
+      },
     },
   },
   connectedAccountDescriptors: {
@@ -497,6 +623,8 @@ export const BITBUCKET_PLUGIN = definePlugin({
             get: sources.operations.get.bind(BITBUCKET_TRIAGE_ACTION_IDS.get),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
               .bind(BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
+            verifyReviewWorkspace: sources.operations.verifyReviewWorkspace
+              .bind(BITBUCKET_TRIAGE_ACTION_IDS.verifyReviewWorkspace),
           },
           surfaces: { detail: { renderer: BITBUCKET_TRIAGE_DETAIL_RENDERER_ID } },
         }),

@@ -3,14 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 
-describe('Gemini agent definition runtime contributions', () => {
-  it('exports a plugin-owned provider catalog runtime contribution', () => {
-    expect(AGENT_DEFINITION.runtimeContributions).toMatchObject({
-      agentCatalogEntry: {
-        importName: 'GEMINI_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/catalog',
-      },
-    });
+describe('Gemini agent definition', () => {
+  it('keeps the public Agent definition free of private runtime aggregates', () => {
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
   });
 
   it('does not advertise deferred OAuth, ADC, or machine-login auth facts', () => {

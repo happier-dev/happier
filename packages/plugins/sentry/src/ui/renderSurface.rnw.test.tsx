@@ -131,7 +131,14 @@ function eventProjection(overrides: Readonly<Record<string, JsonValue>> = {}): J
       redactions: [],
       sensitivePaths: [],
       projectionTruncated: false,
-      omitted: { sections: 0, frames: 0, breadcrumbs: 0, tags: 0 },
+      omitted: {
+        sections: 0,
+        frames: 0,
+        breadcrumbs: 0,
+        tags: 0,
+        redactions: 0,
+        sensitivePaths: 0,
+      },
       ...overrides,
     },
   };
@@ -146,6 +153,7 @@ type Invocation = Readonly<{ localId: string; input: unknown }>;
 
 function createHarness(options: Readonly<{
   event?: JsonValue;
+  eventSequence?: readonly JsonValue[];
   events?: JsonValue;
   tags?: JsonValue;
 }> = {}) {
@@ -173,7 +181,12 @@ function createHarness(options: Readonly<{
         projectionTruncated: false,
       };
     }
-    if (localId === SENTRY_ACTION_IDS.readEvent) return options.event ?? eventProjection();
+    if (localId === SENTRY_ACTION_IDS.readEvent) {
+      const readIndex = invocations.filter(
+        (entry) => entry.localId === SENTRY_ACTION_IDS.readEvent,
+      ).length - 1;
+      return options.eventSequence?.[readIndex] ?? options.event ?? eventProjection();
+    }
     if (localId === SENTRY_ACTION_IDS.listTagValues) {
       return {
         kind: 'tagValues',
@@ -310,6 +323,35 @@ describe('the mounted Sentry issue detail body', () => {
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(1);
   });
 
+  it('keeps the last-known-good occurrence visible when its explicit reread fails', async () => {
+    const harness = createHarness({
+      eventSequence: [
+        eventProjection({
+          sections: [{
+            kind: 'exception',
+            type: 'ProjectionFailure',
+            value: 'retained body',
+            frames: [],
+          }],
+        }),
+        {
+          kind: 'unavailable',
+          failure: { class: 'transient', code: 'sentry-temporarily-unavailable' },
+        },
+      ],
+    });
+    const page = await mountDetail(harness);
+    await expect(page.getByText('ProjectionFailure: retained body')).resolves.toBeDefined();
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Reread this occurrence' }));
+    });
+
+    expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(2);
+    await expect(page.getByText('ProjectionFailure: retained body')).resolves.toBeDefined();
+    await expect(page.getByText('Showing the last observation')).resolves.toBeDefined();
+  });
+
   it('gives an occurrence with no trace no Stack Trace tab at all', async () => {
     const harness = createHarness({ event: TRACELESS_EVENT });
     const page = await mountDetail(harness);
@@ -342,6 +384,27 @@ describe('the mounted Sentry issue detail body', () => {
     expect(harness.countOf(SENTRY_ACTION_IDS.readEvent)).toBe(2);
     expect(harness.invocations.at(-1)?.input)
       .toMatchObject({ selector: { kind: 'event', eventId: 'b'.repeat(32) } });
+  });
+
+  it('states when an oversized provider continuation made the occurrence walk stop short', async () => {
+    const harness = createHarness({
+      events: {
+        kind: 'events',
+        rows: [{ eventId: 'b'.repeat(32), headline: 'retained occurrence' }],
+        omittedRowCount: 0,
+        projectionTruncated: false,
+        incomplete: 'continuationUnavailable',
+      },
+    });
+    const page = await mountDetail(harness);
+
+    await selectTab(page, 'Occurrences');
+
+    await expect(page.getByText(
+      'Sentry offered the next page in a form this build will not follow, so this list stops here.',
+    )).resolves.toBeDefined();
+    await expect(page.queryByRole('button', { name: 'Load more retained events' }))
+      .resolves.toBeUndefined();
   });
 
   it('names its tab strip and every tab in the reader’s own locale', async () => {

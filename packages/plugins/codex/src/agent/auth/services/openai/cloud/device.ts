@@ -1,5 +1,5 @@
 import { sleep as sdkSleep } from '@happier-dev/plugin-sdk/async';
-import { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from '../../../../../connectedAccounts/openAiCodexProfile.js';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 
 import type { CodexAuthTokens } from './types.js';

@@ -20,22 +20,24 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
-    defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
+    TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageSourceEntryLocalRefV1Schema,
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-    POSTHOG_ACTIVITY_BOUNDS_V1,
-    POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
-} from '../../ui/detail/activityProjection.js';
+const definePosthogActivityString = (
+    options: Parameters<typeof defineProtocolString>[0],
+) => defineProtocolString({
+    ...options,
+    pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+});
 
-/** The largest continuation this source will mint or accept, in UTF-8 bytes. */
-export const MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES = 256;
+import { POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT } from '../../ui/detail/activityProjection.js';
 
 /**
  * Why an Activity walk stopped without reaching the end of the collection.
@@ -64,37 +66,17 @@ const PosthogActivityBooleanSchema = defineProtocolUnion([
 /**
  * One published activity record.
  *
- * Every bound is the exact value the boundary projector applies, so a page the projector
- * can produce always parses and a page it never could is rejected here rather than
- * becoming a second, looser statement of what may leave this source.
+ * Provider text is normalized to the shared single-line rule before publication. No
+ * source-local byte or changed-field count limit is invented here.
  */
 export const PosthogProjectedActivityRecordV1Schema = defineProtocolObject({
-    id: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.identifierUtf8Bytes,
-        minLength: 1,
-    }),
-    activity: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.activityUtf8Bytes,
-        minLength: 1,
-    }),
-    scope: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.scopeUtf8Bytes,
-        minLength: 1,
-    }).optional(),
+    id: definePosthogActivityString({ minLength: 1 }),
+    activity: definePosthogActivityString({ minLength: 1 }),
+    scope: definePosthogActivityString({ minLength: 1 }).optional(),
     atMs: defineProtocolNumber({ integer: true }).optional(),
-    actor: defineProtocolUtf8String({
-        maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.actorUtf8Bytes,
-        minLength: 1,
-    }).optional(),
+    actor: definePosthogActivityString({ minLength: 1 }).optional(),
     isSystem: PosthogActivityBooleanSchema,
-    changedFields: defineProtocolArray(
-        defineProtocolUtf8String({
-            maxUtf8Bytes: POSTHOG_ACTIVITY_BOUNDS_V1.changedFieldUtf8Bytes,
-            minLength: 1,
-        }),
-        { maxItems: POSTHOG_ACTIVITY_BOUNDS_V1.maxChangedFieldsPerRecord },
-    ),
-    truncated: defineProtocolLiteral(true).optional(),
+    changedFields: defineProtocolArray(definePosthogActivityString({ minLength: 1 })),
 }, { policy: 'closed' });
 
 export const PosthogIssueActivityInputV1Schema = defineProtocolObject({
@@ -107,10 +89,7 @@ export const PosthogIssueActivityInputV1Schema = defineProtocolObject({
         maximum: POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
     }),
     /** Present only for a following page, and only as this source minted it. */
-    continuation: defineProtocolUtf8String({
-        maxUtf8Bytes: MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
-        minLength: 1,
-    }).optional(),
+    continuation: defineProtocolString({ minLength: 1 }).optional(),
 }, { policy: 'closed' });
 export type PosthogIssueActivityInputV1 = ReturnType<
     typeof PosthogIssueActivityInputV1Schema.parse
@@ -130,10 +109,7 @@ export const PosthogIssueActivityResultV1Schema = defineProtocolUnion([
         /** The provider's stated total, absent when it stated none. */
         totalCount: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
         /** Absent when this page ends the walk. */
-        continuation: defineProtocolUtf8String({
-            maxUtf8Bytes: MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
-            minLength: 1,
-        }).optional(),
+        continuation: defineProtocolString({ minLength: 1 }).optional(),
         /**
          * Present only when the walk stopped short of the whole collection. Absent
          * together with `continuation` is exhaustion; present without one is a list
@@ -160,15 +136,11 @@ export type PosthogIssueActivityFrontier = Readonly<{
 export function encodePosthogIssueActivityContinuation(
     frontier: PosthogIssueActivityFrontier,
 ): string | null {
-    const token = JSON.stringify({
+    return JSON.stringify({
         v: CONTINUATION_VERSION,
         page: frontier.page,
         limit: frontier.limit,
     });
-    return new TextEncoder().encode(token).length
-        > MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES
-        ? null
-        : token;
 }
 
 /**

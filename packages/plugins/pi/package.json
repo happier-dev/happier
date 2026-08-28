@@ -14,14 +14,6 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./agent/contributions/runtime": {
-      "types": "./dist/agent/contributions/runtime.d.ts",
-      "default": "./dist/agent/contributions/runtime.js"
-    },
-    "./agent/contributions/catalog": {
-      "types": "./dist/agent/contributions/catalog.d.ts",
-      "default": "./dist/agent/contributions/catalog.js"
-    },
     "./protocol/runtimeDescriptorV1": {
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"
@@ -74,10 +66,10 @@
     "typecheck:local": "node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@happier-dev/agents": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   },
   "devDependencies": {
+    "@happier-dev/agents": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@happier-dev/tests": "0.0.0",
     "pi-ai-0810": "npm:@earendil-works/pi-ai@0.81.0",

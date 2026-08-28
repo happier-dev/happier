@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { defineUiSurface, type PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiContextEnrichmentV1, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -56,6 +56,7 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { TriageListShell } from './shell/root.js';
 import { TRIAGE_UI_TRANSLATIONS } from './translations.js';
@@ -90,6 +91,7 @@ const SOURCE_A = Object.freeze({ pluginId: 'happier.example.source', localId: 'e
 const SOURCE_B = Object.freeze({ pluginId: 'happier.other.source', localId: 'other-forge' });
 const INSTANCE_A = '11111111-1111-4111-8111-111111111111';
 const INSTANCE_B = '22222222-2222-4222-8222-222222222222';
+
 /**
  * The two connections are labelled differently on purpose. A fixture that gives
  * every configured instance one label cannot tell "names the source that
@@ -283,10 +285,19 @@ function createHarness() {
         });
     }
 
-    return { actionCalls, executeAction, publishedContexts, scanCalls, state, unroutedActions };
+    return {
+        actionCalls,
+        executeAction,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
+        publishedContexts,
+        scanCalls,
+        state,
+        unroutedActions,
+    };
 }
 
 const mounted: PluginUiTestkit[] = [];
+const scopeByHost = new WeakMap<object, PluginUiEphemeralSharedScope>();
 
 async function mountSurface(
     surface: RenderSurface,
@@ -310,7 +321,9 @@ async function mountSurface(
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             surface,
             surfaceContext: createSurfaceContextFixture(context),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({
+                ephemeralSharedScope: harness.ephemeralSharedScope,
+            }),
             handlers: {
                 publishCurrentUiContext: ({ enrichment }) => {
                     harness.publishedContexts.push(enrichment);
@@ -321,6 +334,7 @@ async function mountSurface(
             },
         });
     });
+    scopeByHost.set(fixture.context.hostApi, harness.ephemeralSharedScope);
     mounted.push(fixture);
     return fixture;
 }
@@ -330,8 +344,10 @@ async function settleWindow(
     trigger: 'view' | 'manual',
     fixture: PluginUiTestkit,
 ): Promise<void> {
+    const scope = scopeByHost.get(fixture.context.hostApi);
+    if (scope === undefined) throw new Error('mounted surface lost its host-owned scope');
     await act(async () => {
-        await refreshTriageListWindow(trigger, fixture.context.hostApi);
+        await refreshTriageListWindow(trigger, fixture.context.hostApi, scope);
     });
 }
 
@@ -442,13 +458,11 @@ describe('the mounted PRs & Issues surface', () => {
         const picker = await mountSurface(renderPickerSurface, harness, 'triage-entry-picker');
 
         // `REQ-14`. Mounting the PRs & Issues page is a named materialization
-        // producer; opening a Composer control is not. The picker is its own UI
-        // artifact with its own host-stamped window, so it can never inherit
-        // this page's rows — and the honest answer to that is the cold state
-        // and an explicit Refresh, never an empty list and never a hidden walk.
+        // producer; opening a Composer control is not. The separate picker
+        // artifact joins the exact host-owned window the page already warmed,
+        // without starting another provider walk.
         expect(harness.scanCalls.count).toBe(scansAfterList);
-        await visibleTexts(picker, ['Refresh to read your connected sources.']);
-        await expect(picker.queryByText('No sources are configured')).resolves.toBeUndefined();
+        await visibleTexts(picker, ['Replace the duplicated normalizer', 'Middle change', 'Older change']);
         await visibleTexts(shell, ['Replace the duplicated normalizer']);
 
         // The reader asks, and only then does the picker read.

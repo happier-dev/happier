@@ -180,13 +180,18 @@ function normalizeAutomationEvent(
   payload: JsonObject,
   eventType: string,
   providerDeliveryId: string,
+  receivedAtMs: number,
 ): GithubAutomationWebhookObservationV1 | null {
   if (eventType !== 'push' && eventType !== 'issues' && eventType !== 'pull_request') return null;
   const repository = readRepository(payload.repository);
   const repositoryPayload = eventRepository(repository);
   if (eventType === 'push') {
-    if (!isObject(payload.head_commit)) return null;
-    const occurredAtMs = readTimestamp(payload.head_commit, 'timestamp');
+    // Unlike issue and pull-request resources, a push webhook has no provider
+    // event timestamp. `head_commit.timestamp` is commit authorship time and
+    // may be arbitrarily older than the push (or null for ref deletion), so it
+    // must not drive Event freshness. The authenticated host receipt is the
+    // only transport-owned occurrence clock available for this delivery.
+    const occurredAtMs = receivedAtMs;
     const facts = Object.freeze({
       kind: 'push',
       repository: repositoryPayload,
@@ -223,6 +228,7 @@ function normalizeAutomationEvent(
   }
   if (payload.action !== 'opened' && payload.action !== 'closed') return null;
   const pullRequest = readObject(payload.pull_request, 'pull_request');
+  if (payload.action === 'closed' && pullRequest.merged !== true) return null;
   const occurredAtMs = payload.action === 'opened'
     ? readTimestamp(pullRequest, 'created_at')
     : readTimestamp(pullRequest, 'merged_at');
@@ -239,17 +245,14 @@ function normalizeAutomationEvent(
           title: readString(pullRequest, 'title', true),
         }),
       })
-    : pullRequest.merged === true
-      ? Object.freeze({
-          kind: 'pullRequestMerged',
-          repository: repositoryPayload,
-          pullRequest: Object.freeze({
-            ...commonPullRequest,
-            mergeCommitSha: readString(pullRequest, 'merge_commit_sha'),
-          }),
-        })
-      : null;
-  if (facts === null) return null;
+    : Object.freeze({
+        kind: 'pullRequestMerged',
+        repository: repositoryPayload,
+        pullRequest: Object.freeze({
+          ...commonPullRequest,
+          mergeCommitSha: readString(pullRequest, 'merge_commit_sha'),
+        }),
+      });
   return createAutomationWebhookObservation({
     repository,
     providerDeliveryId,
@@ -268,6 +271,7 @@ export function normalizeGithubWebhookDelivery(input: Readonly<{
   rawBody: Uint8Array;
   eventType: string | undefined;
   providerDeliveryId: string;
+  receivedAtMs: number;
   parseJson?: GithubWebhookJsonParser;
 }>): GithubNormalizedWebhookDeliveryV1 {
   if (!input.eventType || !input.providerDeliveryId) {
@@ -286,6 +290,11 @@ export function normalizeGithubWebhookDelivery(input: Readonly<{
     providerDeliveryId: input.providerDeliveryId,
     eventType: input.eventType,
     comment: input.eventType === 'issue_comment' ? normalizeIssueComment(payload) : null,
-    automationEvent: normalizeAutomationEvent(payload, input.eventType, input.providerDeliveryId),
+    automationEvent: normalizeAutomationEvent(
+      payload,
+      input.eventType,
+      input.providerDeliveryId,
+      input.receivedAtMs,
+    ),
   });
 }

@@ -23,6 +23,7 @@ import {
 import { renderSurface as renderShellSurface } from '../surface.js';
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from '../shell/root.js';
 import { refreshTriageListWindow } from '../window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from '../window/ephemeralSharedScope.test-support.js';
 
 /**
  * `core/SURFACE.md` §6's two lens compositions, decided by the SAME measurement
@@ -137,6 +138,7 @@ async function executeAction(action: string): Promise<JsonValue> {
 const mounted: PluginUiTestkit[] = [];
 
 async function mountShell(): Promise<PluginUiTestkit> {
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -154,7 +156,7 @@ async function mountShell(): Promise<PluginUiTestkit> {
                     container: 'appPage',
                 },
             }),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action }) => await executeAction(action),
@@ -163,7 +165,9 @@ async function mountShell(): Promise<PluginUiTestkit> {
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     return fixture;
 }
 

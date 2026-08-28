@@ -13,7 +13,11 @@ import {
   createBitbucketTriageApiClient,
   type BitbucketTriageApiClient,
 } from '../apiClient.js';
-import { createBitbucketFailure, type BitbucketTriageFailure } from '../failures.js';
+import {
+  classifyBitbucketAbortSignal,
+  createBitbucketFailure,
+  type BitbucketTriageFailure,
+} from '../failures.js';
 
 /** Everything one bounded source invocation needs from the host, and nothing more. */
 export type BitbucketSourceRuntime = Readonly<{
@@ -90,7 +94,12 @@ export async function createAuthorizedBitbucketClient(
   });
   if (!authorization.ok) {
     // The host's rejection is never echoed: it can carry the very material it failed to deliver.
-    return { ok: false, failure: AUTHORIZATION_FAILURES[authorization.reason] };
+    return {
+      ok: false,
+      failure: authorization.reason === 'cancelled' && runtime.signal?.aborted === true
+        ? classifyBitbucketAbortSignal(runtime.signal)
+        : AUTHORIZATION_FAILURES[authorization.reason],
+    };
   }
 
   const headers = authorization.headers;

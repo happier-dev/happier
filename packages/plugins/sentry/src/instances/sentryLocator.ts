@@ -8,15 +8,13 @@
  */
 
 import {
+  MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   normalizeTriageSingleLineV1,
   projectTriageDisplayTextV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import {
-  SENTRY_DISPLAY_PATH_SEPARATOR,
-  SENTRY_MAX_LOCATION_UTF8_BYTES,
-  SENTRY_MAX_TEXT_UTF8_BYTES,
-} from '../sentryContracts.js';
+import { SENTRY_DISPLAY_PATH_SEPARATOR } from '../sentryContracts.js';
 
 export type SentryLocatorInputV1 = Readonly<{
   /** `[SCHEMA]` `permalink`, used verbatim when it is a usable http(s) URL. */
@@ -62,7 +60,7 @@ function usablePermalink(value: string | null | undefined): string | null {
  */
 function fittingLocation(value: string): string | null {
   if (value === '' || value !== normalizeTriageSingleLineV1(value)) return null;
-  return new TextEncoder().encode(value).byteLength > SENTRY_MAX_LOCATION_UTF8_BYTES
+  return new TextEncoder().encode(value).byteLength > MAX_TRIAGE_LOCATION_UTF8_BYTES_V1
     ? null
     : value;
 }
@@ -95,7 +93,7 @@ export function buildSentryLocator(input: SentryLocatorInputV1): SentryLocatorV1
   // normalized to one line and shortened rather than dropped.
   const displayPath = projectTriageDisplayTextV1(
     `${pathHead}${SENTRY_DISPLAY_PATH_SEPARATOR}${shortId ?? input.entryId}`,
-    SENTRY_MAX_TEXT_UTF8_BYTES,
+    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   );
 
   return Object.freeze({

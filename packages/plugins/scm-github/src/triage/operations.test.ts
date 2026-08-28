@@ -4,6 +4,7 @@ import {
   TriageGetResultV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanResultV1Schema,
+  TriageVerifyReviewWorkspaceResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -27,6 +28,7 @@ import {
   getGithubTriageEntry,
   prepareGithubTriageReviewWorkspace,
   scanGithubTriageSource,
+  verifyGithubTriageReviewWorkspace,
 } from './operations.js';
 import {
   createStubGithubTransport,
@@ -127,6 +129,26 @@ function withReviewWorkspaceMaterializer(
       services: { ...context.services, actions: { execute } },
     } as unknown as PluginInvocationContext,
   });
+}
+
+function verifyWorkspaceInput(input: Readonly<{
+  observed?: Partial<Readonly<{
+    baseSha: string;
+    headSha: string;
+    nativeRevision: string;
+  }>>;
+  repositoryPath?: string;
+  pullRequest?: unknown;
+}> = {}) {
+  const prepared = prepareWorkspaceInput({ observed: input.observed });
+  return {
+    ...prepared,
+    prepared: {
+      repositoryPath: input.repositoryPath
+        ?? '/selected/repository/.happier/review/review-from-fork',
+      pullRequest: input.pullRequest ?? { number: 1284 },
+    },
+  };
 }
 
 function configuredInstance(input: Readonly<{
@@ -299,12 +321,132 @@ describe('GitHub Triage source operations', () => {
     );
   });
 
+  it('rereads the exact pull request and asks canonical SCM to verify the prepared local HEAD', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => {
+        if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
+          return undefined;
+        }
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        };
+      },
+    });
+    const verifier = withReviewWorkspaceMaterializer(stub.context, Object.freeze({
+      success: true as const,
+      verification: Object.freeze({
+        targetPath: '/selected/repository/.happier/review/review-from-fork',
+        sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      }),
+    }));
+
+    const result = await verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput(),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    );
+
+    expect(() => TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).not.toThrow();
+    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284 } });
+    expect(verifier.execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/repository',
+        displayName: 'review-from-fork',
+        sourceTip: {
+          repository: {
+            kind: 'github',
+            deployment: 'https://github.com',
+            repository: 'fork-user/fork-app',
+          },
+          cloneUrl: 'https://github.com/fork-user/fork-app.git',
+          branch: 'review-from-fork',
+          sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+          fetchRef: 'refs/heads/review-from-fork',
+        },
+        verification: {
+          targetPath: '/selected/repository/.happier/review/review-from-fork',
+        },
+      },
+      { signal: verifier.context.signal },
+    );
+  });
+
+  it('refuses changed provider or prepared pull-request facts before local verification', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => {
+        if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
+          return undefined;
+        }
+        return {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        };
+      },
+    });
+    const verifier = withReviewWorkspaceMaterializer(stub.context);
+
+    await expect(verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput({ observed: { headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+    await expect(verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput({ pullRequest: { number: 999 } }),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+    expect(verifier.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{
+      success: true,
+      verification: {
+        targetPath: '/another/worktree',
+        sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      },
+    }, { kind: 'workspaceMismatch' }],
+    [{
+      success: true,
+      verification: {
+        targetPath: '/selected/repository/.happier/review/review-from-fork',
+        sourceHeadSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      },
+    }, { kind: 'refused', reason: 'observedHeadMoved' }],
+  ] as const)('fails closed when canonical SCM reports changed final workspace facts', async (
+    scmResult,
+    expected,
+  ) => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => request.url.endsWith(
+        `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+      ) ? {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        } : undefined,
+    });
+    const verifier = withReviewWorkspaceMaterializer(stub.context, Object.freeze(scmResult));
+
+    await expect(verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput(),
+      verifier.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual(expected);
+    expect(verifier.execute).toHaveBeenCalledTimes(1);
+  });
+
   it('requires an already-selected workspace without reading GitHub or probing local SCM', async () => {
     const stub = searchTransport();
     const materializer = withReviewWorkspaceMaterializer(stub.context);
+    const { workspace: _workspace, ...withoutWorkspace } = prepareWorkspaceInput({});
 
     await expect(prepareGithubTriageReviewWorkspace(
-      prepareWorkspaceInput({ workspace: null }),
+      withoutWorkspace,
       materializer.context,
       { now: fixedClock(1_700_000_000_000) },
     )).resolves.toEqual({ kind: 'workspaceRequired' });
@@ -376,6 +518,63 @@ describe('GitHub Triage source operations', () => {
       { now: fixedClock(1_700_000_000_000) },
     )).resolves.toEqual(expected);
     expect(materializer.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when preparation receives the read-only verification success arm', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => request.url.endsWith(
+        `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+      ) ? {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        } : undefined,
+    });
+    const materializer = withReviewWorkspaceMaterializer(stub.context, Object.freeze({
+      success: true as const,
+      verification: Object.freeze({
+        targetPath: '/selected/repository/.happier/review/review-from-fork',
+        sourceHeadSha: '9f2c1a7d4b6e08f3a5c9d2e1b0847af63d5c1e29',
+      }),
+    }));
+
+    await expect(prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({}),
+      materializer.context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+
+  it('propagates SCM AbortError from both preparation and final verification', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request): StubHttpResponse | undefined => request.url.endsWith(
+        `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
+      ) ? {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+          body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
+        } : undefined,
+    });
+    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    const execute = vi.fn(async () => {
+      throw cancellation;
+    });
+    const context = {
+      ...stub.context,
+      services: { ...stub.context.services, actions: { execute } },
+    } as unknown as PluginInvocationContext;
+
+    await expect(prepareGithubTriageReviewWorkspace(
+      prepareWorkspaceInput({}),
+      context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).rejects.toBe(cancellation);
+    await expect(verifyGithubTriageReviewWorkspace(
+      verifyWorkspaceInput(),
+      context,
+      { now: fixedClock(1_700_000_000_000) },
+    )).rejects.toBe(cancellation);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('refuses a continuation this process did not mint rather than guessing a frontier', async () => {

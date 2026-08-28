@@ -28,6 +28,7 @@
  */
 
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
+import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
 import type {
   TriageDetailSurfaceInputV1,
   TriageSourceFailureV1,
@@ -37,6 +38,7 @@ import {
   GithubIssueAssigneeAddInputV1Schema,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
+  GithubIssueCommentInputV1Schema,
   GithubIssueDeltaResultV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
@@ -46,7 +48,9 @@ import {
   GithubPullRequestMarkReadyInputV1Schema,
   GithubPullRequestMarkReadyResultV1Schema,
   GithubPullRequestMergeInputV1Schema,
+  GithubPullRequestReviewCommentCreateInputV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
+  GithubPullRequestThreadReplyInputV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
   GithubPullRequestReviewersResultV1Schema,
   GithubPullRequestThreadResolutionInputV1Schema,
@@ -68,9 +72,9 @@ import {
   type GithubPullRequestMarkReadyResultV1,
   type GithubPullRequestMergeInputV1,
   type GithubPullRequestMergeResultV1,
+  type GithubPullRequestReviewCommentCreateInputV1,
   type GithubPullRequestReviewPublicationInputV1,
   type GithubPullRequestReviewPublicationResultV1,
-  type GithubPullRequestReviewVerdictV1,
   type GithubPullRequestRemoveReviewersInputV1,
   type GithubPullRequestReviewersResultV1,
   type GithubPullRequestStateResultV1,
@@ -221,14 +225,48 @@ export function buildGithubPullRequestUpdateBranchInputV1(
 /** Builds the one head-pinned review publication request from visible user input. */
 export function buildGithubPullRequestReviewPublicationInputV1(
   input: TriageDetailSurfaceInputV1,
-  verdict: GithubPullRequestReviewVerdictV1,
-  summary: string,
+  publicationPlan: ReviewCommentPublicationPlanV1,
 ): GithubPullRequestReviewPublicationInputV1 | null {
   const parsed = GithubPullRequestReviewPublicationInputV1Schema.safeParse({
     ...mutationTargetOf(input),
-    headRevision: input.observation.nativeRevision,
-    verdict,
-    summary,
+    publicationPlan,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestReviewCommentCreateInputV1(
+  input: TriageDetailSurfaceInputV1,
+  publicationPlan: ReviewCommentPublicationPlanV1,
+): GithubPullRequestReviewCommentCreateInputV1 | null {
+  const parsed = GithubPullRequestReviewCommentCreateInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    publicationPlan,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubPullRequestThreadReplyInputV1(
+  input: TriageDetailSurfaceInputV1,
+  publicationPlan: ReviewCommentPublicationPlanV1,
+  threadId: string,
+) {
+  const target = buildGithubPullRequestTargetInputV1(input);
+  if (target === null) return null;
+  const parsed = GithubPullRequestThreadReplyInputV1Schema.safeParse({
+    ...target,
+    publicationPlan,
+    threadId,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+export function buildGithubIssueCommentInputV1(
+  input: TriageDetailSurfaceInputV1,
+  publicationPlan: ReviewCommentPublicationPlanV1,
+) {
+  const parsed = GithubIssueCommentInputV1Schema.safeParse({
+    ...mutationTargetOf(input),
+    publicationPlan,
   });
   return parsed.success ? parsed.data : null;
 }
@@ -376,6 +414,15 @@ function localRefOf(input: TriageDetailSurfaceInputV1) {
  */
 export type GithubMutationOutcomeV1 =
   | Readonly<{ kind: 'applied'; effect: 'changed' | 'alreadySatisfied' }>
+  | Readonly<{
+    kind: 'publication';
+    publishedCount: number;
+    uncertainCount: number;
+    failedCount: number;
+    totalCount: number;
+    verdict: 'published' | 'uncertain' | 'failed' | 'notRequested';
+    failure: TriageSourceFailureV1 | null;
+  }>
   | Readonly<{ kind: 'pending' }>
   | Readonly<{ kind: 'refused'; reason: GithubMutationRefusalReasonV1 }>
   | Readonly<{ kind: 'uncertain'; failure: TriageSourceFailureV1 | null }>
@@ -423,6 +470,28 @@ export function projectGithubMutationOutcomeV1(
     });
   }
   if (parsed === null) return Object.freeze({ kind: 'unreadable' as const });
+  if (parsed.kind === 'settled') {
+    const entryOutcomes = parsed.publication.entries.map((entry) => entry.outcome);
+    const publicationVerdict = parsed.publication.verdict;
+    const verdict = 'kind' in publicationVerdict
+      ? 'notRequested' as const
+      : publicationVerdict.outcome.kind === 'published'
+        ? 'published' as const
+        : publicationVerdict.outcome.kind === 'uncertain'
+          ? 'uncertain' as const
+          : 'failed' as const;
+    return Object.freeze({
+      kind: 'publication' as const,
+      publishedCount: entryOutcomes.filter((effect) => effect.kind === 'published').length,
+      uncertainCount: entryOutcomes.filter((effect) => effect.kind === 'uncertain').length,
+      failedCount: entryOutcomes.filter((effect) => (
+        effect.kind === 'failed' || effect.kind === 'skippedPriorFailure'
+      )).length,
+      totalCount: entryOutcomes.length,
+      verdict,
+      failure: parsed.failure ?? null,
+    });
+  }
   if (parsed.kind === 'applied') {
     return Object.freeze({
       kind: 'applied' as const,
@@ -457,6 +526,11 @@ export function githubMutationMayHaveChangedProviderStateV1(
   switch (outcome.kind) {
     case 'applied':
       return outcome.effect === 'changed';
+    case 'publication':
+      return outcome.publishedCount > 0
+        || outcome.uncertainCount > 0
+        || outcome.verdict === 'published'
+        || outcome.verdict === 'uncertain';
     case 'pending':
     case 'uncertain':
     case 'unreadable':

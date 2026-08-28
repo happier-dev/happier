@@ -17,7 +17,10 @@ import {
   type DiscordGatewaySupervisor,
 } from './discordGatewaySupervisor.js';
 import type { DiscordGatewayWorkerResult } from './discordGatewayWorker.js';
-import { DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID } from './discordPluginConstants.js';
+import {
+  DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
+  DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
+} from './discordPluginConstants.js';
 
 const credentialRef = Object.freeze({
   service: Object.freeze({ pluginId: 'happier.channel.discord', localId: 'discord-bot' }),
@@ -60,8 +63,8 @@ function backgroundContext(
   return {
     plugin: { id: 'happier.channel.discord', version: '0.0.0' },
     contribution: {
-      id: 'gateway-supervisor',
-      qualifiedId: 'happier.channel.discord/backgroundServices/gateway-supervisor',
+      id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
+      qualifiedId: `happier.channel.discord/backgroundServices/${DISCORD_GATEWAY_BACKGROUND_SERVICE_ID}`,
     },
     surface: 'background',
     signal,
@@ -129,6 +132,7 @@ function supervisorBackgroundHarness(input: Readonly<{
                 materializationId: 'discord-supervisor-fixture-materialization',
                 pluginId: background.plugin.id,
               },
+              originSurface: 'background',
             },
             signal: options?.signal ?? background.signal,
             services: background.services,
@@ -252,6 +256,77 @@ function gatewaySocketUntilStopped(
 }
 
 describe('Discord Gateway supervisor', () => {
+  it.each([
+    ['missing caller', undefined],
+    ['different plugin', {
+      kind: 'plugin' as const,
+      pluginId: 'acme.unrelated',
+      contribution: {
+        id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
+        qualifiedId: `acme.unrelated/backgroundServices/${DISCORD_GATEWAY_BACKGROUND_SERVICE_ID}`,
+      },
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'acme.unrelated',
+      },
+      originSurface: 'background' as const,
+    }],
+    ['different background service', {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channel.discord',
+      contribution: {
+        id: 'another-runner',
+        qualifiedId: 'happier.channel.discord/backgroundServices/another-runner',
+      },
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'happier.channel.discord',
+      },
+      originSurface: 'background' as const,
+    }],
+    ['mismatched qualified contribution', {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channel.discord',
+      contribution: {
+        id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
+        qualifiedId: `happier.channel.discord/backgroundServices/another-runner`,
+      },
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'happier.channel.discord',
+      },
+      originSurface: 'background' as const,
+    }],
+    ['non-background origin', {
+      kind: 'plugin' as const,
+      pluginId: 'happier.channel.discord',
+      contribution: {
+        id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
+        qualifiedId: `happier.channel.discord/backgroundServices/${DISCORD_GATEWAY_BACKGROUND_SERVICE_ID}`,
+      },
+      materialization: {
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+        pluginId: 'happier.channel.discord',
+      },
+      originSurface: 'plugin' as const,
+    }],
+  ])('rejects a worker attempt from %s before provider work', async (_label, caller) => {
+    const supervisor = createDiscordGatewaySupervisor();
+    const context = {
+      ...channelsCoreContext(),
+      caller,
+    } as PluginInvocationContext;
+
+    await expect(supervisor.runWorkerAttempt(snapshot(), context))
+      .rejects.toThrow('Discord Gateway worker attempts may only be started by the Gateway supervisor.');
+
+    await supervisor.dispose();
+  });
+
   it('consumes the strict core-derived Message Content demand without reading bindings or defaulting it', () => {
     expect(requireDiscordGatewayRuntimeFactsFromCoreSnapshot(
       snapshot({ requiresFullSharedMessageContent: true }),

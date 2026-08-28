@@ -18,13 +18,14 @@ import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { buildGitlabGraphqlUrl, requestGitlabJson } from '../http/gitlabClient.js';
-import { boundGitlabText } from '../mapping/bounded.js';
-import { GITLAB_DETAIL_BOUNDS_V1 } from '../detail/projection.js';
 import { projectGitlabSourceFailure } from '../sourceFailure.js';
 import {
   GitlabMergeRequestMarkReadyInputV1Schema,
   type GitlabMergeRequestMarkReadyResultV1,
 } from './contracts.js';
+import {
+  readGitlabGraphqlMutationErrors,
+} from './graphqlDelta.js';
 import {
   GITLAB_MERGE_REQUEST_MUTATION_SUBJECT_V1,
   readGitlabProjectPath,
@@ -52,41 +53,6 @@ const SET_DRAFT_DOCUMENT = `mutation HappierMergeRequestSetDraft($projectPath: I
     mergeRequest { draft }
   }
 }`;
-
-const MAX_PROVIDER_MESSAGES = 8;
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-/**
- * GraphQL reports refusal in two places and both mean the same thing here: the
- * mutation did not happen. A `200` carrying either is a failed mutation, never a
- * success.
- */
-function readMutationErrors(body: unknown): readonly string[] {
-  const root = readRecord(body);
-  if (root === null) return [];
-  const messages: string[] = [];
-  const transportErrors = root.errors;
-  if (Array.isArray(transportErrors)) {
-    for (const entry of transportErrors) {
-      const message = typeof entry === 'string' ? entry : readRecord(entry)?.message;
-      if (typeof message === 'string' && message.trim() !== '') messages.push(message.trim());
-    }
-  }
-  const payloadErrors = readRecord(readRecord(root.data)?.mergeRequestSetDraft)?.errors;
-  if (Array.isArray(payloadErrors)) {
-    for (const entry of payloadErrors) {
-      if (typeof entry === 'string' && entry.trim() !== '') messages.push(entry.trim());
-    }
-  }
-  return messages
-    .slice(0, MAX_PROVIDER_MESSAGES)
-    .map((message) => boundGitlabText(message, GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes).text);
-}
 
 export async function markGitlabMergeRequestReady(
   input: unknown,
@@ -144,7 +110,10 @@ export async function markGitlabMergeRequestReady(
     // out. The confirming read below settles it; a second POST would summon
     // those reviewers twice.
   } else {
-    const messages = readMutationErrors(write.response.body);
+    const messages = readGitlabGraphqlMutationErrors(
+      write.response.body,
+      'mergeRequestSetDraft',
+    );
     if (messages.length > 0) {
       return {
         kind: 'refused',

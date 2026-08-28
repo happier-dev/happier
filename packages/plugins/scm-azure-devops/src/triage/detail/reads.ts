@@ -7,7 +7,6 @@ import type {
 
 import {
   AZURE_DETAIL_BOUNDS_V1,
-  AZURE_MAX_DETAIL_ROWS_V1,
   projectAzureCommitRows,
   projectAzureIterationChanges,
   projectAzureIterationRows,
@@ -55,8 +54,6 @@ export const AZURE_CONTINUATION_TOKEN_HEADER_V1 = 'x-ms-continuationtoken';
 export const AZURE_COMMITS_PAGE_SIZE_V1 = 30;
 /** One page of iteration changes. The provider decides every following window. */
 export const AZURE_CHANGES_PAGE_SIZE_V1 = 100;
-/** One bounded page of policy evaluations. */
-export const AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1 = 100;
 
 function collectionPageLength(body: unknown): number {
   return typeof body === 'object'
@@ -110,11 +107,12 @@ export type AzureIterationsReadV1 = Readonly<{
  * disagree about which iteration is current.
  */
 export async function readAzureIterations(
-  input: Readonly<{ repositoryId: string; pullRequestId: number }>,
+  input: Readonly<{ project: string; repositoryId: string; pullRequestId: number }>,
   dependencies: AzureDetailReadDependenciesV1,
 ): Promise<AzureDetailReadResultV1<AzureIterationsReadV1>> {
   const response = await requestJson(dependencies, {
     resource: 'iterations',
+    project: input.project,
     repositoryId: input.repositoryId,
     pullRequestId: input.pullRequestId,
   });
@@ -148,6 +146,7 @@ export type AzureCommitsReadV1 =
 
 export async function readAzureCommitsPage(
   input: Readonly<{
+    project: string;
     repositoryId: string;
     pullRequestId: number;
     continuationToken: string | null;
@@ -156,7 +155,12 @@ export async function readAzureCommitsPage(
 ): Promise<AzureDetailReadResultV1<AzureCommitsReadV1>> {
   const response = await requestJson(
     dependencies,
-    { resource: 'commits', repositoryId: input.repositoryId, pullRequestId: input.pullRequestId },
+    {
+      resource: 'commits',
+      project: input.project,
+      repositoryId: input.repositoryId,
+      pullRequestId: input.pullRequestId,
+    },
     {
       $top: AZURE_COMMITS_PAGE_SIZE_V1,
       ...(input.continuationToken === null
@@ -185,6 +189,7 @@ export async function readAzureCommitsPage(
  */
 export async function readAzureIterationChangesPage(
   input: Readonly<{
+    project: string;
     repositoryId: string;
     pullRequestId: number;
     iterationId: number;
@@ -200,6 +205,7 @@ export async function readAzureIterationChangesPage(
     dependencies,
     {
       resource: 'iterationChanges',
+      project: input.project,
       repositoryId: input.repositoryId,
       pullRequestId: input.pullRequestId,
       iterationId: input.iterationId,
@@ -207,10 +213,14 @@ export async function readAzureIterationChangesPage(
     { $compareTo: 0, $skip: input.skip, $top: input.top },
   );
   if (!response.ok) return response;
-  return {
-    ok: true,
-    value: projectAzureIterationChanges(response.value.body, AZURE_DETAIL_BOUNDS_V1),
-  };
+  const projected = projectAzureIterationChanges(response.value.body, AZURE_DETAIL_BOUNDS_V1);
+  if (projected.continuationMalformed) {
+    return {
+      ok: false,
+      failure: malformed('Azure DevOps returned an incomplete iteration-changes position.'),
+    };
+  }
+  return { ok: true, value: projected };
 }
 
 /* ------------------------------------------------------------------ policies */
@@ -241,15 +251,16 @@ export type AzurePoliciesReadV1 = Readonly<{
  */
 export async function readAzurePoliciesSurface(
   input: Readonly<{
+    project: string;
     repositoryId: string;
     pullRequestId: number;
-    project: string;
     projectId: string;
   }>,
   dependencies: AzureDetailReadDependenciesV1,
 ): Promise<AzureDetailReadResultV1<AzurePoliciesReadV1>> {
   const statuses = await requestJson(dependencies, {
     resource: 'statuses',
+    project: input.project,
     repositoryId: input.repositoryId,
     pullRequestId: input.pullRequestId,
   });
@@ -259,6 +270,7 @@ export async function readAzurePoliciesSurface(
   const artifactId =
     `vstfs:///CodeReview/CodeReviewId/${input.projectId}/${String(input.pullRequestId)}`;
   const projectedEvaluationRows: AzureProjectedPolicyEvaluationRowV1[] = [];
+  const seenEvaluationIds = new Set<string>();
   let evaluationOmissions = 0;
   let evaluationProjectionTruncated = false;
   let skip = 0;
@@ -270,7 +282,6 @@ export async function readAzurePoliciesSurface(
       {
         // The documented artifact identifier for a pull request's code review.
         artifactId,
-        $top: AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1,
         $skip: skip,
       },
     );
@@ -300,16 +311,39 @@ export async function readAzurePoliciesSurface(
       evaluations.value.body,
       AZURE_DETAIL_BOUNDS_V1,
     );
-    const available = Math.max(0, AZURE_MAX_DETAIL_ROWS_V1 - projectedEvaluationRows.length);
-    projectedEvaluationRows.push(...projectedPage.rows.slice(0, available));
-    const clipped = Math.max(0, projectedPage.rows.length - available);
-    evaluationOmissions += projectedPage.omittedRowCount + clipped;
+    let addedRows = 0;
+    for (const row of projectedPage.rows) {
+      if (seenEvaluationIds.has(row.evaluationId)) continue;
+      seenEvaluationIds.add(row.evaluationId);
+      projectedEvaluationRows.push(row);
+      addedRows += 1;
+    }
+    evaluationOmissions += projectedPage.omittedRowCount;
     evaluationProjectionTruncated = evaluationProjectionTruncated
-      || projectedPage.projectionTruncated
-      || clipped > 0;
+      || projectedPage.projectionTruncated;
 
     const pageLength = collectionPageLength(evaluations.value.body);
-    if (pageLength < AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1) break;
+    // Azure documents `$top` only as an optional requested count, with no default or maximum.
+    // Omitting it leaves page geometry with the provider; the first explicit empty page is the
+    // only authoritative terminal signal available to this offset API.
+    if (pageLength === 0) break;
+    if (addedRows === 0) {
+      // A Server that ignores `$skip` can legally keep returning a successful page. The
+      // invocation-local identity set is only a progress witness: it neither persists provider
+      // data nor invents a retry count. Retain the rows already proved and report the plane short
+      // instead of spinning until the panel deadline and then discarding the whole result.
+      return {
+        ok: true,
+        value: Object.freeze({
+          statuses: projectedStatuses.rows,
+          evaluations: Object.freeze(projectedEvaluationRows),
+          evaluationsPartial: true,
+          omittedRowCount: projectedStatuses.omittedRowCount + evaluationOmissions,
+          projectionTruncated:
+            projectedStatuses.projectionTruncated || evaluationProjectionTruncated,
+        }),
+      };
+    }
     skip += pageLength;
   }
 
@@ -340,6 +374,7 @@ export type AzureThreadsReadV1 = AzurePageProjectionV1<AzureProjectedThreadRowV1
  */
 export async function readAzureThreads(
   input: Readonly<{
+    project: string;
     repositoryId: string;
     pullRequestId: number;
     /** Both are supplied together or not at all: a lens is a comparison. */
@@ -349,7 +384,12 @@ export async function readAzureThreads(
 ): Promise<AzureDetailReadResultV1<AzureThreadsReadV1>> {
   const response = await requestJson(
     dependencies,
-    { resource: 'threads', repositoryId: input.repositoryId, pullRequestId: input.pullRequestId },
+    {
+      resource: 'threads',
+      project: input.project,
+      repositoryId: input.repositoryId,
+      pullRequestId: input.pullRequestId,
+    },
     input.iterationLens === null
       ? undefined
       : {

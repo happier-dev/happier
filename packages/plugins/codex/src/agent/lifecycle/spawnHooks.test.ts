@@ -23,7 +23,7 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
   it('uses canonical Agent identity for a provider-bound nonliteral runtime target', async () => {
     const runSystemTool = vi.fn(async () => ({
       ok: true as const,
-      stdout: 'codex-cli 0.146.0',
+      stdout: 'codex-cli 0.147.0',
       stderr: '',
     }));
 
@@ -49,46 +49,41 @@ describe('resolveCodexDaemonSpawnPrerequisites', () => {
       stderr: '',
     }));
 
-    await expect(resolveCodexDaemonSpawnPrerequisites({
-      payload: {
-        agentId: 'codex',
-        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: {
-          agentRuntimeSelection: { codexBackendMode: 'appServer' },
-          hasExternalModelBinding: true,
+    for (const installedVersion of ['0.144.3', '0.145.0', '0.146.0']) {
+      runSystemTool.mockResolvedValueOnce({
+        ok: true,
+        stdout: `codex-cli ${installedVersion}`,
+        stderr: '',
+      });
+      await expect(resolveCodexDaemonSpawnPrerequisites({
+        payload: {
+          agentId: 'codex',
+          targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+          runtimeSelection: {
+            agentRuntimeSelection: { codexBackendMode: 'appServer' },
+            hasExternalModelBinding: true,
+          },
         },
-      },
-    }, {
-      tools: {
-        resolveManagedInstallable: vi.fn(),
-        runSystemTool,
-      },
-    })).resolves.toEqual({ decision: 'allow' });
-    expect(runSystemTool).toHaveBeenCalledTimes(1);
-
-    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.145.0', stderr: '' });
-    await expect(resolveCodexDaemonSpawnPrerequisites({
-      payload: {
-        agentId: 'codex',
-        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: { hasExternalModelBinding: true },
-      },
-    }, {
-      tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
-    })).resolves.toEqual({ decision: 'allow' });
-
-    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.146.0', stderr: '' });
-    await expect(resolveCodexDaemonSpawnPrerequisites({
-      payload: {
-        agentId: 'codex',
-        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-        runtimeSelection: { hasExternalModelBinding: true },
-      },
-    }, {
-      tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
-    })).resolves.toEqual({ decision: 'allow' });
+      }, {
+        tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
+      })).resolves.toMatchObject({
+        decision: 'deny',
+        reasonCode: 'codex_provider_runtime_unsupported',
+      });
+    }
 
     runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 0.147.0', stderr: '' });
+    await expect(resolveCodexDaemonSpawnPrerequisites({
+      payload: {
+        agentId: 'codex',
+        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        runtimeSelection: { hasExternalModelBinding: true },
+      },
+    }, {
+      tools: { resolveManagedInstallable: vi.fn(), runSystemTool },
+    })).resolves.toEqual({ decision: 'allow' });
+
+    runSystemTool.mockResolvedValueOnce({ ok: true, stdout: 'codex-cli 1.0.0', stderr: '' });
     await expect(resolveCodexDaemonSpawnPrerequisites({
       payload: {
         agentId: 'codex',

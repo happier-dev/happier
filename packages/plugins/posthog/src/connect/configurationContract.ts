@@ -3,6 +3,7 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
     defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -13,25 +14,20 @@ import {
     TriageSourceFailureV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-/** The shipped plugin HTTP boundary rejects request URLs wider than 8 KiB. */
-export const MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1 = 8 * 1024;
-
 /**
- * Rows per directory page, derived from the 1 MiB Action JSON boundary with the widest
- * valid organization row and widest continuation URL. `configurationContract.test.ts`
- * proves 754 fits and 755 does not. This bounds one response projection only; explicit
- * user-driven continuations have no cumulative page count.
+ * PostHog's current REST default page geometry (`posthog/settings/web.py`:
+ * `REST_FRAMEWORK.PAGE_SIZE = 100`). This is not a cumulative walk ceiling:
+ * every provider continuation remains available through an explicit user request.
+ * Keeping the request at the provider's own page size avoids a Triage-only transport
+ * quota while still bounding the one response projection the directory returns.
  */
-export const MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1 = 754;
+export const MAX_POSTHOG_DIRECTORY_ROWS_PER_PAGE_V1 = 100;
 
 const PageSchema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('initial') }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('continuation'),
-        next: defineProtocolUtf8String({
-            minLength: 1,
-            maxUtf8Bytes: MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1,
-        }),
+        next: defineProtocolString({ minLength: 1 }),
     }, { policy: 'closed' }),
 ]);
 
@@ -59,10 +55,7 @@ export type PosthogConfigurationDirectoryInputV1 = ReturnType<
     typeof PosthogConfigurationDirectoryInputV1Schema.parse
 >;
 
-const NextSchema = defineProtocolUtf8String({
-    minLength: 1,
-    maxUtf8Bytes: MAX_POSTHOG_DIRECTORY_NEXT_URL_UTF8_BYTES_V1,
-}).optional();
+const NextSchema = defineProtocolString({ minLength: 1 }).optional();
 
 const OrganizationSchema = defineProtocolObject({
     organizationUuid: OrganizationUuidSchema,

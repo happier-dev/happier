@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ConversationBindingTargetMutationV1 } from '@happier-dev/channels-protocol/v1';
+import type { ConversationBindingTargetV1 } from '@happier-dev/channels-protocol/v1';
 
 import { classifyConversationCommand } from './commands.js';
 import {
@@ -31,7 +31,7 @@ const sessionTarget = {
     approvals: { kind: 'off' },
     newSession: { kind: 'off' },
   },
-} satisfies ConversationBindingTargetMutationV1;
+} satisfies ConversationBindingTargetV1;
 
 function pairingBinding(id: string): ConversationPairingBinding {
   return {

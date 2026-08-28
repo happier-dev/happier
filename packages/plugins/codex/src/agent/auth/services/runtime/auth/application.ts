@@ -45,14 +45,6 @@ export type CodexDirectLiveAuthApplyResult =
       applied: true;
       appliedVia: 'direct_live_hot_auth';
       activeAccountId: string;
-      durability:
-        | Readonly<{ persisted: true }>
-        | Readonly<{
-            persisted: false;
-            errorCode:
-              | 'auth_store_persistence_unavailable_after_live_apply'
-              | 'auth_store_persistence_failed_after_live_apply';
-          }>;
     }>
   | Readonly<{
       applied: false;
@@ -154,7 +146,6 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
   candidate: OauthCredentialRecord | TokenCredentialRecord;
   forcedWorkspaceId: string | null;
   forcedLoginMethod?: string | null;
-  persistAuthStore?: (() => Promise<void> | void) | null;
   refreshSelection?: CodexConnectedServiceRefreshSelection | null;
   updateRefreshSelection?: ((
     selection: CodexConnectedServiceRefreshSelection,
@@ -207,50 +198,9 @@ export async function applyCodexConnectedServiceAuthGeneration(params: Readonly<
     return classifyCodexLoginStartError(error);
   }
 
-  if (typeof params.persistAuthStore !== 'function') {
-    return {
-      applied: true,
-      appliedVia: 'direct_live_hot_auth',
-      activeAccountId: accountId,
-      durability: {
-        persisted: false,
-        errorCode: 'auth_store_persistence_unavailable_after_live_apply',
-      },
-    };
-  }
-
-  try {
-    await params.persistAuthStore();
-  } catch {
-    return {
-      applied: true,
-      appliedVia: 'direct_live_hot_auth',
-      activeAccountId: accountId,
-      durability: {
-        persisted: false,
-        errorCode: 'auth_store_persistence_failed_after_live_apply',
-      },
-    };
-  }
-
   return {
     applied: true,
     appliedVia: 'direct_live_hot_auth',
     activeAccountId: accountId,
-    durability: { persisted: true },
   };
-}
-
-export async function recoverCodexConnectedServiceRestartResumeOnce(params: Readonly<{
-  attemptsSoFar: number;
-  restartAndResume: () => Promise<Readonly<{ resumed: true }>>;
-}>): Promise<
-  | Readonly<{ recovered: true; via: 'restart' }>
-  | Readonly<{ recovered: false; reason: 'retry_limit_reached' }>
-> {
-  if (params.attemptsSoFar >= 1) {
-    return { recovered: false, reason: 'retry_limit_reached' };
-  }
-  await params.restartAndResume();
-  return { recovered: true, via: 'restart' };
 }

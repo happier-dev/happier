@@ -1,6 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 import {
   findNewestSessionFileInDir,
@@ -62,7 +62,6 @@ export function buildPiResumeSearchRoots(params: Readonly<{
   cwd: string;
   env?: Readonly<Record<string, string | undefined>> | null;
   targetMaterializedRoot?: string | null;
-  candidatePersistedSessionFile?: string | null;
   targetStrict?: boolean;
 }>): string[] {
   const encodedCwdDir = formatPiSessionDirectoryForCwd(params.cwd);
@@ -71,8 +70,6 @@ export function buildPiResumeSearchRoots(params: Readonly<{
   const legacySessionDir = PI_SESSION_FILE_STORE_DESCRIPTOR_V1.legacySessionDirEnvVars
     .map((envVar) => nonEmptyString(env[envVar]))
     .find((value): value is string => value != null) ?? null;
-  const persisted = nonEmptyString(params.candidatePersistedSessionFile);
-  const persistedDir = persisted && isAbsolute(persisted) ? dirname(persisted) : null;
   const targetRoot = nonEmptyString(params.targetMaterializedRoot);
   const defaultAgentDir = join(homedir(), ...PI_SESSION_FILE_STORE_DESCRIPTOR_V1.defaultAgentDirSegments);
 
@@ -81,7 +78,6 @@ export function buildPiResumeSearchRoots(params: Readonly<{
   }
 
   const roots = [
-    ...(persistedDir ? [persistedDir] : []),
     ...(piAgentDir ? [join(piAgentDir, 'sessions', encodedCwdDir), join(piAgentDir, 'sessions')] : []),
     join(defaultAgentDir, 'sessions', encodedCwdDir),
     join(defaultAgentDir, 'sessions'),

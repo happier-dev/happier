@@ -106,8 +106,6 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             ],
           },
           runtimeDescriptorFromCandidate: {
-            runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
-            legacyModeOutputKey: 'codexBackendMode',
             backendMode: {
               values: ['acp', 'appServer'],
             },
@@ -165,7 +163,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             settingKey: 'codexBackendMode',
             value: 'acp',
             aliases: {
-              mcp: 'appServer',
+              mcp: 'mcp',
               mcp_resume: 'acp',
             },
           },
@@ -186,7 +184,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
                       settingKey: 'codexBackendMode',
                       value: 'acp',
                       aliases: {
-                        mcp: 'appServer',
+                        mcp: 'mcp',
                         mcp_resume: 'acp',
                       },
                     },
@@ -205,15 +203,19 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
       sessionExtras: {
         outputKey: 'codexBackendMode',
         values: ['acp', 'appServer'],
+        settingKey: 'codexBackendMode',
+        aliases: {
+          mcp: 'mcp',
+          mcp_resume: 'acp',
+        },
+        defaultValue: 'appServer',
       },
       backendTransport: {
-        runtimeDescriptorOutputKey: 'runtimeDescriptorV1',
-        legacyModeOutputKey: 'codexBackendMode',
         backendMode: {
           values: ['acp', 'appServer'],
           // Retired setting spellings still reach spawn/resume from persisted UI state.
           aliases: {
-            mcp: 'appServer',
+            mcp: 'mcp',
             mcp_resume: 'acp',
           },
           legacyExperimentalValue: 'acp',

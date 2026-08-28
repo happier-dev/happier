@@ -41,9 +41,18 @@ describe('Codex External Sessions takeover launch derivation', () => {
       linkedDirectory: ' /repo/project ',
     });
 
-    expect(plan).toEqual({
+    expect(plan).toMatchObject({
       directory: '/repo/project',
-      backendModeHint: 'appServer',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          providerSessionId: 'native-session-current',
+          home: 'connectedService',
+          homePath: '/srv/happier/codex-home',
+        },
+      },
       environmentVariables: {
         CODEX_HOME: '/srv/happier/codex-home',
       },
@@ -126,11 +135,17 @@ describe('Codex External Sessions takeover launch derivation', () => {
         targetDirectory: '/local/selected/workspace',
         linkedDirectory: '/repo/project',
       }),
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       ok: true,
       value: {
         directory: '/repo/project',
-        backendModeHint: 'acp',
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: 'acp',
+          },
+        },
         environmentVariables: {
           CODEX_HOME: '/home/user/.codex',
         },

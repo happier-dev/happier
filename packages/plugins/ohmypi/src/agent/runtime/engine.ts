@@ -14,6 +14,7 @@ import {
 
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from '../auth/services/accountPurposes.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
+import { AGENT_DEFINITION } from '../definition.js';
 
 export {
   ohMyPiExternalSessionsContribution,
@@ -196,6 +197,11 @@ async function prepareOhMyPiQualifiedAccounts(
         if (invalidated) void invalidationHandler();
         return {
           ...session,
+          runtimeCapabilities: {
+            sessionCapabilities: {
+              ...AGENT_DEFINITION.core.sessionCapabilities,
+            },
+          },
           dispose,
         };
       },
@@ -207,30 +213,33 @@ async function prepareOhMyPiQualifiedAccounts(
   }
 }
 
+async function openOhMyPiSession(
+  request: AgentSessionOpenRequest,
+  context: AgentRuntimeContext,
+): Promise<AgentSessionRuntime> {
+  const prepared = await prepareOhMyPiQualifiedAccounts(request, context);
+  try {
+    if (prepared.isInvalidated()) {
+      throw new Error('Oh My Pi qualified Connected Account launch was invalidated before opening the runtime.');
+    }
+    const session = await context.protocols.acp.open(prepared.request, {
+      transport: {
+        kind: 'stdio',
+        executable: {
+          kind: 'systemTool',
+          id: OH_MY_PI_SYSTEM_TOOL_ID,
+        },
+        args: ['--mode', 'acp'],
+      },
+      definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
+    });
+    return prepared.bind(session);
+  } catch (error) {
+    prepared.cleanup();
+    throw error;
+  }
+}
+
 export const createOhMyPiAgentRuntime: AgentRuntimeFactory = () => ({
-  sessions: {
-    async open(request, context) {
-      const prepared = await prepareOhMyPiQualifiedAccounts(request, context);
-      try {
-        if (prepared.isInvalidated()) {
-          throw new Error('Oh My Pi qualified Connected Account launch was invalidated before opening the runtime.');
-        }
-        const session = await context.protocols.acp.open(prepared.request, {
-          transport: {
-            kind: 'stdio',
-            executable: {
-              kind: 'systemTool',
-              id: OH_MY_PI_SYSTEM_TOOL_ID,
-            },
-            args: ['--mode', 'acp'],
-          },
-          definition: OH_MY_PI_ACP_RUNTIME_DEFINITION,
-        });
-        return prepared.bind(session);
-      } catch (error) {
-        prepared.cleanup();
-        throw error;
-      }
-    },
-  },
+  sessions: { open: openOhMyPiSession },
 });

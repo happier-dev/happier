@@ -37,7 +37,6 @@ describe('Conversation binding transition', () => {
       target: {
         kind: 'automation',
         automationId: 'automation-1',
-        templateVersion: 3,
         policy: { resultDelivery: 'finalResult' },
       },
     });
@@ -282,17 +281,15 @@ describe('Conversation binding transition', () => {
     });
   });
 
-  it('treats an Automation template-version replacement as a target authority change', () => {
+  it('treats only Automation identity and delivery policy as target authority', () => {
     const currentTarget = {
       kind: 'automation',
       automationId: 'automation-1',
-      templateVersion: 3,
       policy: { resultDelivery: 'none' },
     } satisfies ConversationBindingStateV1['target'];
     const replacementTarget = {
       kind: 'automation',
-      automationId: 'automation-1',
-      templateVersion: 4,
+      automationId: 'automation-2',
       policy: { resultDelivery: 'none' },
     } satisfies ConversationBindingStateV1['target'];
     const current = binding({
@@ -313,8 +310,7 @@ describe('Conversation binding transition', () => {
         authorityEpoch: 8,
         target: {
           kind: 'automation',
-          automationId: 'automation-1',
-          templateVersion: 4,
+          automationId: 'automation-2',
         },
       },
     });

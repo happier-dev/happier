@@ -56,7 +56,7 @@ describe('activate', () => {
 
     try {
       // Two targeted contributions to two different target plugins: the Channels
-      // provider, and the Triage source whose three read Actions this activation also
+      // provider, and the Triage source whose five role-bound Actions this activation also
       // registers. Neither is a second owner of the other's concept.
       expect(PLUGIN_MANIFEST.contributes.targetedPluginContributions).toEqual(
         expect.arrayContaining([{
@@ -80,7 +80,7 @@ describe('activate', () => {
         // generated activation as every other Action this plugin owns.
         ...Object.values(GITHUB_TRIAGE_ACTION_IDS_V1)
           .map((localId) => ({ family: 'actions' as const, localId })),
-        // The four source-native detail reads register through the same
+        // The source-native detail reads register through the same
         // activation. A declared-but-unregistered detail Action would mount a
         // detail body whose every panel reports a dispatch failure.
         ...Object.values(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1)
@@ -143,7 +143,7 @@ describe('activate', () => {
     expect((PLUGIN_MANIFEST.hostAccess?.required ?? [])).toContainEqual({
       id: 'automation-event-checkpoint-storage',
       capability: 'storage.account',
-      reason: 'Persist per-Automation GitHub Event source checkpoints.',
+      reason: 'Persist one GitHub Event checkpoint per authenticated Automation trigger source.',
       scope: { enabled: true },
     });
     expect(PLUGIN_MANIFEST.contributes.accountCollections).toEqual([
@@ -264,7 +264,6 @@ describe('activate', () => {
       'automation/pull-request-opened-v1',
       'automation/repository-pushed-v1',
     ]);
-    expect(semanticEvents).not.toContainEqual(expect.objectContaining({ id: 'automation/repository-event-v1' }));
     expect(semanticEvents).toEqual(semanticEvents.map((event) => expect.objectContaining({
       kind: 'event',
       payloadSchema: expect.objectContaining({
@@ -277,6 +276,10 @@ describe('activate', () => {
         source: {
           sourceContractVersion: 1,
           supportedObservationTransports: ['checkpointedPull', 'durablePush'],
+          sourceConfigSchema: expect.objectContaining({
+            type: 'object',
+            additionalProperties: false,
+          }),
           setupActionRef: {
             pluginId: PLUGIN_MANIFEST.id,
             localId: 'automation/setup-repository-event-v1',

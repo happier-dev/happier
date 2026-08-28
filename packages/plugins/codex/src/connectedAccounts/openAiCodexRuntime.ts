@@ -1,9 +1,9 @@
 import {
-  OPENAI_CODEX_OAUTH_PROFILE,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { OPENAI_CODEX_OAUTH_PROFILE } from './openAiCodexProfile.js';
 
 import { buildCodexCloudAuthFile } from '../agent/auth/services/openai/cloud/authFile.js';
 import {

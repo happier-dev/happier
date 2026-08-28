@@ -1857,13 +1857,6 @@
         ],
         "id": "claude-cli",
         "title": "Claude Code CLI"
-      },
-      {
-        "executableNames": [
-          "security"
-        ],
-        "id": "macos-security",
-        "title": "macOS Keychain security"
       }
     ],
     "targetedPluginContributions": [],
@@ -1923,6 +1916,8 @@
           "locale": "en",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Create a team or spawn a teammate with structured Claude team commands.",
+            "session.subagents.panel.launchTeammateAction": "Launch teammate",
             "subAgentGuidance.settings.agents.claude.footer": "Agent-specific subagent behavior stays owned by the agent settings screen.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Manage Agent Teams and other Claude-specific subagent behavior.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude subagent options",
@@ -1933,6 +1928,8 @@
           "locale": "ru",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Создайте команду или запустите участника с помощью структурированных команд Claude для команд.",
+            "session.subagents.panel.launchTeammateAction": "Запустить участника",
             "subAgentGuidance.settings.agents.claude.footer": "Поведение субагентов для конкретного агента настраивается на экране настроек агента.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Управляйте Agent Teams и другими особенностями субагентов Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Параметры субагентов Claude",
@@ -1943,6 +1940,8 @@
           "locale": "pl",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Utwórz zespół lub uruchom członka zespołu za pomocą uporządkowanych poleceń zespołów Claude.",
+            "session.subagents.panel.launchTeammateAction": "Uruchom członka zespołu",
             "subAgentGuidance.settings.agents.claude.footer": "Ustawienia agenta nadal odpowiadają za zachowanie jego podagentów.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Zarządzaj Agent Teams i innymi zachowaniami podagentów Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opcje podagentów Claude",
@@ -1953,6 +1952,8 @@
           "locale": "es",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equipo o lanza un compañero con comandos estructurados de equipos Claude.",
+            "session.subagents.panel.launchTeammateAction": "Lanzar compañero",
             "subAgentGuidance.settings.agents.claude.footer": "La pantalla de ajustes del agente sigue controlando el comportamiento específico de sus subagentes.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams y otros comportamientos específicos de los subagentes de Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opciones de subagentes de Claude",
@@ -1963,6 +1964,8 @@
           "locale": "fr",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Crée une équipe ou lance un équipier avec les commandes structurées d’équipe Claude.",
+            "session.subagents.panel.launchTeammateAction": "Lancer l’équipier",
             "subAgentGuidance.settings.agents.claude.footer": "L’écran des réglages de l’agent reste responsable du comportement de ses sous-agents.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gérez Agent Teams et les autres comportements propres aux sous-agents Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Options des sous-agents Claude",
@@ -1973,6 +1976,8 @@
           "locale": "it",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un team o avvia un compagno con comandi strutturati dei team Claude.",
+            "session.subagents.panel.launchTeammateAction": "Avvia compagno",
             "subAgentGuidance.settings.agents.claude.footer": "La schermata delle impostazioni dell’agente continua a gestire il comportamento specifico dei suoi sottoagenti.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestisci Agent Teams e gli altri comportamenti specifici dei sottoagenti Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opzioni dei sottoagenti Claude",
@@ -1983,6 +1988,8 @@
           "locale": "pt",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Crie uma equipe ou inicie um colega com comandos estruturados de equipes Claude.",
+            "session.subagents.panel.launchTeammateAction": "Iniciar colega",
             "subAgentGuidance.settings.agents.claude.footer": "O ecrã de definições do agente continua responsável pelo comportamento específico dos respetivos subagentes.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gira Agent Teams e outros comportamentos específicos dos subagentes Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opções dos subagentes Claude",
@@ -1993,6 +2000,8 @@
           "locale": "ca",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "Crea un equip o inicia un company amb ordres estructurades d’equips Claude.",
+            "session.subagents.panel.launchTeammateAction": "Inicia company",
             "subAgentGuidance.settings.agents.claude.footer": "La pantalla de configuració de l’agent continua gestionant el comportament específic dels seus subagents.",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Gestiona Agent Teams i altres comportaments específics dels subagents de Claude.",
             "subAgentGuidance.settings.agents.claude.openTitle": "Opcions dels subagents de Claude",
@@ -2003,6 +2012,8 @@
           "locale": "zh-Hans",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "使用结构化的 Claude 团队命令创建团队或启动队友。",
+            "session.subagents.panel.launchTeammateAction": "启动队友",
             "subAgentGuidance.settings.agents.claude.footer": "代理专属的子代理行为仍由代理设置页面管理。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理专属行为。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理选项",
@@ -2013,6 +2024,8 @@
           "locale": "zh-Hant",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "使用結構化的 Claude 團隊指令建立團隊或啟動隊友。",
+            "session.subagents.panel.launchTeammateAction": "啟動隊友",
             "subAgentGuidance.settings.agents.claude.footer": "代理專屬的子代理行為仍由代理設定畫面管理。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "管理 Agent Teams 和其他 Claude 子代理專屬行為。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude 子代理選項",
@@ -2023,6 +2036,8 @@
           "locale": "ja",
           "messages": {
             "agentInput.connectedServiceLabel.claude": "Claude Code",
+            "session.subagents.panel.launchClaudeTeamsSubtitle": "構造化された Claude チームコマンドでチームを作成するか、チームメイトを起動します。",
+            "session.subagents.panel.launchTeammateAction": "チームメイトを起動",
             "subAgentGuidance.settings.agents.claude.footer": "エージェント固有のサブエージェント動作は、引き続きエージェント設定画面で管理されます。",
             "subAgentGuidance.settings.agents.claude.openSubtitle": "Agent Teams とその他の Claude 固有のサブエージェント動作を管理します。",
             "subAgentGuidance.settings.agents.claude.openTitle": "Claude サブエージェントのオプション",
@@ -2033,9 +2048,7 @@
       "views": [
         {
           "container": "sessionSubagentLaunch",
-          "headerActions": [],
           "id": "subagent-launch",
-          "instancePolicy": "singleton",
           "renderer": "subagent-launch-renderer",
           "target": {
             "kind": "session"
@@ -2043,9 +2056,7 @@
         },
         {
           "container": "sessionSubagentDetails",
-          "headerActions": [],
           "id": "subagent-details",
-          "instancePolicy": "singleton",
           "renderer": "subagent-details-renderer",
           "target": {
             "kind": "session"
@@ -2086,7 +2097,7 @@
       {
         "capability": "process",
         "id": "claude-process",
-        "reason": "Run the declared Claude Code executable and its macOS keychain boundary.",
+        "reason": "Run the declared Claude Code executable.",
         "scope": {
           "envKeys": [
             "ANTHROPIC_BASE_URL",
@@ -2110,10 +2121,6 @@
           "executables": [
             {
               "id": "claude-cli",
-              "kind": "systemTool"
-            },
-            {
-              "id": "macos-security",
               "kind": "systemTool"
             }
           ]

@@ -24,6 +24,7 @@ import {
 import {
   bitbucketPagedInitialState,
   bitbucketPagedReducer,
+  type BitbucketDetailIncompleteReasonV1,
   type BitbucketPagedPageV1,
   type BitbucketPagedStateV1,
 } from './panelState.js';
@@ -181,6 +182,7 @@ type PagedResultShape<TRow> = Readonly<{
   rows: readonly TRow[];
   omittedRowCount: number;
   projectionTruncated: boolean;
+  incomplete?: BitbucketDetailIncompleteReasonV1;
   continuation?: string;
 }>;
 
@@ -190,10 +192,7 @@ function toPage<TRow>(result: PagedResultShape<TRow>): BitbucketPagedPageV1<TRow
     omittedRowCount: result.omittedRowCount,
     projectionTruncated: result.projectionTruncated,
     continuation: result.continuation ?? null,
-    // Bitbucket reports completeness by the absence of `next`, and has no
-    // short-walk reason of its own. Claiming one would be a truncation this
-    // product invented.
-    incomplete: null,
+    incomplete: result.incomplete ?? null,
   };
 }
 
@@ -459,6 +458,7 @@ export function useBitbucketDiff(
       rows: parsed.data.files,
       omittedRowCount: parsed.data.omittedRowCount,
       projectionTruncated: parsed.data.projectionTruncated,
+      ...(parsed.data.incomplete === undefined ? {} : { incomplete: parsed.data.incomplete }),
       ...(parsed.data.continuation === undefined ? {} : { continuation: parsed.data.continuation }),
     }) };
   }, [execute, instance, localRef, routingToken]);

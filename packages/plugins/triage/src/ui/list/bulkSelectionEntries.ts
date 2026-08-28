@@ -2,6 +2,7 @@ import { buildTriageEntryAttachmentPresentation } from '../../composer/mutationP
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriageEntrySessionStartRequestV1 } from '../header/useEntrySessionStart.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
+import type { TriageReviewWorkspacePreparationV1 } from '../header/newSessionDestination.js';
 
 /**
  * One selected row, as everything a Session start needs from it.
@@ -19,7 +20,11 @@ import { readTriageSelectedObservationV1 } from '../window/selectedObservation.j
  * and every unit carries the same ones (`PLAN.md` §0a A6).
  */
 export type TriageBulkSelectedEntryV1 = Readonly<{ key: string }>
-    & Omit<TriageEntrySessionStartRequestV1, 'action' | 'preference'>;
+    & Omit<TriageEntrySessionStartRequestV1, 'action' | 'preference'>
+    & Readonly<{
+        /** Present observation facts; exact configured instance is joined at press time. */
+        reviewWorkspacePreparation?: Omit<TriageReviewWorkspacePreparationV1, 'instance'>;
+    }>;
 
 export type TriageBulkSelectionProjectionV1 = Readonly<{
     entries: readonly TriageBulkSelectedEntryV1[];
@@ -61,6 +66,7 @@ export function projectTriageBulkSelectedEntriesV1(input: Readonly<{
             continue;
         }
         const observation = selected.observation;
+        const reviewRevision = observation.snapshot.reviewRevision;
         entries.push(Object.freeze({
             key,
             entryRef: row.entryRef,
@@ -77,6 +83,18 @@ export function projectTriageBulkSelectedEntriesV1(input: Readonly<{
                 scopeLabel: observation.snapshot.scopeLabel,
             }),
             lastKnownLocator: observation.locator,
+            ...(reviewRevision === undefined
+                ? {}
+                : {
+                    reviewWorkspacePreparation: {
+                        entryRef: row.entryRef,
+                        lastKnownLocator: observation.locator,
+                        observed: {
+                            ...reviewRevision,
+                            observedAtMs: observation.observedAtMs,
+                        },
+                    },
+                }),
             ...(selected.repository === undefined
                 ? {}
                 : { repository: selected.repository }),

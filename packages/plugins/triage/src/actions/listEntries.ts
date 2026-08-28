@@ -5,7 +5,6 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import {
     admitTriageSourceDescriptorV1,
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     type TriageScanContinuationV1,
     type TriageScanInputV1,
     type TriageScanResultV1,
@@ -241,7 +240,7 @@ export async function listTriageEntries(
     );
     const pass = await runTriageScanPass({
         lanes,
-        pageLimit: Math.min(pageLimit, MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1),
+        pageLimit,
         observationBudget: lens.limit,
         nowMs: deps.nowMs,
         ...(deps.signal ? { signal: deps.signal } : {}),

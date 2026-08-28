@@ -1,43 +1,77 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
 import {
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
   TriageScanInputV1Schema,
+  TriageVerifyReviewWorkspaceInputV1Schema,
+  TriageVerifyReviewWorkspaceResultV1Schema,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
   type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
+  type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { createBitbucketFailure } from '../failures.js';
+import { BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS } from '../apiClient.js';
 import { toTriageSourceFailure } from './failures.js';
 import { getBitbucketSourceEntry } from './get.js';
 import { listBitbucketSourceInstances } from './listInstances.js';
-import { prepareBitbucketReviewWorkspace } from './prepareReviewWorkspace.js';
+import {
+  prepareBitbucketReviewWorkspace,
+  verifyBitbucketReviewWorkspace,
+} from './prepareReviewWorkspace.js';
 import { scanBitbucketSource } from './scan.js';
 import type { BitbucketSourceRuntime } from './authorization.js';
 
 /**
  * The Action ids that carry this source's three required V1 roles and its optional selected-PR
- * workspace-preparation role. They are plugin-local ids; the qualified handle is the host's, and
- * the role binding lives in the manifest contribution.
+ * workspace preparation and final verification roles. They are plugin-local ids; the qualified
+ * handle is the host's, and the role binding lives in the manifest contribution.
  */
 export const BITBUCKET_TRIAGE_ACTION_IDS = Object.freeze({
   listInstances: 'triage-list-instances',
   scan: 'triage-scan',
   get: 'triage-get',
   prepareReviewWorkspace: 'triage-prepare-review-workspace',
+  verifyReviewWorkspace: 'triage-verify-review-workspace',
 });
 
-function toRuntime(context: PluginInvocationContext): BitbucketSourceRuntime {
+function toRuntime(
+  context: PluginInvocationContext,
+  signal: AbortSignal | undefined = context.signal,
+): BitbucketSourceRuntime {
   return {
     connectedAccounts: context.services.connectedAccounts,
     http: context.services.http,
     now: () => Date.now(),
-    signal: context.signal,
+    ...(signal === undefined ? {} : { signal }),
   };
+}
+
+/**
+ * Runs one source role under one absolute interactive-read deadline.
+ *
+ * The HTTP client keeps the same duration as a last-resort bound for a single transport call, but
+ * it is not the operation clock: account materialization, viewer discovery, pagination and exact
+ * rereads all share this signal, so each subrequest cannot reset the time a person waits.
+ */
+async function withBitbucketSourceReadDeadline<Result>(
+  context: PluginInvocationContext,
+  run: (runtime: BitbucketSourceRuntime) => Promise<Result>,
+): Promise<Result> {
+  const bounded = createBoundedInvocation({
+    callerSignal: context.signal,
+    timeoutMs: BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS,
+  });
+  try {
+    return await run(toRuntime(context, bounded.signal));
+  } finally {
+    bounded.dispose();
+  }
 }
 
 const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'operation-input-invalid');
@@ -58,7 +92,10 @@ export async function listBitbucketInstancesAction(
 ): Promise<TriageListInstancesResultV1> {
   const parsed = TriageListInstancesInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
-  return await listBitbucketSourceInstances(toRuntime(context));
+  return await withBitbucketSourceReadDeadline(
+    context,
+    async (runtime) => await listBitbucketSourceInstances(runtime),
+  );
 }
 
 export async function scanBitbucketSourceAction(
@@ -67,7 +104,10 @@ export async function scanBitbucketSourceAction(
 ): Promise<TriageScanResultV1> {
   const parsed = TriageScanInputV1Schema.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: toTriageSourceFailure(INVALID_INPUT) };
-  return await scanBitbucketSource(toRuntime(context), parsed.data);
+  return await withBitbucketSourceReadDeadline(
+    context,
+    async (runtime) => await scanBitbucketSource(runtime, parsed.data),
+  );
 }
 
 export async function getBitbucketSourceEntryAction(
@@ -80,7 +120,10 @@ export async function getBitbucketSourceEntryAction(
     // invocation is refused rather than answered about an invented entry.
     throw new TypeError('Bitbucket triage get received an invalid input');
   }
-  return await getBitbucketSourceEntry(toRuntime(context), parsed.data);
+  return await withBitbucketSourceReadDeadline(
+    context,
+    async (runtime) => await getBitbucketSourceEntry(runtime, parsed.data),
+  );
 }
 
 export async function prepareBitbucketReviewWorkspaceAction(
@@ -91,9 +134,28 @@ export async function prepareBitbucketReviewWorkspaceAction(
   if (!parsed.success) {
     throw new TypeError('Bitbucket triage review-workspace preparation received an invalid input');
   }
-  const result = await prepareBitbucketReviewWorkspace(parsed.data, {
-    ...toRuntime(context),
-    actions: context.services.actions,
-  });
+  const result = await withBitbucketSourceReadDeadline(context, async (runtime) => (
+    await prepareBitbucketReviewWorkspace(parsed.data, {
+      ...runtime,
+      actions: context.services.actions,
+    })
+  ));
   return TriagePrepareReviewWorkspaceResultV1Schema.parse(result);
+}
+
+export async function verifyBitbucketReviewWorkspaceAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<TriageVerifyReviewWorkspaceResultV1> {
+  const parsed = TriageVerifyReviewWorkspaceInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    throw new TypeError('Bitbucket triage review-workspace verification received an invalid input');
+  }
+  const result = await withBitbucketSourceReadDeadline(context, async (runtime) => (
+    await verifyBitbucketReviewWorkspace(parsed.data, {
+      ...runtime,
+      actions: context.services.actions,
+    })
+  ));
+  return TriageVerifyReviewWorkspaceResultV1Schema.parse(result);
 }

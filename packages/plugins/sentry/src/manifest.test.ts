@@ -64,15 +64,13 @@ describe('Sentry plugin manifest', () => {
     });
   });
 
-  it('contributes only the selected-evidence Composer reference and no review-workspace role', () => {
+  it('omits selected evidence until its full projection fits the Composer contract', () => {
     const contributes = PLUGIN_MANIFEST.contributes as Readonly<Record<string, unknown>>;
-    // A selected Sentry occurrence is a reference whose fresh resolver re-reads
-    // the approved Tier-B projection. It must not turn this source into the
-    // owner of Triage's whole-entry attachment or its Composer control.
-    expect(contributes.composerReferences).toEqual([
-      expect.objectContaining({ id: 'sentry-evidence' }),
-    ]);
-    for (const family of ['composerAttachments', 'composerControls']) {
+    // The current maximum allow-listed event projection exceeds the Composer
+    // reference context contract. Publishing a smaller source-private excerpt
+    // would silently change the approved evidence semantics, so this source
+    // fails closed pending the explicit evidence-projection amendment.
+    for (const family of ['composerReferences', 'composerAttachments', 'composerControls']) {
       expect(contributes[family] ?? []).toEqual([]);
     }
     const [contribution] = PLUGIN_MANIFEST.contributes.targetedPluginContributions;

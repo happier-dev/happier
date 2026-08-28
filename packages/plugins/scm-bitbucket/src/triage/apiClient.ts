@@ -13,6 +13,7 @@ import {
 } from './bitbucketRateLimit.js';
 import {
   classifyBitbucketHttpFailure,
+  classifyBitbucketAbortSignal,
   classifyBitbucketTransportFailure,
   createBitbucketFailure,
   type BitbucketTriageFailure,
@@ -122,7 +123,7 @@ export function createBitbucketTriageApiClient(
         return {
           ok: false,
           status: null,
-          failure: createBitbucketFailure('cancelled', 'invocation-cancelled'),
+          failure: classifyBitbucketAbortSignal(request.signal),
           telemetry: EMPTY_BITBUCKET_RATE_LIMIT_TELEMETRY,
         };
       }
@@ -222,7 +223,7 @@ export function createBitbucketTriageApiClient(
         };
       }
       if (request.signal?.aborted === true) {
-        return { ok: false, failure: createBitbucketFailure('cancelled', 'invocation-cancelled') };
+        return { ok: false, failure: classifyBitbucketAbortSignal(request.signal) };
       }
 
       let headers: BitbucketAuthorizationHeaders;

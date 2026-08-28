@@ -43,40 +43,25 @@ describe('AGENT_DEFINITION', () => {
     expect(legacyRuntimeKey in AGENT_DEFINITION).toBe(false);
   });
 
-  it('declares only Codex-owned runtime contributions', () => {
-    expect(AGENT_DEFINITION.runtimeContributions).toEqual({
-      agentCatalogEntry: {
-        importName: 'CODEX_AGENT_RUNTIME_CONTRIBUTION',
-        source: './agent/contributions/catalog',
-      },
-      sessionControlAdapter: {
-        kind: 'providerSessionControlAdapter',
-        providerId: 'codex',
-        generatedAdapter: expect.objectContaining({ providerId: 'codex' }),
-      },
-      runtimeDescriptorReader: {
+  it('keeps only the released flat-metadata compatibility fact', () => {
+    expect(AGENT_DEFINITION).toMatchObject({
+      releasedFlatSessionMetadataRuntimeDescriptorReader: {
         kind: 'providerRuntimeDescriptorReader',
         providerId: 'codex',
         generatedReader: expect.objectContaining({ providerId: 'codex' }),
       },
-      protocolRuntimeDescriptor: {
-        kind: 'providerRuntimeDescriptorV1',
-        providerId: 'codex',
-        source: './protocol/runtimeDescriptorV1',
-        buildFunction: 'buildCodexAgentRuntimeDescriptorV1',
-        canonicalReader: 'readCanonicalCodexAgentRuntimeDescriptorV1',
-      },
-      protocolBuiltInBackendProfiles: {
-        kind: 'providerBuiltInBackendProfilesV1',
-        providerId: 'codex',
-        source: './protocol/profiles',
-        exportName: 'CODEX_BUILT_IN_BACKEND_PROFILES',
-      },
     });
+    expect(AGENT_DEFINITION).not.toHaveProperty('sessionControlAdapter');
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
+    expect(AGENT_DEFINITION).not.toHaveProperty('protocolRuntimeDescriptor');
+    expect(AGENT_DEFINITION).not.toHaveProperty('protocolBuiltInBackendProfiles');
+    expect(
+      AGENT_DEFINITION.releasedFlatSessionMetadataRuntimeDescriptorReader.generatedReader.runtimeKind.aliases,
+    ).toContainEqual({ input: 'mcp', runtimeKind: 'mcp' });
   });
 
   it('does not declare app-local external-session host adapter bridges', () => {
-    expect(AGENT_DEFINITION.runtimeContributions).not.toHaveProperty('externalSessionHostAdapters');
+    expect(AGENT_DEFINITION).not.toHaveProperty('externalSessionHostAdapters');
   });
 
   it('does not ship named static Codex models because Codex model truth is dynamic', () => {

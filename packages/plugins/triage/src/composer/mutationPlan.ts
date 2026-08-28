@@ -152,8 +152,8 @@ function boundDisplayText(value: string, maxCodePoints: number): string {
 /**
  * The bounded immutable fallback one entry contributes to a draft.
  *
- * A source title is bounded at 4 KiB while a composer attachment label is
- * bounded at 256 code points, so passing a provider title straight through
+ * A source title is bounded by the source ABI while a composer attachment
+ * label is bounded at 256 code points, so passing a provider title straight through
  * makes the host reject the whole attach. Shortening a *display fallback* is
  * admissible precisely because it is presentation: identity travels in the
  * value, and fresh context is resolved at dispatch.

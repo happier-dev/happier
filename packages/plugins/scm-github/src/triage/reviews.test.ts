@@ -11,7 +11,11 @@ import {
   type RecordedGithubRequest,
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
-import { deriveGithubReviewDecision, readGithubPullRequestReviewers } from './reviews.js';
+import {
+  deriveGithubReviewDecision,
+  readGithubPullRequestReviewers,
+  readGithubPullRequestReviewPublicationRecords,
+} from './reviews.js';
 
 const ROUTE = Object.freeze({ owner: 'octo-org', name: 'example-app' });
 
@@ -153,23 +157,72 @@ describe('GitHub pull-request review people', () => {
     expect(surface.historical.map((reviewer) => reviewer.login)).toEqual(['monalisa', 'octocat']);
   });
 
-  it('reports the reviews connection incomplete when GitHub still offers a page at its result ceiling', async () => {
+  it('follows the reviews connection beyond the search-only 1,000-result ceiling', async () => {
     const { surface, transport } = await readReviewers((request) => {
       if (request.url.includes('/requested_reviewers')) {
         return { status: 200, body: { users: [], teams: [] } };
       }
       const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
-      return {
+      return page <= 10 ? {
         status: 200,
         headers: {
           link: `<https://api.github.com/repos/octo-org/example-app/pulls/1284/reviews?per_page=100&page=${page + 1}>; rel="next"`,
         },
         body: [githubReview({ id: page, login: `reviewer-${page}`, state: 'COMMENTED' })],
+      } : { status: 200, body: [githubReview({ id: page, login: `reviewer-${page}`, state: 'COMMENTED' })] };
+    });
+
+    expect(transport.requests.filter((request) => request.url.includes('/reviews?'))).toHaveLength(11);
+    expect(surface.reviewsIncomplete).toBe(false);
+    expect(surface.reviewsFailure).toBeNull();
+  });
+
+  it('settles a repeated validated review cursor instead of rereading it until the deadline', async () => {
+    const { surface, transport } = await readReviewers((request) => {
+      if (request.url.includes('/requested_reviewers')) {
+        return { status: 200, body: { users: [], teams: [] } };
+      }
+      return {
+        status: 200,
+        headers: { link: `<${request.url}>; rel="next"` },
+        body: [githubReview({ id: 1, login: 'monalisa', state: 'COMMENTED' })],
       };
     });
 
-    expect(transport.requests.filter((request) => request.url.includes('/reviews?'))).toHaveLength(10);
-    expect(surface.reviewsIncomplete).toBe(true);
-    expect(surface.reviewsFailure).toBeNull();
+    expect(transport.requests.filter((request) => request.url.includes('/reviews?'))).toHaveLength(1);
+    expect(surface.reviewsFailure).toEqual({
+      class: 'unsupportedContract',
+      code: 'github_reviews_link_invalid',
+    });
+  });
+});
+
+describe('GitHub review publication marker reconciliation', () => {
+  it('retains a marker with a deleted author and future review state beside malformed rows', async () => {
+    const transport = createStubGithubTransport({
+      respond: () => ({
+        status: 200,
+        body: [
+          { nope: true },
+          {
+            id: 991,
+            body: 'kept <!-- happier-review-verdict:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -->',
+            user: null,
+            state: 'FUTURE_GITHUB_STATE',
+          },
+        ],
+      }),
+    });
+    const client = await createTestGithubApiClient(transport);
+    const read = await readGithubPullRequestReviewPublicationRecords(
+      { route: ROUTE, number: '1284' },
+      { client, now: fixedClock(1_000), signal: transport.context.signal },
+    );
+    expect(read.failure).toBeNull();
+    expect(read.incomplete).toBe(false);
+    expect(read.reviews).toEqual([{
+      providerId: '991',
+      body: 'kept <!-- happier-review-verdict:v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -->',
+    }]);
   });
 });

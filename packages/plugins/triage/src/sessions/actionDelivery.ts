@@ -103,7 +103,12 @@ export function planTriageActionDeliveryV1(input: Readonly<{
         });
         return draft === null ? [] : [draft];
     });
-    const text = input.promptText === null ? '' : input.promptText.trim();
+    // The Prompt Library renderer owns these bytes. Use trimming only to apply
+    // the canonical "whitespace alone is no text" rule; when content exists,
+    // preserve it exactly so indentation and trailing Markdown/newlines do not
+    // change merely because the invocation came through a Triage action.
+    const resolvedText = input.promptText ?? '';
+    const text = resolvedText.trim().length === 0 ? '' : resolvedText;
 
     // The one canonical emptiness rule, shared with the Session-input seam that
     // admits the send (`protocol#hasSessionInputContentV1`): an input carrying

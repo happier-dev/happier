@@ -552,9 +552,6 @@
                                   "const": false,
                                   "type": "boolean"
                                 },
-                                "historyGap": {
-                                  "type": "null"
-                                },
                                 "pendingOldTransportStop": {
                                   "additionalProperties": false,
                                   "properties": {
@@ -836,7 +833,6 @@
                               "required": [
                                 "deletionState",
                                 "enabled",
-                                "historyGap",
                                 "pendingOldTransportStop"
                               ],
                               "type": "object"
@@ -850,9 +846,6 @@
                                 "enabled": {
                                   "const": false,
                                   "type": "boolean"
-                                },
-                                "historyGap": {
-                                  "type": "null"
                                 },
                                 "pendingOldTransportStop": {
                                   "anyOf": [
@@ -1142,7 +1135,6 @@
                               "required": [
                                 "deletionState",
                                 "enabled",
-                                "historyGap",
                                 "pendingOldTransportStop"
                               ],
                               "type": "object"
@@ -2576,17 +2568,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -3612,17 +3598,11 @@
                                           "type": "object"
                                         }
                                       ]
-                                    },
-                                    "templateVersion": {
-                                      "maximum": 9007199254740991,
-                                      "minimum": 0,
-                                      "type": "integer"
                                     }
                                   },
                                   "required": [
                                     "kind",
                                     "automationId",
-                                    "templateVersion",
                                     "occurrenceKey",
                                     "resultDelivery"
                                   ],
@@ -3916,6 +3896,15 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "retainedAttentionObligationRowIds": {
+                                  "items": {
+                                    "maxLength": 43,
+                                    "minLength": 43,
+                                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
                                 "shell": {
                                   "$schema": "http://json-schema.org/draft-07/schema#",
                                   "additionalProperties": false,
@@ -4340,7 +4329,8 @@
                               },
                               "required": [
                                 "shell",
-                                "textDigest"
+                                "textDigest",
+                                "retainedAttentionObligationRowIds"
                               ],
                               "type": "object"
                             },
@@ -7706,6 +7696,17 @@
                     },
                     {
                       "properties": {
+                        "archiveRecovery": {
+                          "anyOf": [
+                            {
+                              "const": "ownerMustUnarchiveOrRebind",
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "content": {
                           "type": "null"
                         },
@@ -7718,6 +7719,7 @@
                         "state": {
                           "enum": [
                             "delivered",
+                            "notDelivered",
                             "suppressed",
                             "resolvedAccepted",
                             "resolvedDiscarded",
@@ -7729,7 +7731,8 @@
                       "required": [
                         "content",
                         "contentFingerprint",
-                        "state"
+                        "state",
+                        "archiveRecovery"
                       ]
                     }
                   ]
@@ -8184,11 +8187,6 @@
                           "minLength": 1,
                           "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                           "type": "string"
-                        },
-                        "templateVersion": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
                         }
                       },
                       "required": [
@@ -8196,7 +8194,6 @@
                         "automationRunId",
                         "resultId",
                         "automationId",
-                        "templateVersion",
                         "resultDelivery"
                       ],
                       "type": "object"
@@ -8747,11 +8744,6 @@
                       "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                       "type": "string"
                     },
-                    "expectedTemplateVersion": {
-                      "maximum": 9007199254740991,
-                      "minimum": 0,
-                      "type": "integer"
-                    },
                     "kind": {
                       "const": "automation"
                     },
@@ -8778,7 +8770,6 @@
                   "required": [
                     "kind",
                     "automationId",
-                    "expectedTemplateVersion",
                     "policy"
                   ],
                   "type": "object"
@@ -8872,9 +8863,6 @@
                   "anyOf": [
                     {
                       "const": "notFound"
-                    },
-                    {
-                      "const": "templateVersionMismatch"
                     },
                     {
                       "const": "resultDeliveryUnsupported"
@@ -9449,17 +9437,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -9969,17 +9951,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -10044,9 +10020,6 @@
                   "anyOf": [
                     {
                       "const": "notFound"
-                    },
-                    {
-                      "const": "templateVersionMismatch"
                     },
                     {
                       "const": "resultDeliveryUnsupported"
@@ -12295,17 +12268,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -12815,17 +12782,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -14047,11 +14008,6 @@
                           "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                           "type": "string"
                         },
-                        "expectedTemplateVersion": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
                         "kind": {
                           "const": "automation"
                         },
@@ -14078,7 +14034,6 @@
                       "required": [
                         "kind",
                         "automationId",
-                        "expectedTemplateVersion",
                         "policy"
                       ],
                       "type": "object"
@@ -14559,11 +14514,6 @@
                           "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                           "type": "string"
                         },
-                        "expectedTemplateVersion": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
                         "kind": {
                           "const": "automation"
                         },
@@ -14590,7 +14540,6 @@
                       "required": [
                         "kind",
                         "automationId",
-                        "expectedTemplateVersion",
                         "policy"
                       ],
                       "type": "object"
@@ -15102,17 +15051,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -15622,17 +15565,11 @@
                                     "resultDelivery"
                                   ],
                                   "type": "object"
-                                },
-                                "templateVersion": {
-                                  "maximum": 9007199254740991,
-                                  "minimum": 0,
-                                  "type": "integer"
                                 }
                               },
                               "required": [
                                 "kind",
                                 "automationId",
-                                "templateVersion",
                                 "policy"
                               ],
                               "type": "object"
@@ -15690,9 +15627,6 @@
                   "anyOf": [
                     {
                       "const": "notFound"
-                    },
-                    {
-                      "const": "templateVersionMismatch"
                     },
                     {
                       "const": "resultDeliveryUnsupported"
@@ -16307,11 +16241,6 @@
                           "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                           "type": "string"
                         },
-                        "expectedTemplateVersion": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
                         "kind": {
                           "const": "automation"
                         },
@@ -16338,7 +16267,6 @@
                       "required": [
                         "kind",
                         "automationId",
-                        "expectedTemplateVersion",
                         "policy"
                       ],
                       "type": "object"
@@ -16832,11 +16760,6 @@
                           "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                           "type": "string"
                         },
-                        "expectedTemplateVersion": {
-                          "maximum": 9007199254740991,
-                          "minimum": 0,
-                          "type": "integer"
-                        },
                         "kind": {
                           "const": "automation"
                         },
@@ -16863,7 +16786,6 @@
                       "required": [
                         "kind",
                         "automationId",
-                        "expectedTemplateVersion",
                         "policy"
                       ],
                       "type": "object"
@@ -16935,9 +16857,6 @@
                   "anyOf": [
                     {
                       "const": "notFound"
-                    },
-                    {
-                      "const": "templateVersionMismatch"
                     },
                     {
                       "const": "resultDeliveryUnsupported"
@@ -17230,6 +17149,93 @@
           "ui"
         ],
         "title": "Delete conversation binding"
+      },
+      {
+        "confirmation": {
+          "body": "This resumes the conversation from the Session’s current transcript tail without replaying unavailable history.",
+          "confirmLabel": "Accept baseline",
+          "title": "Continue without unavailable transcript history?"
+        },
+        "dangerLevel": "writesLocal",
+        "description": "Resumes one paused Session conversation from the current transcript tail.",
+        "execution": {
+          "target": "daemon"
+        },
+        "hostAccess": [
+          "account-storage"
+        ],
+        "id": "binding/session-projection-baseline-accept-v1",
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "bindingId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "expectedBindingRevision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "expectedFrontierRevision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "bindingId",
+            "expectedBindingRevision",
+            "expectedFrontierRevision"
+          ],
+          "type": "object"
+        },
+        "placementBindings": [
+          "primary"
+        ],
+        "resultSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "bindingId": {
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[\\x21-\\x7E]+$",
+              "type": "string"
+            },
+            "bindingRevision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "frontierRevision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "baselineAccepted"
+            }
+          },
+          "required": [
+            "kind",
+            "bindingId",
+            "bindingRevision",
+            "frontierRevision"
+          ],
+          "type": "object"
+        },
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli",
+          "ui"
+        ],
+        "title": "Accept Session conversation transcript baseline"
       },
       {
         "confirmation": {
@@ -19554,7 +19560,6 @@
                   "type": "string"
                 },
                 "text": {
-                  "maxLength": 262144,
                   "type": "string"
                 },
                 "v": {
@@ -19603,11 +19608,6 @@
                   "minLength": 1,
                   "pattern": "^(?!\\s)[\\s\\S]*\\S$(?![\\s\\S])",
                   "type": "string"
-                },
-                "templateVersion": {
-                  "maximum": 9007199254740991,
-                  "minimum": 0,
-                  "type": "integer"
                 }
               },
               "required": [
@@ -19615,7 +19615,6 @@
                 "automationRunId",
                 "resultId",
                 "automationId",
-                "templateVersion",
                 "resultDelivery"
               ],
               "type": "object"
@@ -19896,6 +19895,16 @@
                         "minimum": 0,
                         "type": "integer"
                       },
+                      "observedDelta": {
+                        "anyOf": [
+                          {
+                            "const": 0
+                          },
+                          {
+                            "const": 1
+                          }
+                        ]
+                      },
                       "occurredAt": {
                         "maximum": 9007199254740991,
                         "minimum": 0,
@@ -19912,7 +19921,8 @@
                       "candidate",
                       "occurrenceId",
                       "occurredAt",
-                      "observationReceivedAt"
+                      "observationReceivedAt",
+                      "observedDelta"
                     ],
                     "type": "object"
                   }
@@ -24128,7 +24138,7 @@
         ],
         "id": "session-conversations-v1",
         "kind": "config",
-        "maxBytes": 253952,
+        "maxBytes": 274432,
         "scope": "session",
         "source": "dynamic"
       },
@@ -24393,7 +24403,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "The connected provider always sees this conversation. Deliveries that arrive through a Happier-hosted webhook endpoint also pass through the Happier server, which reads and verifies the raw provider request before sealing it.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Replies only",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Choose \"Do not reply\" to save this binding. The Automation still runs; only the reply back to the conversation is unavailable.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Returning the Automation result is not available on an end-to-end encrypted Account yet",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "This Automation cannot return a final result",
             "plugins.channels.surface.bindingCreateReview": "Review binding",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Sender feedback",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Off",
@@ -24430,7 +24440,7 @@
             "plugins.channels.surface.bindingEdit": "Edit binding",
             "plugins.channels.surface.bindingEditAudience": "Re-resolve conversation and allowed senders",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Automation target policy",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Only the Automation owner can confirm the current template version, so this target stays read-only until the selected machine is reachable.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Only the Automation owner can confirm current target eligibility, so this target stays read-only until the selected machine is reachable.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Automation target changes need your selected machine",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Keep this draft and reload Automations before choosing a target.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Automations are unavailable",
@@ -24462,7 +24472,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "Provider resolution is unavailable",
             "plugins.channels.surface.bindingEditResultDelivery": "Result delivery",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Keep this draft and choose \"Do not reply\" before saving. The Automation still runs; only the reply back to the conversation is unavailable.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Returning the Automation result is not available on an end-to-end encrypted Account yet",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "This Automation cannot return a final result",
             "plugins.channels.surface.bindingEditReview": "Review changes",
             "plugins.channels.surface.bindingEditRevokeSender": "Revoke {principal}",
             "plugins.channels.surface.bindingEditSave": "Save binding",
@@ -24897,7 +24907,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "Подключённый провайдер всегда видит этот разговор. Доставки, поступающие через размещённую в Happier конечную точку webhook, также проходят через сервер Happier, который читает и проверяет исходный запрос провайдера перед его запечатыванием.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Только ответы",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Выберите «Не отвечать», чтобы сохранить эту привязку. Автоматизация всё равно выполняется; недоступен только ответ обратно в разговор.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Возврат результата автоматизации пока недоступен для аккаунта со сквозным шифрованием",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Эта Автоматизация не может вернуть итоговый результат",
             "plugins.channels.surface.bindingCreateReview": "Просмотр привязки",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Отзыв отправителя",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Выключено",
@@ -24934,7 +24944,7 @@
             "plugins.channels.surface.bindingEdit": "Редактировать привязку",
             "plugins.channels.surface.bindingEditAudience": "Переопределите разговор и допустимых отправителей",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Политика целевого объекта автоматизации",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Только владелец Автоматизации может подтвердить текущую версию шаблона, поэтому эта цель остаётся доступной только для чтения, пока выбранная машина недоступна.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Только владелец Автоматизации может подтвердить доступность текущей цели, поэтому эта цель остаётся доступной только для чтения, пока выбранная машина недоступна.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Для изменения цели Автоматизации нужна выбранная машина",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Сохраните этот черновик и перезагрузите автоматизацию перед выбором цели.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Автоматизации недоступны",
@@ -24966,7 +24976,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "Разрешение поставщика недоступно",
             "plugins.channels.surface.bindingEditResultDelivery": "Доставка результатов",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Сохраните этот черновик и выберите «Не отвечать» перед сохранением. Автоматизация всё равно выполняется; недоступен только ответ обратно в разговор.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Возврат результата Автоматизации пока недоступен для аккаунта со сквозным шифрованием",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Эта Автоматизация не может вернуть итоговый результат",
             "plugins.channels.surface.bindingEditReview": "Проверьте изменения",
             "plugins.channels.surface.bindingEditRevokeSender": "Отозвать {principal}",
             "plugins.channels.surface.bindingEditSave": "Сохраните привязку",
@@ -25401,7 +25411,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "Podłączony dostawca zawsze widzi tę rozmowę. Dostawy przychodzące przez punkt końcowy webhook hostowany przez Happier przechodzą także przez serwer Happier, który odczytuje i weryfikuje surowe żądanie dostawcy przed jego zapieczętowaniem.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Odpowiedzi tylko",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Wybierz „Nie odpowiadaj”, aby zapisać to powiązanie. Automatyzacja nadal działa; niedostępna jest tylko odpowiedź z powrotem do rozmowy.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Zwracanie wyniku Automatyzacji nie jest jeszcze dostępne na Koncie z szyfrowaniem end-to-end",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Ta Automatyzacja nie może zwrócić wyniku końcowego",
             "plugins.channels.surface.bindingCreateReview": "Przejrzyj wiązanie",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Informacja zwrotna nadawcy",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Wyłączone",
@@ -25438,7 +25448,7 @@
             "plugins.channels.surface.bindingEdit": "Edytuj powiązanie",
             "plugins.channels.surface.bindingEditAudience": "Rozwiąż ponownie rozmowę i dozwolonych nadawców",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Zasada docelowa automatyzacji",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Tylko właściciel Automatyzacji może potwierdzić bieżącą wersję szablonu, więc ten cel pozostaje tylko do odczytu, dopóki wybrana maszyna nie będzie osiągalna.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Tylko właściciel Automatyzacji może potwierdzić dostępność bieżącego celu, więc ten cel pozostaje tylko do odczytu, dopóki wybrana maszyna nie będzie osiągalna.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Zmiana celu Automatyzacji wymaga wybranej maszyny",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Zachowaj tymczasowy fragment i odśwież Automatyzacje przed wyborem celu.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Automatyzacje są niedostępne",
@@ -25470,7 +25480,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "Rozwiązanie dostawcy jest niedostępne",
             "plugins.channels.surface.bindingEditResultDelivery": "Dostawa wyników",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Zachowaj tę wersję roboczą i wybierz „Nie odpowiadaj” przed zapisaniem. Automatyzacja nadal działa; niedostępna jest tylko odpowiedź z powrotem do rozmowy.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Zwracanie wyniku Automatyzacji nie jest jeszcze dostępne na koncie z szyfrowaniem end-to-end",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Ta Automatyzacja nie może zwrócić wyniku końcowego",
             "plugins.channels.surface.bindingEditReview": "Przejrzyj zmiany",
             "plugins.channels.surface.bindingEditRevokeSender": "Cofnij dostęp {principal}",
             "plugins.channels.surface.bindingEditSave": "Zapisz powiązanie",
@@ -25905,7 +25915,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "El proveedor conectado siempre ve esta conversación. Las entregas que llegan por un punto de conexión webhook alojado por Happier también pasan por el servidor de Happier, que lee y verifica la solicitud original del proveedor antes de sellarla.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Respuestas solo",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Elige «No responder» para guardar esta vinculación. La Automatización sigue ejecutándose; solo la respuesta a la conversación no está disponible.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Devolver el resultado de la Automatización aún no está disponible en una Cuenta con cifrado de extremo a extremo",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Esta Automatización no puede devolver un resultado final",
             "plugins.channels.surface.bindingCreateReview": "Revisión vinculante",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Comentarios del remitente",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Desactivado",
@@ -25942,7 +25952,7 @@
             "plugins.channels.surface.bindingEdit": "Edite la enlace",
             "plugins.channels.surface.bindingEditAudience": "Vuelve a resolver la conversación y los remitentes permitidos",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Política de objetivo de automatización",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Solo el propietario de la Automatización puede confirmar la versión actual de la plantilla, por lo que este destino permanece en solo lectura hasta que la máquina seleccionada sea accesible.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Solo el propietario de la Automatización puede confirmar la disponibilidad actual del destino, por lo que permanece en solo lectura hasta que la máquina seleccionada sea accesible.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Cambiar el destino de la Automatización requiere tu máquina seleccionada",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Manten este borrador y recarga las automatizaciones antes de elegir un objetivo.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Las automatizaciones no están disponibles",
@@ -25974,7 +25984,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "La resolución del proveedor no está disponible",
             "plugins.channels.surface.bindingEditResultDelivery": "Entrega de resultados",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Conserva este borrador y elige «No responder» antes de guardar. La Automatización sigue ejecutándose; solo la respuesta de vuelta a la conversación no está disponible.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Devolver el resultado de la Automatización aún no está disponible en una cuenta cifrada de extremo a extremo",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Esta Automatización no puede devolver un resultado final",
             "plugins.channels.surface.bindingEditReview": "Revisar los cambios",
             "plugins.channels.surface.bindingEditRevokeSender": "Revocar a {principal}",
             "plugins.channels.surface.bindingEditSave": "Guardar el enlace",
@@ -26409,7 +26419,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "Le fournisseur connecté voit toujours cette conversation. Les livraisons qui arrivent par un point de terminaison webhook hébergé par Happier transitent aussi par le serveur Happier, qui lit et vérifie la requête brute du fournisseur avant de la sceller.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Réponses uniquement",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Choisissez « Ne pas répondre » pour enregistrer cette liaison. L’Automatisation s’exécute toujours ; seule la réponse renvoyée dans la conversation est indisponible.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Le renvoi du résultat de l’Automatisation n’est pas encore disponible sur un Compte chiffré de bout en bout",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Cette Automatisation ne peut pas renvoyer de résultat final",
             "plugins.channels.surface.bindingCreateReview": "Reliure de révision",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Commentaires de l'expéditeur",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Désactivé",
@@ -26446,7 +26456,7 @@
             "plugins.channels.surface.bindingEdit": "Éditer le liaison",
             "plugins.channels.surface.bindingEditAudience": "Re-resolver la conversation et les expéditeurs autorisés",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Stratégie cible d'automatisation",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Seul le propriétaire de l’Automatisation peut confirmer la version actuelle du modèle : cette cible reste en lecture seule tant que la machine sélectionnée n’est pas joignable.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Seul le propriétaire de l’Automatisation peut confirmer la disponibilité actuelle de la cible : elle reste en lecture seule tant que la machine sélectionnée n’est pas joignable.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Modifier la cible de l’Automatisation nécessite votre machine sélectionnée",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Conservez cette brouillon et rechargez les Automations avant de choisir une cible.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Les Automations ne sont pas disponibles",
@@ -26478,7 +26488,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "La résolution du fournisseur n'est pas disponible",
             "plugins.channels.surface.bindingEditResultDelivery": "Livraison du résultat",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Conservez ce brouillon et choisissez « Ne pas répondre » avant d’enregistrer. L’Automatisation s’exécute toujours ; seule la réponse renvoyée dans la conversation est indisponible.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Le renvoi du résultat de l’Automatisation n’est pas encore disponible sur un compte chiffré de bout en bout",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Cette Automatisation ne peut pas renvoyer de résultat final",
             "plugins.channels.surface.bindingEditReview": "Examiner les modifications",
             "plugins.channels.surface.bindingEditRevokeSender": "Révoquer {principal}",
             "plugins.channels.surface.bindingEditSave": "Sauvegarder le lien",
@@ -26913,7 +26923,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "Il provider collegato vede sempre questa conversazione. Le consegne che arrivano tramite un endpoint webhook ospitato da Happier passano anche dal server Happier, che legge e verifica la richiesta originale del provider prima di sigillarla.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Risposte solo",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Scegli «Non rispondere» per salvare questo collegamento. L’Automazione viene comunque eseguita; non è disponibile solo la risposta nella conversazione.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "La restituzione del risultato dell’Automazione non è ancora disponibile su un Account con crittografia end-to-end",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Questa Automazione non può restituire un risultato finale",
             "plugins.channels.surface.bindingCreateReview": "Rivedere la rilegatura",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Feedback del mittente",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Spento",
@@ -26950,7 +26960,7 @@
             "plugins.channels.surface.bindingEdit": "Modifica la bind",
             "plugins.channels.surface.bindingEditAudience": "Risolve nuovamente la conversazione e gli invianti consentiti",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Politica di bersaglio dell'automazione",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Solo il proprietario dell’Automazione può confermare la versione corrente del modello, quindi questa destinazione resta in sola lettura finché la macchina selezionata non è raggiungibile.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Solo il proprietario dell’Automazione può confermare la disponibilità corrente della destinazione, quindi resta in sola lettura finché la macchina selezionata non è raggiungibile.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Modificare la destinazione dell’Automazione richiede la macchina selezionata",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Mantieni questo bozza e ricarica le Automazioni prima di scegliere un bersaglio.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Le Automazioni non sono disponibili",
@@ -26982,7 +26992,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "La risoluzione del fornitore non è disponibile",
             "plugins.channels.surface.bindingEditResultDelivery": "Consegna del risultato",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Conserva questa bozza e scegli «Non rispondere» prima di salvare. L’Automazione viene comunque eseguita; non è disponibile solo la risposta nella conversazione.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "La restituzione del risultato dell’Automazione non è ancora disponibile su un account con crittografia end-to-end",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Questa Automazione non può restituire un risultato finale",
             "plugins.channels.surface.bindingEditReview": "Rivedi le modifiche",
             "plugins.channels.surface.bindingEditRevokeSender": "Revoca {principal}",
             "plugins.channels.surface.bindingEditSave": "Salva l'associazione",
@@ -27417,7 +27427,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "O fornecedor ligado vê sempre esta conversa. As entregas que chegam por um ponto final de webhook alojado pelo Happier passam também pelo servidor Happier, que lê e verifica o pedido original do fornecedor antes de o selar.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Respostas apenas",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Escolha «Não responder» para guardar esta associação. A Automatização continua a correr; apenas a resposta de volta à conversa está indisponível.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Devolver o resultado da Automatização ainda não está disponível numa Conta com cifragem ponta a ponta",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Esta Automatização não pode devolver um resultado final",
             "plugins.channels.surface.bindingCreateReview": "Revisar vinculação",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Feedback do remetente",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Desligado",
@@ -27454,7 +27464,7 @@
             "plugins.channels.surface.bindingEdit": "Edite a ligação",
             "plugins.channels.surface.bindingEditAudience": "Re-resolver a conversa e os remetentes permitidos",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Política de destino da automação",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Apenas o proprietário da Automação pode confirmar a versão atual do modelo, por isso este destino permanece somente leitura até que a máquina selecionada esteja acessível.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Apenas o proprietário da Automação pode confirmar a disponibilidade atual do destino, por isso ele permanece somente leitura até que a máquina selecionada esteja acessível.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Alterar o destino da Automação exige a sua máquina selecionada",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Manter este rascunho e recarregar as automações antes de escolher um alvo.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "As automações estão indisponíveis",
@@ -27486,7 +27496,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "A resolução do provedor está indisponível",
             "plugins.channels.surface.bindingEditResultDelivery": "Entrega de resultados",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Mantenha este rascunho e escolha «Não responder» antes de salvar. A Automação continua sendo executada; apenas a resposta de volta à conversa está indisponível.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Devolver o resultado da Automação ainda não está disponível em uma conta com criptografia de ponta a ponta",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Esta Automação não pode devolver um resultado final",
             "plugins.channels.surface.bindingEditReview": "Revisar alterações",
             "plugins.channels.surface.bindingEditRevokeSender": "Revogar {principal}",
             "plugins.channels.surface.bindingEditSave": "Salvar vinculação",
@@ -27921,7 +27931,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "El proveïdor connectat sempre veu aquesta conversa. Els lliuraments que arriben per un punt final de webhook allotjat per Happier també passen pel servidor de Happier, que llegeix i verifica la sol·licitud original del proveïdor abans de segellar-la.",
             "plugins.channels.surface.bindingCreateRepliesOnly": "Només respostes",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "Tria «No responguis» per desar aquest vincle. L’Automatització continua executant-se; només la resposta a la conversa no està disponible.",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Retornar el resultat de l’Automatització encara no està disponible en un Compte amb xifratge d’extrem a extrem",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "Aquesta Automatització no pot retornar un resultat final",
             "plugins.channels.surface.bindingCreateReview": "Enquadernació de revisió",
             "plugins.channels.surface.bindingCreateSenderFeedback": "Opinió del remitent",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "Apagat",
@@ -27958,7 +27968,7 @@
             "plugins.channels.surface.bindingEdit": "Edita la vinculació",
             "plugins.channels.surface.bindingEditAudience": "Reavalua la conversa i els enviadors autoritzats",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "Política de destí de l'automatització",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Només el propietari de l’Automatització pot confirmar la versió actual de la plantilla, de manera que aquest destí queda només de lectura fins que la màquina seleccionada sigui accessible.",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "Només el propietari de l’Automatització pot confirmar la disponibilitat actual del destí, de manera que queda només de lectura fins que la màquina seleccionada sigui accessible.",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "Canviar el destí de l’Automatització requereix la màquina seleccionada",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "Mantén aquest esborrany i recarrega les automatitzacions abans de seleccionar un objectiu.",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "Les Automàtiques no estan disponibles",
@@ -27990,7 +28000,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "La resolució del proveïdor no està disponible",
             "plugins.channels.surface.bindingEditResultDelivery": "Lliurat del resultat",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "Conserveu aquest esborrany i trieu «No responguis» abans de desar. L’Automatització continua executant-se; només no està disponible la resposta de tornada a la conversa.",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Retornar el resultat de l’Automatització encara no està disponible en un compte amb xifratge d’extrem a extrem",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "Aquesta Automatització no pot retornar un resultat final",
             "plugins.channels.surface.bindingEditReview": "Revisa els canvis",
             "plugins.channels.surface.bindingEditRevokeSender": "Revoca {principal}",
             "plugins.channels.surface.bindingEditSave": "Guarda el vincul",
@@ -28425,7 +28435,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "已连接的提供方始终能看到此对话。通过 Happier 托管的 webhook 端点送达的内容也会经过 Happier 服务器，服务器会在封装前读取并验证提供方的原始请求。",
             "plugins.channels.surface.bindingCreateRepliesOnly": "仅限回复",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "选择“不回复”即可保存此绑定。自动化仍会运行；只有回到对话的回复不可用。",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "在端到端加密的帐户上，尚不支持返回自动化结果",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "此自动化无法返回最终结果",
             "plugins.channels.surface.bindingCreateReview": "审核绑定",
             "plugins.channels.surface.bindingCreateSenderFeedback": "发件人反馈",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "关闭",
@@ -28462,7 +28472,7 @@
             "plugins.channels.surface.bindingEdit": "编辑绑定",
             "plugins.channels.surface.bindingEditAudience": "重新解析对话和允许的发送者",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "自动化目标策略",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "只有该自动化的所有者才能确认当前模板版本，因此在所选机器可访问之前，此目标保持只读。",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "只有该自动化的所有者才能确认当前目标是否可用，因此在所选机器可访问之前，此目标保持只读。",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "更改自动化目标需要你所选的机器",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "保持此草稿并重新加载自动化后再选择目标。",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "自动化不可用",
@@ -28494,7 +28504,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "提供者解析不可用",
             "plugins.channels.surface.bindingEditResultDelivery": "结果交付",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "请保留此草稿并在保存前选择“不回复”。自动化仍会运行；仅无法将回复发送回该对话。",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "在端到端加密账户上，尚不支持将自动化结果返回到对话",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "此自动化无法返回最终结果",
             "plugins.channels.surface.bindingEditReview": "审查更改",
             "plugins.channels.surface.bindingEditRevokeSender": "撤销 {principal}",
             "plugins.channels.surface.bindingEditSave": "保存绑定",
@@ -28929,7 +28939,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "已連線的供應商一律看得到此對話。透過 Happier 代管的 webhook 端點送達的內容也會經過 Happier 伺服器，伺服器會在封裝前讀取並驗證供應商的原始要求。",
             "plugins.channels.surface.bindingCreateRepliesOnly": "仅回复",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "選擇「不回覆」即可儲存此繫結。自動化仍會執行；只有回到對話的回覆無法使用。",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "在端對端加密的帳戶上，尚不支援回傳自動化結果",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "此自動化無法回傳最終結果",
             "plugins.channels.surface.bindingCreateReview": "審核綁定",
             "plugins.channels.surface.bindingCreateSenderFeedback": "寄件者回饋",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "關閉",
@@ -28966,7 +28976,7 @@
             "plugins.channels.surface.bindingEdit": "編輯綁定",
             "plugins.channels.surface.bindingEditAudience": "重新解析对话和允许的发送者",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "自动化目标策略",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "只有該自動化的擁有者才能確認目前的範本版本，因此在所選機器可連線之前，此目標維持唯讀。",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "只有該自動化的擁有者才能確認目前的目標是否可用，因此在所選機器可連線之前，此目標維持唯讀。",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "變更自動化目標需要您所選的機器",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "请保存此草稿并重新加载自动化，然后再选择目标。",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "自动化不可用",
@@ -28998,7 +29008,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "提供者解析不可用",
             "plugins.channels.surface.bindingEditResultDelivery": "结果传递",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "請保留此草稿並在儲存前選擇「不回覆」。自動化仍會執行；僅無法將回覆送回該對話。",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "在端對端加密帳戶上，尚未支援將自動化結果回傳到對話",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "此自動化無法回傳最終結果",
             "plugins.channels.surface.bindingEditReview": "查看更改",
             "plugins.channels.surface.bindingEditRevokeSender": "撤銷 {principal}",
             "plugins.channels.surface.bindingEditSave": "保存绑定",
@@ -29433,7 +29443,7 @@
             "plugins.channels.surface.bindingCreatePrivacyTransit": "接続されたプロバイダーは常にこの会話を見ることができます。Happier がホストする webhook エンドポイント経由の配信は Happier サーバーも経由し、サーバーは封をする前にプロバイダーの生のリクエストを読み取って検証します。",
             "plugins.channels.surface.bindingCreateRepliesOnly": "返信のみ",
             "plugins.channels.surface.bindingCreateResultDeliveryUnavailableDescription": "この紐づけを保存するには「返信しない」を選んでください。オートメーションは実行されます。会話への返信だけが利用できません。",
-            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "エンドツーエンド暗号化アカウントでは、オートメーションの結果の返信はまだ利用できません",
+            "plugins.channels.surface.bindingCreateResultDeliveryUnavailableTitle": "このオートメーションは最終結果を返せません",
             "plugins.channels.surface.bindingCreateReview": "レビューバインディング",
             "plugins.channels.surface.bindingCreateSenderFeedback": "送信者のフィードバック",
             "plugins.channels.surface.bindingCreateSenderFeedbackOff": "オフ",
@@ -29470,7 +29480,7 @@
             "plugins.channels.surface.bindingEdit": "バインドを編集する",
             "plugins.channels.surface.bindingEditAudience": "会話と許可された送信者を再解決する",
             "plugins.channels.surface.bindingEditAutomationPolicyTitle": "自動化ターゲットポリシー",
-            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "現在のテンプレートバージョンを確認できるのはそのオートメーションの所有者だけです。そのため、選択したマシンに接続できるようになるまで、このターゲットは読み取り専用のままです。",
+            "plugins.channels.surface.bindingEditAutomationTargetOfflineDescription": "現在のターゲットが利用可能か確認できるのはそのオートメーションの所有者だけです。そのため、選択したマシンに接続できるようになるまで、このターゲットは読み取り専用のままです。",
             "plugins.channels.surface.bindingEditAutomationTargetOfflineTitle": "オートメーションのターゲット変更には選択したマシンが必要です",
             "plugins.channels.surface.bindingEditAutomationUnavailableDescription": "この下書きを保存する前に、オートメーションを再読み込みしてターゲットを選択してください。",
             "plugins.channels.surface.bindingEditAutomationUnavailableTitle": "オートメーションが利用できません",
@@ -29502,7 +29512,7 @@
             "plugins.channels.surface.bindingEditResolverUnavailableTitle": "プロバイダーの解決が利用できません",
             "plugins.channels.surface.bindingEditResultDelivery": "結果配信",
             "plugins.channels.surface.bindingEditResultDeliveryUnavailableDescription": "この下書きを保持し、保存する前に「返信しない」を選択してください。オートメーション自体は実行されます。会話へ返信する部分だけが利用できません。",
-            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "エンドツーエンド暗号化アカウントでは、オートメーションの結果を会話に返す機能はまだ利用できません",
+            "plugins.channels.surface.bindingEditResultDeliveryUnavailableTitle": "このオートメーションは最終結果を返せません",
             "plugins.channels.surface.bindingEditReview": "変更内容を確認",
             "plugins.channels.surface.bindingEditRevokeSender": "{principal} を取り消す",
             "plugins.channels.surface.bindingEditSave": "バインディングを保存する",

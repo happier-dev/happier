@@ -1,6 +1,7 @@
 import type {
   AgentAccountUsageSnapshot,
   AgentAccountUsageSourceContextInput,
+  AgentSessionNativeHomeService,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ClaudeRuntimeLogger } from './dependencies.js';
@@ -11,7 +12,7 @@ import {
   mapClaudeRuntimeRateLimitsToUsageObservation,
 } from '../auth/services/runtime/usage.js';
 import { resolveClaudeUsageSubjectRef } from '../auth/services/usage/identity.js';
-import { readClaudeNativeAccountIdentityFromConfigDir } from '../auth/services/native/accountIdentity.js';
+import { readClaudeNativeAccountIdentity } from '../auth/services/native/accountIdentity.js';
 import {
   mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot,
   mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot,
@@ -49,7 +50,10 @@ export type ClaudeRuntimeAccountUsageService = Readonly<{
 }>;
 
 export type ClaudeRuntimeAccountUsageContext = Readonly<{
-  agentRuntime: Readonly<{ accountUsage: ClaudeRuntimeAccountUsageService }>;
+  agentRuntime: Readonly<{
+    accountUsage: ClaudeRuntimeAccountUsageService;
+    nativeHome?: AgentSessionNativeHomeService;
+  }>;
   logger: Pick<ClaudeRuntimeLogger, 'debug'>;
 }>;
 
@@ -134,9 +138,17 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     launchEnv: params.launchEnv,
   });
   const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
-  const liveAccountIdentity = claudeConfigDir
-    ? await readClaudeNativeAccountIdentityFromConfigDir(claudeConfigDir)
-    : null;
+  const liveAccountIdentity = await (async () => {
+    try {
+      const bytes = (await params.ctx.agentRuntime.nativeHome?.readFiles(['.claude.json']))?.['.claude.json'];
+      if (!bytes) return null;
+      return readClaudeNativeAccountIdentity(
+        JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+      );
+    } catch {
+      return null;
+    }
+  })();
   const serializedConnectedServiceSelection = params.launchEnv?.[
     HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV
   ];

@@ -11,6 +11,7 @@ import {
     classifyGitPortableWorkspacePath,
     createGitWorkspaceCheckout,
     materializeGitWorkspaceSourceCheckout,
+    verifyGitPreparedReviewWorkspace,
     reconcileGitWorkspacePostMaterialization,
     realizeGitWorkspaceCheckout,
 } from './workspaceIntegration.js';
@@ -39,6 +40,79 @@ async function writeTrackedFile(cwd: string, relativePath: string, contents: str
 }
 
 describe('git workspace integration', () => {
+    it('reports the already-prepared checkout local HEAD without mutating it', async () => {
+        const repoRoot = await makeTempDir('git-review-workspace-verify-');
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await writeTrackedFile(repoRoot, 'README.md', 'initial\n');
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+            const localHead = await runGit(repoRoot, ['rev-parse', 'HEAD']);
+            const signal = new AbortController().signal;
+
+            await expect(runWithRealGitScmRuntime(() => verifyGitPreparedReviewWorkspace({
+                context: {
+                    cwd: repoRoot,
+                    projectKey: `test:${repoRoot}`,
+                    detection: { isRepo: true, rootPath: repoRoot, mode: '.git' },
+                },
+                request: {
+                    cwd: repoRoot,
+                    displayName: 'feature',
+                    sourceTip: {
+                        repository: {
+                            kind: 'github',
+                            deployment: 'https://github.com',
+                            repository: 'acme/repository',
+                        },
+                        cloneUrl: 'https://github.com/acme/repository.git',
+                        branch: 'feature',
+                        sourceHeadSha: 'ffffffffffffffffffffffffffffffffffffffff',
+                        fetchRef: 'refs/heads/feature',
+                    },
+                    verification: { targetPath: repoRoot },
+                },
+                signal,
+            }))).resolves.toEqual({
+                success: true,
+                verification: { targetPath: repoRoot, sourceHeadSha: localHead },
+            });
+            await expect(runGit(repoRoot, ['rev-parse', 'HEAD'])).resolves.toBe(localHead);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves cancellation before reading a prepared review workspace', async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        await expect(verifyGitPreparedReviewWorkspace({
+            context: {
+                cwd: '/selected/repository',
+                projectKey: 'test:selected',
+                detection: { isRepo: true, rootPath: '/selected/repository', mode: '.git' },
+            },
+            request: {
+                cwd: '/selected/repository',
+                displayName: 'feature',
+                sourceTip: {
+                    repository: {
+                        kind: 'github',
+                        deployment: 'https://github.com',
+                        repository: 'acme/repository',
+                    },
+                    cloneUrl: 'https://github.com/acme/repository.git',
+                    branch: 'feature',
+                    sourceHeadSha: '0123456789abcdef0123456789abcdef01234567',
+                    fetchRef: 'refs/heads/feature',
+                },
+                verification: { targetPath: '/selected/repository/.happier/worktrees/feature' },
+            },
+            signal: controller.signal,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('classifies linked-worktree admin paths as non-portable while keeping regular git metadata portable', () => {
         expect(classifyGitPortableWorkspacePath({ relativePath: '.git/HEAD' })).toBe('portable');
         expect(classifyGitPortableWorkspacePath({ relativePath: '.git/worktrees/feature-auth/HEAD' })).toBe('non_portable');

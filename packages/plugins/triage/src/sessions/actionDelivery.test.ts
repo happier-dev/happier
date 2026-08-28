@@ -41,7 +41,10 @@ describe('what happens to the resolved prompt once a Session exists', () => {
 
         expect(plan.kind).toBe('send');
         if (plan.kind !== 'send') return;
-        expect(plan.text).toBe('Repair the failing parser test.');
+        // The Prompt Library's resolver owns the rendered body. In particular,
+        // indentation and trailing newlines can be meaningful Markdown/code;
+        // Triage must not normalize them on its separate launch path.
+        expect(plan.text).toBe('  Repair the failing parser test.  ');
         // A direct send that delivered a prompt and no entry context is the
         // exact failure `PLAN.md` §0a A4a exists to prevent.
         expect(plan.attachments).toHaveLength(1);

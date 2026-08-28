@@ -13,7 +13,6 @@ import type { GithubReviewDecisionV1 } from './mapping/facts.js';
 import { readValidatedGithubFollowUpPage } from './scan/link.js';
 import {
   GITHUB_MAX_PAGE_SIZE_V1,
-  GITHUB_SEARCH_RESULT_CEILING_V1,
   type GithubTriageFailureV1,
 } from './types.js';
 
@@ -217,7 +216,6 @@ async function readPaginated<T, TPageRow = unknown>(
     initialUrl: string;
     readPage: (body: unknown) => readonly TPageRow[] | null;
     decodeRow: (raw: TPageRow) => T | null;
-    maxPages: number;
   }>,
 ): Promise<Readonly<{
   rows: readonly T[];
@@ -226,9 +224,9 @@ async function readPaginated<T, TPageRow = unknown>(
 }>> {
   const rows: T[] = [];
   let url: string | null = input.initialUrl;
-  let pages = 0;
+  const visitedUrls = new Set<string>();
 
-  while (url !== null && pages < input.maxPages) {
+  while (url !== null) {
     if (dependencies.signal.aborted) {
       return Object.freeze({
         rows: Object.freeze([...rows]),
@@ -236,6 +234,17 @@ async function readPaginated<T, TPageRow = unknown>(
         incomplete: false,
       });
     }
+    if (visitedUrls.has(url)) {
+      return Object.freeze({
+        rows: Object.freeze([...rows]),
+        failure: Object.freeze({
+          class: 'unsupportedContract',
+          code: 'github_reviews_link_invalid',
+        }),
+        incomplete: false,
+      });
+    }
+    visitedUrls.add(url);
     const requestedUrl: string = url;
     let response;
     try {
@@ -279,7 +288,6 @@ async function readPaginated<T, TPageRow = unknown>(
       if (decoded !== null) rows.push(decoded);
     }
 
-    pages += 1;
     const next = readValidatedGithubFollowUpPage(response.headers, requestedUrl);
     if (next.kind === 'next') {
       url = next.url;
@@ -300,10 +308,7 @@ async function readPaginated<T, TPageRow = unknown>(
   return Object.freeze({
     rows: Object.freeze([...rows]),
     failure: null,
-    // A validated next page after the provider-derived 1,000-row budget is
-    // evidence that this connection did not finish. Rows already read remain
-    // useful, but they may not be presented as the whole review history.
-    incomplete: url !== null,
+    incomplete: false,
   });
 }
 
@@ -313,12 +318,40 @@ export type GithubPullRequestReviewRecordsReadV1 = Readonly<{
   incomplete: boolean;
 }>;
 
+export type GithubPullRequestReviewCommentRecordV1 = Readonly<{
+  providerId: string;
+  body: string;
+}>;
+
+export type GithubPullRequestReviewPublicationRecordV1 = Readonly<{
+  providerId: string;
+  body: string;
+}>;
+
+function decodeGithubPullRequestReviewPublicationRecord(
+  raw: unknown,
+): GithubPullRequestReviewPublicationRecordV1 | null {
+  if (!isRecord(raw)) return null;
+  const providerId = readProviderId(raw.id);
+  return providerId === null || typeof raw.body !== 'string'
+    ? null
+    : Object.freeze({ providerId, body: raw.body });
+}
+
+function decodeGithubPullRequestReviewCommentRecord(
+  raw: unknown,
+): GithubPullRequestReviewCommentRecordV1 | null {
+  if (!isRecord(raw)) return null;
+  const providerId = readProviderId(raw.id);
+  if (providerId === null || typeof raw.body !== 'string') return null;
+  return Object.freeze({ providerId, body: raw.body });
+}
+
 /** The one canonical walk of GitHub's submitted-review collection. */
 export async function readGithubPullRequestReviewRecords(
   input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
   dependencies: GithubReviewsDependenciesV1,
 ): Promise<GithubPullRequestReviewRecordsReadV1> {
-  const maxPages = Math.ceil(GITHUB_SEARCH_RESULT_CEILING_V1 / GITHUB_MAX_PAGE_SIZE_V1);
   const base = buildGithubApiUrl([
     'repos',
     input.route.owner,
@@ -328,7 +361,6 @@ export async function readGithubPullRequestReviewRecords(
   ]);
   const read = await readPaginated<GithubPullRequestReviewRecordV1>(dependencies, {
     initialUrl: `${base}/reviews?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
-    maxPages,
     decodeRow: decodeGithubPullRequestReviewRecord,
     readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
   });
@@ -339,11 +371,89 @@ export async function readGithubPullRequestReviewRecords(
   });
 }
 
+/**
+ * Minimal full walk for publication markers.
+ *
+ * Reconciliation needs only GitHub's immutable native id and raw body. It must
+ * not discard a marker because an author was deleted or GitHub introduced a
+ * review state the richer reviewer-detail decoder does not yet understand.
+ */
+export async function readGithubPullRequestReviewPublicationRecords(
+  input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
+  dependencies: GithubReviewsDependenciesV1,
+): Promise<Readonly<{
+  reviews: readonly GithubPullRequestReviewPublicationRecordV1[];
+  failure: GithubTriageFailureV1 | null;
+  incomplete: boolean;
+}>> {
+  const base = buildGithubApiUrl([
+    'repos', input.route.owner, input.route.name, 'pulls', input.number,
+  ]);
+  const read = await readPaginated<GithubPullRequestReviewPublicationRecordV1>(dependencies, {
+    initialUrl: `${base}/reviews?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
+    decodeRow: decodeGithubPullRequestReviewPublicationRecord,
+    readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
+  });
+  return Object.freeze({
+    reviews: read.rows,
+    failure: read.failure,
+    incomplete: read.incomplete,
+  });
+}
+
+/** Canonical full walk used only for exact publication-marker reconciliation. */
+export async function readGithubPullRequestReviewCommentRecords(
+  input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
+  dependencies: GithubReviewsDependenciesV1,
+): Promise<Readonly<{
+  comments: readonly GithubPullRequestReviewCommentRecordV1[];
+  failure: GithubTriageFailureV1 | null;
+  incomplete: boolean;
+}>> {
+  const base = buildGithubApiUrl([
+    'repos',
+    input.route.owner,
+    input.route.name,
+    'pulls',
+    input.number,
+    'comments',
+  ]);
+  const read = await readPaginated<GithubPullRequestReviewCommentRecordV1>(dependencies, {
+    initialUrl: `${base}?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
+    decodeRow: decodeGithubPullRequestReviewCommentRecord,
+    readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
+  });
+  return Object.freeze({
+    comments: read.rows,
+    failure: read.failure,
+    incomplete: read.incomplete,
+  });
+}
+
+/** Canonical full issue-conversation walk for exact publication markers. */
+export async function readGithubIssueCommentPublicationRecords(
+  input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
+  dependencies: GithubReviewsDependenciesV1,
+): Promise<Readonly<{
+  comments: readonly GithubPullRequestReviewCommentRecordV1[];
+  failure: GithubTriageFailureV1 | null;
+  incomplete: boolean;
+}>> {
+  const base = buildGithubApiUrl([
+    'repos', input.route.owner, input.route.name, 'issues', input.number, 'comments',
+  ]);
+  const read = await readPaginated<GithubPullRequestReviewCommentRecordV1>(dependencies, {
+    initialUrl: `${base}?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
+    decodeRow: decodeGithubPullRequestReviewCommentRecord,
+    readPage: (body) => (Array.isArray(body) ? Object.freeze([...body]) : null),
+  });
+  return Object.freeze({ comments: read.rows, failure: read.failure, incomplete: read.incomplete });
+}
+
 export async function readGithubPullRequestReviewers(
   input: Readonly<{ route: GithubRepositoryRouteV1; number: string }>,
   dependencies: GithubReviewsDependenciesV1,
 ): Promise<GithubReviewersSurfaceV1> {
-  const maxPages = Math.ceil(GITHUB_SEARCH_RESULT_CEILING_V1 / GITHUB_MAX_PAGE_SIZE_V1);
   const base = buildGithubApiUrl([
     'repos',
     input.route.owner,
@@ -358,7 +468,6 @@ export async function readGithubPullRequestReviewers(
   // request object's nested `requested_reviewers`/`requested_teams`. One shape, read once.
   const requests = await readPaginated<GithubRequestedReviewerV1, GithubRequestedReviewerV1>(dependencies, {
     initialUrl: `${base}/requested_reviewers?per_page=${GITHUB_MAX_PAGE_SIZE_V1}`,
-    maxPages,
     decodeRow: (raw) => raw,
     readPage: (body) => decodeGithubRequestedReviewers(body),
   });

@@ -84,9 +84,6 @@ RealtimeVoiceProviderRuntime & Readonly<{
         providerConfig: settings,
       });
     },
-    // Subscription denial remains an explicit protocol result. A public leaf
-    // cannot invoke app-private modal or translation services.
-    presentPaywall: async () => Object.freeze({ purchased: false }),
     alert() {},
   });
   const hostedConversationsByLeaseId = new Map<

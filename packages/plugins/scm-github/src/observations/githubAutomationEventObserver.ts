@@ -483,10 +483,10 @@ function parseRepositoryEventPayload(input: Readonly<{
   return null;
 }
 
-function normalizeRepositoryEvent(
+export function normalizeGithubRepositoryEventForAutomation(
   value: unknown,
   repository: GithubRepositorySourceConfigV1,
-  eventLocalId: GithubAutomationEventLocalIdV1,
+  eventLocalId?: GithubAutomationEventLocalIdV1,
 ): GithubRepositoryTimelineEntryV1<GithubAutomationRepositoryEventObservationV1> {
   if (!isRecord(value)) {
     throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events entry is invalid');
@@ -514,7 +514,7 @@ function normalizeRepositoryEvent(
   return Object.freeze({
     eventId,
     createdAtMs: occurredAtMs,
-    observation: normalized === null || normalized.eventRef.localId !== eventLocalId
+    observation: normalized === null || (eventLocalId !== undefined && normalized.eventRef.localId !== eventLocalId)
       ? null
       : Object.freeze({
         eventRef: normalized.eventRef,
@@ -572,10 +572,9 @@ async function pollRepositoryEvents(input: Readonly<{
         kind: 'page' as const,
         etag: readTriageResponseHeaderV1(response.headers, 'etag'),
         nextUrl: parseNextPageUrl(response.headers, input.source.repository),
-        events: Object.freeze(payload.map((event) => normalizeRepositoryEvent(
+        events: Object.freeze(payload.map((event) => normalizeGithubRepositoryEventForAutomation(
           event,
           input.source.repository,
-          input.source.definition.eventRef.localId,
         ))),
         pollIntervalMs: readGithubPollIntervalMs(response.headers),
       });
@@ -583,11 +582,12 @@ async function pollRepositoryEvents(input: Readonly<{
   });
 }
 
-function checkpointRowId(definition: GithubAutomationEventSourceDefinitionV1): string {
+function checkpointRowId(source: GithubAutomationObservedSourceV1): string {
   return createGithubAutomationEventCheckpointRowId({
-    automationId: definition.automationId,
-    eventRef: definition.eventRef,
-    sourceSelectorId: definition.sourceSelectorId,
+    automationId: source.definition.automationId,
+    triggerId: source.definition.triggerId,
+    eventRef: source.definition.eventRef,
+    sourceSelectorId: source.definition.sourceSelectorId,
   });
 }
 
@@ -597,16 +597,13 @@ function loadCheckpoint(input: Readonly<{
 }>): LoadedCheckpointV1 {
   const { row, source } = input;
   const checkpoint = row.value;
-  if (row.rowId !== checkpointRowId(source.definition) || !isGithubAutomationEventCheckpointRowV1(checkpoint)) {
+  if (row.rowId !== checkpointRowId(source) || !isGithubAutomationEventCheckpointRowV1(checkpoint)) {
     throw new GithubRepositoryEventsSourceContractError('GitHub Automation checkpoint is incompatible');
   }
   const payload = checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload];
   const continuity = parseRepositoryEventsContinuity(payload.continuity, source.repository.repositoryId);
   if (
-    checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId] !== source.definition.automationId
-    || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId] !== source.definition.eventRef.localId
-    || checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId] !== source.definition.sourceSelectorId
-    || payload.sourceInstanceId !== source.definition.sourceInstanceId
+    payload.sourceInstanceId !== source.definition.sourceInstanceId
     || payload.sourceContractVersion !== source.definition.sourceContractVersion
     || continuity === null
   ) {
@@ -631,7 +628,9 @@ function createCheckpointRow(input: Readonly<{
   historyGap?: boolean;
 }>): GithubAutomationEventCheckpointRowV1 {
   return createGithubAutomationEventCheckpointRowV1({
+    checkpointRowId: checkpointRowId(input.source),
     automationId: input.source.definition.automationId,
+    triggerId: input.source.definition.triggerId,
     eventRef: input.source.definition.eventRef,
     sourceSelectorId: input.source.definition.sourceSelectorId,
     sourceInstanceId: input.source.definition.sourceInstanceId,
@@ -639,7 +638,7 @@ function createCheckpointRow(input: Readonly<{
     cursor: input.cursor,
     lastContiguousOccurrenceId: input.lastContiguousOccurrenceId,
     baseline: input.baseline,
-    lastEvaluatedTemplateVersion: input.source.definition.templateVersion,
+    lastEvaluatedTriggerRevision: input.source.definition.triggerRevision,
     continuity: repositoryEventsContinuity(input.source.repository.repositoryId, input.historyGap),
   });
 }
@@ -663,6 +662,8 @@ function readCheckpointRetirementCandidate(
   return Object.freeze({
     candidate: Object.freeze({
       automationId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId],
+      triggerId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId],
+      triggerRevision: payload.lastEvaluatedTriggerRevision,
       eventRef: Object.freeze({
         pluginId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId],
         localId: checkpoint[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId],
@@ -694,12 +695,16 @@ function checkpointRetirementCandidateForServerClassification(input: Readonly<{
   return checkpoint.candidate;
 }
 
-function checkpointRetirementRowId(candidate: AutomationEventCheckpointRetirementCandidateV1): string {
-  return createGithubAutomationEventCheckpointRowId({
-    automationId: candidate.automationId,
-    eventRef: candidate.eventRef,
-    sourceSelectorId: candidate.sourceSelectorId,
-  });
+function checkpointRetirementCandidateKey(candidate: AutomationEventCheckpointRetirementCandidateV1): string {
+  return JSON.stringify([
+    candidate.automationId,
+    candidate.triggerId,
+    candidate.triggerRevision,
+    candidate.eventRef.pluginId,
+    candidate.eventRef.localId,
+    candidate.sourceSelectorId,
+    candidate.sourceContractVersion,
+  ]);
 }
 
 /**
@@ -726,7 +731,7 @@ async function reconcileCheckpointRows(input: Readonly<{
       ...(cursor === undefined ? {} : { cursor }),
     }, { signal: input.context.signal });
     input.context.signal.throwIfAborted();
-    const candidatesByRowId = new Map<string, Readonly<{
+    const candidatesByKey = new Map<string, Readonly<{
       row: StoredCheckpointRowV1;
       candidate: AutomationEventCheckpointRetirementCandidateV1;
     }>>();
@@ -736,14 +741,14 @@ async function reconcileCheckpointRows(input: Readonly<{
         knownCurrentCheckpointsByRowId: input.adopted.knownCurrentCheckpointsByRowId,
       });
       if (candidate !== null) {
-        candidatesByRowId.set(checkpointRetirementRowId(candidate), Object.freeze({ row, candidate }));
+        candidatesByKey.set(checkpointRetirementCandidateKey(candidate), Object.freeze({ row, candidate }));
       }
     }
-    if (candidatesByRowId.size > 0) {
+    if (candidatesByKey.size > 0) {
       const result = await input.context.services.actions.execute('automation.event.sources.list', {
         transport: { kind: 'checkpointedPull' },
         knownRevision: input.adopted.revision,
-        checkpointRetirementCandidates: [...candidatesByRowId.values()].map(({ candidate }) => candidate),
+        checkpointRetirementCandidates: [...candidatesByKey.values()].map(({ candidate }) => candidate),
       }, { signal: input.context.signal });
       input.context.signal.throwIfAborted();
       if (
@@ -751,12 +756,12 @@ async function reconcileCheckpointRows(input: Readonly<{
         || result.revision !== input.adopted.revision
         || result.checkpointRetirements === undefined
       ) return Object.freeze({ complete: false });
-      const retirementRows = result.checkpointRetirements.map(checkpointRetirementRowId);
-      if (retirementRows.some((rowId) => !candidatesByRowId.has(rowId))) {
+      const retirementKeys = result.checkpointRetirements.map(checkpointRetirementCandidateKey);
+      if (retirementKeys.some((key) => !candidatesByKey.has(key))) {
         return Object.freeze({ complete: false });
       }
-      for (const rowId of retirementRows) {
-        const candidate = candidatesByRowId.get(rowId);
+      for (const key of retirementKeys) {
+        const candidate = candidatesByKey.get(key);
         if (candidate === undefined) return Object.freeze({ complete: false });
         try {
           await collection.delete(candidate.row.rowId, {
@@ -815,7 +820,7 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   );
-  const row = await collection.get(checkpointRowId(source.definition), { signal: input.context.signal });
+  const row = await collection.get(checkpointRowId(source), { signal: input.context.signal });
   input.context.signal.throwIfAborted();
   if (row === null) {
     return Object.freeze({ kind: 'noHistoryGap' });
@@ -894,7 +899,7 @@ function addDelay(now: number, delayMs: number): number {
 }
 
 function sourceStatus(input: Readonly<{
-  source: GithubAutomationObservedSourceV1;
+  definition: GithubCheckpointedPullSourceDefinitionV1;
   state: AutomationEventSourceStatusStateV1;
   code: AutomationEventSourceStatusCodeV1;
   lastObservedAt?: number | null;
@@ -906,10 +911,11 @@ function sourceStatus(input: Readonly<{
 }>): AutomationEventSourceStatusInputV1 {
   return {
     kind: 'source',
-    automationId: input.source.definition.automationId,
-    templateVersion: input.source.definition.templateVersion,
-    eventRef: input.source.definition.eventRef,
-    sourceSelectorId: input.source.definition.sourceSelectorId,
+    automationId: input.definition.automationId,
+    triggerId: input.definition.triggerId,
+    triggerRevision: input.definition.triggerRevision,
+    eventRef: input.definition.eventRef,
+    sourceSelectorId: input.definition.sourceSelectorId,
     state: input.state,
     code: input.code,
     lastObservedAt: input.lastObservedAt ?? null,
@@ -936,7 +942,7 @@ async function reportSourceStatus(input: Readonly<{
   input.context.signal.throwIfAborted();
   await input.context.services.actions.execute(
     'automation.event.source.status.report',
-    sourceStatus(input),
+    sourceStatus({ ...input, definition: input.source.definition }),
     { signal: input.context.signal },
   );
   input.context.signal.throwIfAborted();
@@ -1007,8 +1013,14 @@ function knownCurrentCheckpointsByRowId(
 ): ReadonlyMap<string, GithubAutomationKnownCurrentCheckpointV1 | null> {
   const current = new Map<string, GithubAutomationKnownCurrentCheckpointV1 | null>();
   for (const definition of definitions) {
-    if (!isGithubCheckpointedPullDefinition(definition)) continue;
-    const rowId = checkpointRowId(definition);
+    let source: GithubAutomationObservedSourceV1 | null;
+    try {
+      source = parseObservedSource(definition);
+    } catch {
+      continue;
+    }
+    if (source === null) continue;
+    const rowId = checkpointRowId(source);
     const next = Object.freeze({
       sourceInstanceId: definition.sourceInstanceId,
       sourceContractVersion: definition.sourceContractVersion,
@@ -1273,8 +1285,15 @@ function checkpointForSafeObservations(input: Readonly<{
 }
 
 function sourceScheduleKey(candidate: GithubAutomationObservedSourceCandidateV1): string {
-  const definition = candidate.kind === 'source' ? candidate.source.definition : candidate.definition;
-  return checkpointRowId(definition);
+  if (candidate.kind === 'source') return checkpointRowId(candidate.source);
+  return JSON.stringify([
+    'incompatible',
+    candidate.definition.automationId,
+    candidate.definition.triggerId,
+    candidate.definition.eventRef.pluginId,
+    candidate.definition.eventRef.localId,
+    candidate.definition.sourceSelectorId,
+  ]);
 }
 
 function sourceCycleResult(sourceKey: string, nextEligibleAt: number): GithubAutomationSourceCycleResultV1 {
@@ -1295,7 +1314,7 @@ async function runObservedSource(input: Readonly<{
   const collection = requireGithubAccountStorage(input.context).collection(
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   );
-  const rowId = checkpointRowId(input.source.definition);
+  const rowId = checkpointRowId(input.source);
   let existing: LoadedCheckpointV1 | null = null;
   const persistHistoryGap = async (checkpoint: LoadedCheckpointV1): Promise<void> => {
     await collection.put(createCheckpointRow({
@@ -1412,15 +1431,21 @@ async function runObservedSource(input: Readonly<{
     let unsafe: SourceFailureStatusV1 | null = null;
     for (const observation of classified.observations) {
       input.context.signal.throwIfAborted();
+      if (observation.eventRef.localId !== input.source.definition.eventRef.localId) {
+        safeObservationCount += 1;
+        lastContiguousOccurrenceId = observation.occurrenceId;
+        continue;
+      }
       const admitted = await input.context.services.actions.execute('automation.event.admit', {
-        eventRef: input.source.definition.eventRef,
+        eventRef: observation.eventRef,
         occurrenceId: observation.occurrenceId,
         occurredAt: observation.occurredAtMs,
         observationReceivedAt: observedAtMs,
         payload: observation.payload,
         definitions: [{
           automationId: input.source.definition.automationId,
-          templateVersion: input.source.definition.templateVersion,
+          triggerId: input.source.definition.triggerId,
+          triggerRevision: input.source.definition.triggerRevision,
           sourceSelectorId: input.source.definition.sourceSelectorId,
         }],
       }, { signal: input.context.signal });
@@ -1505,7 +1530,8 @@ async function runIncompatibleSource(input: Readonly<{
   await input.context.services.actions.execute('automation.event.source.status.report', {
     kind: 'source',
     automationId: input.definition.automationId,
-    templateVersion: input.definition.templateVersion,
+    triggerId: input.definition.triggerId,
+    triggerRevision: input.definition.triggerRevision,
     eventRef: input.definition.eventRef,
     sourceSelectorId: input.definition.sourceSelectorId,
     state: 'attention',
@@ -1665,7 +1691,7 @@ async function defaultSleep(delayMs: number, signal: AbortSignal): Promise<void>
 /**
  * Provider-local source slice only: host Actions own definition projection,
  * currentness, durable admission, and status; the provider owns the long-lived
- * authenticated Events loop and its private per-definition cursor CAS.
+ * authenticated Events loop and each Automation trigger's private checkpoint CAS.
  */
 export function createGithubAutomationEventCheckpointedPullObserver(
   options: GithubAutomationEventCheckpointedPullObserverOptions = {},
@@ -1847,9 +1873,9 @@ export function createGithubAutomationEventCheckpointedPullObserver(
       now,
       defaultPollIntervalMs: DEFAULT_SOURCE_POLL_INTERVAL_MS,
       retryDelayMs,
-      // The exact-account Action remains one source attempt. Its coalescer is
-      // shared only by the current generation-local observer cycle so same-key
-      // definitions preserve the approved provider request bound.
+      // One source attempt owns one Automation trigger checkpoint. Identical
+      // authenticated repository reads coalesce generation-locally and carry
+      // no persisted checkpoint authority.
       coalescer,
     });
     return Object.freeze({

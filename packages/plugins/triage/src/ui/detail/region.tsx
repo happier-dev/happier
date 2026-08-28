@@ -21,6 +21,7 @@ import {
   useSurfaceContext,
   type ComposerRefV1,
   type MetadataEntry,
+  type PluginUiFocusTarget,
 } from '@happier-dev/plugin-ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 import {
@@ -46,12 +47,14 @@ import {
 } from '../header/entryActionControls.js';
 import { describeTriageEntrySessionPhaseV1 } from '../header/sessionStartOutcome.js';
 import { useTriageEntrySessionStart } from '../header/useEntrySessionStart.js';
+import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChooser.js';
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { projectTriageDetailHeaderV1, type TriageDetailHeaderV1 } from './header.js';
 import {
   readTriageSourceDetailContributionV1,
-  readTriageSourcePreparesReviewWorkspaceV1,
+  readTriageSourceDescriptorV1,
+  readTriageSourcePrepareReviewWorkspaceOperationV1,
 } from './sourceSurface.js';
 import { useTriageEntryDetail } from './useTriageEntryDetail.js';
 import { reobserveTriagePostMutationRow } from './postMutationReobservation.js';
@@ -274,7 +277,14 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // revision-checked transaction the disclosed candidate becomes.
   const evidenceDisclosure = useTriageTierBEvidenceInsertion(props.originComposer);
   const [postMutationRow, setPostMutationRow] = React.useState<TriageListRowV1 | null>(null);
-  React.useEffect(() => { setPostMutationRow(null); }, [props.row]);
+  const postMutationReobservation = React.useRef<AbortController | null>(null);
+  React.useEffect(() => {
+    setPostMutationRow(null);
+    return () => {
+      postMutationReobservation.current?.abort();
+      postMutationReobservation.current = null;
+    };
+  }, [props.row]);
   const row = postMutationRow ?? props.row;
   const lookup = readTriageSourceDetailContributionV1(context, row.entryRef.source);
 
@@ -301,7 +311,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const linkedSessionsHasMore = detail?.kind === 'ready'
     ? detail.linkedSessionsNextCursor !== undefined
     : false;
-  const sourceDescriptor = detail?.kind === 'ready' ? detail.sourceDescriptor : null;
+  const sourceDescriptor = readTriageSourceDescriptorV1(context, row.entryRef.source);
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
     row,
     lanes: props.lanes,
@@ -313,13 +323,24 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
 
   const completePostMutation = React.useCallback(async (): Promise<void> => {
     if (selected === null) return;
+    postMutationReobservation.current?.abort();
+    const controller = new AbortController();
+    postMutationReobservation.current = controller;
     const next = await reobserveTriagePostMutationRow(
       hostApi,
       row,
       props.lanes,
       selected.sourceInstanceId,
+      { signal: controller.signal },
     );
-    if (next !== null) setPostMutationRow(next);
+    if (!controller.signal.aborted
+      && postMutationReobservation.current === controller
+      && next !== null) {
+      setPostMutationRow(next);
+    }
+    if (postMutationReobservation.current === controller) {
+      postMutationReobservation.current = null;
+    }
   }, [hostApi, props.lanes, row, selected]);
 
   /**
@@ -338,7 +359,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
    * needs the display facts the link freezes from that observation.
    */
   const controller = useTriageEntrySessionStart();
-  const preparesReviewWorkspace = readTriageSourcePreparesReviewWorkspaceV1(
+  const [reviewActionFocusTarget, setReviewActionFocusTarget] = React.useState<PluginUiFocusTarget | null>(null);
+  const prepareReviewWorkspaceOperation = readTriageSourcePrepareReviewWorkspaceOperationV1(
     context,
     row.entryRef.source,
   );
@@ -351,12 +373,34 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const repository = selected?.repository;
   const snapshot = observation?.snapshot;
   const locator = observation?.locator;
+  const reviewWorkspace = React.useMemo(() => {
+    if (
+      prepareReviewWorkspaceOperation === undefined
+      || detail?.kind !== 'ready'
+      || observation === null
+      || snapshot?.reviewRevision === undefined
+      || locator === undefined
+    ) return undefined;
+    return {
+      operation: prepareReviewWorkspaceOperation,
+      preparation: {
+        instance: detail.input.instance,
+        entryRef: row.entryRef,
+        lastKnownLocator: locator,
+        observed: {
+          ...snapshot.reviewRevision,
+          observedAtMs: observation.observedAtMs,
+        },
+      },
+    };
+  }, [detail, locator, observation, prepareReviewWorkspaceOperation, row.entryRef, snapshot]);
   const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
     // The pressed action travels WHOLE: its mode, its profile, its prompt, its
     // delivery and its arm are all read by the one controller below. This is
     // the last place a press could have re-decided any of them, and it does
     // not — it only adds the facts this screen holds and the record cannot.
     if (display === null || snapshot === undefined) return;
+    setReviewActionFocusTarget(request.returnFocusTarget ?? null);
     controller.start({
       action: request.action,
       entryRef: request.entryRef,
@@ -377,8 +421,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       // placement joins on the same answer the screen is showing rather than
       // re-reading the entry.
       ...(repository === undefined ? {} : { repository }),
+      ...(reviewWorkspace === undefined ? {} : { reviewWorkspace }),
     });
-  }, [controller, display, locator, repository, snapshot]);
+  }, [controller, display, locator, repository, reviewWorkspace, snapshot]);
+  const retireReviewChooser = React.useCallback(() => {
+    controller.reset();
+    setReviewActionFocusTarget(null);
+  }, [controller]);
   const notice = describeTriageEntrySessionPhaseV1(controller.phase);
 
   return (
@@ -399,23 +448,31 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             target={props.target}
             actions={props.actions.actions}
             workflowSubject={workflowSubject}
-            preparesReviewWorkspace={preparesReviewWorkspace}
+            preparesReviewWorkspace={reviewWorkspace !== undefined}
             onAction={onAction}
           />
+          {controller.review === null || reviewActionFocusTarget === null ? null : (
+            <TriagePullRequestReviewChooser
+              pending={controller.review}
+              returnFocusTarget={reviewActionFocusTarget}
+              onDismiss={retireReviewChooser}
+              onFinished={retireReviewChooser}
+            />
+          )}
           {notice === null ? null : (
             <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
           )}
         </Stack>
       )}
 
-      {detail === null ? (
+      {observation === null ? (
         <EmptyState
           titleKey="plugins.triage.surface.detail.noConnection.title"
           title="No connection to open this through"
           descriptionKey="plugins.triage.surface.detail.noConnection.description"
           description="No configured connection currently observes this entry, so there is nothing to read it with."
         />
-      ) : detail.kind === 'reading' ? (
+      ) : detail === null || detail.kind === 'reading' ? (
         <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
       ) : detail.kind === 'unavailable' ? (
         <EmptyState

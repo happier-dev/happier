@@ -155,9 +155,11 @@ describe('startPullRequestReview', () => {
     }> = {}) {
         const calls: Array<Readonly<{ actionId: string; input: unknown }>> = [];
         const events: string[] = [];
+        const selections: unknown[] = [];
         return {
             calls,
             events,
+            selections,
             deps: {
                 reread: async () => {
                     events.push('reread');
@@ -170,16 +172,17 @@ describe('startPullRequestReview', () => {
                         return input.engineList ?? {
                             sessionId: SESSION_ID,
                             items: [
-                                { engineId: 'codex', enabled: true },
-                                { engineId: 'claude', enabled: true },
+                                { engineId: 'codex', label: 'Codex', enabled: true },
+                                { engineId: 'claude', label: 'Claude', enabled: true },
                             ],
                         };
                     }
                     if (actionId === 'review.start') return { status: 'started' };
                     throw new Error(`unexpected action ${actionId}`);
                 },
-                selectEngineIds: async () => {
+                selectEngineIds: async (selection) => {
                     events.push('selectEngineIds');
+                    selections.push(selection);
                     return input.selectedEngineIds ?? ['codex', 'claude'];
                 },
             },
@@ -211,6 +214,13 @@ describe('startPullRequestReview', () => {
             'selectEngineIds',
             'review.start',
         ]);
+        expect(run.selections).toEqual([expect.objectContaining({
+            sessionId: SESSION_ID,
+            options: [
+                { value: 'codex', label: 'Codex' },
+                { value: 'claude', label: 'Claude' },
+            ],
+        })]);
         expect(run.calls).toEqual([
             { actionId: 'review.engines.list', input: { sessionId: SESSION_ID } },
             {

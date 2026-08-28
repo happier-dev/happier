@@ -38,6 +38,7 @@ export type AzureDetailTabReadPlaneV1 =
 export type AzureDetailTabDeclarationV1 = Readonly<{
   id: AzureDetailTabIdV1;
   title: string;
+  titleKey: string;
   /** Stated on every concrete tab; never inherited from the shared default. */
   retention: 'retain' | 'discard';
   /** Exactly what survives a tab leave, in this panel and nothing else. */
@@ -51,6 +52,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
   Object.freeze({
     id: 'overview' as const,
     title: 'Overview',
+    titleKey: 'plugins.azureDevops.ui.tab.overview',
     retention: 'retain' as const,
     retainedState: 'its one reader scroll anchor only; it holds no provider read to keep',
     readPlane: 'observation' as const,
@@ -59,6 +61,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
   Object.freeze({
     id: 'activity' as const,
     title: 'Activity',
+    titleKey: 'plugins.azureDevops.ui.tab.activity',
     retention: 'discard' as const,
     retainedState: 'nothing: commit pages, the provider continuation token, the chronology'
       + ' rows, scroll and expansions remount from defaults',
@@ -68,16 +71,18 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
   Object.freeze({
     id: 'files' as const,
     title: 'Files',
+    titleKey: 'plugins.azureDevops.ui.tab.files',
     retention: 'retain' as const,
-    retainedState: 'its one vertical list viewport and file scroll anchor only; the parsed'
-      + ' changed-file page model, the provider-issued skip/top and errors are discarded when'
-      + ' the panel becomes inactive, and no hunk or body diff is retained while B6 is held',
+    retainedState: 'the parsed changed-file page model, provider-issued skip/top and its one'
+      + ' visible-file scroll anchor; pending reads, file selection/copy/Action state and any'
+      + ' hunk or body diff are discarded while B6 is held',
     readPlane: 'files' as const,
     scrollOwner: 'list' as const,
   }),
   Object.freeze({
     id: 'policies' as const,
     title: 'Policies',
+    titleKey: 'plugins.azureDevops.ui.tab.policies',
     retention: 'discard' as const,
     retainedState: 'nothing: statuses, policy and build projections, scroll and expansion'
       + ' remount from defaults',
@@ -87,6 +92,7 @@ export const AZURE_DETAIL_TABS_V1: readonly AzureDetailTabDeclarationV1[] = Obje
   Object.freeze({
     id: 'threads' as const,
     title: 'Threads',
+    titleKey: 'plugins.azureDevops.ui.tab.threads',
     retention: 'discard' as const,
     retainedState: 'nothing: the all-returned response, the 18-thread and 2-reply windows,'
       + ' scroll, expansions and any reply draft remount from defaults',

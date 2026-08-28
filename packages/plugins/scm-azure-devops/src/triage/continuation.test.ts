@@ -1,4 +1,3 @@
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
 import { decodeAzureScanContinuation, encodeAzureScanContinuation } from './continuation.js';
@@ -7,7 +6,7 @@ import type { AzureScanFrontier } from './types.js';
 
 function frontier(overrides: Partial<AzureScanFrontier> = {}): AzureScanFrontier {
   return Object.assign(
-    createAzureScanFrontier({ scanLimit: 64, nativePageSize: 30 }),
+    createAzureScanFrontier({ scanLimit: 64 }),
     overrides,
   );
 }
@@ -64,26 +63,24 @@ describe('Azure DevOps scan continuation codec', () => {
     expect(decodeAzureScanContinuation({ v: 1, token })).toBeNull();
   });
 
-  it('refuses a rotation position, geometry, or lane set it could not have produced', () => {
+  it('refuses a rotation position, scan budget, or lane set it could not have produced', () => {
     const base = encoded(frontier());
 
     expect(decodeAzureScanContinuation({ v: 1, token: base.replace('"nextLaneIndex":0', '"nextLaneIndex":2') }))
       .toBeNull();
-    expect(decodeAzureScanContinuation({ v: 1, token: base.replace('"nativePageSize":30', '"nativePageSize":99') }))
+    expect(decodeAzureScanContinuation({ v: 1, token: base.replace('"scanLimit":64', '"scanLimit":0') }))
       .toBeNull();
     expect(decodeAzureScanContinuation({ v: 1, token: base.replace('"authored"', '"mentioned"') }))
       .toBeNull();
     expect(decodeAzureScanContinuation({ v: 1, token: '{"v":9}' })).toBeNull();
   });
 
-  it('stays inside the transport bound the protocol owns rather than a remembered number', () => {
+  it('carries only the invocation frontier', () => {
     const token = encoded(frontier({
       projectNextToken: 'p'.repeat(64),
       currentRepositoryId: 'f4b7c1a2-3d4e-4f50-9a6b-7c8d9e0f1a2b',
       lastCompletedRepositoryId: 'a0d31c2e-4f50-4a6b-8c7d-9e0f1a2b3c4d',
     }));
-    expect(new TextEncoder().encode(token).length)
-      .toBeLessThanOrEqual(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
     // The frontier is a function of the contract, never of the account's inventory: no
     // repository list, delivered-id history, viewer record, or credential travels in it.
     expect(token).not.toContain('Basic');

@@ -11,7 +11,8 @@ import type {
   AgentSessionRuntime,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { overlayPiDirectAuthConfig } from '../auth/services/authConfig.js';
+import { replacePiAuthConfig } from '../auth/services/authConfig.js';
+import { PI_DIRECT_AUTH_ENV_KEYS } from '../launchEnvironment.js';
 import {
   PI_ANTHROPIC_API_KEY_PURPOSE_ID,
   PI_OPENAI_API_KEY_PURPOSE_ID,
@@ -113,7 +114,7 @@ function mergeQualifiedLaunchEnvironment(input: Readonly<{
     values,
     unset: Object.freeze(Array.from(new Set([
       ...(input.source?.unset ?? []).filter((key) => !materialized.has(key)),
-      ...input.remove,
+      ...input.remove.filter((key) => !materialized.has(key)),
     ]))),
   });
 }
@@ -290,19 +291,23 @@ export async function preparePiQualifiedConnectedAccounts(input: Readonly<{
     if (requestAuthEnabled) {
       await ensurePiRequestAuthExtensionAsset(agentDir, requestAuthPurposes);
     }
-    if (Object.keys(directAuth).length > 0) {
-      await overlayPiDirectAuthConfig({ agentDir, entries: directAuth });
-    }
+    // A qualified launch owns the exact Pi auth surface. Replacing even with
+    // an empty object prevents stale native/provider credentials from
+    // satisfying a request-auth-only binding.
+    await replacePiAuthConfig({ agentDir, entries: directAuth });
 
     const launchEnvironment = mergeQualifiedLaunchEnvironment({
       source: sourceLaunchEnvironment,
       direct: directEnvironment,
-      remove: requestAuthEnabled
-        ? []
-        : [
+      remove: [
+        ...PI_DIRECT_AUTH_ENV_KEYS,
+        ...(requestAuthEnabled
+          ? []
+          : [
             PI_REQUEST_AUTH_CAPABILITY_PATH_ENV,
             PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
-          ],
+          ]),
+      ],
     });
     return Object.freeze({
       launchEnvironment,

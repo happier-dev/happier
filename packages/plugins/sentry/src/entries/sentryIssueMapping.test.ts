@@ -5,12 +5,13 @@ import issuesListPage1 from '../fixtures/issuesListPage1.json' with { type: 'jso
 import issuesListPage2 from '../fixtures/issuesListPage2.json' with { type: 'json' };
 
 import {
+  MAX_TRIAGE_ROW_FACTS_V1,
+  MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
   TriageSourceEntrySnapshotV1Schema,
   TriageSourceScanObservationV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { SENTRY_MAX_ROW_FACTS, SENTRY_MAX_TEXT_UTF8_BYTES } from '../sentryContracts.js';
 import { toTriagePresentObservation } from '../source/observation.js';
 import { mapSentryIssueForInvokedInstance } from './sentryIssueMapping.js';
 
@@ -287,8 +288,8 @@ describe('mapSentryIssueForInvokedInstance', () => {
     if (!result.ok) return;
     expect(result.snapshot.projectionTruncated).toBe(true);
     expect(new TextEncoder().encode(result.snapshot.title).byteLength)
-      .toBeLessThanOrEqual(SENTRY_MAX_TEXT_UTF8_BYTES);
-    expect(result.snapshot.facts.length).toBeLessThanOrEqual(SENTRY_MAX_ROW_FACTS);
+      .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+    expect(result.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
     expect(result.snapshot.localRef.entryId).toBe('5501001');
     expect(result.snapshot.state.presentation).toBe('active');
   });
@@ -299,7 +300,7 @@ describe('mapSentryIssueForInvokedInstance', () => {
     const result = map(withoutProviderFields(issuesListPage2.body[1], ABOVE_ASSIGNEE));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.snapshot.facts.length).toBeLessThanOrEqual(SENTRY_MAX_ROW_FACTS);
+    expect(result.snapshot.facts.length).toBeLessThanOrEqual(MAX_TRIAGE_ROW_FACTS_V1);
     expect(result.snapshot.projectionTruncated).toBe(false);
   });
 
@@ -309,7 +310,7 @@ describe('mapSentryIssueForInvokedInstance', () => {
     if (!result.ok) return;
 
     const ids = result.snapshot.facts.map((fact) => fact.id);
-    expect(ids.length).toBe(SENTRY_MAX_ROW_FACTS);
+    expect(ids.length).toBe(MAX_TRIAGE_ROW_FACTS_V1);
     expect(ids[0]).toBe('issue-category');
     expect(ids).toContain('level');
     expect(ids).toContain('culprit');
@@ -500,7 +501,7 @@ describe('Sentry locator bounds', () => {
     // Display text is shortened rather than dropped, so the row still reads as itself.
     expect(observation.locator.displayPath).not.toBeUndefined();
     expect(new TextEncoder().encode(observation.locator.displayPath ?? '').byteLength)
-      .toBeLessThanOrEqual(SENTRY_MAX_TEXT_UTF8_BYTES);
+      .toBeLessThanOrEqual(MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
     // With no publishable destination left, the field is omitted and the loss is announced.
     expect(observation.locator.webUrl).toBeUndefined();
     expect(observation.snapshot.projectionTruncated).toBe(true);

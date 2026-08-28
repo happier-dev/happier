@@ -42,6 +42,7 @@ type ScanStart = Readonly<{
   walkHealth: readonly BitbucketWalkHealthReason[];
   authored: BitbucketScanFrontierRecord['authored'];
   repositoryListNextUrl: string | null;
+  repositoryListCycleProbe: BitbucketScanFrontierRecord['repositoryListCycleProbe'];
   currentRepository: BitbucketScanFrontierRecord['currentRepository'];
 }>;
 
@@ -57,8 +58,9 @@ function readScanStart(
         geometry: geometry.geometry,
         nextLaneIndex: 0,
         walkHealth: [],
-        authored: { nextUrl: null, ended: false },
+        authored: { nextUrl: null, ended: false, cycleProbe: null },
         repositoryListNextUrl: null,
+        repositoryListCycleProbe: null,
         currentRepository: null,
       },
     };
@@ -81,6 +83,7 @@ function readScanStart(
       walkHealth: decoded.walkHealth,
       authored: decoded.authored,
       repositoryListNextUrl: decoded.repositoryListNextUrl,
+      repositoryListCycleProbe: decoded.repositoryListCycleProbe,
       currentRepository: decoded.currentRepository,
     },
   };
@@ -150,6 +153,7 @@ export async function scanBitbucketSource(
     client: authorized.client,
     workspaceUuid,
     resumeUrl: start.repositoryListNextUrl,
+    resumeCycleProbe: start.repositoryListCycleProbe,
     enteredRepositoryUuid: start.currentRepository?.repositoryUuid ?? null,
     initial: input.page.kind === 'initial',
     ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
@@ -159,7 +163,7 @@ export async function scanBitbucketSource(
     ? null
     : {
       repositoryUuid: start.currentRepository.repositoryUuid,
-      lane: start.currentRepository.lanes[0] ?? { nextUrl: null, ended: true },
+      lane: start.currentRepository.lanes[0] ?? { nextUrl: null, ended: true, cycleProbe: null },
     };
 
   const outcome = await scanBitbucketPullRequests({
@@ -210,8 +214,12 @@ export async function scanBitbucketSource(
       nativePageSize: start.geometry.nativePageSize,
       nextLaneIndex: outcome.frontier.nextLaneIndex,
       walkHealth: outcome.walkHealth,
-      authored: outcome.frontier.authored,
+      authored: {
+        ...outcome.frontier.authored,
+        cycleProbe: outcome.frontier.authored.cycleProbe ?? null,
+      },
       repositoryListNextUrl: repositories.cursorUrl(),
+      repositoryListCycleProbe: repositories.cursorCycleProbe(),
       currentRepository: outcome.frontier.currentRepository === null
         ? null
         : {
@@ -219,6 +227,7 @@ export async function scanBitbucketSource(
           lanes: [{
             laneId: BITBUCKET_REPOSITORY_ROUTE_ID,
             ...outcome.frontier.currentRepository.lane,
+            cycleProbe: outcome.frontier.currentRepository.lane.cycleProbe ?? null,
           }],
         },
     } satisfies BitbucketScanFrontierRecord)

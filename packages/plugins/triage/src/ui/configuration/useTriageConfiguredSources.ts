@@ -4,16 +4,18 @@ import { usePluginTranslation } from '@happier-dev/plugin-ui';
 import { readActiveConfiguredSourceRows } from '../../corpus/configuration/readConfiguredSourceRows.js';
 import { removeConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
 import { useTriageDurableAccount } from '../durable/accountDurableState.js';
+import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 
 export type TriageMountedConfiguredSourceV1 = Readonly<{
   sourceInstanceId: string;
+  /** Exact durable source fact used by source-owned targeted operations. */
+  configured: TriageConfiguredSourceInstanceV1;
   displayLabel: string;
   displayPath?: string;
 }>;
 
 export type TriageMountedConfiguredSourcesV1 = Readonly<{
   sources: readonly TriageMountedConfiguredSourceV1[];
-  completeness: 'complete' | 'truncated';
   busySourceInstanceId: string | null;
   notice: TriageConfiguredSourcesNoticeV1 | null;
   unavailableReason: string | null;
@@ -41,7 +43,6 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
   const [sources, setSources] = useState<readonly TriageMountedConfiguredSourceV1[]>([]);
-  const [completeness, setCompleteness] = useState<'complete' | 'truncated'>('complete');
   const [busySourceInstanceId, setBusySourceInstanceId] = useState<string | null>(null);
   const [notice, setNotice] = useState<TriageConfiguredSourcesNoticeV1 | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
@@ -62,12 +63,12 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
       if (signal.aborted || generation.current !== current) return false;
       setSources(Object.freeze(result.rows.map((row) => Object.freeze({
         sourceInstanceId: row.configured.instance.sourceInstanceId,
+        configured: row.configured,
         displayLabel: row.configured.locator?.displayLabel ?? row.configured.localInstanceKey,
         ...(row.configured.locator?.displayPath === undefined
           ? {}
           : { displayPath: row.configured.locator.displayPath }),
       }))));
-      setCompleteness(result.status);
       setUnavailableReason(null);
       return true;
     } catch {
@@ -129,10 +130,9 @@ export function useTriageConfiguredSources(): TriageMountedConfiguredSourcesV1 {
 
   return useMemo(() => Object.freeze({
     sources,
-    completeness,
     busySourceInstanceId,
     notice,
     unavailableReason,
     remove,
-  }), [busySourceInstanceId, completeness, notice, remove, sources, unavailableReason]);
+  }), [busySourceInstanceId, notice, remove, sources, unavailableReason]);
 }

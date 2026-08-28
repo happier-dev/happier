@@ -44,10 +44,6 @@ export const AGENT_DEFINITION = Object.freeze({
     cloudConnect: { vendorKey: 'gemini', status: 'wired' },
     connectedServices: {
       supportedServiceIds: ['gemini'],
-      sessionAuthSwitch: {
-        continuityMode: 'restart_same_home',
-        supportedTransitions: ['native_to_connected', 'connected_to_connected'],
-      },
       supportedKindsByServiceId: {
         gemini: ['token'],
       },
@@ -80,17 +76,5 @@ export const AGENT_DEFINITION = Object.freeze({
     defaultMode: 'gemini-2.5-pro',
     allowedModes: GEMINI_STATIC_MODELS.map((model) => model.id),
     staticModels: GEMINI_STATIC_MODELS,
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'GEMINI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-    protocolBuiltInBackendProfiles: {
-      kind: 'providerBuiltInBackendProfilesV1',
-      providerId: GEMINI_AGENT_ID,
-      source: './protocol/profiles',
-      exportName: 'GEMINI_BUILT_IN_BACKEND_PROFILES',
-    },
   },
 });

@@ -31,6 +31,7 @@ const presentObservation: TriageSourceObservationV1 = {
     snapshot: testkitSnapshot(),
     viewer: testkitViewer(),
     sourceUpdatedAtMs: 1_759_000_000_000,
+    nativeRevision: 'head-a',
 };
 
 describe('qualifySourceObservation', () => {
@@ -49,6 +50,7 @@ describe('qualifySourceObservation', () => {
             snapshot: testkitSnapshot(),
             viewer: testkitViewer(),
             sourceUpdatedAtMs: 1_759_000_000_000,
+            nativeRevision: 'head-a',
         });
     });
 

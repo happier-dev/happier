@@ -91,17 +91,6 @@ export function planTriageListContinuationV1(input: Readonly<{
     };
   }
 
-  if (state?.kind === 'atCeiling') {
-    // Ours, not the source's — so it says the page is full rather than implying
-    // the sources finished.
-    return {
-      title: text('plugins.triage.surface.moreEntries.full.title', 'This page holds as many entries as it can'),
-      description: text('plugins.triage.surface.moreEntries.full.description', 'Narrow the filters or search to bring different entries into view.'),
-      tone: 'neutral',
-      busy: false,
-    };
-  }
-
   const title = pins
     ? text('plugins.triage.surface.morePins.title', 'More pinned entries exist')
     : text('plugins.triage.surface.moreEntries.title', 'More entries may exist');

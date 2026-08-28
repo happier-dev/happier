@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { createClaudeNativeSessionRuntimeFromOperations } from './nativeRuntime.js';
 
@@ -29,7 +30,14 @@ describe('Claude native runtime disposal', () => {
         permissionIntent: { value: null, updatedAtMs: 0 },
         options: {},
       },
-    });
+    }, {
+      session: {
+        services: {
+          activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext);
 
     await runtime.dispose('host_shutdown');
 

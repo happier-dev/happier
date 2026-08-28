@@ -2,16 +2,17 @@ import type {
     AdmittedTargetedOperationExecutionHandle,
     AdmittedTargetedOperationExecutionOptions,
 } from '@happier-dev/plugin-sdk/actions';
-import type {
-    TriageConfiguredSourceInstanceV1,
-    TriageEntryLocatorV1,
-    TriageEntryRefV1,
-    TriagePrepareReviewWorkspaceInputV1,
-    TriagePrepareReviewWorkspaceResultV1,
-    TriageReviewWorkspaceCurrentnessV1,
-    TriageReviewWorkspaceObservedRevisionV1,
-    TriageSelectedWorkspaceScopeV1,
-    TriageSourceWorkflowSubjectV1,
+import {
+    projectTriagePrepareReviewWorkspaceInputV1,
+    type TriageConfiguredSourceInstanceV1,
+    type TriageEntryLocatorV1,
+    type TriageEntryRefV1,
+    type TriagePrepareReviewWorkspaceInputV1,
+    type TriagePrepareReviewWorkspaceResultV1,
+    type TriageReviewWorkspaceCurrentnessV1,
+    type TriageReviewWorkspaceObservedRevisionV1,
+    type TriageSelectedWorkspaceScopeV1,
+    type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
@@ -313,14 +314,7 @@ export async function resolveEntrySessionWorkspace(
 
     const result = await deps.execute(
         operation,
-        {
-            v: 1,
-            instance: request.instance,
-            entryRef: request.entryRef,
-            lastKnownLocator: request.lastKnownLocator,
-            observed: request.observed,
-            workspace: request.workspace,
-        },
+        projectTriagePrepareReviewWorkspaceInputV1(request),
         {
             expectedSelectedConnectedAccountRef: request.instance.binding.account,
             ...(deps.signal ? { signal: deps.signal } : {}),

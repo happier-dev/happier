@@ -1,7 +1,10 @@
 import {
+    MAX_TRIAGE_ROW_FACTS_V1,
     TRIAGE_VIEWER_INVOLVEMENTS_V1,
+    type TriageRowFactV1,
     type TriageSourceViewerFactsV1,
 } from '@happier-dev/triage-protocol/v1';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 
 import type { CorpusEntryObservationsV1, ProjectedObservationV1 } from './projectedObservation.js';
 
@@ -92,22 +95,95 @@ function mergeAnswers(answers: readonly ProjectedObservationV1[]): ProjectedObse
         if (answer.outcome.kind !== 'present') continue;
         for (const value of answer.outcome.viewer.involvement) involvement.add(value);
     }
-    if (involvement.size === outcome.viewer.involvement.length) return newest;
+    const mergedSnapshot = mergeTiedSnapshotFacts(newest, answers);
+    const involvementChanged = involvement.size !== outcome.viewer.involvement.length;
+    if (!involvementChanged && mergedSnapshot === outcome.snapshot) return newest;
 
     return Object.freeze({
         ...newest,
         outcome: Object.freeze({
             ...outcome,
-            viewer: Object.freeze({
-                ...outcome.viewer,
-                // The protocol's own declared order, not encounter order: two
-                // walks of the same inbox legitimately meet the lanes in a
-                // different sequence, and a viewer record that reordered with
-                // them would make one entry's facts look like two.
-                involvement: Object.freeze(
-                    TRIAGE_VIEWER_INVOLVEMENTS_V1.filter((value) => involvement.has(value)),
-                ),
-            }),
+            snapshot: mergedSnapshot,
+            ...(involvementChanged
+                ? {
+                    viewer: Object.freeze({
+                        ...outcome.viewer,
+                        // The protocol's own declared order, not encounter order: two
+                        // walks of the same inbox legitimately meet the lanes in a
+                        // different sequence, and a viewer record that reordered with
+                        // them would make one entry's facts look like two.
+                        involvement: Object.freeze(
+                            TRIAGE_VIEWER_INVOLVEMENTS_V1.filter((value) => involvement.has(value)),
+                        ),
+                    }),
+                }
+                : {}),
         }),
+    });
+}
+
+/**
+ * Supplement the winner's row facts only when tied source answers prove they
+ * describe the same native revision. Missing revision on both sides is not
+ * evidence: treating `undefined === undefined` as agreement manufactures a
+ * snapshot from unrelated reads.
+ *
+ * A same-id disagreement vetoes the whole supplement. The winner remains the
+ * sole authority rather than combining half of one answer with half of a
+ * conflicting answer. Equal duplicates keep the winner's exact object, while
+ * new ids fill only the protocol-owned fact capacity.
+ */
+function mergeTiedSnapshotFacts(
+    winner: ProjectedObservationV1,
+    answers: readonly ProjectedObservationV1[],
+): Extract<ProjectedObservationV1['outcome'], Readonly<{ kind: 'present' }>>['snapshot'] {
+    if (winner.outcome.kind !== 'present') {
+        throw new Error('The connection-answer winner must be present.');
+    }
+    // Keep the discriminated member itself, rather than rereading the union
+    // through `winner` inside callbacks where TypeScript cannot preserve the
+    // outer narrowing.
+    const winnerOutcome = winner.outcome;
+    const winnerSnapshot = winnerOutcome.snapshot;
+    const winnerRevision = winnerOutcome.nativeRevision;
+    if (winnerRevision === undefined || winnerRevision.length === 0) return winnerSnapshot;
+
+    const tied = answers.filter((answer) => answer.observedAtMs === winner.observedAtMs);
+    const tiedPresent = tied.filter((answer): answer is ProjectedObservationV1 & Readonly<{
+        outcome: Extract<ProjectedObservationV1['outcome'], Readonly<{ kind: 'present' }>>;
+    }> => answer.outcome.kind === 'present');
+    if (tiedPresent.length !== tied.length || tiedPresent.some((answer) =>
+        answer.outcome.nativeRevision === undefined
+        || answer.outcome.nativeRevision.length === 0
+        || answer.outcome.nativeRevision !== winnerRevision)) {
+        return winnerSnapshot;
+    }
+
+    const byId = new Map<string, TriageRowFactV1>();
+    for (const fact of winnerSnapshot.facts) byId.set(fact.id, fact);
+    for (const answer of tiedPresent) {
+        for (const fact of answer.outcome.snapshot.facts) {
+            const existing = byId.get(fact.id);
+            if (existing !== undefined && !pluginJsonValuesEqual(existing, fact)) {
+                return winnerSnapshot;
+            }
+            if (existing === undefined) byId.set(fact.id, fact);
+        }
+    }
+
+    const facts = [...byId.values()];
+    const projectionTruncated = tiedPresent.some((answer) =>
+        answer.outcome.snapshot.projectionTruncated === true)
+        || facts.length > MAX_TRIAGE_ROW_FACTS_V1;
+    const boundedFacts = facts.slice(0, MAX_TRIAGE_ROW_FACTS_V1);
+    if (boundedFacts.length === winnerSnapshot.facts.length
+        && boundedFacts.every((fact, index) => fact === winnerSnapshot.facts[index])
+        && projectionTruncated === (winnerSnapshot.projectionTruncated === true)) {
+        return winnerSnapshot;
+    }
+    return Object.freeze({
+        ...winnerSnapshot,
+        facts: Object.freeze(boundedFacts),
+        ...(projectionTruncated ? { projectionTruncated: true as const } : {}),
     });
 }

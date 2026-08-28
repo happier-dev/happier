@@ -1,4 +1,5 @@
 import {
+  arePluginMachineMaterializationRefsEqual,
   PluginError,
   type JsonValue,
   type PluginInvocationCaller,
@@ -29,7 +30,6 @@ import {
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
-  areConversationMaterializationRefsEqual,
   hasUnsettledDestructiveOldTransportStop,
   isSelfStampedPluginCaller,
 } from './connectionLifecycle.js';
@@ -122,7 +122,7 @@ export function hasCurrentConversationTransportCaller(input: Readonly<{
 }>): boolean {
   return isSelfStampedPluginCaller(input.caller)
     && input.caller.pluginId === input.providerPluginId
-    && areConversationMaterializationRefsEqual(
+    && arePluginMachineMaterializationRefsEqual(
       input.caller.materialization,
       input.transportOrigin.materializationRef,
     );

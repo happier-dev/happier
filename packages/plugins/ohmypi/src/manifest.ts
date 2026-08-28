@@ -5,6 +5,7 @@ import { resolveSessionFileStoreLaunchEnvironment } from '@happier-dev/plugin-sd
 
 import { OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/accountPurposes.js';
 import { ohMyPiConnectedServiceStateSharingDescriptor } from './agent/connectedServices/stateSharing.js';
+import { verifyResumeReachableOhMyPi } from './agent/connectedServices/reachability.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { OH_MY_PI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
 import { resolveOhMyPiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
@@ -110,6 +111,11 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             cancel: true,
             configuration: true,
           },
+          executionRuns: {
+            open: ['create', 'resume'],
+            checkpoint: true,
+            stop: true,
+          },
         }),
         surfaces: {
           externalSession: {
@@ -149,6 +155,9 @@ export const OH_MY_PI_PLUGIN = definePlugin({
       factory: createOhMyPiAgentRuntime,
       connectedAccountLaunch: {
         stateSharingDescriptor: ohMyPiConnectedServiceStateSharingDescriptor,
+        continuity: {
+          verifyResumeReachable: verifyResumeReachableOhMyPi,
+        },
       },
       preflightSessionControls: OH_MY_PI_PREFLIGHT_SESSION_CONTROLS,
       cliSessionCommand: {

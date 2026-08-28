@@ -1,4 +1,8 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -19,7 +23,6 @@ import {
   githubCombinedStatusResponse,
   githubCommitStatus,
   githubFollowUpLinkHeader,
-  githubIssueComment,
   githubReview,
   githubTimelineEvent,
 } from './__fixtures__/githubResponses.js';
@@ -27,7 +30,6 @@ import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
-  GithubCommentsResultV1Schema,
   GithubFeedbackResultV1Schema,
   GithubReviewsResultV1Schema,
   GithubTimelineResultV1Schema,
@@ -35,7 +37,6 @@ import {
 import { encodeGithubDetailContinuation } from './detail/continuation.js';
 import {
   listGithubChangedFiles,
-  listGithubComments,
   readGithubFeedback,
   listGithubTimeline,
   readGithubChecks,
@@ -357,34 +358,6 @@ describe('GitHub changed-files plane', () => {
   });
 });
 
-/* --------------------------------------------------------------------- comments */
-
-describe('GitHub comments plane', () => {
-  it('reads the issue-level comment stream for both kinds', async () => {
-    const stub = createStubGithubTransport({
-      respond: (request) => (request.url.includes('/issues/1284/comments')
-        ? jsonResponse([
-          githubIssueComment({ id: 11, body: 'First\r\n\r\nsecond', author: 'monalisa' }),
-        ])
-        : undefined),
-    });
-
-    for (const localRef of [PULL_REQUEST_REF, ISSUE_REF]) {
-      const result = GithubCommentsResultV1Schema.parse(await listGithubComments(
-        planeInput({ localRef, limit: 30 }),
-        stub.context,
-      ));
-      if (result.kind !== 'comments') throw new Error('comments must settle as comments');
-      expect(result.rows[0]?.id).toBe('github-issue-comment:11');
-      expect(result.rows[0]?.author).toBe('monalisa');
-      expect(result.rows[0]?.body).toBe('First\n\nsecond');
-    }
-    expect(stub.requests
-      .filter((request) => request.url.includes('/comments?'))
-      .every((request) => request.url.includes('per_page=30'))).toBe(true);
-  });
-});
-
 /* --------------------------------------------------------------------- feedback */
 
 describe('GitHub feedback plane', () => {
@@ -405,7 +378,7 @@ describe('GitHub feedback plane', () => {
           owner: 'octo-org',
           name: 'example-app',
           number: 1284,
-          commentCount: 40,
+          commentCount: 24,
           commentCursor: null,
         });
         return jsonResponse({
@@ -439,6 +412,154 @@ describe('GitHub feedback plane', () => {
       kind: 'comments',
       previousCursor: 'comments-before',
       rows: [{ id: 'IC_1' }, { id: 'IC_2' }],
+    });
+  });
+
+  it('states when a provider cursor cannot cross the canonical Action envelope', async () => {
+    const providerCursor = 'c'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES + 1);
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/repos/octo-org/example-app') {
+          return jsonResponse({ id: 4210, full_name: 'octo-org/example-app' });
+        }
+        if (pathname !== '/graphql') return undefined;
+        return jsonResponse({
+          data: {
+            repository: {
+              databaseId: 4210,
+              pullRequest: {
+                comments: {
+                  nodes: [{ id: 'IC_1', body: 'kept', createdAt: '2026-08-11T12:00:00Z' }],
+                  pageInfo: { hasPreviousPage: true, startCursor: providerCursor },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+
+    const result = GithubFeedbackResultV1Schema.parse(await readGithubFeedback({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY,
+      connection: 'comments',
+    }, stub.context));
+    expect(result).toMatchObject({
+      kind: 'comments',
+      rows: [{ id: 'IC_1', body: 'kept' }],
+      omittedRowCount: 0,
+      projectionTruncated: false,
+      incomplete: 'continuationUnavailable',
+    });
+    expect(result).not.toHaveProperty('previousCursor');
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+  });
+
+  it('reports provider document rows omitted by the canonical Action envelope', async () => {
+    const body = 'x'.repeat(
+      Math.floor(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2) + 2_048,
+    );
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/repos/octo-org/example-app') {
+          return jsonResponse({ id: 4210, full_name: 'octo-org/example-app' });
+        }
+        if (pathname !== '/graphql') return undefined;
+        return jsonResponse({
+          data: {
+            repository: {
+              databaseId: 4210,
+              pullRequest: {
+                comments: {
+                  nodes: [
+                    { id: 'IC_1', body, createdAt: '2026-08-11T12:00:00Z' },
+                    { id: 'IC_2', body, createdAt: '2026-08-12T12:00:00Z' },
+                  ],
+                  pageInfo: { hasPreviousPage: false, startCursor: null },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+
+    const result = GithubFeedbackResultV1Schema.parse(await readGithubFeedback({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY,
+      connection: 'comments',
+    }, stub.context));
+    expect(result).toMatchObject({
+      kind: 'comments',
+      omittedRowCount: 1,
+      projectionTruncated: true,
+    });
+    if (result.kind !== 'comments') throw new Error('the feedback read must settle as comments');
+    expect(result.rows).toHaveLength(1);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+  });
+
+  it('routes an issue Comments window through that same GraphQL feedback fetcher', async () => {
+    const stub = createStubGithubTransport({
+      respond: (request) => {
+        const pathname = new URL(request.url).pathname;
+        if (pathname === '/repos/octo-org/example-app') {
+          return jsonResponse({ id: 4210, full_name: 'octo-org/example-app' });
+        }
+        if (pathname !== '/graphql') return undefined;
+        const body = readRecordedJsonBody(request) as {
+          query: string;
+          variables: Record<string, unknown>;
+        };
+        expect(body.query).toContain('issue(number: $number)');
+        expect(body.query).not.toContain('pullRequest(number: $number)');
+        expect(body.variables).toMatchObject({
+          owner: 'octo-org',
+          name: 'example-app',
+          number: 1284,
+          commentCount: 40,
+          commentCursor: null,
+        });
+        return jsonResponse({
+          data: {
+            repository: {
+              databaseId: 4210,
+              issue: {
+                comments: {
+                  nodes: [{
+                    id: 'IC_3',
+                    author: { login: 'latest' },
+                    body: 'latest issue reply',
+                    createdAt: '2026-08-13T12:00:00Z',
+                    url: 'https://github.com/o/r/issues/1284#issuecomment-3',
+                  }],
+                  pageInfo: { hasPreviousPage: true, startCursor: 'issue-comments-before' },
+                },
+              },
+            },
+          },
+        });
+      },
+    });
+
+    const result = GithubFeedbackResultV1Schema.parse(await readGithubFeedback({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: ISSUE_REF,
+      routingToken: REPOSITORY_KEY,
+      connection: 'comments',
+    }, stub.context));
+
+    expect(result).toMatchObject({
+      kind: 'comments',
+      previousCursor: 'issue-comments-before',
+      rows: [{ id: 'IC_3', body: 'latest issue reply' }],
     });
   });
 });
@@ -510,6 +631,31 @@ describe('GitHub checks plane', () => {
     expect(result.failingCount).toBe(1);
     expect(result.runningCount).toBe(1);
     expect(result.passingCount).toBe(1);
+  });
+
+  it('fits unbounded provider diagnostics through the canonical Action result envelope', async () => {
+    const diagnostic = 'x'.repeat(
+      Math.floor(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES / 2) + 2_048,
+    );
+    const runs = [9001, 9002].map((id) => githubCheckRun({
+      id,
+      name: `job-${id}`,
+      status: 'completed',
+      conclusion: 'failure',
+      output: { text: diagnostic },
+    }));
+    const stub = checksTransport({
+      checkRuns: jsonResponse(githubCheckRunsResponse({ runs })),
+    });
+
+    const result = GithubChecksResultV1Schema.parse(
+      await readGithubChecks(checksInput(), stub.context),
+    );
+    if (result.kind !== 'checks') throw new Error('the checks read must settle as checks');
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+    expect(result.rows).toHaveLength(1);
+    expect(result.omittedRowCount).toBe(1);
+    expect(result.projectionTruncated).toBe(true);
   });
 
   it('keeps the rows that answered when one of the two reads fails', async () => {
@@ -640,7 +786,7 @@ describe('GitHub reviews plane', () => {
     expect(stub.requests.some((request) => request.url.includes('/requested_reviewers?'))).toBe(true);
   });
 
-  it('publishes that a review walk stopped at GitHub\'s result ceiling', async () => {
+  it('reads submitted reviews beyond the search-only result ceiling', async () => {
     const stub = createStubGithubTransport({
       respond: (request) => {
         if (request.url.includes('/requested_reviewers')) {
@@ -650,12 +796,17 @@ describe('GitHub reviews plane', () => {
         const page = Number(new URL(request.url).searchParams.get('page') ?? '1');
         return jsonResponse(
           [githubReview({ id: page, login: `reviewer-${page}`, state: 'COMMENTED' })],
-          { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: page + 1 }) },
+          page <= 10
+            ? { link: githubFollowUpLinkHeader({ requestedUrl: request.url, nextPage: page + 1 }) }
+            : undefined,
         );
       },
     });
 
     const result = await readGithubReviews(checksInput(), stub.context);
-    expect(result).toMatchObject({ kind: 'reviews', reviewsIncomplete: true });
+    expect(result).toMatchObject({ kind: 'reviews' });
+    if (result.kind !== 'reviews') throw new Error('the reviews read must settle as reviews');
+    expect(result.reviewsIncomplete).toBeUndefined();
+    expect(stub.requests.filter((request) => request.url.includes('/reviews?'))).toHaveLength(11);
   });
 });

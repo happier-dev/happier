@@ -12,6 +12,10 @@ import {
 } from './agent/auth/services/qualifiedPurposes.js';
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { PI_PREFLIGHT_SESSION_CONTROLS } from './agent/preflight/models.js';
+import { piConnectedServiceStateSharingDescriptor } from './agent/connectedServices/stateSharingDescriptor.js';
+import { createPiConnectedServiceRuntimeAuthAdapter } from './agent/connectedServices/runtimeAuthAdapter.js';
+import { verifyResumeReachablePi } from './agent/connectedServices/reachability.js';
+import { PI_REQUEST_AUTH_USES } from './agent/auth/services/requestAuth/purposes.js';
 import { piExternalSessionsContribution } from './agent/externalSessions/contribution.js';
 import { piExternalSessionObservationContribution } from './agent/externalSessions/observation.js';
 import { piExternalSessionTakeoverContribution } from './agent/externalSessions/takeover.js';
@@ -109,7 +113,6 @@ export const PI_PLUGIN = definePlugin({
             cancel: true,
             configuration: true,
             compaction: { events: true, manual: true },
-            usageLimitRecovery: { active: ['checkNow'], inactive: ['checkNow'] },
           },
           executionRuns: { open: ['create'], checkpoint: false, stop: true },
         }),
@@ -149,6 +152,30 @@ export const PI_PLUGIN = definePlugin({
         },
       },
       factory: createPiAgentRuntime,
+      connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: ['connected_to_connected'],
+          providerStateSharingRequired: {
+            supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+          },
+        },
+        requestAuthUses: PI_REQUEST_AUTH_USES,
+        stateSharingDescriptor: {
+          providerSupportStatus: piConnectedServiceStateSharingDescriptor.providerSupportStatus,
+          config: piConnectedServiceStateSharingDescriptor.config,
+          state: piConnectedServiceStateSharingDescriptor.state,
+          authIsolation: piConnectedServiceStateSharingDescriptor.authIsolation,
+          nativeHome: {
+            environmentKey: 'PI_CODING_AGENT_DIR',
+            defaultRelativePath: '.pi/agent',
+          },
+        },
+        continuity: {
+          runtimeAuthAdapter: createPiConnectedServiceRuntimeAuthAdapter(),
+          verifyResumeReachable: verifyResumeReachablePi,
+        },
+      },
       preflightSessionControls: PI_PREFLIGHT_SESSION_CONTROLS,
       cliSessionCommand: {
         sessionRuntimeId: 'pi',

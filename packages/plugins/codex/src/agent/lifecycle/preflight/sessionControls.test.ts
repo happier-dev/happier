@@ -83,6 +83,11 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
     expect(fixture.commands).toEqual([{
       toolId: 'codex-cli',
       args: ['app-server', '--listen', 'stdio://'],
+      environmentExcludeKeys: [
+        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
+        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
+        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
+      ],
     }]);
     expect(fixture.requests.map(({ method }) => method).sort())
       .toEqual(['collaborationMode/list', 'model/list']);

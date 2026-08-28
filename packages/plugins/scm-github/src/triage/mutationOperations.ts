@@ -1,11 +1,20 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  parseReviewCommentPublicationPlanV1,
+  reviewCommentPublicationTargetMatchesV1,
+  validateReviewCommentPublicationClaimAgainstPlanV1,
+  type ReviewCommentPublicationPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
+import { GITHUB_PLUGIN_ID } from '../observations/githubProviderContracts.js';
+
 
 import { admitGithubEntryInvocation } from './admission.js';
 import {
   GithubIssueAssigneeAddInputV1Schema,
   GithubIssueAssigneeRemoveInputV1Schema,
   GithubIssueCloseInputV1Schema,
+  GithubIssueCommentInputV1Schema,
   GithubIssueLabelAddInputV1Schema,
   GithubIssueLabelRemoveInputV1Schema,
   GithubIssueReopenInputV1Schema,
@@ -14,9 +23,11 @@ import {
   GithubPullRequestMarkReadyInputV1Schema,
   GithubPullRequestMergeInputV1Schema,
   GithubPullRequestReviewPublicationInputV1Schema,
+  GithubPullRequestReviewCommentCreateInputV1Schema,
   GithubPullRequestRemoveReviewersInputV1Schema,
   GithubPullRequestReopenInputV1Schema,
   GithubPullRequestThreadResolutionInputV1Schema,
+  GithubPullRequestThreadReplyInputV1Schema,
   GithubPullRequestUpdateBranchInputV1Schema,
   type GithubIssueDeltaResultV1,
   type GithubPullRequestMarkReadyResultV1,
@@ -25,11 +36,13 @@ import {
   type GithubPullRequestStateResultV1,
   type GithubPullRequestThreadResolutionResultV1,
   type GithubPullRequestUpdateBranchResultV1,
+  type GithubPullRequestReviewPublicationInputV1,
 } from './mutations/contracts.js';
 import {
   addGithubIssueAssignees,
   addGithubIssueLabels,
   closeGithubIssue,
+  publishGithubIssueComment,
   removeGithubIssueAssignees,
   removeGithubIssueLabel,
   reopenGithubIssue,
@@ -39,6 +52,7 @@ import {
   markGithubPullRequestReady,
   mergeGithubPullRequest,
   publishGithubPullRequestReview,
+  publishGithubPullRequestComment,
   reopenGithubPullRequest,
   updateGithubPullRequestBranch,
 } from './mutations/pullRequest.js';
@@ -47,6 +61,33 @@ import {
   requestGithubPullRequestReviewers,
 } from './mutations/reviewers.js';
 import { setGithubReviewThreadResolution } from './mutations/reviewThread.js';
+
+function publicationPlanTargetsRequest(
+  request: Pick<GithubPullRequestReviewPublicationInputV1, 'instance' | 'localRef'>,
+  plan: ReviewCommentPublicationPlanV1,
+  expectedSubtarget: ReviewCommentPublicationPlanV1['target']['subtarget'] = null,
+): boolean {
+  return reviewCommentPublicationTargetMatchesV1(plan.target, {
+    providerId: 'github',
+    configuredAccountId: request.instance.binding.account.accountId,
+    sourceId: `${GITHUB_PLUGIN_ID}/github-forge`,
+    localRef: request.localRef,
+    subtarget: expectedSubtarget,
+  });
+}
+
+async function claimPublicationPlan(
+  plan: ReviewCommentPublicationPlanV1,
+  signal: AbortSignal,
+  context: PluginInvocationContext,
+) {
+  const claim = await context.services.actions.execute(
+    'reviews.comments.claimPublicationDispatch',
+    plan,
+    { signal },
+  );
+  return validateReviewCommentPublicationClaimAgainstPlanV1(plan, claim);
+}
 
 /**
  * The bound GitHub pull-request mutation Actions.
@@ -137,7 +178,7 @@ export async function mergeGithubPullRequestAction(
   }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 
-/** Publishes one summary+verdict review through GitHub's single review endpoint. */
+/** Publishes one canonical multi-comment plan through GitHub's single review endpoint. */
 export async function publishGithubPullRequestReviewAction(
   input: unknown,
   context: PluginInvocationContext,
@@ -151,6 +192,23 @@ export async function publishGithubPullRequestReviewAction(
     });
   }
   const request = parsed.data;
+  let publicationPlan;
+  try {
+    publicationPlan = parseReviewCommentPublicationPlanV1(request.publicationPlan);
+  } catch {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'invalid_input' as const,
+      failure: INVALID_INPUT_FAILURE,
+    });
+  }
+  if (!publicationPlanTargetsRequest(request, publicationPlan)) {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'invalid_input' as const,
+      failure: INVALID_INPUT_FAILURE,
+    });
+  }
   const admitted = await admitGithubEntryInvocation({
     instance: request.instance,
     localRef: request.localRef,
@@ -167,9 +225,105 @@ export async function publishGithubPullRequestReviewAction(
   return await publishGithubPullRequestReview({
     localRef: admitted.localRef,
     route: admitted.route,
-    headRevision: request.headRevision,
-    verdict: request.verdict,
-    summary: request.summary,
+    publicationPlan,
+    claimPublicationDispatch: async () => await claimPublicationPlan(
+      publicationPlan, admitted.signal, context,
+    ),
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+async function parsePublicationPlanOrReject(value: unknown): Promise<ReviewCommentPublicationPlanV1 | null> {
+  try {
+    return parseReviewCommentPublicationPlanV1(value);
+  } catch {
+    return null;
+  }
+}
+
+/** Publishes one pinned canonical proposal as a standalone review comment. */
+export async function createGithubPullRequestReviewCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+) {
+  const parsed = GithubPullRequestReviewCommentCreateInputV1Schema.safeParse(input);
+  if (!parsed.success) return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  const request = parsed.data;
+  const publicationPlan = await parsePublicationPlanOrReject(request.publicationPlan);
+  if (publicationPlan === null || !publicationPlanTargetsRequest(request, publicationPlan)) {
+    return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  }
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request'],
+  }, context);
+  if (!admitted.ok) return Object.freeze({ kind: 'rejected' as const, reason: 'admission_failed' as const, failure: admitted.failure });
+  return await publishGithubPullRequestComment({
+    localRef: admitted.localRef,
+    route: admitted.route,
+    publicationPlan,
+    mode: 'create',
+    claimPublicationDispatch: async () => await claimPublicationPlan(publicationPlan, admitted.signal, context),
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+/** Publishes one canonical proposal as a reply to one exact GraphQL review thread. */
+export async function replyToGithubPullRequestThreadAction(
+  input: unknown,
+  context: PluginInvocationContext,
+) {
+  const parsed = GithubPullRequestThreadReplyInputV1Schema.safeParse(input);
+  if (!parsed.success) return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  const request = parsed.data;
+  const publicationPlan = await parsePublicationPlanOrReject(request.publicationPlan);
+  if (publicationPlan === null || !publicationPlanTargetsRequest(request, publicationPlan, {
+    kindId: 'review-thread',
+    targetId: request.threadId,
+  })) {
+    return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  }
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request'],
+  }, context);
+  if (!admitted.ok) return Object.freeze({ kind: 'rejected' as const, reason: 'admission_failed' as const, failure: admitted.failure });
+  return await publishGithubPullRequestComment({
+    localRef: admitted.localRef,
+    route: admitted.route,
+    publicationPlan,
+    mode: 'reply',
+    threadId: request.threadId,
+    claimPublicationDispatch: async () => await claimPublicationPlan(publicationPlan, admitted.signal, context),
+  }, { client: admitted.client, now: Date.now, signal: admitted.signal });
+}
+
+/** Publishes one canonical proposal into one exact issue conversation. */
+export async function createGithubIssueCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+) {
+  const parsed = GithubIssueCommentInputV1Schema.safeParse(input);
+  if (!parsed.success) return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  const request = parsed.data;
+  const publicationPlan = await parsePublicationPlanOrReject(request.publicationPlan);
+  if (publicationPlan === null || !publicationPlanTargetsRequest(request, publicationPlan)) {
+    return Object.freeze({ kind: 'rejected' as const, reason: 'invalid_input' as const, failure: INVALID_INPUT_FAILURE });
+  }
+  const admitted = await admitGithubEntryInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['issue'],
+  }, context);
+  if (!admitted.ok) return Object.freeze({ kind: 'rejected' as const, reason: 'admission_failed' as const, failure: admitted.failure });
+  return await publishGithubIssueComment({
+    localRef: admitted.localRef,
+    route: admitted.route,
+    publicationPlan,
+    claimPublicationDispatch: async () => await claimPublicationPlan(publicationPlan, admitted.signal, context),
   }, { client: admitted.client, now: Date.now, signal: admitted.signal });
 }
 

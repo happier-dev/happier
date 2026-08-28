@@ -6,6 +6,10 @@ import {
 
 import { readBitbucketApiUrl } from './apiUrl.js';
 import { readBitbucketBracedUuid } from './identity.js';
+import {
+  readCursorCycleProbeV1,
+  type CursorCycleProbeV1,
+} from '@happier-dev/triage-sources/runtime';
 
 /**
  * The strict versioned codec for this source's own scan continuation bytes.
@@ -69,6 +73,7 @@ export type BitbucketLaneFrontierRecord = Readonly<{
   /** A validated provider `next`, or `null` for a lane still sitting on the seed this source built. */
   nextUrl: string | null;
   ended: boolean;
+  cycleProbe: CursorCycleProbeV1 | null;
 }>;
 
 export type BitbucketRepositoryLaneFrontierRecord = BitbucketLaneFrontierRecord & Readonly<{
@@ -103,6 +108,7 @@ export type BitbucketScanFrontierRecord = Readonly<{
   walkHealth: readonly BitbucketWalkHealthReason[];
   authored: BitbucketLaneFrontierRecord;
   repositoryListNextUrl: string | null;
+  repositoryListCycleProbe: CursorCycleProbeV1 | null;
   currentRepository: Readonly<{
     repositoryUuid: string;
     lanes: readonly BitbucketRepositoryLaneFrontierRecord[];
@@ -132,14 +138,16 @@ export function encodeBitbucketScanContinuation(
     n: frontier.nativePageSize,
     i: frontier.nextLaneIndex,
     h: [...frontier.walkHealth],
-    a: [frontier.authored.nextUrl, frontier.authored.ended],
-    r: frontier.repositoryListNextUrl,
+    a: [frontier.authored.nextUrl, frontier.authored.ended, frontier.authored.cycleProbe],
+    r: frontier.repositoryListNextUrl === null
+      ? null
+      : [frontier.repositoryListNextUrl, frontier.repositoryListCycleProbe],
     c: frontier.currentRepository === null
       ? null
       : [
         frontier.currentRepository.repositoryUuid,
         frontier.currentRepository.lanes.map((lane) => (
-          [REPOSITORY_LANE_CODE, lane.nextUrl, lane.ended]
+          [REPOSITORY_LANE_CODE, lane.nextUrl, lane.ended, lane.cycleProbe]
         )),
       ],
   });
@@ -172,8 +180,8 @@ export function decodeBitbucketScanContinuation(
   const authored = readLane(record.a);
   if (authored === null) return null;
 
-  const repositoryListNextUrl = readNullableApiUrl(record.r);
-  if (repositoryListNextUrl === undefined) return null;
+  const repositoryList = readRepositoryList(record.r);
+  if (repositoryList === undefined) return null;
 
   const currentRepository = readCurrentRepository(record.c);
   if (currentRepository === undefined) return null;
@@ -187,7 +195,8 @@ export function decodeBitbucketScanContinuation(
     nextLaneIndex,
     walkHealth,
     authored,
-    repositoryListNextUrl,
+    repositoryListNextUrl: repositoryList.url,
+    repositoryListCycleProbe: repositoryList.probe,
     currentRepository,
   };
   return frontier;
@@ -205,12 +214,15 @@ function readWalkHealth(raw: unknown): readonly BitbucketWalkHealthReason[] | nu
 }
 
 function readLane(raw: unknown): BitbucketLaneFrontierRecord | null {
-  if (!Array.isArray(raw) || raw.length !== 2) return null;
-  const [nextUrl, ended] = raw as readonly unknown[];
+  if (!Array.isArray(raw) || raw.length !== 3) return null;
+  const [nextUrl, ended, rawProbe] = raw as readonly unknown[];
   if (typeof ended !== 'boolean') return null;
   const url = readNullableApiUrl(nextUrl);
   if (url === undefined) return null;
-  return { nextUrl: url, ended };
+  const cycleProbe = readProbe(rawProbe);
+  if (cycleProbe === undefined) return null;
+  if (url !== null && cycleProbe === null) return null;
+  return { nextUrl: url, ended, cycleProbe };
 }
 
 /** `undefined` means invalid; `null` is the legitimate absent value. */
@@ -228,14 +240,33 @@ function readCurrentRepository(
 
   const lanes: BitbucketRepositoryLaneFrontierRecord[] = [];
   for (const entry of rawLanes) {
-    if (!Array.isArray(entry) || entry.length !== 3) return undefined;
-    const [code, nextUrl, ended] = entry as readonly unknown[];
+    if (!Array.isArray(entry) || entry.length !== 4) return undefined;
+    const [code, nextUrl, ended, probe] = entry as readonly unknown[];
     if (code !== REPOSITORY_LANE_CODE) return undefined;
-    const lane = readLane([nextUrl, ended]);
+    const lane = readLane([nextUrl, ended, probe]);
     if (lane === null) return undefined;
     lanes.push({ laneId: BITBUCKET_REPOSITORY_ROUTE_ID, ...lane });
   }
   return { repositoryUuid, lanes };
+}
+
+function readRepositoryList(
+  raw: unknown,
+): Readonly<{ url: string | null; probe: CursorCycleProbeV1 | null }> | undefined {
+  if (raw === null) return { url: null, probe: null };
+  if (!Array.isArray(raw) || raw.length !== 2) return undefined;
+  const url = readNullableApiUrl(raw[0]);
+  if (url === undefined || url === null) return undefined;
+  const probe = readProbe(raw[1]);
+  if (probe === undefined || probe === null) return undefined;
+  return { url, probe };
+}
+
+function readProbe(raw: unknown): CursorCycleProbeV1 | null | undefined {
+  if (raw === null) return null;
+  const probe = readCursorCycleProbeV1(raw);
+  if (probe === null || readBitbucketApiUrl(probe.cursor) === null) return undefined;
+  return probe;
 }
 
 function readCount(raw: unknown, minimum: number): number | null {

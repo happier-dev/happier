@@ -61,9 +61,9 @@ export type AzureDevOpsRoute =
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'pullRequest'>;
     /**
-     * Optional, deliberately. Locator-authorized `get` and review-workspace preparation route
-     * through the source's project/repository locator, while the retained mutation/detail route
-     * carries an already validated immutable repository GUID with no project segment.
+     * Optional, deliberately. Locator-authorized `get`, detail, and review-workspace preparation
+     * route through the source's project/repository locator, while retained mutation routes carry
+     * an already validated immutable repository GUID with no project segment.
      */
     project?: string;
     repositoryId: string;
@@ -75,6 +75,7 @@ export type AzureDevOpsRoute =
    */
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'iterations'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
   }>
@@ -87,12 +88,14 @@ export type AzureDevOpsRoute =
    */
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'iterationChanges'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
     iterationId: number;
   }>
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'commits'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
   }>
@@ -105,19 +108,26 @@ export type AzureDevOpsRoute =
    */
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'threads'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
     /** Addresses ONE thread. Absent asks for the list. */
     threadId?: number;
+    /** Addresses that thread's comment collection. Valid only with `threadId`. */
+    comments?: true;
   }>
   /** The pull request's reviewer collection. */
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'reviewers'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
+    /** Addresses one exact reviewer for a vote read/write. */
+    reviewerId?: string;
   }>
   | Readonly<{
     resource: Extract<AzureDevOpsResource, 'statuses'>;
+    project?: string;
     repositoryId: string;
     pullRequestId: number;
   }>
@@ -199,7 +209,7 @@ export type AzureDevOpsFailure = Readonly<{
 /* Transport                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export type AzureDevOpsHttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type AzureDevOpsHttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export type AzureDevOpsHttpRequest = Readonly<{
   url: string;
@@ -526,8 +536,6 @@ export type AzureScanStickyReason = (typeof AZURE_SCAN_STICKY_REASONS)[number];
  */
 export type AzureScanFrontier = {
   readonly scanLimit: number;
-  /** Fixed for the whole invocation. Shrinking it mid-walk corrupts the provider offset. */
-  readonly nativePageSize: number;
   projectId: string | null;
   projectNextToken: string | null;
   lastCompletedRepositoryId: string | null;

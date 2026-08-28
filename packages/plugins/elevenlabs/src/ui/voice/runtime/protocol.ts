@@ -77,7 +77,6 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
         controlSessionId,
         initialContext: readOptionalString(requestRecord.initialContext),
         requestedTargetSessionId: readOptionalString(requestRecord.requestedTargetSessionId) ?? null,
-        retryAfterPaywall: requestRecord.retryAfterPaywall === true,
         settings: providerConfig,
         credentials,
         hostedConversation,

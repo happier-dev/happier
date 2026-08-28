@@ -11,13 +11,6 @@ export const AGENT_DEFINITION = Object.freeze({
     cloudConnect: null,
     connectedServices: {
       supportedServiceIds: ['openai-codex', 'openai', 'claude-subscription', 'anthropic'],
-      sessionAuthSwitch: {
-        continuityMode: 'restart_same_home',
-        supportedTransitions: ['connected_to_connected'],
-        providerStateSharingRequired: {
-          supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
-        },
-      },
       providerStateSharing: {
         config: {
           supported: false,
@@ -43,7 +36,7 @@ export const AGENT_DEFINITION = Object.freeze({
       sessionListing: 'unsupported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
       sessionRollback: { conversation: 'unsupported' },
-      usageLimitRecovery: { checkNow: 'supported' },
+      usageLimitRecovery: { checkNow: 'unsupported' },
     },
     handoff: { vendorStateTransfer: 'unsupported' },
     runtimeInput: {
@@ -62,30 +55,5 @@ export const AGENT_DEFINITION = Object.freeze({
     dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],
-  },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'PI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-    sessionControlAdapter: {
-      kind: 'runtimeDescriptorResumeId',
-      providerId: PI_AGENT_ID,
-      absolutePathField: 'sessionFile',
-      legacyAbsolutePathField: 'piSessionFile',
-      fallbackField: 'providerSessionId',
-    },
-    runtimeDescriptorReader: {
-      kind: 'providerSessionId',
-      providerId: PI_AGENT_ID,
-      runtimeHandle: 'providerSessionId',
-    },
-    protocolRuntimeDescriptor: {
-      kind: 'providerRuntimeDescriptorV1',
-      providerId: PI_AGENT_ID,
-      source: './protocol/runtimeDescriptorV1',
-      buildFunction: 'buildPiAgentRuntimeDescriptorV1',
-      canonicalReader: 'readCanonicalPiAgentRuntimeDescriptorV1',
-    },
   },
 } as const);

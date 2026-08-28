@@ -8,11 +8,17 @@ import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from './additionalTranslations.js';
 import { GITHUB_RENDER_UI_TRANSLATIONS } from './renderTranslations.js';
 import { GITHUB_DETAIL_TABS_V1 } from './detail/tabDeclarations.js';
 import {
+  GITHUB_CHANGED_FILE_STATUS_LABELS_V1,
+  GITHUB_CHECK_CONCLUSION_LABELS_V1,
+  GITHUB_CHECK_STATUS_LABELS_V1,
   GITHUB_DETAIL_FIELD_LABELS_V1,
   GITHUB_REVIEW_STATE_LABELS_V1,
   GITHUB_REVIEW_STATE_UNKNOWN_KEY_V1,
   GITHUB_REVIEW_STATE_UNKNOWN_LABEL_V1,
   GITHUB_TIMELINE_HEADLINES_V1,
+  githubChangedFileStatusKey,
+  githubCheckConclusionKey,
+  githubCheckStatusKey,
   githubDetailFieldLabelKey,
   githubReviewStateKey,
   githubTimelineHeadlineKey,
@@ -27,10 +33,10 @@ import {
  * noticed.
  */
 
+type Messages = Readonly<Record<string, string | undefined>>;
+
 const LOCALES = Object.keys(GITHUB_RENDER_UI_TRANSLATIONS) as readonly
   (keyof typeof GITHUB_RENDER_UI_TRANSLATIONS)[];
-
-type Messages = Readonly<Record<string, string | undefined>>;
 
 function messages(locale: (typeof LOCALES)[number]): Messages {
   return {
@@ -73,9 +79,43 @@ describe('the GitHub surface catalog', () => {
     };
     walk(root);
 
+    // Action confirmations are rendered by the host from the source manifest,
+    // not by this UI directory. Keep them in the same source-derived guard so
+    // adding a write cannot silently leave its confirmation untranslated in
+    // every locale while catalog parity still reports agreement.
+    const manifestSource = readFileSync(
+      fileURLToPath(new URL('../manifest.ts', import.meta.url)),
+      'utf8',
+    );
+    for (const match of manifestSource.matchAll(
+      /key:\s*['"](plugins\.github\.[A-Za-z0-9._]+)['"]/gu,
+    )) {
+      if (match[1] !== undefined) referenced.add(match[1]);
+    }
+    const inlineManifestMessages = new Set(
+      [...manifestSource.matchAll(/['"](plugins\.github\.[A-Za-z0-9._]+)['"]\s*:/gu)]
+        .flatMap((match) => match[1] === undefined ? [] : [match[1]]),
+    );
+
     // A scan that found nothing would pass while asserting nothing.
-    expect(referenced.size).toBeGreaterThan(40);
-    expect([...referenced].filter((key) => ENGLISH[key] === undefined).sort()).toEqual([]);
+    expect(referenced.size).toBeGreaterThan(70);
+    expect([...referenced]
+      .filter((key) => ENGLISH[key] === undefined && !inlineManifestMessages.has(key))
+      .sort()).toEqual([]);
+  });
+
+  it('does not bypass the catalog in mutation controls', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./renderSurface.tsx', import.meta.url)),
+      'utf8',
+    );
+    const exactWritesWithoutKeys = [...source.matchAll(/<ExactWrite\b[\s\S]*?\/>/gu)]
+      .map((match) => match[0])
+      .filter((control) => !control.includes('titleKey='));
+
+    expect(exactWritesWithoutKeys).toEqual([]);
+    expect([...source.matchAll(/\b(?:label|placeholder)="[^"]+"/gu)]).toEqual([]);
+    expect([...source.matchAll(/\{\s*value:\s*'[^']+',\s*label:\s*'[^']+'\s*\}/gu)]).toEqual([]);
   });
 
   it('defines the keys the surfaces COMPUTE, which no literal scan can see', () => {
@@ -91,6 +131,12 @@ describe('the GitHub surface catalog', () => {
         .map(([kind, headline]) => [githubTimelineHeadlineKey(kind), headline ?? ''] as const),
       ...Object.entries(GITHUB_REVIEW_STATE_LABELS_V1)
         .map(([state, label]) => [githubReviewStateKey(state), label ?? ''] as const),
+      ...Object.entries(GITHUB_CHANGED_FILE_STATUS_LABELS_V1)
+        .map(([status, label]) => [githubChangedFileStatusKey(status), label ?? ''] as const),
+      ...Object.entries(GITHUB_CHECK_STATUS_LABELS_V1)
+        .map(([status, label]) => [githubCheckStatusKey(status), label ?? ''] as const),
+      ...Object.entries(GITHUB_CHECK_CONCLUSION_LABELS_V1)
+        .map(([status, label]) => [githubCheckConclusionKey(status), label ?? ''] as const),
       [GITHUB_REVIEW_STATE_UNKNOWN_KEY_V1, GITHUB_REVIEW_STATE_UNKNOWN_LABEL_V1] as const,
     ];
     expect(computed.length).toBeGreaterThan(35);

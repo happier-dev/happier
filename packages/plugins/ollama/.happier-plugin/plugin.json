@@ -37,7 +37,8 @@
               "path": "/api/tags"
             }
           ],
-          "source": "probe"
+          "source": "probe",
+          "sourceRegistryVersion": "ollama-tags/v1"
         },
         "discovery": {
           "availabilityProbe": {

@@ -1906,6 +1906,7 @@ describe('Pi pure External Sessions contribution leaf', () => {
     });
     expect(advanced.value.diagnostics).toEqual([{
       code: 'non_transcript_record_skipped',
+      severity: 'benign',
       count: 1,
       positions: [0],
     }]);

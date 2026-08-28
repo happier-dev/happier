@@ -42,6 +42,8 @@ import {
   CHANNEL_STATE_RECORD_KIND,
 } from './collections.js';
 import { CONVERSATION_DELIVERY_CUSTODY_STATES } from './deliveryCustody.js';
+import { MAX_CHANNELS_BINDINGS_RESOURCE_BYTES } from './resourceBounds.js';
+import { MAX_CHANNELS_SESSION_CONVERSATIONS_BYTES } from './sessionConversationsResource.js';
 
 /**
  * `PluginManifest` types every contribution entry as `{ id, [key: string]: unknown }`,
@@ -738,6 +740,23 @@ describe('Channels core manifest', () => {
         hostAccess: ['account-storage'],
       },
       {
+        id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept,
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.sessionProjectionBaselineAccept,
+        title: 'Accept Session conversation transcript baseline',
+        description: 'Resumes one paused Session conversation from the current transcript tail.',
+        scopes: ['global'],
+        surfaces: ['cli', 'ui'],
+        placementBindings: ['primary'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        confirmation: {
+          title: 'Continue without unavailable transcript history?',
+          body: 'This resumes the conversation from the Session’s current transcript tail without replaying unavailable history.',
+          confirmLabel: 'Accept baseline',
+        },
+        hostAccess: ['account-storage'],
+      },
+      {
         id: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry,
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressRetry,
         title: 'Retry blocked conversation ingress',
@@ -849,7 +868,7 @@ describe('Channels core manifest', () => {
         // artifact already carried.
         scope: 'global',
         contentType: 'application/json',
-        maxBytes: 212_992,
+        maxBytes: MAX_CHANNELS_BINDINGS_RESOURCE_BYTES,
         hostAccess: ['account-storage'],
       },
       {
@@ -879,9 +898,9 @@ describe('Channels core manifest', () => {
         kind: 'config',
         scope: 'session',
         contentType: 'application/json',
-        // The Account-wide bindings ceiling plus the one attention entry each
-        // of the 256 bindings can carry: 212_992 + (256 * 160).
-        maxBytes: 253_952,
+        // The canonical Account-wide bindings ceiling plus the one attention
+        // entry each of the 256 bindings can carry.
+        maxBytes: MAX_CHANNELS_SESSION_CONVERSATIONS_BYTES,
         hostAccess: ['account-storage'],
       },
       {
@@ -1445,6 +1464,7 @@ describe('Channels core manifest', () => {
           },
         },
         textDigest: 'E'.repeat(43),
+        retainedAttentionObligationRowIds: [],
       },
     };
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1456,6 +1476,16 @@ describe('Channels core manifest', () => {
       payload: {
         ...compactedCensusPayload,
         compacted: { ...compactedCensusPayload.compacted, textDigest: 'not-a-digest' },
+      },
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingressCensus,
+      payload: {
+        ...compactedCensusPayload,
+        compacted: {
+          ...compactedCensusPayload.compacted,
+          retainedAttentionObligationRowIds: ['not-a-row-id'],
+        },
       },
     })).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1509,7 +1539,6 @@ describe('Channels core manifest', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           occurrenceKey: 'automation-occurrence-1',
           resultDelivery: {
             kind: 'finalResult',
@@ -1719,7 +1748,7 @@ describe('Channels core manifest', () => {
           reason: 'providerHistoryUnavailable',
         },
       },
-    })).toBe(false);
+    })).toBe(true);
 
     const retainedAcceptedTransfer = {
       ...connection,

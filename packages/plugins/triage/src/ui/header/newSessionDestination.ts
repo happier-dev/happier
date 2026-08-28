@@ -14,6 +14,10 @@ import type {
     TriageActionExecutionPlacementV1,
     TriageActionPlacementV1,
 } from '../../sessions/actionLaunch.js';
+import {
+    projectTriagePrepareReviewWorkspaceInputV1,
+    type TriagePrepareReviewWorkspaceInputV1,
+} from '@happier-dev/triage-protocol/v1';
 
 /**
  * The one projection from the host's settled new-Session draft to the
@@ -65,6 +69,12 @@ export type TriageNewSessionPlacementSeedV1 = Readonly<{
     placement: TriageActionPlacementV1;
 }>;
 
+export type TriageNewSessionDraftActionContextV1 = Readonly<{
+    profileId?: string;
+    checkoutIntent: TriageActionCheckoutResolutionV1;
+    candidates?: readonly PluginUiSessionPlacementCandidateV1[];
+}>;
+
 /**
  * Projects the placement owner's candidate unchanged into the public New
  * Session seed grammar.
@@ -113,6 +123,7 @@ export function triageNewSessionDraftSeedV1(
      * with an equal machine id mounted from another.
      */
     placement?: TriageActionExecutionPlacementV1 | TriageNewSessionPlacementSeedV1,
+    actionContext?: TriageNewSessionDraftActionContextV1,
 ): Readonly<Record<string, JsonValue>> | null {
     const agentId = preference.agentId?.trim();
     // A directory the reader pinned in Triage settings names no machine, so it
@@ -138,14 +149,15 @@ export function triageNewSessionDraftSeedV1(
             : placement;
     const directory = pinnedDirectory || resolved?.directory?.trim();
     const executionTarget = pinnedDirectory ? undefined : resolved?.executionTarget;
-    const actionSeed = placement !== undefined && 'checkoutIntent' in placement ? placement : undefined;
-    const candidates = actionSeed === undefined
+    const actionSeed = actionContext
+        ?? (placement !== undefined && 'checkoutIntent' in placement ? placement : undefined);
+    const candidates = actionContext?.candidates ?? (actionSeed === undefined || !('placement' in actionSeed)
         ? undefined
         : actionSeed.placement.kind === 'launch'
             ? [projectTriageSessionPlacementCandidateV1(actionSeed.placement.candidate)]
             : actionSeed.placement.kind === 'prefill'
                 ? actionSeed.placement.candidates.map(projectTriageSessionPlacementCandidateV1)
-                : undefined;
+                : undefined);
     const seed = {
         ...(agentId ? { agentId } : {}),
         ...(actionSeed?.profileId === undefined ? {} : { profileId: actionSeed.profileId }),
@@ -249,16 +261,20 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
         }
         : { kind, directory: draft.data.directory };
 
+    const { directory: _directory, ...settledSpawn } = draft.data;
+    const spawn = {
+        ...settledSpawn,
+        ...(settledSpawn.profileId === undefined && input.profileId !== undefined
+            ? { profileId: input.profileId }
+            : {}),
+    };
+
     return {
         status: 'settled',
         destination: {
             kind: 'new',
             creationKey: input.creationKey,
-            spawn: {
-                executionTarget: draft.data.executionTarget,
-                agentTarget: draft.data.agentTarget,
-                ...(input.profileId === undefined ? {} : { profileId: input.profileId }),
-            },
+            spawn,
             // The action's declared mode IS the materialization request, read
             // from the one table the gate validates it against. A second copy
             // of the pairings here is the unbound duplicate F1 named.
@@ -274,12 +290,15 @@ export function projectTriageNewSessionDestinationV1(input: Readonly<{
  * fallback is allowed to invent a project/machine/root selection.
  */
 function selectedWorkspaceScope(
-    draft: ReturnType<typeof TriageStartEntrySessionSettledDraftV1Schema.parse>,
+    placement: Readonly<{
+        executionTarget: Readonly<{ serverId: string; machineId: string }>;
+        directory: string;
+    }>,
     candidates: readonly PluginUiSessionPlacementCandidateV1[],
 ): TriageReviewWorkspaceRequestV1['workspace'] {
-    const matches = candidates.filter((candidate) => candidate.serverId === draft.executionTarget.serverId
-        && candidate.machineId === draft.executionTarget.machineId
-        && candidate.rootPath === draft.directory);
+    const matches = candidates.filter((candidate) => candidate.serverId === placement.executionTarget.serverId
+        && candidate.machineId === placement.executionTarget.machineId
+        && candidate.rootPath === placement.directory);
     if (matches.length !== 1) return null;
     const candidate = matches[0]!;
     return {
@@ -287,4 +306,27 @@ function selectedWorkspaceScope(
         machineId: candidate.machineId,
         rootPath: candidate.rootPath,
     };
+}
+
+/**
+ * The one projection used when a compose action prepares before New Session
+ * opens. It reuses the same candidate-correspondence owner as direct Session
+ * starts, so a path or machine hint can never become a saved-workspace choice
+ * merely because the destination is authoring rather than immediate launch.
+ */
+export function projectTriagePreparedWorkspaceSelectionInputV1(input: Readonly<{
+    preparation: TriageReviewWorkspacePreparationV1;
+    placement: TriageActionExecutionPlacementV1 | null;
+    candidates: readonly PluginUiSessionPlacementCandidateV1[];
+}>): TriagePrepareReviewWorkspaceInputV1 {
+    const workspace = input.placement?.directory === undefined
+        ? null
+        : selectedWorkspaceScope({
+            executionTarget: input.placement.executionTarget,
+            directory: input.placement.directory,
+        }, input.candidates);
+    return projectTriagePrepareReviewWorkspaceInputV1({
+        ...input.preparation,
+        workspace,
+    });
 }

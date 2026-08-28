@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 } from '@happier-dev/triage-protocol/v1';
-
 import { decodeGithubScanContinuation, encodeGithubScanContinuation } from './continuation.js';
 import { createGithubScanFrontier } from './frontier.js';
 import { GITHUB_SCAN_LANE_ORDER_V1, type GithubScanLaneIdV1 } from './query.js';
 
 const SCAN_LIMIT = 50;
-const MAX_SCAN_LIMIT = 200;
 
-/** A lane query long enough that five lane URLs cannot fit the protocol paging bound. */
+/** A lane query wider than the retired feature-local token ceiling. */
 function wideLaneQuery(laneId: GithubScanLaneIdV1): string {
   return `${laneId} ${'repo:acme/service-with-a-long-name'.repeat(20)}`;
 }
@@ -46,14 +43,11 @@ function handMintedToken(buildLaneQuery: (laneId: GithubScanLaneIdV1) => string)
 }
 
 describe('GitHub scan continuation envelope', () => {
-  it('round-trips a frontier that fits the protocol paging bound', () => {
+  it('round-trips a frontier', () => {
     const token = handMintedToken(shortLaneQuery);
-    expect(new TextEncoder().encode(token).byteLength)
-      .toBeLessThanOrEqual(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
 
     const decoded = decodeGithubScanContinuation(token, {
       buildLaneQuery: shortLaneQuery,
-      maxScanLimit: MAX_SCAN_LIMIT,
     });
     expect(decoded?.lanes).toHaveLength(GITHUB_SCAN_LANE_ORDER_V1.length);
     expect(decoded?.lanes[0]?.frontier).toEqual({
@@ -62,7 +56,7 @@ describe('GitHub scan continuation envelope', () => {
     });
   });
 
-  it('refuses a token wider than the protocol paging bound, which its own encoder would never mint', () => {
+  it('round-trips a wide valid frontier and leaves size to the Action envelope', () => {
     const frontier = createGithubScanFrontier({
       scanLimit: SCAN_LIMIT,
       buildLaneQuery: wideLaneQuery,
@@ -76,15 +70,33 @@ describe('GitHub scan continuation envelope', () => {
         })),
       },
     });
-    // The encoder refuses to mint it: the same bytes must not be admitted on the way back in.
-    expect(encodeGithubScanContinuation(frontier)).toBeNull();
+    expect(encodeGithubScanContinuation(frontier)).not.toBeNull();
 
     const token = handMintedToken(wideLaneQuery);
-    expect(new TextEncoder().encode(token).byteLength)
-      .toBeGreaterThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
     expect(decodeGithubScanContinuation(token, {
       buildLaneQuery: wideLaneQuery,
-      maxScanLimit: MAX_SCAN_LIMIT,
-    })).toBeNull();
+    })).not.toBeNull();
+  });
+
+  it('accepts the source-minted safe-integer limit without recreating a feature-local ceiling', () => {
+    const scanLimit = 65_536;
+    const nativePageSize = 100;
+    const token = JSON.stringify({
+      v: 1,
+      scanLimit,
+      nativePageSize,
+      nextLaneIndex: 0,
+      walkHealth: [],
+      lanes: GITHUB_SCAN_LANE_ORDER_V1.map((laneId) => ({
+        laneId,
+        nextUrl: null,
+        pagesConsumed: 0,
+        ended: false,
+      })),
+    });
+
+    expect(decodeGithubScanContinuation(token, {
+      buildLaneQuery: shortLaneQuery,
+    })?.scanLimit).toBe(scanLimit);
   });
 });

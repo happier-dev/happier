@@ -20,46 +20,39 @@
  *   is how a reviewer approves a diff they believe is whole;
  * - **an actor is a username, never an email address or an account id.**
  *
- * Every single-line value goes through the published normalizer, so the
- * collapse-then-bound rule keeps one owner across the product. A note body is
+ * Every single-line value goes through the published normalizer. A note body is
  * the one exception and it is narrow: its line structure IS its content, so it
- * is stripped of the control characters that are not line structure and then cut
- * on a whole code point by the same published truncator.
+ * is stripped of the control characters that are not line structure. Result
+ * fitting belongs to the canonical external-Action envelope owner after the
+ * complete result shape exists; this projector invents no per-field byte quota.
  */
 
 import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+  normalizeTriageSingleLineV1,
   projectTriageDisplayTextV1,
-  truncateTriageUtf8V1,
 } from '@happier-dev/triage-protocol/v1';
 
-import type { GitlabActivityEventSourceV1 } from './routes.js';
+import {
+  GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
+  type GitlabActivityEventSourceV1,
+} from './routes.js';
 
 /** The published bounds one GitLab detail projection is measured against. */
 export type GitlabDetailBoundsV1 = Readonly<{
   identifierUtf8Bytes: number;
-  labelUtf8Bytes: number;
   textUtf8Bytes: number;
   locationUtf8Bytes: number;
-  /** A changed-file path; longer than display text because a path is identity. */
-  pathUtf8Bytes: number;
-  /** One note body, which is document content rather than a row label. */
-  noteBodyUtf8Bytes: number;
 }>;
 
 export const GITLAB_DETAIL_BOUNDS_V1: GitlabDetailBoundsV1 = Object.freeze({
   identifierUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  labelUtf8Bytes: 128,
   textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   locationUtf8Bytes: MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-  pathUtf8Bytes: 512,
-  noteBodyUtf8Bytes: 8_192,
 });
 
-/** The largest number of rows any one GitLab detail page publishes. */
-export const GITLAB_MAX_DETAIL_ROWS_V1 = 100;
 /**
  * Notes published for one discussion.
  *
@@ -67,11 +60,6 @@ export const GITLAB_MAX_DETAIL_ROWS_V1 = 100;
  * published so `Show 4 earlier replies` stays a client-local window over data
  * the panel already holds rather than an invented nested HTTP cursor.
  */
-export const GITLAB_MAX_DISCUSSION_NOTES_V1 = 40;
-/** Approvers published for one merge request. */
-export const GITLAB_MAX_APPROVERS_V1 = 40;
-/** Approval rules published for one merge request. */
-export const GITLAB_MAX_APPROVAL_RULES_V1 = 30;
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -125,6 +113,13 @@ function boundedOrNull(
   return projected.value === '' ? null : projected;
 }
 
+function normalizedOrNull(value: unknown): Readonly<{ value: string; truncated: false }> | null {
+  const raw = readString(value);
+  if (raw === null) return null;
+  const normalized = normalizeTriageSingleLineV1(raw);
+  return normalized === '' ? null : { value: normalized, truncated: false };
+}
+
 /**
  * A location is never truncated into a shorter destination: an over-bound URL is
  * omitted so the row keeps its identity instead of pointing somewhere else.
@@ -139,10 +134,9 @@ function boundedWebUrl(value: unknown, bounds: GitlabDetailBoundsV1): string | n
 /** The username half of a GitLab actor object. */
 function readActor(
   value: unknown,
-  bounds: GitlabDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> | null {
   if (!isRecord(value)) return null;
-  return boundedOrNull(value.username, bounds.labelUtf8Bytes);
+  return normalizedOrNull(value.username);
 }
 
 /* ----------------------------------------------------------------- note body */
@@ -154,7 +148,6 @@ const EXCESSIVE_BLANK_LINES = /\n{3,}/gu;
 
 function projectNoteBody(
   value: unknown,
-  bounds: GitlabDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> {
   if (typeof value !== 'string') return { value: '', truncated: false };
   const normalized = value
@@ -162,7 +155,7 @@ function projectNoteBody(
     .replace(NON_STRUCTURAL_CONTROLS, '')
     .replace(EXCESSIVE_BLANK_LINES, '\n\n')
     .trim();
-  return truncateTriageUtf8V1(normalized, bounds.noteBodyUtf8Bytes);
+  return { value: normalized, truncated: false };
 }
 
 /* --------------------------------------------------------------- page result */
@@ -177,7 +170,7 @@ export type GitlabPageProjectionV1<TRow> = Readonly<{
 
 function projectRows<TRow>(
   body: unknown,
-  maxRows: number,
+  maxRows: number | null,
   projectOne: (row: JsonRecord) => Readonly<{ row: TRow; truncated: boolean }> | null,
 ): GitlabPageProjectionV1<TRow> {
   if (!Array.isArray(body)) {
@@ -187,7 +180,7 @@ function projectRows<TRow>(
   let omitted = 0;
   let truncated = false;
   for (const candidate of body) {
-    if (rows.length >= maxRows) {
+    if (maxRows !== null && rows.length >= maxRows) {
       omitted += 1;
       continue;
     }
@@ -232,13 +225,13 @@ export type GitlabProjectedNoteRowV1 = Readonly<{
 export function projectGitlabNoteRows(
   body: unknown,
   bounds: GitlabDetailBoundsV1,
-  maxRows: number = GITLAB_MAX_DETAIL_ROWS_V1,
+  maxRows: number | null = GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
 ): GitlabPageProjectionV1<GitlabProjectedNoteRowV1> {
   return projectRows(body, maxRows, (raw) => {
     const id = readNativeId(raw.id, bounds.identifierUtf8Bytes);
     if (id === null) return null;
-    const author = readActor(raw.author, bounds);
-    const noteBody = projectNoteBody(raw.body, bounds);
+    const author = readActor(raw.author);
+    const noteBody = projectNoteBody(raw.body);
     const atMs = readTimestampMs(raw.created_at);
     const updatedAtMs = readTimestampMs(raw.updated_at);
     const truncated = noteBody.truncated || (author?.truncated ?? false);
@@ -284,20 +277,20 @@ export function projectGitlabActivityEventRows(
   body: unknown,
   source: GitlabActivityEventSourceV1,
   bounds: GitlabDetailBoundsV1,
-  maxRows: number = GITLAB_MAX_DETAIL_ROWS_V1,
+  maxRows: number = GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
 ): GitlabPageProjectionV1<GitlabProjectedActivityEventRowV1> {
   return projectRows(body, maxRows, (raw) => {
     const id = readNativeId(raw.id, bounds.identifierUtf8Bytes);
     if (id === null) return null;
     // `state` events name the transition in `state`; label and milestone events
     // name it in `action`. Neither is invented for the other.
-    const action = boundedOrNull(raw.state ?? raw.action, bounds.labelUtf8Bytes);
+    const action = normalizedOrNull(raw.state ?? raw.action);
     if (action === null) return null;
-    const actor = readActor(raw.user, bounds);
+    const actor = readActor(raw.user);
     const subject = source === 'label'
-      ? boundedOrNull(isRecord(raw.label) ? raw.label.name : null, bounds.labelUtf8Bytes)
+      ? normalizedOrNull(isRecord(raw.label) ? raw.label.name : null)
       : source === 'milestone'
-        ? boundedOrNull(isRecord(raw.milestone) ? raw.milestone.title : null, bounds.labelUtf8Bytes)
+        ? normalizedOrNull(isRecord(raw.milestone) ? raw.milestone.title : null)
         : null;
     const atMs = readTimestampMs(raw.created_at);
     const truncated = action.truncated
@@ -333,12 +326,12 @@ export type GitlabProjectedDiscussionRowV1 = Readonly<{
 export function projectGitlabDiscussionRows(
   body: unknown,
   bounds: GitlabDetailBoundsV1,
-  maxRows: number = GITLAB_MAX_DETAIL_ROWS_V1,
+  maxRows: number = GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
 ): GitlabPageProjectionV1<GitlabProjectedDiscussionRowV1> {
   return projectRows(body, maxRows, (raw) => {
     const id = readNativeId(raw.id, bounds.identifierUtf8Bytes);
     if (id === null) return null;
-    const notes = projectGitlabNoteRows(raw.notes, bounds, GITLAB_MAX_DISCUSSION_NOTES_V1);
+    const notes = projectGitlabNoteRows(raw.notes, bounds, null);
     const truncated = notes.projectionTruncated;
     return {
       row: Object.freeze({
@@ -359,6 +352,8 @@ export type GitlabProjectedApprovalStateV1 = Readonly<{
   approvalsRequired?: number;
   approvalsLeft?: number;
   approvedBy: readonly string[];
+  /** Provider approver rows that were unreadable at projection. */
+  omittedApproverCount: number;
   userHasApproved?: boolean;
   /**
    * GitLab's own answer to whether THIS account may approve. It is a provider
@@ -370,19 +365,20 @@ export type GitlabProjectedApprovalStateV1 = Readonly<{
 
 export function projectGitlabApprovalState(
   body: unknown,
-  bounds: GitlabDetailBoundsV1,
+  _bounds: GitlabDetailBoundsV1,
 ): GitlabProjectedApprovalStateV1 | null {
   if (!isRecord(body)) return null;
   const approvedBy: string[] = [];
+  let omittedApproverCount = 0;
   if (Array.isArray(body.approved_by)) {
     for (const candidate of body.approved_by) {
-      if (approvedBy.length >= GITLAB_MAX_APPROVERS_V1) break;
       // GitLab nests the user under `user`; a flat actor is accepted too rather
       // than dropping an approver over an envelope difference.
       const actor = isRecord(candidate)
-        ? readActor(candidate.user, bounds) ?? readActor(candidate, bounds)
+        ? readActor(candidate.user) ?? readActor(candidate)
         : null;
       if (actor !== null) approvedBy.push(actor.value);
+      else omittedApproverCount += 1;
     }
   }
   const approvalsRequired = readCount(body.approvals_required);
@@ -391,6 +387,7 @@ export function projectGitlabApprovalState(
     ...(approvalsRequired === null ? {} : { approvalsRequired }),
     ...(approvalsLeft === null ? {} : { approvalsLeft }),
     approvedBy: Object.freeze(approvedBy),
+    omittedApproverCount,
     ...(typeof body.user_has_approved === 'boolean'
       ? { userHasApproved: body.user_has_approved }
       : {}),
@@ -412,9 +409,9 @@ export function projectGitlabApprovalRules(
   body: unknown,
   bounds: GitlabDetailBoundsV1,
 ): GitlabPageProjectionV1<GitlabProjectedApprovalRuleV1> {
-  return projectRows(body, GITLAB_MAX_APPROVAL_RULES_V1, (raw) => {
+  return projectRows(body, null, (raw) => {
     const id = readNativeId(raw.id, bounds.identifierUtf8Bytes);
-    const name = boundedOrNull(raw.name, bounds.labelUtf8Bytes);
+    const name = normalizedOrNull(raw.name);
     if (id === null || name === null) return null;
     const approvalsRequired = readCount(raw.approvals_required);
     return {
@@ -447,15 +444,15 @@ export type GitlabProjectedPipelineRowV1 = Readonly<{
 export function projectGitlabPipelineRows(
   body: unknown,
   bounds: GitlabDetailBoundsV1,
-  maxRows: number = GITLAB_MAX_DETAIL_ROWS_V1,
+  maxRows: number = GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
 ): GitlabPageProjectionV1<GitlabProjectedPipelineRowV1> {
   return projectRows(body, maxRows, (raw) => {
     const id = readNativeId(raw.id, bounds.identifierUtf8Bytes);
-    const status = boundedOrNull(raw.status, bounds.labelUtf8Bytes);
+    const status = normalizedOrNull(raw.status);
     if (id === null || status === null) return null;
-    const ref = boundedOrNull(raw.ref, bounds.labelUtf8Bytes);
+    const ref = normalizedOrNull(raw.ref);
     const sha = boundedOrNull(raw.sha, bounds.identifierUtf8Bytes);
-    const source = boundedOrNull(raw.source, bounds.labelUtf8Bytes);
+    const source = normalizedOrNull(raw.source);
     const webUrl = boundedWebUrl(raw.web_url, bounds);
     const createdAtMs = readTimestampMs(raw.created_at);
     const updatedAtMs = readTimestampMs(raw.updated_at);
@@ -553,15 +550,15 @@ export type GitlabChangedFilesProjectionV1 =
 export function projectGitlabChangedFileRows(
   body: unknown,
   bounds: GitlabDetailBoundsV1,
-  maxRows: number = GITLAB_MAX_DETAIL_ROWS_V1,
+  maxRows: number = GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
 ): GitlabChangedFilesProjectionV1 {
   let everyRowReported = true;
   const projected = projectRows<GitlabProjectedChangedFileRowV1>(body, maxRows, (raw) => {
-    const path = boundedOrNull(raw.new_path ?? raw.old_path, bounds.pathUtf8Bytes);
+    const path = normalizedOrNull(raw.new_path ?? raw.old_path);
     if (path === null) return null;
     const previousPath = raw.old_path === raw.new_path
       ? null
-      : boundedOrNull(raw.old_path, bounds.pathUtf8Bytes);
+      : normalizedOrNull(raw.old_path);
     // Read as booleans ONLY when GitLab supplied booleans. `?? false` here is
     // exactly the defect this projector exists to prevent.
     const collapsed = typeof raw.collapsed === 'boolean' ? raw.collapsed : null;

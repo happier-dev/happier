@@ -62,7 +62,11 @@ export type PosthogConfigurationRejection =
 
 export type PosthogConfigurationEncoding =
     | Readonly<{ ok: true; token: string; utf8Bytes: number }>
-    | Readonly<{ ok: false; reason: PosthogConfigurationRejection; utf8Bytes?: number }>;
+    | Readonly<{ ok: false; reason: 'tokenTooLarge'; utf8Bytes: number }>
+    | Readonly<{
+        ok: false;
+        reason: Exclude<PosthogConfigurationRejection, 'tokenTooLarge'>;
+      }>;
 
 /**
  * The draft window a discovery candidate proposes. It is a starting point for the
@@ -135,7 +139,7 @@ function readEnvironment(value: unknown): PosthogConfiguredEnvironment | null {
 
 function validate(
     configuration: PosthogConfigurationToken,
-): PosthogConfigurationRejection | null {
+): Exclude<PosthogConfigurationRejection, 'tokenTooLarge'> | null {
     if (!isUuid(configuration.organizationUuid)) {
         return 'invalidOrganizationUuid';
     }

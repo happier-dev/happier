@@ -32,9 +32,9 @@ import type {
   SentryApiResponseV1,
 } from '../api/sentryApiClient.js';
 import {
-  advanceSentryCursorWalk,
-  type SentryCursorWalkV1,
-} from '../api/sentryCursorCycle.js';
+  advanceCursorCycleWalkV1,
+  type CursorCycleWalkV1,
+} from '@happier-dev/triage-sources/runtime';
 import { classifySentryFailure } from '../api/sentryFailure.js';
 import { parseSentryLinkHeader } from '../api/sentryLinkHeader.js';
 import {
@@ -124,7 +124,7 @@ function decodeBody(
  * the same thing on both planes.
  */
 export type SentryNextPageV1 =
-  | Readonly<{ kind: 'next'; walk: SentryCursorWalkV1 }>
+  | Readonly<{ kind: 'next'; walk: CursorCycleWalkV1 }>
   | Readonly<{ kind: 'end' }>
   | Readonly<{ kind: 'stoppedShort'; reason: SentryDetailIncompleteReasonV1 }>;
 
@@ -141,7 +141,7 @@ function stoppedShort(reason: SentryDetailIncompleteReasonV1): SentryNextPageV1 
 function verifyNextCursor(
   headers: Readonly<Record<string, string>>,
   expectedPath: string,
-  position: SentryCursorWalkV1 | null,
+  position: CursorCycleWalkV1 | null,
 ): SentryNextPageV1 {
   const link = parseSentryLinkHeader(headers);
   // An absent header is not a finished walk, and it is also not a reason to
@@ -160,7 +160,7 @@ function verifyNextCursor(
   // repeat stays caught and an `A → B → A` alternation — invisible to a
   // comparison that can only see the current request — is caught with it,
   // without evidence whose width grows with every "Load more".
-  const advanced = advanceSentryCursorWalk(position, next.cursor);
+  const advanced = advanceCursorCycleWalkV1(position, next.cursor);
   if (advanced.kind === 'revisited') {
     return stoppedShort('paginationCursorNotAdvancing');
   }
@@ -327,7 +327,7 @@ export type SentryEventsPageInputV1 = Readonly<{
    * Where this walk stands: the position to request and the earlier one its
    * cycle probe is watching. `null` on the first page, which has requested none.
    */
-  position: SentryCursorWalkV1 | null;
+  position: CursorCycleWalkV1 | null;
   nowMs: number;
 }>;
 
@@ -390,7 +390,7 @@ export type SentryTagValuesPageInputV1 = Readonly<{
    * Where this walk stands: the position to request and the earlier one its
    * cycle probe is watching. `null` on the first page, which has requested none.
    */
-  position: SentryCursorWalkV1 | null;
+  position: CursorCycleWalkV1 | null;
   nowMs: number;
 }>;
 
@@ -481,6 +481,13 @@ export async function readSentryEventProjection(
   // successful occurrence with nothing in it.
   const projection = projectSentryEventForDisplay(decoded.body);
   if (projection === null) {
+    return failed(classifySentryFailure({ kind: 'unparseable', operation: 'event' }));
+  }
+  // The exact event selector is an identity claim, not only a route hint. A
+  // provider/proxy body for another valid event must never publish beneath the
+  // selected occurrence's heading. `representative` deliberately remains
+  // provider-chosen and therefore has no caller-authored id to compare.
+  if (input.selector.kind === 'event' && projection.eventId !== input.selector.eventId) {
     return failed(classifySentryFailure({ kind: 'unparseable', operation: 'event' }));
   }
 

@@ -40,9 +40,6 @@ import {
     type PosthogProjectedActivityRecord,
 } from './activityProjection.js';
 
-/** The page size one mounted Activity panel asks for. */
-export const POSTHOG_ACTIVITY_PAGE_SIZE = POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT;
-
 /**
  * The Activity plane's state.
  *
@@ -185,7 +182,9 @@ export function usePosthogActivityController(
                 collisionScope: input.observation.entryRef.collisionScope,
                 entryId: input.observation.entryRef.entryId,
             },
-            limit: POSTHOG_ACTIVITY_PAGE_SIZE,
+            // The provider projection owns this ceiling; the controller adds
+            // no second page-size policy.
+            limit: POSTHOG_ISSUE_ACTIVITY_MAX_LIMIT,
             ...(continuation === null ? {} : { continuation }),
         }, { signal: pageSignal });
         if (pageSignal.aborted) {

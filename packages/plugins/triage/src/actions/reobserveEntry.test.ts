@@ -110,4 +110,22 @@ describe('reobserveTriageEntry', () => {
     await Promise.resolve();
     expect(result).toEqual({ kind: 'unavailable' });
   });
+
+  it('includes configured-instance and contribution discovery in the one invocation deadline', async () => {
+    const result = await Promise.race([
+      reobserveTriageEntry({
+        entryRef: fixture.detailInput.observation.entryRef,
+        sourceInstanceId: fixture.configuredInstance.instance.sourceInstanceId,
+      }, {
+        readConfiguredInstance: async () => await new Promise<null>(() => {}),
+        readAdmittedSources: async () => [],
+        executeGet: async () => fixture.getResult,
+        nowMs: () => 1_760_000_800_000,
+        getDeadlineMs: 5,
+      }),
+      new Promise<'test-timeout'>((resolve) => setTimeout(() => resolve('test-timeout'), 50)),
+    ]);
+
+    expect(result).toEqual({ kind: 'unavailable' });
+  }, 1_000);
 });

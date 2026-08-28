@@ -12,7 +12,7 @@ import {
   GITHUB_PLUGIN_ID,
 } from './githubProviderContracts.js';
 
-/** Provider-owned Account Collection; registration stays dormant until Event authoring can produce definitions. */
+/** Provider-owned Account Collection for repository-source GitHub Event checkpoints. */
 export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION_ID = 'automation-event-checkpoints-v1';
 export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_CONTRACT_VERSION = 1;
 export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_CURSOR_AND_CONTINUITY_MAX_UTF8_BYTES = 64 * 1024;
@@ -21,6 +21,7 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD = {
   id: 'id',
   version: 'v',
   automationId: 'automation-id',
+  triggerId: 'trigger-id',
   eventPluginId: 'event-plugin-id',
   eventLocalId: 'event-local-id',
   sourceSelectorId: 'source-selector-id',
@@ -90,7 +91,7 @@ const CHECKPOINT_PAYLOAD_SCHEMA = {
       },
       required: ['kind', 'establishedAt'],
     },
-    lastEvaluatedTemplateVersion: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
+    lastEvaluatedTriggerRevision: POSITIVE_SAFE_INTEGER_SCHEMA,
     continuity: JSON_VALUE_SCHEMA,
   },
   required: [
@@ -100,7 +101,7 @@ const CHECKPOINT_PAYLOAD_SCHEMA = {
     'cursor',
     'lastContiguousOccurrenceId',
     'baseline',
-    'lastEvaluatedTemplateVersion',
+    'lastEvaluatedTriggerRevision',
     'continuity',
   ],
 } satisfies PluginJsonSchema;
@@ -112,7 +113,7 @@ export type GithubAutomationEventCheckpointPayloadV1 = Readonly<{
   cursor: JsonValue;
   lastContiguousOccurrenceId: string | null;
   baseline: Readonly<{ kind: 'currentHead' | 'boundedImport'; establishedAt: number }>;
-  lastEvaluatedTemplateVersion: number;
+  lastEvaluatedTriggerRevision: number;
   continuity: JsonValue;
 }>;
 
@@ -120,6 +121,7 @@ export type GithubAutomationEventCheckpointRowV1 = Readonly<{
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: string;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: 1;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: string;
+  [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId]: string;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: typeof GITHUB_PLUGIN_ID;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: GithubAutomationEventLocalIdV1;
   [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: string;
@@ -181,14 +183,20 @@ function computeCheckpointRowId(parts: readonly string[]): string {
     .digest('base64url');
 }
 
-/** The opaque row key is derived only from the immutable checkpoint identity tuple. */
+/**
+ * One opaque checkpoint key per Automation trigger occurrence stream.
+ * Provider reads may be coalesced process-locally, but mutable cursor and
+ * retry/history-gap custody must remain independently owned by each trigger.
+ */
 export function createGithubAutomationEventCheckpointRowId(input: Readonly<{
   automationId: string;
+  triggerId: string;
   eventRef: Readonly<{ pluginId: string; localId: string }>;
   sourceSelectorId: string;
 }>): string {
   return computeCheckpointRowId([
     input.automationId,
+    input.triggerId,
     input.eventRef.pluginId,
     input.eventRef.localId,
     input.sourceSelectorId,
@@ -200,6 +208,7 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
   const id = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id];
   const version = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version];
   const automationId = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId];
+  const triggerId = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId];
   const eventPluginId = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId];
   const eventLocalId = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId];
   const sourceSelectorId = value[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId];
@@ -207,6 +216,7 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
   if (version !== 1
     || !isBoundedString(id, 43)
     || !isBoundedString(automationId, MAX_HOST_ID_LENGTH)
+    || !isBoundedString(triggerId, MAX_HOST_ID_LENGTH)
     || eventPluginId !== GITHUB_PLUGIN_ID
     || typeof eventLocalId !== 'string'
     || !isGithubAutomationEventLocalId(eventLocalId)
@@ -221,14 +231,12 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
     || !isRecord(payload.baseline)
     || (payload.baseline.kind !== 'currentHead' && payload.baseline.kind !== 'boundedImport')
     || !isNonNegativeSafeInteger(payload.baseline.establishedAt)
-    || !isNonNegativeSafeInteger(payload.lastEvaluatedTemplateVersion)
+    || !isPositiveSafeInteger(payload.lastEvaluatedTriggerRevision)
   ) return false;
   return id === createGithubAutomationEventCheckpointRowId({
     automationId,
-    eventRef: {
-      pluginId: eventPluginId,
-      localId: eventLocalId,
-    },
+    triggerId,
+    eventRef: { pluginId: eventPluginId, localId: eventLocalId },
     sourceSelectorId,
   }) && encodedCursorAndContinuityBytes({
     cursor: payload.cursor as JsonValue,
@@ -237,7 +245,9 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
 }
 
 export function createGithubAutomationEventCheckpointRowV1(input: Readonly<{
+  checkpointRowId: string;
   automationId: string;
+  triggerId: string;
   eventRef: Readonly<{ pluginId: string; localId: string }>;
   sourceSelectorId: string;
   sourceInstanceId: string;
@@ -245,20 +255,26 @@ export function createGithubAutomationEventCheckpointRowV1(input: Readonly<{
   cursor: JsonValue;
   lastContiguousOccurrenceId: string | null;
   baseline: Readonly<{ kind: 'currentHead' | 'boundedImport'; establishedAt: number }>;
-  lastEvaluatedTemplateVersion: number;
+  lastEvaluatedTriggerRevision: number;
   continuity: JsonValue;
 }>): GithubAutomationEventCheckpointRowV1 {
   if (input.eventRef.pluginId !== GITHUB_PLUGIN_ID || !isGithubAutomationEventLocalId(input.eventRef.localId)) {
     throw new RangeError('GitHub Automation Event checkpoint requires a current semantic Event ref');
   }
+  const expectedCheckpointRowId = createGithubAutomationEventCheckpointRowId({
+    automationId: input.automationId,
+    triggerId: input.triggerId,
+    eventRef: input.eventRef,
+    sourceSelectorId: input.sourceSelectorId,
+  });
+  if (input.checkpointRowId !== expectedCheckpointRowId) {
+    throw new RangeError('GitHub Automation Event checkpoint row ID is invalid');
+  }
   const row: GithubAutomationEventCheckpointRowV1 = Object.freeze({
-    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: createGithubAutomationEventCheckpointRowId({
-      automationId: input.automationId,
-      eventRef: input.eventRef,
-      sourceSelectorId: input.sourceSelectorId,
-    }),
+    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: input.checkpointRowId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: 1,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: input.automationId,
+    [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId]: input.triggerId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: GITHUB_PLUGIN_ID,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: input.eventRef.localId,
     [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId]: input.sourceSelectorId,
@@ -269,7 +285,7 @@ export function createGithubAutomationEventCheckpointRowV1(input: Readonly<{
       cursor: input.cursor,
       lastContiguousOccurrenceId: input.lastContiguousOccurrenceId,
       baseline: Object.freeze({ ...input.baseline }),
-      lastEvaluatedTemplateVersion: input.lastEvaluatedTemplateVersion,
+      lastEvaluatedTriggerRevision: input.lastEvaluatedTriggerRevision,
       continuity: input.continuity,
     }),
   });
@@ -293,6 +309,7 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION = defineAccountCollec
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id]: ROW_ID_SCHEMA,
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version]: { type: 'integer', const: 1 },
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId]: HOST_ID_SCHEMA,
+      [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId]: HOST_ID_SCHEMA,
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId]: { type: 'string', const: GITHUB_PLUGIN_ID },
       [GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId]: {
         type: 'string',
@@ -305,6 +322,7 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION = defineAccountCollec
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.id,
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version,
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId,
+      GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId,
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId,
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId,
       GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId,
@@ -315,14 +333,19 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION = defineAccountCollec
   serverReadable: [
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.version,
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId,
+    GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId,
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId,
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId,
     GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId,
   ],
   indexes: [{
     id: GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID.byAutomationEventSource,
+    // A trigger ID names one Automation globally. Keeping automationId here
+    // would add no lookup authority and would exceed Collections' four-field
+    // compound-index contract once the exact qualified Event and selector are
+    // included.
     fields: [
-      { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.automationId, direction: 'asc' },
+      { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.triggerId, direction: 'asc' },
       { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventPluginId, direction: 'asc' },
       { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.eventLocalId, direction: 'asc' },
       { field: GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.sourceSelectorId, direction: 'asc' },
@@ -330,9 +353,9 @@ export const GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION = defineAccountCollec
   }],
   uiQueries: [],
   relations: [],
-  // No field here is a mode-derived identity tag. This row is addressed by the
-  // Automation, event and selector ids the host already knows in plaintext, so
-  // an Account encryption-mode change cannot move it.
+  // No field here is a mode-derived identity tag. The Trigger, Automation,
+  // Event and selector IDs that address this row are host-known plaintext
+  // facts, so an Account encryption-mode change cannot move it.
   identityFields: [],
   quota: { maxRowEncodedBytes: MAX_CHECKPOINT_ROW_ENCODED_BYTES },
 });

@@ -37,7 +37,7 @@ describe('git repository clone operation', () => {
         const repositoryClone = getRepositoryCloneOperation({
             registry: {
                 getProvider: () => description.repository.provider,
-                getAdapter: () => ({
+                getRepositoryClone: () => ({
                     describeCloneTargets: async ({ runtimeServices }: {
                         runtimeServices?: ScmHostingProviderRuntimeServices;
                     }) => {
@@ -90,7 +90,7 @@ describe('git repository clone operation', () => {
         const remotePath = createBareRemoteRepository();
         const repositoryClone = getRepositoryCloneOperation({
             registry: {
-                getAdapter: () => undefined,
+                getRepositoryClone: () => undefined,
             },
         });
 
@@ -152,7 +152,7 @@ describe('git repository clone operation', () => {
         const repositoryClone = getRepositoryCloneOperation({
             registry: {
                 getProvider: () => canonicalProvider,
-                getAdapter: () => ({
+                getRepositoryClone: () => ({
                     describeCloneTargets: async ({ provider, repository }) => {
                         observed.push({
                             providerBaseUrl: provider.baseUrl,

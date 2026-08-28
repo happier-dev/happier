@@ -23,6 +23,7 @@ import {
   CHANNEL_STATE_COLLECTION,
 } from './collections.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
+import { conversationRetryDelayMs } from './retryBackoff.js';
 import {
   acceptConversationOutwardDeliveryReady,
   createConversationOutwardDeliveryCollectionStore,
@@ -92,7 +93,7 @@ function isExactAutomationRunCaller(input: Readonly<{
 }>): boolean {
   const { caller } = input;
   return caller?.kind === 'automationRun'
-    && caller.origin === 'conversation'
+    && caller.cause.kind === 'conversation'
     && caller.automationId === input.automationId
     && caller.runId === input.runId;
 }
@@ -252,7 +253,11 @@ export async function deliverConversationAutomationResultForInvocation(
   if (prepared.kind === 'suppressed') return resultForSuppressedCustody(prepared.reason);
   if (prepared.kind === 'invalid') return { kind: 'blocked', code: 'invalidCustodyRequest' };
   if (prepared.kind === 'unavailable') {
-    return { kind: 'retry', retryAfterMs: 0, code: 'temporarilyUnavailable' };
+    return {
+      kind: 'retry',
+      retryAfterMs: conversationRetryDelayMs(1),
+      code: 'temporarilyUnavailable',
+    };
   }
 
   const accepted = await acceptConversationOutwardDeliveryReady({
@@ -270,5 +275,9 @@ export async function deliverConversationAutomationResultForInvocation(
   if (accepted.kind === 'retired') return accepted;
   if (accepted.kind === 'suppressed') return resultForSuppressedCustody(accepted.reason);
   if (accepted.kind === 'invalid') return { kind: 'blocked', code: 'invalidCustodyRequest' };
-  return { kind: 'retry', retryAfterMs: 0, code: 'temporarilyUnavailable' };
+  return {
+    kind: 'retry',
+    retryAfterMs: conversationRetryDelayMs(1),
+    code: 'temporarilyUnavailable',
+  };
 }

@@ -1,5 +1,4 @@
 import type {
-  AgentRuntimeContext,
   AgentSessionOpenRequest,
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
@@ -651,28 +650,6 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     expect(dispose).toHaveBeenCalledOnce();
   });
 
-  it('omits generated-media publication for a sessionless execution-run context', async () => {
-    const context = {
-      signal: new AbortController().signal,
-      services: {
-        logger: { debug: vi.fn() },
-        sessions: { current: null },
-        interactions: {},
-        connectedAccounts: createConnectedAccountsFixture(),
-      },
-      ui: { title: { set: vi.fn(async () => undefined) } },
-    } as unknown as AgentRuntimeContext;
-    const host = createCodexNativeAppServerRuntimeHost({
-      request: { sessionId: 'execution-run-1' } as AgentSessionOpenRequest,
-      context,
-      processEnv: {},
-    });
-
-    expect('publishGeneratedMedia' in host).toBe(false);
-    expect('setTitle' in host).toBe(false);
-    await expect(host.dispose?.()).resolves.toBeUndefined();
-  });
-
   it('sets the durable title through the host-stamped current Session handle', async () => {
     const setDisplayTitle = vi.fn(async () => undefined);
     const controller = new AbortController();
@@ -840,7 +817,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       processEnv: {},
     });
 
-    await expect(host.accountUsage?.resolveSourceContext({
+    await expect(host.accountUsage.resolveSourceContext({
       serviceId: 'openai-codex',
     })).resolves.toEqual(source);
   });
@@ -957,6 +934,11 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
       providerBinding: {
         connectionId: 'pc_work',
         model: { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
+        upstream: {
+          protocol: 'openai-responses',
+          normalizedUrl: 'https://gateway.example.test/v1',
+          credential: 'apiKey',
+        },
         materialization: { v: 1, kind: 'engineConfig', engineConfig },
       },
     } as unknown as AgentSessionOpenRequest, context);

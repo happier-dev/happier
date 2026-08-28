@@ -8,10 +8,12 @@ describe('Sentry plugin activation', () => {
   it('registers exactly the Actions and Connected Account the manifest declares', () => {
     const registerAction = vi.fn();
     const registerAccount = vi.fn();
+    const registerComposerReference = vi.fn();
 
     activate({
       actions: { register: registerAction },
       connectedAccounts: { register: registerAccount },
+      composerReferences: { register: registerComposerReference },
     } as never);
 
     const registered = registerAction.mock.calls.map(([id]) => id).sort();
@@ -37,5 +39,10 @@ describe('Sentry plugin activation', () => {
       SENTRY_CONNECTED_ACCOUNT_ID,
       expect.objectContaining({ authentication: expect.any(Object) }),
     );
+    // The full allow-listed Sentry event projection currently exceeds the
+    // Composer reference-result contract. Until the evidence projection is
+    // explicitly amended, activation must fail closed with no resolver whose
+    // valid output can be rejected solely because of its size.
+    expect(registerComposerReference).not.toHaveBeenCalled();
   });
 });

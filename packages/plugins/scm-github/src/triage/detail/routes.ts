@@ -41,7 +41,6 @@ export const GITHUB_CHANGED_FILES_PAGE_SIZE_V1 = GITHUB_MAX_DETAIL_PAGE_SIZE_V1;
  * them is the largest value any plane here could emit, for content a reader
  * scrolls through a screen at a time.
  */
-export const GITHUB_COMMENTS_PAGE_SIZE_V1 = 30;
 
 /**
  * GitHub's documented changed-file ceiling.
@@ -117,23 +116,6 @@ export function buildGithubChangedFilesUrl(input: GithubDetailPageRequestV1): st
   assertPageGeometry(input.perPage, input.page);
   return pagedUrl(
     ['repos', input.route.owner, input.route.name, 'pulls', input.entryNumber, 'files'],
-    input,
-  );
-}
-
-/**
- * `GET /repos/{owner}/{repo}/issues/{number}/comments`.
- *
- * This is the pull-request-level comment stream as well as the issue one:
- * GitHub states that PR-level comments *"use the endpoints to manage issues"*
- * (`verify-github-sentry.md` G5). Line comments and review bodies are separate
- * resources with separate cursors and are not read here.
- */
-export function buildGithubIssueCommentsUrl(input: GithubDetailPageRequestV1): string {
-  assertEntryNumber(input.entryNumber);
-  assertPageGeometry(input.perPage, input.page);
-  return pagedUrl(
-    ['repos', input.route.owner, input.route.name, 'issues', input.entryNumber, 'comments'],
     input,
   );
 }

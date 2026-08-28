@@ -49,7 +49,6 @@ describe('createElevenLabsProtocolAdapter', () => {
       request: {
         initialContext: 'context',
         requestedTargetSessionId: 'target-1',
-        retryAfterPaywall: false,
         textOnly: false,
       },
       platform: 'web',
@@ -72,7 +71,6 @@ describe('createElevenLabsProtocolAdapter', () => {
       controlSessionId: 'control-1',
       initialContext: 'context',
       requestedTargetSessionId: 'target-1',
-      retryAfterPaywall: false,
       platform: 'web',
       textOnly: false,
     }));
@@ -84,7 +82,6 @@ describe('createElevenLabsProtocolAdapter', () => {
       request: {
         initialContext: 'replacement context',
         requestedTargetSessionId: 'target-1',
-        retryAfterPaywall: false,
         textOnly: false,
       },
       platform: 'web',

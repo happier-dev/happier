@@ -45,7 +45,6 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     welcome: WelcomeConfig;
     providerConfig: unknown;
   }> | null;
-  presentPaywall: () => Promise<Readonly<{ purchased: boolean }>>;
   alert: (titleKey: string, bodyKey: string) => void;
 }>) {
   const isSelected = (settings: unknown): boolean =>
@@ -55,7 +54,6 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     controlSessionId: string;
     initialContext?: string;
     requestedTargetSessionId: string | null;
-    retryAfterPaywall: boolean;
     settings: unknown;
     credentials: VoiceCredentialAccess<'prepare'>;
     hostedConversation: VoiceHostedConversationService | null;
@@ -121,71 +119,55 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
       };
     }
 
-    let retriedAfterPaywall = input.retryAfterPaywall;
-    for (;;) {
-      const response = await input.hostedConversation.start({
-        sessionId: input.requestedTargetSessionId,
-      });
-      if (input.signal.aborted) {
-        await input.hostedConversation.abort();
-        return { kind: 'aborted' };
-      }
-      if (response.allowed) {
-        return {
-          kind: 'prepared',
-          session: {
-            sessionConfig: VoiceRealtimeJsonValueSchema.parse({
-              sessionId: input.controlSessionId,
-              ...(initialContext ? { initialContext } : {}),
-              leaseId: response.leaseId,
-              bindingNonce: response.bindingNonce,
-              token: response.token,
-              textOnly: input.textOnly,
-            }),
-            sessionState: {
-              billingMode: 'happier',
-              expiresAtMs: response.expiresAtMs,
-              leaseId: response.leaseId,
-            },
-          },
-        };
-      }
-      if (response.reason === 'authentication_required') {
-        await input.hostedConversation.abort();
-        deps.alert('common.error', 'errors.authenticationFailed');
-        return {
-          kind: 'declined',
-          failure: { reason: 'realtime_authentication_required' },
-        };
-      }
-      if (response.reason === 'subscription_required' || response.reason === 'quota_exceeded') {
-        if (retriedAfterPaywall) {
-          await input.hostedConversation.abort();
-          deps.alert('common.error', 'errors.voiceServiceUnavailable');
-          return {
-            kind: 'declined',
-            failure: { reason: `realtime_${response.reason}` },
-          };
-        }
-        const result = await deps.presentPaywall();
-        if (input.signal.aborted) {
-          await input.hostedConversation.abort();
-          return { kind: 'aborted' };
-        }
-        if (result.purchased) {
-          retriedAfterPaywall = true;
-          continue;
-        }
-        await input.hostedConversation.abort();
-        return { kind: 'aborted' };
-      }
+    // The host-owned hosted-conversation service performs subscription/quota
+    // remediation before returning. The provider leaf consumes only its final
+    // admission result and never owns purchase UI or retries.
+    const response = await input.hostedConversation.start({
+      sessionId: input.requestedTargetSessionId,
+    });
+    if (input.signal.aborted) {
       await input.hostedConversation.abort();
-      deps.alert('common.error', 'errors.voiceServiceUnavailable');
+      return { kind: 'aborted' };
+    }
+    if (response.allowed) {
       return {
-        kind: 'declined',
-        failure: { reason: 'realtime_provider_unavailable' },
+        kind: 'prepared',
+        session: {
+          sessionConfig: VoiceRealtimeJsonValueSchema.parse({
+            sessionId: input.controlSessionId,
+            ...(initialContext ? { initialContext } : {}),
+            leaseId: response.leaseId,
+            bindingNonce: response.bindingNonce,
+            token: response.token,
+            textOnly: input.textOnly,
+          }),
+          sessionState: {
+            billingMode: 'happier',
+            expiresAtMs: response.expiresAtMs,
+            leaseId: response.leaseId,
+          },
+        },
       };
     }
+    await input.hostedConversation.abort();
+    if (response.reason === 'authentication_required') {
+      deps.alert('common.error', 'errors.authenticationFailed');
+      return {
+        kind: 'declined',
+        failure: { reason: 'realtime_authentication_required' },
+      };
+    }
+    if (response.reason === 'subscription_required' || response.reason === 'quota_exceeded') {
+      return {
+        kind: 'declined',
+        failure: { reason: `realtime_${response.reason}` },
+      };
+    }
+    deps.alert('common.error', 'errors.voiceServiceUnavailable');
+    return {
+      kind: 'declined',
+      failure: { reason: 'realtime_provider_unavailable' },
+    };
   };
 
   const buildStartConfig = (input: Readonly<{

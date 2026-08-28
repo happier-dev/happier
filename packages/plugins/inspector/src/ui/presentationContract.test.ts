@@ -68,6 +68,33 @@ describe('Inspector public presentation contract', () => {
     flatListRenderItems.length = 0;
   });
 
+  it('publishes the settled public Action result for the mounted self-check', async () => {
+    const executeAction = vi.fn(async ({ action }: InspectorExecuteActionRequest) => (
+      action === 'plugins.list' ? { plugins: [] } : { ok: true }
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.inspector',
+        pluginVersion: '0.0.0',
+        viewId: 'inspector-app',
+        generation: 'inspector-self-check-settlement',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createInspectorSurfaceContext(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction },
+    });
+    try {
+      await fixture.press(await fixture.findByRole('button', { name: 'Execute Inspector self-check' }));
+      await expect(fixture.getByText('Inspector self-check: success')).resolves.toEqual({
+        content: 'Inspector self-check: success',
+      });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('does not offer page navigation through its action panel when the mounted host has not negotiated openSurface', async () => {
     const executeAction = vi.fn(async ({ action }: InspectorExecuteActionRequest) => {
       if (action === 'plugins.list') return { plugins: [] };

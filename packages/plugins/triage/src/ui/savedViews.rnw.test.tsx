@@ -42,6 +42,7 @@ import {
 import { TRIAGE_SAVED_VIEWS_SETTING_ID_V1 } from '../settings/savedViews.js';
 import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 
 /**
@@ -197,6 +198,7 @@ async function mountShell(options: Readonly<{
     settings: ReturnType<typeof createTestkitAccountSettings>;
 }>> {
     const harness = createHarness(options.selectedViewId ?? null, options.gateViewsRead);
+    const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     const locations: string[] = [];
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -209,7 +211,7 @@ async function mountShell(options: Readonly<{
             },
             surface: renderShellSurface,
             surfaceContext: createSurfaceContextFixture(),
-            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope }),
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
@@ -222,7 +224,9 @@ async function mountShell(options: Readonly<{
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+    });
     // Let the saved-view read settle before anything is asserted about it.
     await act(async () => { await Promise.resolve(); });
     return { shell: fixture, locations, settings: harness.settings };

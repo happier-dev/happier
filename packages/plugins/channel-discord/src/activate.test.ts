@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { activate } from './activate.js';
 import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
+  DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
 } from './discordPluginConstants.js';
 import {
@@ -104,7 +105,7 @@ describe('Discord Channel plugin activation', () => {
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID },
         { family: 'actions', localId: DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID },
         ...Object.values(DISCORD_CHANNEL_ACTION_IDS).map((localId) => ({ family: 'actions' as const, localId })),
-        { family: 'backgroundServices', localId: 'gateway-supervisor' },
+        { family: 'backgroundServices', localId: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID },
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
       ]);
 
@@ -151,7 +152,7 @@ describe('Discord Channel plugin activation', () => {
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.endpointResolve },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.messageDeliver },
         { family: 'actions', localId: DISCORD_CHANNEL_ACTION_IDS.connectionStop },
-        { family: 'backgroundServices', localId: 'gateway-supervisor' },
+        { family: 'backgroundServices', localId: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID },
         { family: 'connectedAccountDescriptors', localId: DISCORD_BOT_CONNECTED_ACCOUNT_ID },
       ]);
 

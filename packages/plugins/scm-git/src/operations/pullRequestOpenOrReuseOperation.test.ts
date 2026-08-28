@@ -9,6 +9,7 @@ import {
   type ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  type HostingProviderPullRequestsCapability,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ScmBackendContext } from '../types.js';
@@ -108,10 +109,21 @@ function createSnapshot(overrides: Partial<ScmWorkingSnapshot> = {}): ScmWorking
     };
 }
 
-function createRegistry(adapter: Readonly<Record<string, unknown>>) {
+function createRegistry(adapter: Partial<HostingProviderPullRequestsCapability>) {
+    const capability: HostingProviderPullRequestsCapability | undefined = Object.keys(adapter).length === 0
+        ? undefined
+        : {
+            getPullRequestAuthProfileKey: () => null,
+            listPullRequests: async () => [],
+            getPullRequest: async () => null,
+            createPullRequest: async () => {
+                throw new Error('Pull request creation is not configured by this fixture');
+            },
+            ...adapter,
+        };
     return {
-        getAdapter(id: string) {
-            return id === provider.id ? adapter : undefined;
+        getPullRequests(id: string) {
+            return id === provider.id ? capability : undefined;
         },
         buildCompareUrl() {
             return {

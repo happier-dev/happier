@@ -33,7 +33,6 @@ export function encodeAzureScanContinuation(
   const token = encodeTriagePagingTokenV1({
     v: CONTINUATION_VERSION,
     scanLimit: frontier.scanLimit,
-    nativePageSize: frontier.nativePageSize,
     projectId: frontier.projectId,
     projectNextToken: frontier.projectNextToken,
     lastCompletedRepositoryId: frontier.lastCompletedRepositoryId,
@@ -64,8 +63,7 @@ export function decodeAzureScanContinuation(
   if (record === null || record.v !== CONTINUATION_VERSION) return null;
 
   const scanLimit = readCount(record.scanLimit, 1);
-  const nativePageSize = readCount(record.nativePageSize, 1);
-  if (scanLimit === null || nativePageSize === null || nativePageSize > scanLimit) return null;
+  if (scanLimit === null) return null;
 
   const lanes = readLanes(record.lanes);
   if (lanes === null) return null;
@@ -94,7 +92,6 @@ export function decodeAzureScanContinuation(
 
   return {
     scanLimit,
-    nativePageSize,
     projectId,
     projectNextToken,
     lastCompletedRepositoryId,

@@ -1,30 +1,27 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TriageListEntriesResultV1 } from '../../actions/listEntriesProtocol.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import {
   acquireTriageListWindow,
+  loadMoreTriageListWindow,
   readTriageListWindowSnapshot,
   refreshTriageListWindow,
+  setTriageListWindowLens,
   type TriageListWindowHostV1,
   type TriageListWindowLeaseV1,
 } from './mountedWindow.js';
+import { createTriageEphemeralSharedScopeFixture } from './ephemeralSharedScope.test-support.js';
 
 /**
  * The scope of the mounted PRs & Issues window.
  *
- * The window is assembled by invoking this plugin's own list Action through a
- * mounted surface's Host API object. That object is not an anonymous transport:
- * the host builds exactly one per mount and rebuilds it when the mount's
- * Account lifetime changes, so its identity is the host's own opaque
- * mount-and-Account scope stamp. Nothing here needs — or is given — an Account
- * id to tell two scopes apart.
- *
- * Two surfaces therefore share a window only when they were handed the same
- * Host API object. The tests below hold the two directions of that rule: the
- * one that would leak an Account's rows into another Account's surface, and the
- * one that would let a retired surface's in-flight pass publish into the window
- * a live surface is reading.
+ * The host-owned ephemeral scope, not a module realm or Host API identity,
+ * names one Account + plugin + immutable generation. Separate artifacts share
+ * the sole store through that scope. Distinct scopes remain isolated without
+ * exposing Account identity to plugin code.
  */
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
@@ -37,13 +34,14 @@ const INSTANCE_B = '22222222-2222-4222-8222-222222222222';
  * distinct configured source instance, which is what makes "whose rows are
  * these?" observable in the published snapshot.
  */
-function createHostStub(sourceInstanceId: string) {
+function createHostStub(sourceInstanceId: string, options: Readonly<{ paged?: boolean }> = {}) {
   const calls: string[] = [];
   let gate: Promise<void> | null = null;
   let openGate: (() => void) | null = null;
-  const result: TriageListEntriesResultV1 = {
+  let rejectGate: ((error: Error) => void) | null = null;
+  const result = (continued: boolean): TriageListEntriesResultV1 => ({
     v: 1,
-    configuredSources: [{ sourceInstanceId, source: SOURCE, available: false }],
+    configuredSources: [{ sourceInstanceId, source: SOURCE, available: options.paged === true }],
     configuredSourcesStatus: 'complete',
     window: {
       v: 1,
@@ -55,21 +53,29 @@ function createHostStub(sourceInstanceId: string) {
         sourceInstanceId,
         source: SOURCE,
         health: { kind: 'unavailable' },
-        exhausted: false,
+        exhausted: options.paged === true && continued,
       }],
       coverage: 'partial',
+      ...(options.paged === true && !continued
+        ? { continuations: [{ sourceInstanceId, continuation: { v: 1, token: 'page-2' } }] }
+        : {}),
       assembledAtMs: 1,
     },
-  };
+  });
   const host: TriageListWindowHostV1 = Object.freeze({
     async executeAction(
       action: string,
-      _input: JsonValue,
+      input: JsonValue,
       _options?: PluginCancellationOptions,
     ): Promise<unknown> {
       calls.push(action);
       if (gate) await gate;
-      return result as unknown as JsonValue;
+      const continued = typeof input === 'object'
+        && input !== null
+        && !Array.isArray(input)
+        && Array.isArray((input as { resume?: unknown }).resume)
+        && ((input as { resume: unknown[] }).resume.length > 0);
+      return result(continued) as unknown as JsonValue;
     },
   });
   return {
@@ -77,15 +83,27 @@ function createHostStub(sourceInstanceId: string) {
     calls,
     /** Hold this stub's next passes open so a retirement can overtake them. */
     hold(): void {
-      gate = new Promise<void>((resolve) => { openGate = resolve; });
+      gate = new Promise<void>((resolve, reject) => {
+        openGate = resolve;
+        rejectGate = reject;
+      });
     },
     release(): void {
       openGate?.();
       gate = null;
       openGate = null;
+      rejectGate = null;
+    },
+    fail(): void {
+      rejectGate?.(new Error('mounted client retired'));
+      gate = null;
+      openGate = null;
+      rejectGate = null;
     },
   };
 }
+
+const createSharedScope = createTriageEphemeralSharedScopeFixture;
 
 /**
  * A surface that joined another scope's window also inherits that scope's
@@ -108,16 +126,22 @@ async function settles(work: Promise<void>, budgetMs = 5_000): Promise<void> {
   }
 }
 
-function configuredInstanceIds(host: TriageListWindowHostV1): readonly string[] {
-  return readTriageListWindowSnapshot(host).configuredSources.map(
+function configuredInstanceIds(
+  host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope,
+): readonly string[] {
+  return readTriageListWindowSnapshot(host, scope).configuredSources.map(
     (summary) => summary.sourceInstanceId,
   );
 }
 
 const leases: TriageListWindowLeaseV1[] = [];
 
-function acquire(host: TriageListWindowHostV1): TriageListWindowLeaseV1 {
-  const lease = acquireTriageListWindow(host);
+function acquire(
+  host: TriageListWindowHostV1,
+  scope: PluginUiEphemeralSharedScope,
+): TriageListWindowLeaseV1 {
+  const lease = acquireTriageListWindow(host, scope);
   leases.push(lease);
   return lease;
 }
@@ -126,86 +150,149 @@ afterEach(() => {
   while (leases.length > 0) leases.pop()?.release();
 });
 
-describe('the mounted PRs & Issues window is scoped to its host', () => {
+describe('the mounted PRs & Issues window is scoped by its host-owned lifetime', () => {
   it('does not let a second Account join the first Account window', async () => {
     const accountA = createHostStub(INSTANCE_A);
     const accountB = createHostStub(INSTANCE_B);
+    const scopeA = createSharedScope();
+    const scopeB = createSharedScope();
 
-    acquire(accountA.host);
-    await refreshTriageListWindow('view', accountA.host);
-    expect(configuredInstanceIds(accountA.host)).toEqual([INSTANCE_A]);
+    acquire(accountA.host, scopeA);
+    await refreshTriageListWindow('view', accountA.host, scopeA);
+    expect(configuredInstanceIds(accountA.host, scopeA)).toEqual([INSTANCE_A]);
 
-    acquire(accountB.host);
-    await refreshTriageListWindow('view', accountB.host);
+    acquire(accountB.host, scopeB);
+    await refreshTriageListWindow('view', accountB.host, scopeB);
 
     // The second surface reached its own host, not the first acquisition's.
     expect(accountB.calls.length).toBeGreaterThan(0);
-    expect(configuredInstanceIds(accountB.host)).toEqual([INSTANCE_B]);
+    expect(configuredInstanceIds(accountB.host, scopeB)).toEqual([INSTANCE_B]);
     // ...and neither window observed the other's configured sources.
-    expect(configuredInstanceIds(accountA.host)).toEqual([INSTANCE_A]);
+    expect(configuredInstanceIds(accountA.host, scopeA)).toEqual([INSTANCE_A]);
   });
 
-  it('keeps a retired surface late pass out of the window a live surface reads', async () => {
+  it('keeps a retired Account scope late pass out of another Account scope', async () => {
     const accountA = createHostStub(INSTANCE_A);
     const accountB = createHostStub(INSTANCE_B);
+    const scopeA = createSharedScope();
+    const scopeB = createSharedScope();
 
     accountA.hold();
-    const retiring = acquire(accountA.host);
-    const latePass = refreshTriageListWindow('view', accountA.host);
+    const retiring = acquire(accountA.host, scopeA);
+    const latePass = refreshTriageListWindow('view', accountA.host, scopeA);
 
-    acquire(accountB.host);
+    acquire(accountB.host, scopeB);
     retiring.release();
 
-    await settles(refreshTriageListWindow('view', accountB.host));
-    expect(configuredInstanceIds(accountB.host)).toEqual([INSTANCE_B]);
+    await settles(refreshTriageListWindow('view', accountB.host, scopeB));
+    expect(configuredInstanceIds(accountB.host, scopeB)).toEqual([INSTANCE_B]);
 
     accountA.release();
     await latePass;
     await Promise.resolve();
 
-    expect(configuredInstanceIds(accountB.host)).toEqual([INSTANCE_B]);
-    // The retired surface's own window is gone rather than left readable.
-    expect(readTriageListWindowSnapshot(accountA.host).configuredSources).toEqual([]);
+    expect(configuredInstanceIds(accountB.host, scopeB)).toEqual([INSTANCE_B]);
+    // The retired Account scope is gone rather than left readable.
+    expect(readTriageListWindowSnapshot(accountA.host, scopeA).configuredSources).toEqual([]);
   });
 
-  it('is realm-local, so two artifact bundles cannot share one window', async () => {
-    // The shell page and the Composer picker are separate UI artifacts, and the
-    // host's module registry keys a loaded module by contribution — so each is
-    // its own module realm with its own copy of this module. A window parked on
-    // a cross-realm global would defeat the host-stamped scope above, because a
-    // global outlives the Account lifetime the Host API object tracks.
-    vi.resetModules();
-    const shellRealm = await import('./mountedWindow.js');
+  it('shares the exact store across shell and picker artifact realms', async () => {
+    // This file's static import is already one loaded artifact realm. Resetting
+    // once and importing again creates the independent picker realm the
+    // contract needs to prove; resetting and importing twice paid for two full
+    // graph resolutions without making the realms any more independent.
+    const shellRealm = {
+      acquireTriageListWindow,
+      loadMoreTriageListWindow,
+      readTriageListWindowSnapshot,
+      refreshTriageListWindow,
+      setTriageListWindowLens,
+    };
     vi.resetModules();
     const pickerRealm = await import('./mountedWindow.js');
     expect(shellRealm.acquireTriageListWindow).not.toBe(pickerRealm.acquireTriageListWindow);
 
-    const shellHost = createHostStub(INSTANCE_A);
-    const lease = shellRealm.acquireTriageListWindow(shellHost.host);
-    await shellRealm.refreshTriageListWindow('view', shellHost.host);
+    const scope = createSharedScope();
+    const shellHost = createHostStub(INSTANCE_A, { paged: true });
+    const pickerHost = createHostStub(INSTANCE_A);
+    const shellLease = shellRealm.acquireTriageListWindow(shellHost.host, scope);
+    const pickerLease = pickerRealm.acquireTriageListWindow(pickerHost.host, scope);
+    await shellRealm.refreshTriageListWindow('view', shellHost.host, scope);
 
-    // The shell realm ran a pass and holds the configured connection; the picker
-    // realm holds nothing. That contrast IS the realm-locality contract, and it
-    // is asserted on `configuredSources` rather than on freshness so this test
-    // stops re-encoding a freshness rule it is not about.
-    //
-    // Its freshness is `stale`, not `fresh`: this stub's only connection is
-    // `available: false`, so the pass never read it, and a window that never read
-    // a configured source is not current. Requiring `fresh` here encoded exactly
-    // the claim the freshness owner was corrected to stop making.
-    const shellSnapshot = shellRealm.readTriageListWindowSnapshot(shellHost.host);
+    const shellSnapshot = shellRealm.readTriageListWindowSnapshot(shellHost.host, scope);
     expect(shellSnapshot.configuredSources).toHaveLength(1);
-    expect(shellSnapshot.freshness).toBe('stale');
+    expect(shellSnapshot.loadMore).toEqual({ kind: 'available' });
+    expect(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope)).toBe(shellSnapshot);
+    expect(shellHost.calls.length).toBeGreaterThan(0);
+    expect(pickerHost.calls).toEqual([]);
 
-    expect(pickerRealm.readTriageListWindowSnapshot(shellHost.host)).toMatchObject({
+    await pickerRealm.loadMoreTriageListWindow(pickerHost.host, scope);
+    const afterPaging = shellRealm.readTriageListWindowSnapshot(shellHost.host, scope);
+    expect(afterPaging).toBe(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope));
+    expect(afterPaging.loadMore).toEqual({ kind: 'exhausted' });
+
+    pickerRealm.setTriageListWindowLens({
+      ...TRIAGE_LIST_DEFAULT_LENS_V1,
+      query: 'only-in-picker',
+    }, pickerHost.host, scope);
+    const afterLens = shellRealm.readTriageListWindowSnapshot(shellHost.host, scope);
+    expect(afterLens).not.toBe(afterPaging);
+    expect(afterLens).toBe(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope));
+
+    shellLease.release();
+    expect(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope)).toBe(afterLens);
+    pickerLease.release();
+    expect(pickerRealm.readTriageListWindowSnapshot(pickerHost.host, scope)).toMatchObject({
+      freshness: 'unknown',
+      configuredSources: [],
+    });
+  }, 60_000);
+
+  it('does not manufacture an artifact-local store when the renderer lacks the host scope', async () => {
+    const host = createHostStub(INSTANCE_A);
+    const lease = acquireTriageListWindow(host.host, null);
+    await refreshTriageListWindow('view', host.host, null);
+
+    expect(host.calls).toEqual([]);
+    expect(readTriageListWindowSnapshot(host.host, null)).toMatchObject({
       freshness: 'unknown',
       configuredSources: [],
     });
     lease.release();
-    // Budgeted for what this case DOES, not to silence a failure: proving two
-    // artifacts cannot share a window REQUIRES `vi.resetModules()` and a second
-    // full import of this module's graph, so the case pays two module-graph
-    // resolutions. That measures just past vitest's 5s default and grew with the
-    // graph. Anything red here is an assertion, never the clock.
-  }, 60_000);
+  });
+
+  it('does not read the old scope while the same host object joins a replacement scope', async () => {
+    const host = createHostStub(INSTANCE_A);
+    const scopeA = createSharedScope();
+    const scopeB = createSharedScope();
+    const leaseA = acquireTriageListWindow(host.host, scopeA);
+    await refreshTriageListWindow('view', host.host, scopeA);
+    expect(readTriageListWindowSnapshot(host.host, scopeA).configuredSources).toHaveLength(1);
+
+    const leaseB = acquireTriageListWindow(host.host, scopeB);
+    expect(readTriageListWindowSnapshot(host.host, scopeB)).toMatchObject({
+      freshness: 'unknown',
+      configuredSources: [],
+    });
+    leaseA.release();
+    leaseB.release();
+  });
+
+  it('finishes a safe shared read through a live artifact when its first client retires', async () => {
+    const scope = createSharedScope();
+    const shell = createHostStub(INSTANCE_A);
+    const picker = createHostStub(INSTANCE_A);
+    shell.hold();
+    const shellLease = acquireTriageListWindow(shell.host, scope);
+    const pickerLease = acquireTriageListWindow(picker.host, scope);
+
+    const pass = refreshTriageListWindow('view', shell.host, scope);
+    shellLease.release();
+    shell.fail();
+    await settles(pass);
+
+    expect(picker.calls.length).toBeGreaterThan(0);
+    expect(configuredInstanceIds(picker.host, scope)).toEqual([INSTANCE_A]);
+    pickerLease.release();
+  });
 });

@@ -100,6 +100,26 @@ describe('Codex rollout title reader', () => {
       .toBe('Explicit title from the session tool');
   });
 
+  it('keeps the earliest append-stable explicit title event', async () => {
+    const filePath = await writeRollout('earliest-explicit-title', [
+      messageRecord('user', 'Opening prompt that is only fallback evidence'),
+      titleToolRecord('First explicit title'),
+      titleToolRecord('Later mutable rename'),
+    ]);
+
+    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+      .toBe('First explicit title');
+  });
+
+  it('does not derive an immutable candidate title from assistant prose', async () => {
+    const filePath = await writeRollout('assistant-only', [
+      messageRecord('assistant', 'Assistant-authored summary is mutable output.'),
+    ]);
+
+    expect(await readCodexSessionTitleFromRollout(filePath, {}, CODEX_ROLLOUT_TITLE_HEAD_BUDGET))
+      .toBeNull();
+  });
+
   it('stays identifier-only when the head carries nothing but harness boilerplate', async () => {
     const filePath = await writeRollout('boilerplate-only', [
       messageRecord('user', '# Session title\n\nAt the start of the session, call the change_title tool.'),

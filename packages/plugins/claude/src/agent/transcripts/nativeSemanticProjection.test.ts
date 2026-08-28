@@ -40,7 +40,7 @@ describe('Claude native transcript semantic projection', () => {
     }
   });
 
-  it('ratifies only schema-valid progress rows as known non-transcript records', () => {
+  it('ratifies pinned non-transcript row types even when their incidental fields drift', () => {
     expect(classifyClaudeNativeTranscriptRow({
       type: 'progress',
       uuid: 'progress-1',
@@ -51,7 +51,7 @@ describe('Claude native transcript semantic projection', () => {
       type: 'progress',
       uuid: 42,
     })).toMatchObject({
-      knownNonTranscriptRecord: false,
+      knownNonTranscriptRecord: true,
     });
     expect(classifyClaudeNativeTranscriptRow({
       type: 'future-transcript-message',

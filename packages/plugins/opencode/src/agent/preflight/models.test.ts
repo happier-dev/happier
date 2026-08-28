@@ -30,20 +30,20 @@ describe('OpenCode preflight model parsing', () => {
     expect(OPENCODE_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('connectedServiceAuth');
   });
 
-  it('lets the host select the fallback after an unparsable verbose result', async () => {
+  it('lets the host select the fallback after an unparsable verbose result', () => {
     const models = OPENCODE_PREFLIGHT_SESSION_CONTROLS.models;
-    await expect(models?.parseOutput?.({
+    expect(models?.parseOutput?.({
       ok: true,
       stdout: 'not verbose model output',
       stderr: '',
       exitCode: 0,
-    })).resolves.toBeNull();
-    await expect(models?.fallback?.parseOutput?.({
+    })).toBeNull();
+    expect(models?.fallback?.parseOutput?.({
       ok: true,
       stdout: 'openai/gpt-5.4\nanthropic/claude-opus-5\n',
       stderr: '',
       exitCode: 0,
-    })).resolves.toEqual([
+    })).toEqual([
       { id: 'openai/gpt-5.4', name: 'openai/gpt-5.4' },
       { id: 'anthropic/claude-opus-5', name: 'anthropic/claude-opus-5' },
     ]);

@@ -112,6 +112,8 @@ export function createStubGithubTransport(input: Readonly<{
    * configured Account.
    */
   binding?: Readonly<{ purpose: string }> | null;
+  /** Optional host Action boundary used by operations that coordinate through a canonical host owner. */
+  executeAction?: (actionId: string, actionInput: unknown) => unknown | Promise<unknown>;
 }>): StubGithubTransport {
   const requests: RecordedGithubRequest[] = [];
   const materializations: RecordedMaterialization[] = [];
@@ -221,7 +223,18 @@ export function createStubGithubTransport(input: Readonly<{
       contribution: { id: 'sources', qualifiedId: 'happier.triage/points/sources' },
     },
     signal: input.signal ?? new AbortController().signal,
-    services: { connectedAccounts, http } as unknown as PluginInvocationContext['services'],
+    services: {
+      connectedAccounts,
+      http,
+      actions: {
+        execute: async (actionId: string, actionInput: unknown) => {
+          if (input.executeAction === undefined) {
+            throw new Error(`No stubbed host Action for ${actionId}`);
+          }
+          return await input.executeAction(actionId, actionInput);
+        },
+      },
+    } as unknown as PluginInvocationContext['services'],
   } as unknown as PluginInvocationContext;
 
   return Object.freeze({

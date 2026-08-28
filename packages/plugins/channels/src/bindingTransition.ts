@@ -1,7 +1,6 @@
 import { areConversationEndpointIdentitiesEqual } from '@happier-dev/channels-protocol/v1';
 import type {
   ConversationBindingInputModeV1,
-  ConversationBindingTargetMutationV1,
   ConversationBindingTargetV1,
   ConversationResolvedEndpointV1,
   ConversationSessionBindingTargetV1,
@@ -75,8 +74,7 @@ function sameTargetIdentity(
     return left.sessionId === right.sessionId;
   }
   if (left.kind === 'automation' && right.kind === 'automation') {
-    return left.automationId === right.automationId
-      && left.templateVersion === right.templateVersion;
+    return left.automationId === right.automationId;
   }
   return false;
 }
@@ -125,7 +123,6 @@ function sameTargetAuthority(
   }
   if (left.kind === 'automation' && right.kind === 'automation') {
     return left.automationId === right.automationId
-      && left.templateVersion === right.templateVersion
       && left.policy.resultDelivery === right.policy.resultDelivery;
   }
   return false;
@@ -175,7 +172,7 @@ function hasPolicyPrincipalOutsideAllowlist(
  * approver-principal subset, which this boolean deliberately does not carry.
  */
 export function hasConversationApprovalPolicyEnabled(
-  target: ConversationBindingTargetV1 | ConversationBindingTargetMutationV1,
+  target: ConversationBindingTargetV1,
 ): boolean {
   return target.kind === 'session' && target.policy.approvals.kind === 'enabled';
 }

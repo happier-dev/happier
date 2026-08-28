@@ -191,7 +191,12 @@ function mapTranscriptPage(
 function mapReadAfterPage(
     page: Parameters<typeof mapTranscriptPage>[0] & Readonly<{
         readAfterOutcome?: 'already_current' | 'gap_or_cursor_expired' | 'source_replaced' | 'source_unavailable';
-        diagnostics?: readonly Readonly<{ code: string; count: number; positions: readonly number[] }>[];
+        diagnostics?: readonly Readonly<{
+            code: string;
+            severity: 'benign' | 'required';
+            count: number;
+            positions: readonly number[];
+        }>[];
     }>,
 ): AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult> {
     if (page.readAfterOutcome) return ok({ outcome: page.readAfterOutcome });
@@ -206,6 +211,7 @@ function mapReadAfterPage(
             items: [],
             nextCursor: mapped.value.nextCursor,
             boundary: mapped.value.nextCursor,
+            hasMore: page.hasMore === true || page.truncated === true,
             diagnostics: page.diagnostics,
         });
     }
@@ -215,6 +221,7 @@ function mapReadAfterPage(
         items: mapped.value.items,
         nextCursor: mapped.value.nextCursor,
         boundary: mapped.value.items.at(-1)!.id,
+        hasMore: page.hasMore === true || page.truncated === true,
         ...(page.diagnostics?.length ? { diagnostics: page.diagnostics } : {}),
     });
 }

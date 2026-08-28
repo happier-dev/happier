@@ -3,10 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_DEFINITION } from './definition.js';
 
 describe('Auggie agent definition', () => {
-  it('declares the provider-owned runtime contribution for model preflight', () => {
-    expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
-      importName: 'AUGGIE_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    });
+  it('keeps the public Agent definition free of private runtime aggregates', () => {
+    expect(AGENT_DEFINITION.id).toBe('auggie');
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
   });
 });

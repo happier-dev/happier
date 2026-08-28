@@ -28,6 +28,7 @@ import {
   GitlabIssueAssignResultV1Schema,
   GitlabIssueLabelInputV1Schema,
   GitlabIssueLabelResultV1Schema,
+  GitlabIssueCommentInputV1Schema,
   GitlabIssueReopenInputV1Schema,
   GitlabIssueReopenResultV1Schema,
   GitlabMergeRequestCloseInputV1Schema,
@@ -42,6 +43,10 @@ import {
   GitlabMergeRequestReviewerChangeResultV1Schema,
   GitlabMergeRequestDiscussionResolutionInputV1Schema,
   GitlabMergeRequestDiscussionResolutionResultV1Schema,
+  GitlabMergeRequestReviewCommentCreateInputV1Schema,
+  GitlabMergeRequestReviewPublicationInputV1Schema,
+  GitlabMergeRequestThreadReplyInputV1Schema,
+  GitlabReviewPublicationResultV1Schema,
 } from './mutations/contracts.js';
 import {
   GitlabActivityEventsInputV1Schema,
@@ -56,6 +61,8 @@ import {
   GitlabNotesResultV1Schema,
   GitlabPipelinesInputV1Schema,
   GitlabPipelinesResultV1Schema,
+  GitlabRawDiffInputV1Schema,
+  GitlabRawDiffResultV1Schema,
 } from './detail/contracts.js';
 import type { GitlabKindId } from './types.js';
 
@@ -74,6 +81,7 @@ export const GITLAB_TRIAGE_ACTION_IDS = Object.freeze({
   scan: 'triage/scan-gitlab',
   get: 'triage/get-gitlab-entry',
   prepareReviewWorkspace: 'triage/prepare-gitlab-review-workspace',
+  verifyReviewWorkspace: 'triage/verify-gitlab-review-workspace',
 });
 
 /**
@@ -91,6 +99,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
   readApprovals: 'triage/read-gitlab-approvals',
   listPipelines: 'triage/list-gitlab-pipelines',
   listChanges: 'triage/list-gitlab-changes',
+  readRawDiff: 'triage/read-gitlab-raw-diff',
 });
 
 /**
@@ -123,6 +132,10 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
   issueReopen: 'gitlab/issue/reopen',
   issueAssign: 'gitlab/issue/assign',
   issueLabel: 'gitlab/issue/label',
+  mergeRequestSubmitReview: 'gitlab/merge-request/submit-review',
+  mergeRequestReviewCommentCreate: 'gitlab/merge-request/review-comment-create',
+  mergeRequestThreadReply: 'gitlab/merge-request/thread-reply',
+  issueComment: 'gitlab/issue/comment',
 });
 
 /**
@@ -273,7 +286,7 @@ function declareOperationAction(input: Readonly<{
   title: string;
   description: string;
   scopes: readonly ['settings'] | readonly ['global'];
-  role: 'listInstances' | 'scan' | 'get' | 'prepareReviewWorkspace';
+  role: 'listInstances' | 'scan' | 'get' | 'prepareReviewWorkspace' | 'verifyReviewWorkspace';
   connectedAccountPurposeBindings?: readonly Readonly<{ path: string; purpose: string }>[];
 }>): TriageActionDeclaration {
   const declaration = sourceOperations[input.role].declaration;
@@ -299,7 +312,7 @@ function declareOperationAction(input: Readonly<{
   };
 }
 
-/** The four Action declarations the contribution's operation roles bind to. */
+/** The five Action declarations the contribution's operation roles bind to. */
 export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration[] = Object.freeze([
   declareOperationAction({
     id: GITLAB_TRIAGE_ACTION_IDS.listInstances,
@@ -314,6 +327,15 @@ export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration
     description: 'Reads one bounded page of GitLab merge requests and issues for a configured deployment.',
     scopes: ['global'],
     role: 'scan',
+    connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+  }),
+  declareOperationAction({
+    id: GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace,
+    title: 'Verify a GitLab merge-request review workspace',
+    description: 'Reauthorizes and rereads one GitLab merge request, then verifies the prepared'
+      + ' local checkout at its provider-authoritative head.',
+    scopes: ['global'],
+    role: 'verifyReviewWorkspace',
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   }),
   declareOperationAction({
@@ -336,7 +358,7 @@ export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration
 ]);
 
 /**
- * The six source-native detail plane declarations.
+ * The source-native detail plane declarations.
  *
  * Unlike the three operation roles above, these publish this source's OWN
  * schemas: there is no protocol-defined role for "one page of GitLab
@@ -392,6 +414,13 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
       inputSchema: GitlabChangesInputV1Schema.jsonSchema,
       resultSchema: GitlabChangesResultV1Schema.jsonSchema,
     },
+    {
+      id: GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff,
+      title: 'Read a GitLab raw diff',
+      description: 'Reads the raw-text diff evidence of one merge request on explicit request.',
+      inputSchema: GitlabRawDiffInputV1Schema.jsonSchema,
+      resultSchema: GitlabRawDiffResultV1Schema.jsonSchema,
+    },
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
@@ -403,7 +432,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
   })));
 
 /**
- * The ten mutation Action declarations.
+ * The mutation Action declarations.
  *
  * Four properties of these declarations are load-bearing rather than
  * decorative, and each is a rule from `sources/SCM.md` §3.8:
@@ -628,6 +657,58 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
       inputSchema: GitlabIssueLabelInputV1Schema.jsonSchema,
       resultSchema: GitlabIssueLabelResultV1Schema.jsonSchema,
     },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
+      title: 'Publish a GitLab merge request review',
+      description: 'Publishes the selected review comments in order, then the selected review summary and approval.',
+      dangerLevel: 'externalSideEffect' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.submitReview.confirm.title', fallback: 'Publish this review?' },
+        body: { key: 'plugins.gitlab.actions.submitReview.confirm.body', fallback: 'GitLab publishes these comments and notifies review participants.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.submitReview.confirm.label', fallback: 'Publish review' },
+      },
+      inputSchema: GitlabMergeRequestReviewPublicationInputV1Schema.jsonSchema,
+      resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
+      title: 'Publish a GitLab review comment',
+      description: 'Publishes one revision-pinned inline merge request comment.',
+      dangerLevel: 'externalSideEffect' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.title', fallback: 'Publish this review comment?' },
+        body: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.body', fallback: 'GitLab publishes the comment and may notify review participants.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.reviewCommentCreate.confirm.label', fallback: 'Publish comment' },
+      },
+      inputSchema: GitlabMergeRequestReviewCommentCreateInputV1Schema.jsonSchema,
+      resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestThreadReply,
+      title: 'Reply to a GitLab review thread',
+      description: 'Publishes one reply into the exact selected merge request discussion.',
+      dangerLevel: 'writesRemote' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.threadReply.confirm.title', fallback: 'Publish this reply?' },
+        body: { key: 'plugins.gitlab.actions.threadReply.confirm.body', fallback: 'GitLab adds the reply to this discussion.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.threadReply.confirm.label', fallback: 'Publish reply' },
+      },
+      inputSchema: GitlabMergeRequestThreadReplyInputV1Schema.jsonSchema,
+      resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
+    },
+    {
+      id: GITLAB_TRIAGE_MUTATION_ACTION_IDS.issueComment,
+      title: 'Comment on a GitLab issue',
+      description: 'Publishes one canonical comment on the selected issue.',
+      dangerLevel: 'externalSideEffect' as const,
+      confirmation: {
+        title: { key: 'plugins.gitlab.actions.issueComment.confirm.title', fallback: 'Publish this issue comment?' },
+        body: { key: 'plugins.gitlab.actions.issueComment.confirm.body', fallback: 'GitLab publishes the comment and may notify issue participants.' },
+        confirmLabel: { key: 'plugins.gitlab.actions.issueComment.confirm.label', fallback: 'Publish comment' },
+      },
+      inputSchema: GitlabIssueCommentInputV1Schema.jsonSchema,
+      resultSchema: GitlabReviewPublicationResultV1Schema.jsonSchema,
+    },
   ].map((declaration) => Object.freeze({
     ...declaration,
     scopes: ['global'] as const,
@@ -639,10 +720,9 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
   })));
 
 /**
- * The targeted contribution binds the optional prepared-workspace role only
- * because this provider has a live handler that reauthorizes, rereads and
- * currentness-checks the merge request before it invokes the generic SCM
- * materializer.
+ * The targeted contribution binds both optional review-workspace roles because
+ * this provider has live handlers that reauthorize and reread the merge request
+ * before generic SCM materializes or verifies the selected local checkout.
  */
 export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionProtocolV1.contribute({
   descriptor: GITLAB_TRIAGE_SOURCE_DESCRIPTOR_V1,
@@ -652,6 +732,9 @@ export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionP
     get: sourceOperations.get.bind(GITLAB_TRIAGE_ACTION_IDS.get),
     prepareReviewWorkspace: sourceOperations.prepareReviewWorkspace.bind(
       GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace,
+    ),
+    verifyReviewWorkspace: sourceOperations.verifyReviewWorkspace.bind(
+      GITLAB_TRIAGE_ACTION_IDS.verifyReviewWorkspace,
     ),
   },
   surfaces: {

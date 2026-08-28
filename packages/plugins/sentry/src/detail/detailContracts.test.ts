@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { projectSentryEventForDisplay } from '../privacy/sentryEventProjection.js';
 
 import {
-  MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES,
   SENTRY_DETAIL_PAGE_SIZE,
   SentryIssueEventsInputV1Schema,
   SentryIssueEventsResultV1Schema,
@@ -60,10 +59,9 @@ describe('Sentry detail continuation', () => {
   });
 
   it('stays one constant width however many pages the walk has read', () => {
-    // The evidence rides inside a BOUNDED token, so evidence that grows per page
-    // is an undeclared "Load more" ceiling: with real keyset cursors the
-    // predecessor position history stopped fitting at the 23rd page and the
-    // panel settled `continuationUnavailable` a reader could not get past.
+    // The evidence must stay constant-space: evidence that grows per page creates
+    // an undeclared "Load more" ceiling. The predecessor position history grew
+    // until an ordinary keyset walk settled `continuationUnavailable`.
     const widthAt = (interval: number): number => {
       const token = encodeSentryDetailContinuation({
         v: 1,
@@ -77,7 +75,7 @@ describe('Sentry detail continuation', () => {
     // A walk deep enough to have doubled its wait twenty times costs the same
     // bytes as one on its second page, give or take the digits of the counter.
     expect(widthAt(2 ** 20) - widthAt(2)).toBeLessThan(8);
-    expect(widthAt(2 ** 20)).toBeLessThan(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES / 2);
+    expect(widthAt(2 ** 20)).toBeLessThan(256);
   });
 
   it('refuses a token this source did not mint', () => {
@@ -108,14 +106,16 @@ describe('Sentry detail continuation', () => {
     }
   });
 
-  it('refuses to mint a position larger than the bounded token', () => {
-    const cursor = 'c'.repeat(MAX_SENTRY_DETAIL_CONTINUATION_UTF8_BYTES);
-    expect(encodeSentryDetailContinuation({
+  it('round-trips a wide provider cursor without an invented local ceiling', () => {
+    const cursor = 'c'.repeat(32 * 1024);
+    const token = encodeSentryDetailContinuation({
       v: 1,
       cursor,
       limit: 100,
       probe: { cursor: '0:0:0', stepsSince: 0, interval: 2 },
-    })).toBeNull();
+    });
+    expect(token).not.toBeNull();
+    expect(decodeSentryDetailContinuation(token ?? '')?.cursor).toBe(cursor);
   });
 
   it('refuses to mint a frontier whose cycle evidence is not its own', () => {
@@ -309,5 +309,24 @@ describe('Sentry selected-event contract', () => {
 
     expect(SentryReadEventResultV1Schema.safeParse({ kind: 'event', projection: leaked }).success)
       .toBe(false);
+  });
+
+  it('publishes the same single-line grammar the event projector emits', () => {
+    const projection = projectSentryEventForDisplay({ eventID: 'a'.repeat(32) });
+    expect(SentryReadEventResultV1Schema.safeParse({
+      kind: 'event',
+      projection,
+    }).success).toBe(true);
+    expect(SentryReadEventResultV1Schema.safeParse({
+      kind: 'event',
+      projection: { ...projection, title: 'line one\nline two' },
+    }).success).toBe(false);
+    expect(SentryReadEventResultV1Schema.safeParse({
+      kind: 'event',
+      projection: {
+        ...projection,
+        sections: [{ kind: 'message', formatted: 'line one\u0000line two' }],
+      },
+    }).success).toBe(false);
   });
 });

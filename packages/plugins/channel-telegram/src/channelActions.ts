@@ -1,4 +1,6 @@
 import {
+  CONVERSATION_CORE_PLUGIN_ID_V1,
+  CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1,
   MAX_CONVERSATION_INGRESS_TEXT_UTF8_BYTES,
   ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
@@ -12,6 +14,8 @@ import {
   ConversationProviderSetupOutcomeV1Schema,
   ConversationProviderSetupRemediationResultV1Schema,
   ConversationProviderSetupResultV1Schema,
+  ConversationProviderConnectionsSnapshotV1Schema,
+  hasCurrentConversationProviderConnectionV1,
   type ConversationConnectionTestResultV1,
   type ConversationAuthenticatedObservationShellV1,
   type ConversationDeliveryInputV1,
@@ -595,6 +599,49 @@ export async function setupTelegramChatEventSource(
     throw new PluginError({
       code: 'telegram_automation_source_unavailable',
       message: 'The selected Telegram bot is unavailable.',
+    });
+  }
+  let currentConnections: unknown;
+  try {
+    currentConnections = await context.services.actions.execute(
+      {
+        pluginId: CONVERSATION_CORE_PLUGIN_ID_V1,
+        localId: CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,
+      },
+      {},
+      { signal: context.signal },
+    );
+  } catch (error) {
+    throwIfAborted(context.signal);
+    throw new PluginError({
+      code: 'telegram_automation_channels_connection_unavailable',
+      message: 'Happier could not verify the Telegram Channels connection. Try again after Channels is available.',
+      retryable: true,
+      remediation: { kind: 'retry' },
+    }, { cause: error });
+  }
+  const connections = ConversationProviderConnectionsSnapshotV1Schema.safeParse(currentConnections);
+  if (!connections.success) {
+    throw new PluginError({
+      code: 'telegram_automation_channels_connection_unavailable',
+      message: 'Happier could not verify the Telegram Channels connection. Try again after Channels is available.',
+      retryable: true,
+      remediation: { kind: 'retry' },
+    });
+  }
+  const hasCurrentConnection = hasCurrentConversationProviderConnectionV1({
+    connections: connections.data,
+    providerConnectionKey: `${TELEGRAM_CONNECTION_KEY_PREFIX}${identity.id}`,
+    credentialRef,
+  });
+  if (!hasCurrentConnection) {
+    throw new PluginError({
+      code: 'telegram_automation_channels_connection_required',
+      message: 'Set up and enable this Telegram bot in Channels before watching one of its chats.',
+      remediation: {
+        kind: 'openSettings',
+        path: '/settings/plugins/happier.channels/connections',
+      },
     });
   }
   const chat = await api.getChat({ chatId: input.chatId }, { signal: context.signal });

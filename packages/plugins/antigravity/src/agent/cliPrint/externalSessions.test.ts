@@ -467,6 +467,20 @@ describe('Antigravity external-session pure leaf', () => {
       },
     });
 
+    const linkedTranscript = await contribution.pageTranscript({
+      ...invocation(),
+      source: linked.value.source,
+      remoteSessionId: linked.value.remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    });
+    expect(linkedTranscript).toMatchObject({
+      ok: true,
+      value: {
+        items: [expect.objectContaining({ messageRole: 'user' })],
+      },
+    });
+
     await expect(contribution.pageTranscript({
       ...invocation(),
       source: {
@@ -1244,7 +1258,8 @@ describe('Antigravity external-session pure leaf', () => {
   });
 
   it.each(['fast', 'full'] as const)('searches candidate titles in %s mode', async (searchMode) => {
-    const home = await mkdir(join(tmpdir(), `antigravity-external-candidate-title-${Date.now()}-`), { recursive: true });
+    const home = join(tmpdir(), `antigravity-external-candidate-title-${searchMode}-${Date.now()}-`);
+    await mkdir(home, { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
     await createConversation(brainDir, 'conversation-title', [
       JSON.stringify({

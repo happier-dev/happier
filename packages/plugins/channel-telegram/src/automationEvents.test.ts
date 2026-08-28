@@ -27,7 +27,8 @@ const botIdentity = {
 function armedDefinition(chatId: string) {
   return {
     automationId: '11111111-1111-4111-8111-111111111111',
-    templateVersion: 1,
+    triggerId: `trigger-telegram-${chatId}`,
+    triggerRevision: 1,
     eventRef: { pluginId: 'happier.channel.telegram', localId: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID },
     sourceInstanceId: `telegram:chat:123:${chatId}`,
     sourceSelectorId: '22222222-2222-4222-8222-222222222222',
@@ -62,6 +63,7 @@ function context(
         machineId: 'telegram-automation-events-fixture-machine',
         materializationId: 'telegram-automation-events-fixture-materialization',
         pluginId: 'happier.channels',
+        immutableGenerationId: 'telegram-automation-events-fixture-generation',
       },
     },
     signal: new AbortController().signal,
@@ -103,6 +105,7 @@ function admissionInput(overrides: Readonly<Record<string, unknown>> = {}) {
     occurrenceId: 'telegram:update:51',
     occurredAt: 1_700_000_008_000,
     observationReceivedAt: 1_700_000_009_000,
+    observedDelta: 1,
     ...overrides,
   };
 }
@@ -110,13 +113,36 @@ function admissionInput(overrides: Readonly<Record<string, unknown>> = {}) {
 describe('Telegram Automation Event source', () => {
   it('admits a frozen Channels Event obligation to the matching current source', async () => {
     const admitted: unknown[] = [];
+    const statuses: unknown[] = [];
     const execute = vi.fn(async (actionId: string, input: unknown) => {
       if (actionId === 'automation.event.sources.list') {
-        return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
+        return {
+          kind: 'page',
+          definitions: [
+            armedDefinition('-100456'),
+            {
+              ...armedDefinition('-100456'),
+              triggerId: 'trigger-telegram-second',
+              triggerRevision: 3,
+              sourceSelectorId: '33333333-3333-4333-8333-333333333333',
+            },
+          ],
+          nextCursor: null,
+          revision: '7',
+        };
       }
       if (actionId === 'automation.event.admit') {
         admitted.push(input);
-        return { results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }] };
+        return {
+          results: [
+            { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
+            { kind: 'rejoined', runId: 'run-2', checkpointSafe: true },
+          ],
+        };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        statuses.push(input);
+        return {};
       }
       throw new Error(`unexpected ${actionId}`);
     });
@@ -124,12 +150,58 @@ describe('Telegram Automation Event source', () => {
     const outcome = await admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute));
 
     expect(admitted).toHaveLength(1);
-    expect(admitted[0]).toMatchObject({
+    expect(admitted[0]).toEqual({
       eventRef: { pluginId: 'happier.channel.telegram', localId: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID },
       occurrenceId: 'telegram:update:51',
-      payload: { chatId: '-100456', chatType: 'supergroup', text: 'deploy the site', senderId: '789' },
-      definitions: [{ automationId: '11111111-1111-4111-8111-111111111111', templateVersion: 1 }],
+      occurredAt: 1_700_000_008_000,
+      observationReceivedAt: 1_700_000_009_000,
+      payload: admissionInput().candidate.payload,
+      definitions: [
+        {
+          automationId: '11111111-1111-4111-8111-111111111111',
+          triggerId: 'trigger-telegram--100456',
+          triggerRevision: 1,
+          sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+        },
+        {
+          automationId: '11111111-1111-4111-8111-111111111111',
+          triggerId: 'trigger-telegram-second',
+          triggerRevision: 3,
+          sourceSelectorId: '33333333-3333-4333-8333-333333333333',
+        },
+      ],
     });
+    expect(statuses).toEqual([
+      {
+        kind: 'catalogReconciliation',
+        scope: { kind: 'checkpointedPull' },
+        observedRevision: '7',
+        adoptedRevision: '7',
+        state: 'current',
+        scanStartedAt: null,
+        nextRetryAt: null,
+      },
+      expect.objectContaining({
+        kind: 'source',
+        triggerId: 'trigger-telegram--100456',
+        triggerRevision: 1,
+        state: 'observing',
+        code: 'none',
+        lastObservedAt: 1_700_000_009_000,
+        lastDispositionAt: 1_700_000_009_000,
+        observedDelta: 1,
+        admittedDelta: 1,
+        skippedDelta: 0,
+      }),
+      expect.objectContaining({
+        kind: 'source',
+        triggerId: 'trigger-telegram-second',
+        triggerRevision: 3,
+        state: 'observing',
+        code: 'none',
+        admittedDelta: 0,
+      }),
+    ]);
     expect(outcome).toEqual({ kind: 'checkpointSafe' });
   });
 
@@ -138,20 +210,66 @@ describe('Telegram Automation Event source', () => {
       if (actionId === 'automation.event.sources.list') {
         return { kind: 'page', definitions: [armedDefinition('-999')], nextCursor: null, revision: '7' };
       }
+      if (actionId === 'automation.event.source.status.report') return {};
       throw new Error(`unexpected ${actionId}`);
     });
     const outcome = await admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute));
-    expect(execute.mock.calls.map(([id]) => id)).toEqual(['automation.event.sources.list']);
+    expect(execute.mock.calls.map(([id]) => id)).toEqual([
+      'automation.event.sources.list',
+      'automation.event.source.status.report',
+    ]);
     expect(outcome).toEqual({ kind: 'checkpointSafe' });
   });
 
   it('returns unsettled when the Automation admission is not checkpoint-safe', async () => {
-    const execute = vi.fn(async (actionId: string) => {
+    const statuses: unknown[] = [];
+    const execute = vi.fn(async (actionId: string, input: unknown) => {
       if (actionId === 'automation.event.sources.list') {
         return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
       }
+      if (actionId === 'automation.event.source.status.report') {
+        statuses.push(input);
+        return {};
+      }
       return { results: [{ kind: 'blocked', reason: 'capacity', checkpointSafe: false }] };
     });
+    await expect(admitTelegramAutomationEvent(
+      admissionInput({ observedDelta: 0 }),
+      context(noHttp, execute),
+    ))
+      .resolves.toEqual({ kind: 'unsettled' });
+    expect(statuses.at(-1)).toMatchObject({
+      kind: 'source',
+      state: 'backingOff',
+      code: 'capacityBlocked',
+      lastDispositionAt: null,
+      observedDelta: 0,
+      admittedDelta: 0,
+      skippedDelta: 0,
+    });
+  });
+
+  it('requires an exact positional result vector for distinct triggers on the same Automation', async () => {
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page',
+          definitions: [
+            armedDefinition('-100456'),
+            {
+              ...armedDefinition('-100456'),
+              triggerId: 'trigger-telegram-second',
+              sourceSelectorId: '33333333-3333-4333-8333-333333333333',
+            },
+          ],
+          nextCursor: null,
+          revision: '7',
+        };
+      }
+      if (actionId === 'automation.event.source.status.report') return {};
+      return { results: [{ kind: 'rejoined', runId: 'run-1', checkpointSafe: true }] };
+    });
+
     await expect(admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute)))
       .resolves.toEqual({ kind: 'unsettled' });
   });
@@ -164,9 +282,29 @@ describe('Telegram Automation Event source', () => {
           : { ok: true, result: { id: -100456, type: 'supergroup', title: 'Deploys' } },
       )),
     };
+    const execute = vi.fn(async (action: unknown) => {
+      if (typeof action === 'object' && action !== null && 'localId' in action
+        && action.localId === 'provider/connections-list-v1') {
+        return {
+          'telegram-connection-1': {
+            v: 1,
+            connectionId: 'telegram-connection-1',
+            providerConnectionKey: 'telegram-bot:123',
+            providerConfigVersion: 1,
+            providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: true },
+            credentialRef: telegramAccount,
+            authorityEpoch: 1,
+            enabled: true,
+            deletionState: 'none',
+            requiresFullSharedMessageContent: false,
+          },
+        };
+      }
+      throw new Error('Unexpected Action');
+    });
     const result = await setupTelegramChatEventSource(
       { credentialRef: telegramAccount, chatId: '-100456' },
-      context(http, vi.fn()),
+      context(http, execute),
     );
     expect(result).toMatchObject({
       v: 1,
@@ -174,6 +312,32 @@ describe('Telegram Automation Event source', () => {
       sourceContractVersion: 1,
       sourceConfig: { v: 1, botId: '123', chatId: '-100456' },
       displayLabel: 'Deploys',
+    });
+  });
+
+  it('rejects a source that has no current Channels connection for the selected bot', async () => {
+    const http = {
+      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        input.url.includes('/getMe')
+          ? botIdentity
+          : { ok: true, result: { id: -100456, type: 'supergroup', title: 'Deploys' } },
+      )),
+    };
+    const execute = vi.fn(async (action: unknown) => {
+      if (typeof action === 'object' && action !== null && 'localId' in action
+        && action.localId === 'provider/connections-list-v1') return {};
+      throw new Error('Unexpected Action');
+    });
+
+    await expect(setupTelegramChatEventSource(
+      { credentialRef: telegramAccount, chatId: '-100456' },
+      context(http, execute),
+    )).rejects.toMatchObject({
+      code: 'telegram_automation_channels_connection_required',
+      remediation: {
+        kind: 'openSettings',
+        path: '/settings/plugins/happier.channels/connections',
+      },
     });
   });
 
@@ -187,4 +351,20 @@ describe('Telegram Automation Event source', () => {
     await expect(admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute)))
       .resolves.toEqual({ kind: 'unsettled' });
   });
+
+  it('keeps canonical admission authoritative when observational status reporting is unavailable', async () => {
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'automation.event.sources.list') {
+        return { kind: 'page', definitions: [armedDefinition('-100456')], nextCursor: null, revision: '7' };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        throw new Error('Automation status projection unavailable');
+      }
+      return { results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }] };
+    });
+
+    await expect(admitTelegramAutomationEvent(admissionInput(), context(noHttp, execute)))
+      .resolves.toEqual({ kind: 'checkpointSafe' });
+  });
+
 });

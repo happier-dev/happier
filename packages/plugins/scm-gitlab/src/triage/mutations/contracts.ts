@@ -1,7 +1,7 @@
 /**
  * The GitLab mutation Action contracts.
  *
- * Ten exact Actions, ten strict input schemas, ten strict result unions. There
+ * Exact Actions, strict input schemas, and strict result unions. There
  * is deliberately no `mutate({ operation, payload })` envelope and no shared
  * operation discriminant: `sources/SCM.md` §3.8 makes every externally visible
  * write its own named Action so a caller cannot reach a write the host never
@@ -31,11 +31,18 @@ import {
   defineProtocolLiteral,
   defineProtocolNumber,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUniqueArray,
   defineProtocolUnion,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
+import {
+  ReviewCommentPublicationResultV1ProtocolSchema,
+  ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema,
+} from '@happier-dev/plugin-sdk/reviews';
 import {
   TriageConfiguredSourceInstanceV1Schema,
   TriageSourceEntryLocalRefV1Schema,
@@ -53,10 +60,7 @@ const IdentifierSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.identifierUtf8Bytes,
   minLength: 1,
 });
-const LabelSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes,
-  minLength: 1,
-});
+const LabelSchema = defineProtocolString({ minLength: 1 });
 const LocationSchema = defineProtocolUtf8String({
   maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.locationUtf8Bytes,
   minLength: 1,
@@ -67,9 +71,10 @@ const ProjectIdSchema = defineProtocolNumber({ integer: true, minimum: 1 });
 /**
  * The commit the user acted on.
  *
- * A full GitLab object id is 40 lowercase hex characters; the bound admits a
- * short id and tomorrow's longer hash without admitting a ref name, a branch or
- * a sentence. It is never derived here — `sources/SCM.md` §2.6 forbids filling
+ * A full GitLab object id is 40 lowercase hex characters in SHA-1 repositories
+ * and 64 in SHA-256 repositories; the lower bound also admits a displayed short
+ * id without admitting a ref name, a branch or a sentence. It is never derived
+ * here — `sources/SCM.md` §2.6 forbids filling
  * it from a fresh read at write time, which is the race the field exists to
  * close.
  *
@@ -85,6 +90,46 @@ export const GitlabObservedHeadShaV1Schema = defineProtocolUtf8String({
   minLength: 7,
   pattern: '^[0-9a-f]{7,64}$',
 });
+
+const GitlabReviewPublicationPlanV1Schema =
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(GitlabObservedHeadShaV1Schema);
+const GitlabSingleReviewCommentPublicationPlanV1Schema =
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(GitlabObservedHeadShaV1Schema);
+
+const GitlabPublicationTargetFieldsV1 = {
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+} as const;
+
+/** A frozen, revision-pinned GitLab merge-request review publication. */
+export const GitlabMergeRequestReviewPublicationInputV1Schema = defineProtocolObject({
+  ...GitlabPublicationTargetFieldsV1,
+  publicationPlan: GitlabReviewPublicationPlanV1Schema,
+  acknowledgedPreexistingDraftIds: defineProtocolArray(IdentifierSchema).optional(),
+}, { policy: 'closed' });
+export type GitlabMergeRequestReviewPublicationInputV1 = ReturnType<
+  typeof GitlabMergeRequestReviewPublicationInputV1Schema.parse
+>;
+
+/** One revision-pinned inline review comment, with no separate verdict. */
+export const GitlabMergeRequestReviewCommentCreateInputV1Schema = defineProtocolObject({
+  ...GitlabPublicationTargetFieldsV1,
+  publicationPlan: GitlabSingleReviewCommentPublicationPlanV1Schema,
+}, { policy: 'closed' });
+
+/** One canonical reply in one exact GitLab merge-request discussion. */
+export const GitlabMergeRequestThreadReplyInputV1Schema = defineProtocolObject({
+  ...GitlabPublicationTargetFieldsV1,
+  discussionId: IdentifierSchema,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+}, { policy: 'closed' });
+
+/** One canonical GitLab issue comment. Issues have no synthetic SCM revisions. */
+export const GitlabIssueCommentInputV1Schema = defineProtocolObject({
+  ...GitlabPublicationTargetFieldsV1,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+}, { policy: 'closed' });
 
 /**
  * The re-observed merge request every mutation answers with.
@@ -152,6 +197,50 @@ export const GitlabIssueStateRowV1Schema = defineProtocolObject({
 export type GitlabIssueStateRowV1 = ReturnType<typeof GitlabIssueStateRowV1Schema.parse>;
 
 /**
+ * Publication settles exact canonical cardinality or refuses before dispatch.
+ * `preexistingDraftCount` is the user-visible GitLab-specific preflight fact:
+ * per-draft publishing leaves those drafts alone, but the user must see them
+ * before any Happier draft is created.
+ */
+export const GitlabReviewPublicationResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('settled'),
+    publication: ReviewCommentPublicationResultV1ProtocolSchema,
+    preexistingDraftCount: defineProtocolNumber({ integer: true, minimum: 0 }),
+    observed: defineProtocolUnion([
+      GitlabMergeRequestStateRowV1Schema,
+      GitlabIssueStateRowV1Schema,
+    ]).optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('rejected'),
+    reason: defineProtocolUnion([
+      defineProtocolLiteral('invalid_input'),
+      defineProtocolLiteral('admission_failed'),
+      defineProtocolLiteral('base_advanced'),
+      defineProtocolLiteral('head_advanced'),
+      defineProtocolLiteral('start_advanced'),
+      defineProtocolLiteral('state_changed'),
+      defineProtocolLiteral('unsupported_anchor'),
+      defineProtocolLiteral('unsupported_verdict'),
+      defineProtocolLiteral('dispatch_claim_failed'),
+      defineProtocolLiteral('preexisting_drafts'),
+    ]),
+    preexistingDraftCount: defineProtocolNumber({ integer: true, minimum: 1 }).optional(),
+    preexistingDraftIds: defineProtocolArray(IdentifierSchema).optional(),
+    observed: defineProtocolUnion([
+      GitlabMergeRequestStateRowV1Schema,
+      GitlabIssueStateRowV1Schema,
+    ]).optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
+  }, { policy: 'closed' }),
+]);
+export type GitlabReviewPublicationResultV1 = ReturnType<
+  typeof GitlabReviewPublicationResultV1Schema.parse
+>;
+
+/**
  * Why a mutation did not reach its intended outcome.
  *
  * Each member is one documented provider answer or one preflight fact, never a
@@ -187,10 +276,7 @@ export const GitlabMutationRefusalReasonV1Schema = defineProtocolUnion([
 export type GitlabMutationRefusalReasonV1 =
   ReturnType<typeof GitlabMutationRefusalReasonV1Schema.parse>;
 
-const ProviderMessageSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: GITLAB_DETAIL_BOUNDS_V1.labelUtf8Bytes,
-  minLength: 1,
-});
+const ProviderMessageSchema = defineProtocolString({ minLength: 1 });
 
 /**
  * The four arms every GitLab mutation shares, instantiated for one re-observed
@@ -229,7 +315,7 @@ function defineGitlabMutationArms<TRowInput, TRowOutput>(
       /** Present when the item could be re-observed after the refusal. */
       observed: rowSchema.optional(),
       /** GitLab's own bounded explanation, when it supplied one. */
-      messages: defineProtocolArray(ProviderMessageSchema, { maxItems: 8 }).optional(),
+      messages: defineProtocolArray(ProviderMessageSchema).optional(),
     }, { policy: 'closed' }),
     /**
      * The write was dispatched and its outcome is **not proven**.

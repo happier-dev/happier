@@ -93,6 +93,31 @@ export function githubReviewStateKey(state: string): string {
   return `plugins.github.ui.reviewState.${state}`;
 }
 
+/** Provider status words this build can present in the reader's language. */
+export const GITHUB_CHANGED_FILE_STATUS_LABELS_V1: Readonly<Record<string, string | undefined>> =
+  Object.freeze({ modified: 'Modified', renamed: 'Renamed' });
+export const GITHUB_CHECK_STATUS_LABELS_V1: Readonly<Record<string, string | undefined>> =
+  Object.freeze({
+    completed: 'Completed',
+    in_progress: 'In progress',
+    queued: 'Queued',
+    waiting: 'Waiting',
+    requested: 'Requested',
+    pending: 'Pending',
+  });
+export const GITHUB_CHECK_CONCLUSION_LABELS_V1: Readonly<Record<string, string | undefined>> =
+  Object.freeze({ success: 'Succeeded', failure: 'Failed', skipped: 'Skipped' });
+
+export function githubChangedFileStatusKey(status: string): string {
+  return `plugins.github.ui.fileStatus.${status}`;
+}
+export function githubCheckStatusKey(status: string): string {
+  return `plugins.github.ui.checkStatus.${status}`;
+}
+export function githubCheckConclusionKey(conclusion: string): string {
+  return `plugins.github.ui.checkConclusion.${conclusion}`;
+}
+
 /**
  * The word for a review GitHub returned without a state.
  *

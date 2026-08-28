@@ -465,6 +465,7 @@ describe('Codex external transcript cursor generations', () => {
         nextCursor: expect.any(String),
         diagnostics: [{
           code: 'malformed_source_utf8',
+          severity: 'required',
           count: 1,
           positions: [before + prefix.byteLength],
         }],

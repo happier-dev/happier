@@ -141,6 +141,7 @@
                 "kind": "primary"
               }
             ],
+            "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
           "displayName": "OpenAI Codex CLI",

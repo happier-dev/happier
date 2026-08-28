@@ -368,7 +368,7 @@ const providerBindingMaterialization = {
   },
 } as const;
 
-type CodexTestAccountUsageService = NonNullable<CodexAppServerRuntimeHost['accountUsage']>;
+type CodexTestAccountUsageService = CodexAppServerRuntimeHost['accountUsage'];
 type CodexTestLogger = Readonly<{
   debug(message: string, fields?: Readonly<Record<string, unknown>>): void;
   info(message: string, fields?: Readonly<Record<string, unknown>>): void;
@@ -448,9 +448,26 @@ function createRuntime(overrides: Readonly<{
     accountUsage: overrides.accountUsage,
   });
   const ctx = fixture.context;
+  const codexHome = overrides.processEnv?.CODEX_HOME;
   return createCodexAppServerRuntime({
     host: {
       baseProcessEnv: ctx.env.list(),
+      ...(codexHome ? {
+        nativeHome: {
+          root: codexHome,
+          async readFiles(fileIds: readonly string[]) {
+            const files: Record<string, Uint8Array> = {};
+            for (const fileId of fileIds) {
+              try {
+                files[fileId] = new Uint8Array(await readFile(join(codexHome, fileId)));
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+              }
+            }
+            return files;
+          },
+        },
+      } : {}),
       logger: ctx.logger,
       createClient: async (request) => await createCodexAppServerClient({
         exec: ctx.exec,
@@ -2986,9 +3003,6 @@ describe('Codex app-server temporary recoverable turn failures', () => {
             credentialFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{8}$/u),
           },
         },
-        durability: {
-          persisted: true,
-        },
       });
 
       expect(clientState.requests).toContainEqual({
@@ -2999,12 +3013,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           chatgptAccountId: 'acct_target',
         },
       });
-      expect(JSON.parse(await readFile(join(codexHome, 'auth.json'), 'utf8'))).toMatchObject({
-        access_token: 'target-access',
-        refresh_token: 'target-refresh',
-        id_token: 'target-id',
-        account_id: 'acct_target',
-      });
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
 
       await expect(clientState.invokeRequestHandler('account/chatgptAuthTokens/refresh', {
         chatgptPlanType: 'plus',
@@ -3184,7 +3194,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('reports connected-service auth switching unsafe while realtime retains thread authority', async () => {
+  it('reports connected-service auth switching safe while realtime retains thread authority', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-realtime-identity-'));
     try {
       await mkdir(codexHome, { recursive: true });
@@ -3217,7 +3227,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         ok: true,
         runtime: {
           safeToProbe: true,
-          safeToApply: false,
+          safeToApply: true,
           inProviderTurn: false,
         },
       });
@@ -3230,7 +3240,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         ok: true,
         runtime: {
           safeToProbe: true,
-          safeToApply: false,
+          safeToApply: true,
           inProviderTurn: false,
         },
       });
@@ -3240,7 +3250,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('blocks realtime identity changes without provider mutation and applies the exact binding once after runtime replacement', async () => {
+  it('hot-applies realtime identity changes without replacing the runtime', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-realtime-auth-fence-'));
     try {
       await mkdir(codexHome, { recursive: true });
@@ -3267,7 +3277,8 @@ describe('Codex app-server temporary recoverable turn failures', () => {
         .resolves.toMatchObject({ ok: true, activeAccountId: 'acct_target' });
       await startCodexAppServerRuntime(runtime);
       const realtimeHandle = await startActiveRealtimeAttachment(runtime);
-      const authStoreBeforeIdentityChange = await readFile(join(codexHome, 'auth.json'), 'utf8');
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
       const loginCountBeforeIdentityChange = clientState.requests.filter(
         ({ method }) => method === 'account/login/start',
       ).length;
@@ -3290,40 +3301,17 @@ describe('Codex app-server temporary recoverable turn failures', () => {
 
       await expect(runtime.runtimeAuth.apply(identityChangeRequest))
         .resolves.toMatchObject({
-          ok: false,
-          errorCode: 'auth_identity_change_restart_required',
-          recovery: 'restart_resume',
-        });
-      expect(clientState.requests.filter(
-        ({ method }) => method === 'account/login/start',
-      )).toHaveLength(loginCountBeforeIdentityChange);
-      await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
-        .resolves.toBe(authStoreBeforeIdentityChange);
-
-      await expect(realtimeHandle.stop()).resolves.toEqual({ status: 'stopped' });
-      await expect(runtime.runtimeAuth.apply(identityChangeRequest))
-        .resolves.toMatchObject({
-          ok: false,
-          errorCode: 'auth_identity_change_restart_required',
-          recovery: 'restart_resume',
-        });
-      expect(clientState.requests.filter(
-        ({ method }) => method === 'account/login/start',
-      )).toHaveLength(loginCountBeforeIdentityChange);
-      await runtime.dispose();
-
-      const replacementRuntime = asConnectedServiceAuthRuntime(createRuntime({
-        processEnv: { CODEX_HOME: codexHome },
-      }));
-      await expect(replacementRuntime.runtimeAuth.apply(identityChangeRequest))
-        .resolves.toMatchObject({
           ok: true,
           activeAccountId: 'acct_target',
         });
       expect(clientState.requests.filter(
         ({ method }) => method === 'account/login/start',
       )).toHaveLength(loginCountBeforeIdentityChange + 1);
-      await replacementRuntime.dispose();
+      await expect(readFile(join(codexHome, 'auth.json'), 'utf8'))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+
+      await expect(realtimeHandle.stop()).resolves.toEqual({ status: 'stopped' });
+      await runtime.dispose();
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }
@@ -3668,7 +3656,7 @@ describe('Codex app-server temporary recoverable turn failures', () => {
     }
   });
 
-  it('blocks a connected-service identity change during an in-flight turn without interrupting that turn', async () => {
+  it('hot-applies a connected-service identity change during an in-flight turn without interrupting it', async () => {
     const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-live-auth-busy-'));
     try {
       await mkdir(codexHome, { recursive: true });
@@ -3708,19 +3696,70 @@ describe('Codex app-server temporary recoverable turn failures', () => {
           },
         },
       })).resolves.toMatchObject({
-        ok: false,
-        errorCode: 'auth_identity_change_restart_required',
-        recovery: 'restart_resume',
+        ok: true,
+        activeAccountId: 'acct_target',
       });
 
       expect(clientState.requests.filter(
         ({ method }) => method === 'account/login/start',
-      )).toHaveLength(loginCountBeforeIdentityChange);
+      )).toHaveLength(loginCountBeforeIdentityChange + 1);
       clientState.resolveDeferredTurnStart('turn-busy');
       await send;
       const completion = waitForCodexAppServerRuntimeTurnCompletion(runtime);
       emitNotification('turn/completed', completedTurn('turn-busy'));
       await completion;
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it('settles exact hot auth before post-apply quota observation finishes', async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), 'happier-codex-plugin-live-auth-observation-'));
+    try {
+      await mkdir(codexHome, { recursive: true });
+      const runtime = asConnectedServiceAuthRuntime(createRuntime({
+        processEnv: { CODEX_HOME: codexHome },
+      }));
+      await startCodexAppServerRuntime(runtime);
+      const rateLimitReadsBeforeApply = clientState.requests.filter(
+        ({ method }) => method === 'account/rateLimits/read',
+      ).length;
+      clientState.deferNextRateLimitsRead();
+      let settled = false;
+      const apply = runtime.runtimeAuth.apply({
+        serviceId: 'openai-codex',
+        authGeneration: {
+          credential: buildConnectedCodexCredential('target'),
+          forcedWorkspaceId: 'acct_target',
+          selection: {
+            kind: 'profile',
+            serviceId: 'openai-codex',
+            profileId: 'target',
+          },
+        },
+      }).then((result) => {
+        settled = true;
+        return result;
+      });
+
+      await vi.waitFor(() => {
+        expect(clientState.requests.filter(
+          ({ method }) => method === 'account/rateLimits/read',
+        )).toHaveLength(rateLimitReadsBeforeApply + 1);
+      }, { timeout: 2_000 });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(true);
+      await expect(apply).resolves.toMatchObject({
+        ok: true,
+        appliedVia: 'direct_live_hot_auth',
+        activeAccountId: 'acct_target',
+      });
+
+      clientState.resolveDeferredRateLimitsRead({
+        rateLimits: { primary: { used_percent: 3 } },
+        plan_type: 'team',
+      });
+      await runtime.dispose();
     } finally {
       await rm(codexHome, { recursive: true, force: true });
     }
@@ -3795,13 +3834,10 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       clientState.resolveDeferredLoginStart();
       await expect(apply).resolves.toMatchObject({
         ok: false,
-        errorCode: 'auth_store_persistence_failed_after_live_apply',
+        errorCode: 'runtime_replaced_during_auth_apply',
         appliedVia: 'direct_live_hot_auth',
         activeAccountId: 'acct_target',
-        durability: {
-          persisted: false,
-          errorCode: 'auth_store_persistence_failed_after_live_apply',
-        },
+        recovery: 'restart_resume',
       });
       await expect(readFile(join(codexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {

@@ -8,7 +8,10 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
-import { resolveTriageSourceDetailContributionV1 } from './sourceSurface.js';
+import {
+    resolveTriageSourceDescriptorV1,
+    resolveTriageSourceDetailContributionV1,
+} from './sourceSurface.js';
 
 /**
  * Matching the entry's source to the admitted contribution its detail mounts
@@ -94,5 +97,15 @@ describe('the source detail contribution lookup', () => {
         expect(lookup.surface.role).toBe(TRIAGE_SOURCE_DETAIL_SURFACE_ROLE_V1);
         expect(lookup.surface.contributor.pluginId).toBe(SOURCE.pluginId);
         expect(lookup.surface.contributor.contributionId).toBe(SOURCE.localId);
+    });
+
+    it('reads descriptor presentation from the same exact mounted snapshot', () => {
+        const targeted = snapshot({ descriptor: VALID_DESCRIPTOR });
+
+        expect(resolveTriageSourceDescriptorV1(targeted, SOURCE)).toEqual(VALID_DESCRIPTOR);
+        expect(resolveTriageSourceDescriptorV1(
+            snapshot({ protocolVersion: PROTOCOL.version + 1, descriptor: VALID_DESCRIPTOR }),
+            SOURCE,
+        )).toBeNull();
     });
 });

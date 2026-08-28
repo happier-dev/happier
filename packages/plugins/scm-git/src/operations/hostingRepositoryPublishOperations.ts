@@ -6,8 +6,6 @@ import {
   normalizeScmRemoteName,
   type ScmHostingRepositoryDescribePublishTargetsRequest,
   type ScmHostingRepositoryDescribePublishTargetsResponse,
-  type ScmHostingRepositoryAuthSummary,
-  type ScmHostingRepositoryPublishTarget,
   type ScmHostingRepositoryPublishRequest,
   type ScmHostingRepositoryPublishResponse,
   type ScmHostingRepositoryRemoteUrlKind,
@@ -23,6 +21,7 @@ import {
 } from '@happier-dev/plugin-sdk/scm';
 import {
   ScmHostingProviderKindSchema,
+  type HostingProviderRepositoryPublishingCapability,
   type ScmHostingProviderKind,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import {
@@ -39,7 +38,7 @@ import { gitRemoteAdd, gitRemoteSetUrl } from './remoteManagementOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
 
-type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter'> & Readonly<{
+type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryPublishing'> & Readonly<{
     providers?: readonly unknown[];
 }>;
 
@@ -54,25 +53,6 @@ type ScmHostingProviderRepositoryCreateInput = ScmHostingProviderRepositoryGetIn
     ownerKind?: ScmHostingRepositoryPublishRequest['ownerKind'];
     visibility: ScmHostingRepositoryPublishRequest['visibility'];
     description?: string;
-}>;
-
-type HostingRepositoryAdapter = Readonly<{
-    describePublishTargets?: (
-        input: Readonly<{
-            provider: ScmHostingProviderRef;
-            defaultRepositoryName: string;
-            runtimeServices?: ScmHostingProviderRuntimeServices;
-        }>
-    ) => Promise<Readonly<{
-        auth?: ScmHostingRepositoryAuthSummary;
-        targets: readonly ScmHostingRepositoryPublishTarget[];
-    }>>;
-    createRepository?: (
-        input: ScmHostingProviderRepositoryCreateInput
-    ) => Promise<ScmHostingRepositorySummary>;
-    getRepository?: (
-        input: ScmHostingProviderRepositoryGetInput
-    ) => Promise<ScmHostingRepositorySummary | null>;
 }>;
 
 type GitHostingRepositoryPublishOperationDeps = Readonly<{
@@ -107,16 +87,6 @@ function errorResponse(
         errorCode,
         ...extra,
     };
-}
-
-function isRepositoryAdapter(adapter: unknown): adapter is HostingRepositoryAdapter {
-    return Boolean(adapter)
-        && typeof adapter === 'object'
-        && (
-            typeof (adapter as Partial<HostingRepositoryAdapter>).createRepository === 'function'
-            || typeof (adapter as Partial<HostingRepositoryAdapter>).getRepository === 'function'
-            || typeof (adapter as Partial<HostingRepositoryAdapter>).describePublishTargets === 'function'
-        );
 }
 
 function mapProviderError(error: unknown): Readonly<{ message: string; code: ScmOperationErrorCode }> {
@@ -281,7 +251,7 @@ async function readHasCurrentCommit(input: Readonly<{ context: ScmBackendContext
 }
 
 async function createOrReuseRepository(input: Readonly<{
-    adapter: HostingRepositoryAdapter;
+    adapter: HostingProviderRepositoryPublishingCapability;
     provider: ScmHostingProviderRef;
     request: ScmHostingRepositoryPublishRequest;
     runtimeServices: ScmHostingProviderRuntimeServices;
@@ -292,15 +262,8 @@ async function createOrReuseRepository(input: Readonly<{
         repositoryName: input.request.repositoryName,
         runtimeServices: input.runtimeServices,
     };
-    if (input.adapter.getRepository) {
-        const existing = await input.adapter.getRepository(getInput);
-        if (existing) return existing;
-    }
-    if (!input.adapter.createRepository) {
-        throw Object.assign(new Error('Hosting repository creation is unsupported by this provider'), {
-            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-        });
-    }
+    const existing = await input.adapter.getRepository(getInput);
+    if (existing) return existing;
     return input.adapter.createRepository({
         provider: input.provider,
         owner: input.request.owner,
@@ -390,8 +353,8 @@ export function createGitHostingRepositoryPublishOperation(
                 );
             }
 
-            const adapter = registry.getAdapter(provider.id);
-            if (!isRepositoryAdapter(adapter)) {
+            const adapter = registry.getRepositoryPublishing(provider.id);
+            if (!adapter) {
                 return errorResponse(
                     `The selected hosting provider "${provider.displayName}" does not support repository publishing.`,
                     SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
@@ -532,8 +495,8 @@ export function createGitHostingRepositoryPublishOperation(
                 ) as ScmHostingRepositoryDescribePublishTargetsResponse;
             }
 
-            const adapter = registry.getAdapter(provider.id);
-            if (!isRepositoryAdapter(adapter) || !adapter.describePublishTargets) {
+            const adapter = registry.getRepositoryPublishing(provider.id);
+            if (!adapter) {
                 return errorResponse(
                     `The selected hosting provider "${provider.displayName}" does not support repository publish target discovery.`,
                     SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
@@ -550,7 +513,7 @@ export function createGitHostingRepositoryPublishOperation(
                 });
                 return {
                     success: true,
-                    auth: result.auth ?? { state: 'unknown', profileKind: 'unknown' },
+                    auth: result.auth,
                     defaultRepositoryName,
                     targets: [...result.targets],
                 };

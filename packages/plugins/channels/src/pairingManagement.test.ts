@@ -140,7 +140,6 @@ const newSessionPrincipalOutsidePairingAllowlistTarget = {
 const automationTarget = {
   kind: 'automation',
   automationId: 'automation-1',
-  expectedTemplateVersion: 3,
   policy: { resultDelivery: 'none' },
 } as const;
 
@@ -280,6 +279,7 @@ function pairingManagementContext(input: Readonly<{
   endpointCandidates?: readonly (typeof directDestinationEndpoint | typeof sharedDestinationEndpoint)[];
 }>): PluginInvocationContext {
   return {
+    invokedAtMs: 1_700_000_000_000,
     plugin: { id: 'happier.channels', version: '0.0.0' },
     contribution: {
       id: 'pairing-management',
@@ -407,7 +407,7 @@ describe('Channels pairing management writer', () => {
     const collection = createCollection([connectionRow()]);
     const context = pairingManagementContext({
       collection,
-      actions: { execute: vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 })) },
+      actions: { execute: vi.fn(async () => ({ kind: 'verified' as const })) },
     });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
@@ -442,7 +442,7 @@ describe('Channels pairing management writer', () => {
     if (typeof createHandlers !== 'function') return;
 
     const collection = createCollection([connectionRow()]);
-    const execute = vi.fn(async () => ({ kind: 'verified' as const, templateVersion: 3 }));
+    const execute = vi.fn(async () => ({ kind: 'verified' as const }));
     const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
@@ -480,7 +480,6 @@ describe('Channels pairing management writer', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           policy: { resultDelivery: 'finalResult' },
         },
       },
@@ -491,7 +490,6 @@ describe('Channels pairing management writer', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         // Early pairing feedback runs before the proposal mints a binding id.
         resultDelivery: 'finalResult',
       },
@@ -502,7 +500,6 @@ describe('Channels pairing management writer', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         resultDelivery: 'finalResult',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -513,7 +510,6 @@ describe('Channels pairing management writer', () => {
         target: {
           kind: 'automation',
           automationId: 'automation-1',
-          templateVersion: 3,
           policy: { resultDelivery: 'finalResult' },
         },
       },
@@ -1016,8 +1012,8 @@ describe('Channels pairing management writer', () => {
 
     const collection = createCollection([connectionRow()]);
     const execute = vi.fn()
-      .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
-      .mockResolvedValueOnce({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+      .mockResolvedValueOnce({ kind: 'verified' })
+      .mockResolvedValueOnce({ kind: 'notVerified', reason: 'notFound' });
     const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
@@ -1049,14 +1045,13 @@ describe('Channels pairing management writer', () => {
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
       finalizeIdempotencyKey: 'finalize-1',
-    }, context)).resolves.toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+    }, context)).resolves.toEqual({ kind: 'notVerified', reason: 'notFound' });
 
     expect(execute).toHaveBeenNthCalledWith(
       1,
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
         // Early pairing feedback runs before the proposal mints a binding id.
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -1066,7 +1061,6 @@ describe('Channels pairing management writer', () => {
       'automation.conversation.target.verify',
       {
         automationId: 'automation-1',
-        expectedTemplateVersion: 3,
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
@@ -1081,9 +1075,9 @@ describe('Channels pairing management writer', () => {
 
     const collection = createCollection([connectionRow()]);
     const execute = vi.fn()
-      .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
-      .mockResolvedValueOnce({ kind: 'verified', templateVersion: 3 })
-      .mockResolvedValueOnce({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+      .mockResolvedValueOnce({ kind: 'verified' })
+      .mockResolvedValueOnce({ kind: 'verified' })
+      .mockResolvedValueOnce({ kind: 'notVerified', reason: 'notFound' });
     const context = pairingManagementContext({ collection, actions: { execute } });
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
@@ -1122,14 +1116,14 @@ describe('Channels pairing management writer', () => {
       kind: 'rejoined',
       binding: {
         id: 'binding-1',
-        target: { kind: 'automation', automationId: 'automation-1', templateVersion: 3 },
+        target: { kind: 'automation', automationId: 'automation-1' },
       },
     });
 
     expect(execute).toHaveBeenCalledTimes(3);
     expect(collection.rows.get('binding-1')?.value).toMatchObject({
       payload: {
-        target: { kind: 'automation', automationId: 'automation-1', templateVersion: 3 },
+        target: { kind: 'automation', automationId: 'automation-1' },
       },
     });
   });

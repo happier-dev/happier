@@ -214,6 +214,7 @@ export function TriageListRow(props: Readonly<{
     return (
       <List.Item
         {...common}
+        accessoryOutsidePressable
         accessory={(
           <Button
             title={label}

@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+  isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 
 import {
   GitlabActivityEventsResultV1Schema,
@@ -7,6 +11,7 @@ import {
   GitlabDiscussionsResultV1Schema,
   GitlabNotesResultV1Schema,
   GitlabPipelinesResultV1Schema,
+  GitlabRawDiffResultV1Schema,
 } from './detail/contracts.js';
 import {
   listGitlabActivityEvents,
@@ -14,6 +19,7 @@ import {
   listGitlabDiscussions,
   listGitlabNotes,
   listGitlabPipelines,
+  readGitlabRawDiff,
   readGitlabApprovals,
 } from './detailOperations.js';
 import {
@@ -164,6 +170,87 @@ describe('GitLab pipelines plane', () => {
     expect(result.runningCount).toBe(0);
     expect(result.passingCount).toBe(0);
   });
+
+  it('does not publish a complete rollup from only the first jobs page', async () => {
+    const jobsNext = `${GITLAB_TEST_ORIGIN}/api/v4/projects/3/pipelines/91/jobs?page=2&per_page=20`;
+    const stub = createStubGitlabTransport({
+      respond: (request) => {
+        const path = pathOf(request);
+        if (path.endsWith('/merge_requests/7/pipelines')) return ok([PIPELINE]);
+        if (path.endsWith('/pipelines/91/jobs')) {
+          return ok(
+            [{ id: 1, status: 'success' }],
+            gitlabNextLinkHeader(jobsNext),
+          );
+        }
+        return undefined;
+      },
+    });
+
+    const result = GitlabPipelinesResultV1Schema.parse(
+      await listGitlabPipelines(planeInput(), stub.context),
+    );
+    if (result.kind !== 'pipelines') throw new Error('the pipelines page must settle');
+
+    // The page did not contain the whole breakdown. Publishing `1 passing` here
+    // would make a partial first page look like the complete newest pipeline.
+    expect(result).not.toHaveProperty('failingCount');
+    expect(result).not.toHaveProperty('runningCount');
+    expect(result).not.toHaveProperty('passingCount');
+    expect(result).not.toHaveProperty('rollupPipelineId');
+  });
+
+  it('aggregates every provider-linked jobs page before publishing the rollup', async () => {
+    const jobsNext = `${GITLAB_TEST_ORIGIN}/api/v4/projects/3/pipelines/91/jobs?page=2&per_page=20`;
+    const stub = createStubGitlabTransport({
+      respond: (request) => {
+        const requestUrl = new URL(request.url);
+        if (requestUrl.pathname.endsWith('/merge_requests/7/pipelines')) return ok([PIPELINE]);
+        if (!requestUrl.pathname.endsWith('/pipelines/91/jobs')) return undefined;
+        return requestUrl.searchParams.get('page') === '2'
+          ? ok([
+            { id: 2, status: 'failed' },
+            { id: 3, status: 'running' },
+          ])
+          : ok([{ id: 1, status: 'success' }], gitlabNextLinkHeader(jobsNext));
+      },
+    });
+
+    const result = GitlabPipelinesResultV1Schema.parse(
+      await listGitlabPipelines(planeInput(), stub.context),
+    );
+    if (result.kind !== 'pipelines') throw new Error('the pipelines page must settle');
+
+    expect(result.failingCount).toBe(1);
+    expect(result.runningCount).toBe(1);
+    expect(result.passingCount).toBe(1);
+    expect(result.rollupPipelineId).toBe('91');
+  });
+
+  it('does not publish a rollup when the jobs Link walk cycles', async () => {
+    const jobsFirst = `${GITLAB_TEST_ORIGIN}/api/v4/projects/3/pipelines/91/jobs?per_page=20`;
+    const jobsNext = `${GITLAB_TEST_ORIGIN}/api/v4/projects/3/pipelines/91/jobs?page=2&per_page=20`;
+    const stub = createStubGitlabTransport({
+      respond: (request) => {
+        const requestUrl = new URL(request.url);
+        if (requestUrl.pathname.endsWith('/merge_requests/7/pipelines')) return ok([PIPELINE]);
+        if (!requestUrl.pathname.endsWith('/pipelines/91/jobs')) return undefined;
+        return requestUrl.searchParams.get('page') === '2'
+          ? ok([{ id: 2, status: 'failed' }], gitlabNextLinkHeader(jobsFirst))
+          : ok([{ id: 1, status: 'success' }], gitlabNextLinkHeader(jobsNext));
+      },
+    });
+
+    const result = GitlabPipelinesResultV1Schema.parse(
+      await listGitlabPipelines(planeInput(), stub.context),
+    );
+    if (result.kind !== 'pipelines') throw new Error('the pipelines page must settle');
+
+    expect(result).not.toHaveProperty('failingCount');
+    expect(result).not.toHaveProperty('runningCount');
+    expect(result).not.toHaveProperty('passingCount');
+    expect(result).not.toHaveProperty('rollupPipelineId');
+  });
 });
 
 /* ------------------------------------------------------------------- changes */
@@ -236,7 +323,7 @@ describe('GitLab changes plane', () => {
     expect(result.diffLimitStatus).toBe('unknown');
   });
 
-  it('never requests the deprecated changes endpoint or a raw diff', async () => {
+  it('keeps the default changed-file read on current /diffs only', async () => {
     const stub = createStubGitlabTransport({
       respond: (request) => (
         pathOf(request).endsWith('/merge_requests/7/diffs') ? ok([]) : undefined
@@ -248,6 +335,27 @@ describe('GitLab changes plane', () => {
     expect(requested.some((url) => url.includes('/changes'))).toBe(false);
     expect(requested.some((url) => url.includes('raw_diffs'))).toBe(false);
     expect(requested.some((url) => url.includes('access_raw_diffs'))).toBe(false);
+  });
+
+  it('reads raw_diffs as labelled raw text only after the dedicated user action', async () => {
+    const rawText = 'diff --git a/src/a.ts b/src/a.ts\n+const ready = true;\n';
+    const stub = createStubGitlabTransport({
+      respond: (request) => (
+        pathOf(request).endsWith('/merge_requests/7/raw_diffs')
+          ? { status: 200, headers: { 'content-type': 'text/plain' }, bodyText: rawText }
+          : undefined
+      ),
+    });
+
+    const result = GitlabRawDiffResultV1Schema.parse(
+      await readGitlabRawDiff(itemInput(), stub.context),
+    );
+
+    expect(result).toEqual({ kind: 'rawDiff', text: rawText, truncated: false });
+    expect(stub.requests).toHaveLength(1);
+    expect(pathOf(stub.requests[0]!)).toBe('/api/v4/projects/3/merge_requests/7/raw_diffs');
+    expect(stub.requests[0]?.headers.Accept).toBe('text/plain');
+    expect(stub.requests[0]?.redirect).toBe('error');
   });
 });
 
@@ -309,6 +417,67 @@ describe('GitLab approvals plane', () => {
     expect(result.rules.rules).toEqual([
       { id: '4', name: 'Backend owners', approvalsRequired: 1, approved: false },
     ]);
+  });
+
+  it('preserves provider approvers and rules beyond the retired local count ceilings', async () => {
+    const approvedBy = Array.from(
+      { length: 41 },
+      (_, index) => ({ user: { username: `reviewer-${index}` } }),
+    );
+    const approvalRules = Array.from(
+      { length: 41 },
+      (_, index) => ({ id: index + 1, name: `Rule ${index}`, approvals_required: 1 }),
+    );
+    const stub = createStubGitlabTransport({
+      respond: (request) => {
+        const path = pathOf(request);
+        if (path.endsWith('/merge_requests/7/approvals')) {
+          return ok({ ...APPROVAL_STATE, approved_by: approvedBy });
+        }
+        if (path.endsWith('/merge_requests/7/approval_rules')) return ok(approvalRules);
+        return undefined;
+      },
+    });
+
+    const result = GitlabApprovalsResultV1Schema.parse(
+      await readGitlabApprovals(itemInput(), stub.context),
+    );
+    if (result.kind !== 'approvals') throw new Error('the approvals read must settle');
+    if (result.rules.kind !== 'available') throw new Error('the rules must be available');
+    expect(result.approvedBy).toHaveLength(approvedBy.length);
+    expect(result.omittedApproverCount).toBe(0);
+    expect(result.rules.rules).toHaveLength(approvalRules.length);
+    expect(result.rules.omittedRuleCount).toBe(0);
+    expect(result.projectionTruncated).toBe(false);
+  });
+
+  it('reports malformed provider approvers as omitted rather than silently losing them', async () => {
+    const stub = createStubGitlabTransport({
+      respond: (request) => {
+        const path = pathOf(request);
+        if (path.endsWith('/merge_requests/7/approvals')) {
+          return ok({
+            ...APPROVAL_STATE,
+            approved_by: [
+              { user: { username: 'reviewer-one' } },
+              { user: { name: 'missing provider username' } },
+            ],
+          });
+        }
+        if (path.endsWith('/merge_requests/7/approval_rules')) {
+          return { status: 403, body: { message: '403 Forbidden' } };
+        }
+        return undefined;
+      },
+    });
+
+    const result = GitlabApprovalsResultV1Schema.parse(
+      await readGitlabApprovals(itemInput(), stub.context),
+    );
+    if (result.kind !== 'approvals') throw new Error('the approvals read must settle');
+    expect(result.approvedBy).toEqual(['reviewer-one']);
+    expect(result.omittedApproverCount).toBe(1);
+    expect(result.projectionTruncated).toBe(true);
   });
 
   it('keeps a real rules failure distinct from a licence answer', async () => {
@@ -426,6 +595,55 @@ describe('GitLab detail paging custody', () => {
     expect(result.rows).toHaveLength(1);
     expect(result.continuation).toBeUndefined();
     expect(stub.requests.every((request) => request.url.startsWith(GITLAB_TEST_ORIGIN))).toBe(true);
+  });
+
+  it('fits provider rows to the canonical Action response envelope with honest omission evidence', async () => {
+    const stub = createStubGitlabTransport({
+      respond: (request) => (
+        pathOf(request).endsWith('/notes')
+          ? ok([
+            { id: 1, body: 'kept note', created_at: '2026-08-01T00:00:00Z' },
+            {
+              id: 2,
+              body: 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES),
+              created_at: '2026-08-01T00:01:00Z',
+            },
+          ])
+          : undefined
+      ),
+    });
+
+    const result = GitlabNotesResultV1Schema.parse(
+      await listGitlabNotes(planeInput(), stub.context),
+    );
+    if (result.kind !== 'notes') throw new Error('the notes page must settle');
+    expect(result.rows.map((row) => row.id)).toEqual(['1']);
+    expect(result.omittedRowCount).toBe(1);
+    expect(result.projectionTruncated).toBe(true);
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+  });
+
+  it('keeps fitting rows and reports pagination when an opaque provider Link cannot fit', async () => {
+    const oversizedNext = `${GITLAB_TEST_ORIGIN}/api/v4/projects/3/merge_requests/7/notes?cursor=${'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES)}`;
+    const stub = createStubGitlabTransport({
+      respond: (request) => (
+        pathOf(request).endsWith('/notes')
+          ? ok(
+            [{ id: 1, body: 'kept note', created_at: '2026-08-01T00:00:00Z' }],
+            gitlabNextLinkHeader(oversizedNext),
+          )
+          : undefined
+      ),
+    });
+
+    const result = GitlabNotesResultV1Schema.parse(
+      await listGitlabNotes(planeInput(), stub.context),
+    );
+    if (result.kind !== 'notes') throw new Error('the notes page must settle');
+    expect(result.rows.map((row) => row.id)).toEqual(['1']);
+    expect(result.continuation).toBeUndefined();
+    expect(result.incomplete).toBe('pagination');
+    expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
   });
 });
 

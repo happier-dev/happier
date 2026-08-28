@@ -1,8 +1,11 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+    EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+    isExternalActionResultWithinResponseEnvelopeLimitV1,
+} from '@happier-dev/plugin-sdk/actions';
 // The published result schemas live on the protocol entry point; `testing/v1` publishes
 // only the conformance helpers and the fixture builder.
 import {
-    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TriageGetResultV1Schema,
     TriageListInstancesResultV1Schema,
     TriageScanResultV1Schema,
@@ -28,16 +31,17 @@ import {
     POSTHOG_ACTIVITY_WALK_STOPPED_SHORT_V1,
     PosthogIssueActivityResultV1Schema,
 } from './detail/issueActivityContract.js';
+import { PosthogCodeVariablesResultV1Schema } from './detail/codeVariablesContract.js';
 import {
     POSTHOG_FAILURE_CODES,
-    createPosthogCapabilityProbe,
+    createPosthogCodeVariablesReader,
     createPosthogConfigurationDirectoryReader,
     createPosthogIssueActivityReader,
     createPosthogSampledEventsReader,
     createPosthogSourceEntryReader,
     getPosthogSourceEntry,
     listPosthogInstances,
-    probePosthogCapability,
+    readPosthogCodeVariablesForIssue,
     readPosthogConfigurationDirectory,
     readPosthogSampledEvents,
     scanPosthogSource,
@@ -325,10 +329,62 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).toHaveBeenCalledTimes(1);
     });
 
+    it('preserves a long same-origin advancing continuation without a source-local URL cap', async () => {
+        const next = `https://eu.posthog.com/api/organizations/?offset=1&cursor=${'a'.repeat(9 * 1024)}`;
+        const host = context([{ ...organizationsPage, next }]);
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(result).toMatchObject({ kind: 'organizations', next });
+        expect(result.kind === 'organizations' ? result.incomplete : true).toBeUndefined();
+    });
+
+    it('omits only an oversized provider continuation and states that the directory is incomplete', async () => {
+        const next = `https://eu.posthog.com/api/organizations/?offset=1&cursor=${'a'.repeat(
+            EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
+        )}`;
+        const host = context([{ ...organizationsPage, next }]);
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(PosthogConfigurationDirectoryResultV1Schema.safeParse(result).success).toBe(true);
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+        expect(result.kind).toBe('organizations');
+        if (result.kind !== 'organizations') return;
+        expect(result.rows).toHaveLength(1);
+        expect(result.next).toBeUndefined();
+        expect(result.incomplete).toBe(true);
+    });
+
+    it('projects a provider-overdelivered directory page instead of rejecting every row', async () => {
+        const host = context([{
+            ...organizationsPage,
+            results: Array.from({ length: 101 }, () => organizationsPage.results[0]),
+        }]);
+        const result = await readPosthogConfigurationDirectory({
+            v: 1,
+            kind: 'organizations',
+            binding: { purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE, account: ACCOUNT },
+            page: { kind: 'initial' },
+        }, host.value);
+
+        expect(() => PosthogConfigurationDirectoryResultV1Schema.parse(result)).not.toThrow();
+        expect(result).toMatchObject({ kind: 'organizations', incomplete: true });
+        expect(result.kind === 'organizations' ? result.rows : []).toHaveLength(100);
+    });
+
     it('does not publish a directory continuation whose offset does not advance', async () => {
         const host = context([{
             ...organizationsPage,
-            next: 'https://eu.posthog.com/api/organizations/?limit=754&offset=0',
+            next: 'https://eu.posthog.com/api/organizations/?limit=100&offset=0',
         }]);
         const result = await readPosthogConfigurationDirectory({
             v: 1,
@@ -340,26 +396,6 @@ describe('PostHog Triage source operations', () => {
         expect(result).toMatchObject({ kind: 'organizations', incomplete: true });
         expect(result.kind === 'organizations' ? result.next : undefined).toBeUndefined();
         expect(host.request).toHaveBeenCalledTimes(1);
-    });
-
-    it('probes the selected draft through one authenticated Error Tracking page', async () => {
-        const instance = configuredInstance();
-        const host = context([queryIssuesPage1]);
-        const result = await probePosthogCapability({
-            v: 1,
-            draft: {
-                v: 1,
-                binding: instance.binding,
-                localInstanceKey: instance.localInstanceKey,
-                keyStability: 'locatorDerived',
-                configuration: instance.configuration,
-                locator: { v: 1, displayLabel: 'Storefront' },
-            },
-        }, host.value);
-
-        expect(result).toEqual({ kind: 'available' });
-        expect(host.request).toHaveBeenCalledTimes(1);
-        expect(host.request.mock.calls[0]?.[0]).toMatchObject({ method: 'POST' });
     });
 
     it('returns a bounded scan page and carries frozen geometry only in its continuation', async () => {
@@ -388,13 +424,7 @@ describe('PostHog Triage source operations', () => {
         expect(host.request).toHaveBeenCalledTimes(2);
     });
 
-    it('ends the walk truthfully when the next continuation cannot fit the protocol bound', async () => {
-        // The target copies a token back verbatim, so the walk position this source
-        // resumes from is the widest input it can be handed. The token below is exactly
-        // at the published bound; advancing the offset by one digit puts the NEXT token
-        // one byte over it, and the token is a member of a `policy: 'closed'` result — so
-        // emitting it discards every row on this page and the reader sees no list.
-        const encoder = new TextEncoder();
+    it('preserves a wide continuation and leaves size to the Action envelope', async () => {
         const geometry = (offset: number, pad: number): string => JSON.stringify({
             v: 1,
             environmentIndex: 0,
@@ -406,12 +436,7 @@ describe('PostHog Triage source operations', () => {
             // the geometry whose width decides whether the NEXT one still fits.
             walkHealth: [],
         });
-        const pad = MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
-            - encoder.encode(geometry(9, 0)).byteLength;
-        expect(encoder.encode(geometry(9, pad)).byteLength)
-            .toBe(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
-        expect(encoder.encode(geometry(12, pad)).byteLength)
-            .toBeGreaterThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+        const pad = 32 * 1024;
 
         const host = context([{ ...queryIssuesPage1, nextOffset: 12 }]);
         const result = await scanPosthogSource({
@@ -421,15 +446,10 @@ describe('PostHog Triage source operations', () => {
         }, host.value);
 
         expect(() => TriageScanResultV1Schema.parse(result)).not.toThrow();
-        // The page's rows survive: an unresumable walk is a coverage fact, not a reason
-        // to throw away entries the provider already answered with.
-        expect(result.kind).toBe('complete');
-        if (result.kind !== 'complete') return;
+        expect(result.kind).toBe('page');
+        if (result.kind !== 'page') return;
         expect(result.observations).toHaveLength(3);
-        expect(result.evidence).toEqual({
-            kind: 'partial',
-            reason: POSTHOG_FAILURE_CODES.continuationUnmintable,
-        });
+        expect(result.continuation.token).toBe(geometry(12, pad));
     });
 
     /**
@@ -580,6 +600,128 @@ describe('PostHog Triage source operations', () => {
         // The refusal happens before the request boundary; no credential was materialized.
         expect(host.request).not.toHaveBeenCalled();
         expect(host.materializeListedAccount).not.toHaveBeenCalled();
+    });
+
+    it('rereads only the confirmed occurrence and publishes only projected code variables', async () => {
+        const localRef = {
+            kindId: 'error-issue',
+            collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+            entryId: '00000000-0000-4000-8000-000000000001',
+        } as const;
+        const selected = {
+            ...queryIssueEventsPage.results[1],
+            distinct_id: 'must-not-cross-the-action',
+            properties: {
+                sibling_must_not_cross_the_action: 'secret-adjacent',
+                $exception_list: [{
+                    type: 'TypeError',
+                    sibling_must_not_cross_the_action: 'exception',
+                    stacktrace: { frames: [{
+                        function: 'renderSummary',
+                        source: 'app/checkout/summary.tsx',
+                        line: 128,
+                        sibling_must_not_cross_the_action: 'frame',
+                        code_variables: { token: 'captured-secret' },
+                    }] },
+                }],
+            },
+        };
+        const host = context([{
+            ...queryIssueEventsPage,
+            results: [selected],
+            limit: 1,
+            offset: 1,
+            hasMore: false,
+            nextOffset: null,
+        }]);
+
+        const result = await readPosthogCodeVariablesForIssue({
+            v: 1,
+            instance: configuredInstance(),
+            localRef,
+            selectedUuid: selected.uuid,
+            selectedOffset: 1,
+            frozenRequest: {
+                v: 1,
+                issueId: localRef.entryId,
+                from: '2026-07-16T00:00:00.000Z',
+                to: '2026-08-15T00:00:00.000Z',
+                filterTestAccounts: false,
+                onlyAppFrames: false,
+                include: ['exception', 'stacktrace', 'navigation', 'correlation'],
+                limit: 3,
+                offset: 0,
+            },
+        }, host.value);
+
+        expect(() => PosthogCodeVariablesResultV1Schema.parse(result)).not.toThrow();
+        expect(result.kind).toBe('revealed');
+        if (result.kind !== 'revealed') return;
+        expect(JSON.parse(result.variablesText)).toEqual([{
+            frame: {
+                function: 'renderSummary',
+                source: 'app/checkout/summary.tsx',
+                line: 128,
+            },
+            variables: { token: 'captured-secret' },
+        }]);
+        expect(result.variablesText).not.toContain('must-not-cross-the-action');
+        expect(host.materializeListedAccount).toHaveBeenCalledWith(
+            expect.objectContaining({ purpose: POSTHOG_CONNECTED_ACCOUNT_PURPOSE }),
+            { signal: expect.any(AbortSignal) },
+        );
+        expect(host.request).toHaveBeenCalledTimes(1);
+        const request = host.request.mock.calls[0]?.[0] as Readonly<{ body: Uint8Array }>;
+        expect(JSON.parse(new TextDecoder().decode(request.body))).toEqual({
+            issueId: localRef.entryId,
+            dateRange: {
+                date_from: '2026-07-16T00:00:00.000Z',
+                date_to: '2026-08-15T00:00:00.000Z',
+            },
+            filterTestAccounts: false,
+            onlyAppFrames: false,
+            include: ['code_variables'],
+            limit: 1,
+            offset: 1,
+        });
+    });
+
+    it('refuses reveal geometry that was not minted by the sampled-query owner', async () => {
+        const host = context([]);
+        const localRef = {
+            kindId: 'error-issue',
+            collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+            entryId: '00000000-0000-4000-8000-000000000001',
+        } as const;
+
+        const result = await readPosthogCodeVariablesForIssue({
+            v: 1,
+            instance: configuredInstance(),
+            localRef,
+            selectedUuid: '00000000-0000-4000-8000-0000000000f1',
+            selectedOffset: 0,
+            frozenRequest: {
+                v: 1,
+                issueId: localRef.entryId,
+                from: '2026-07-16T00:00:00.000Z',
+                to: '2026-08-15T00:00:00.000Z',
+                filterTestAccounts: false,
+                onlyAppFrames: false,
+                include: ['correlation', 'navigation', 'stacktrace', 'exception'],
+                limit: 3,
+                offset: 0,
+            },
+        }, host.value);
+
+        expect(result).toEqual({
+            kind: 'unavailable',
+            failure: {
+                class: 'unsupportedContract',
+                code: POSTHOG_FAILURE_CODES.requestInvalid,
+            },
+        });
+        expect(host.materializeListedAccount).not.toHaveBeenCalled();
+        expect(host.request).not.toHaveBeenCalled();
     });
 
     it('reports a continuation it did not mint as unavailable instead of guessing a page', async () => {
@@ -779,6 +921,47 @@ describe('PostHog invocation boundaries', () => {
         expect(observed?.aborted).toBe(true);
     });
 
+    it('keeps the code-variable reread inside the same positive mounted deadline', async () => {
+        let observed: AbortSignal | undefined;
+        const host = context([], [], {
+            materialize: async (_request, materializeOptions) => {
+                observed = materializeOptions.signal;
+                return await new Promise(() => {
+                    // The reveal owns no extra retry/timer path; its mounted invocation
+                    // aborts this canonical account boundary when the deadline expires.
+                });
+            },
+        });
+
+        const read = createPosthogCodeVariablesReader(5);
+        const result = await read({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+            selectedUuid: '00000000-0000-4000-8000-0000000000f1',
+            selectedOffset: 0,
+            frozenRequest: {
+                v: 1,
+                issueId: LOCAL_REF.entryId,
+                from: '2026-07-16T00:00:00.000Z',
+                to: '2026-08-15T00:00:00.000Z',
+                filterTestAccounts: false,
+                onlyAppFrames: false,
+                include: ['exception', 'stacktrace', 'navigation', 'correlation'],
+                limit: 3,
+                offset: 0,
+            },
+        }, host.value);
+
+        expect(result).toEqual({
+            kind: 'unavailable',
+            failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
+        });
+        expect(observed).toBeDefined();
+        expect(observed).not.toBe(host.value.signal);
+        expect(observed?.aborted).toBe(true);
+    });
+
     it('does not restart a mounted get deadline after CRUD succeeds just before it', async () => {
         vi.useFakeTimers();
         const caller = new AbortController();
@@ -832,19 +1015,11 @@ describe('PostHog invocation boundaries', () => {
         }
     });
 
-    it('applies one source invocation deadline to settings browsing, capability checks, and mounted live get', async () => {
+    it('applies one source invocation deadline to settings browsing and mounted live get', async () => {
         const neverMaterializes = () => context([], [], {
             materialize: async () => await new Promise(() => undefined),
         });
         const instance = configuredInstance();
-        const draft = {
-            v: 1 as const,
-            binding: instance.binding,
-            localInstanceKey: instance.localInstanceKey,
-            keyStability: 'locatorDerived' as const,
-            configuration: instance.configuration,
-            locator: { v: 1 as const, displayLabel: 'Storefront' },
-        };
 
         const directoryHost = neverMaterializes();
         await expect(createPosthogConfigurationDirectoryReader(5)({
@@ -856,13 +1031,6 @@ describe('PostHog invocation boundaries', () => {
             kind: 'unavailable',
             failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
         });
-
-        const capabilityHost = neverMaterializes();
-        await expect(createPosthogCapabilityProbe(5)({ v: 1, draft }, capabilityHost.value))
-            .resolves.toEqual({
-                kind: 'unavailable',
-                failure: { class: 'transient', code: POSTHOG_FAILURE_CODES.timedOut },
-            });
 
         const getHost = neverMaterializes();
         const get = await createPosthogSourceEntryReader(5)({
@@ -991,6 +1159,30 @@ describe('PostHog issue activity coverage', () => {
         // reader is never told a page covered fewer rows than it consumed.
         expect(result.omittedRowCount).toBe(1);
     });
+
+    it('fits provider-valid Activity rows at the canonical Action envelope', async () => {
+        const normal = issueActivityPage.results[0];
+        const largeSource = issueActivityPage.results[1];
+        if (normal === undefined || largeSource === undefined) {
+            throw new Error('recorded Activity fixture must contain two valid rows');
+        }
+        const oversized = {
+            ...largeSource,
+            activity: 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES),
+        };
+        const result = await readActivity({
+            ...issueActivityPage,
+            results: [normal, oversized],
+            next: null,
+            total_count: 2,
+        });
+
+        expect(result.kind).toBe('activity');
+        if (result.kind !== 'activity') return;
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+        expect(result.records.map((record) => record.id)).toEqual([normal.id]);
+        expect(result.omittedRowCount).toBe(1);
+    });
 });
 
 /**
@@ -1052,5 +1244,45 @@ describe('PostHog sampled occurrence coverage', () => {
             limit: 3,
             offset: 0,
         });
+    });
+
+    it('fits a complete sampled result through the canonical Action envelope and states omitted rows', async () => {
+        const normal = queryIssueEventsPage.results[0];
+        const largeSource = queryIssueEventsPage.results[1];
+        if (normal === undefined || largeSource === undefined) {
+            throw new Error('recorded sampled-event fixture must contain two valid rows');
+        }
+        const oversized = {
+            ...largeSource,
+            properties: {
+                ...largeSource.properties,
+                $exception_list: [{
+                    type: 'TypeError',
+                    value: 'x'.repeat(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES),
+                    stacktrace: { frames: [] },
+                }],
+            },
+        };
+        const host = context([{
+            results: [normal, oversized],
+            hasMore: false,
+            limit: 2,
+            offset: 0,
+            nextOffset: null,
+        }]);
+
+        const result = await readPosthogSampledEvents({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: LOCAL_REF,
+            limit: 2,
+        }, host.value);
+
+        expect(result.kind).toBe('sampled');
+        if (result.kind !== 'sampled') return;
+        expect(PosthogSampledEventsResultV1Schema.safeParse(result).success).toBe(true);
+        expect(isExternalActionResultWithinResponseEnvelopeLimitV1(result)).toBe(true);
+        expect(result.events.map((event) => event.uuid)).toEqual([normal.uuid]);
+        expect(result.omittedRowCount).toBe(1);
     });
 });

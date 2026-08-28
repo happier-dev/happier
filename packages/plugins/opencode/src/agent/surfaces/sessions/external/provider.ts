@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import { projectOpenCodeExternalSessionSource } from './client.js';
+import { buildOpenCodeAgentRuntimeDescriptorV1 } from '../../../identity/runtimeDescriptor.js';
 
 function invocationFailure(
   request: AgentExternalSessionTakeoverResolveLaunchRequest,
@@ -31,7 +32,8 @@ async function resolveLaunch(
 ): Promise<AgentExternalSessionTakeoverResolveLaunchResult> {
   const stopped = invocationFailure(request);
   if (stopped) return stopped;
-  if (!projectOpenCodeExternalSessionSource(request.source)) {
+  const source = projectOpenCodeExternalSessionSource(request.source);
+  if (!source) {
     return {
       ok: false,
       code: 'source_invalid',
@@ -43,7 +45,10 @@ async function resolveLaunch(
     ok: true,
     value: {
       directory: request.targetDirectory,
-      backendModeHint: 'server',
+      runtimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptorV1({
+        backendMode: 'server',
+        providerSessionId: request.remoteSessionId,
+      }),
     },
   };
 }

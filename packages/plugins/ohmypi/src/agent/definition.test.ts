@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_DEFINITION } from './definition.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CONTRIBUTION } from './contributions/catalog.js';
 
 describe('OhMyPi agent definition', () => {
   it('advertises Claude subscription credentials as token-only', () => {
@@ -26,14 +25,7 @@ describe('OhMyPi agent definition', () => {
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');
   });
 
-  it('binds the bundled catalog projection to its static catalog contribution leaf', () => {
-    expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
-      importName: 'OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    });
-  });
-
-  it('does not retain Session preferences in the catalog contribution', () => {
-    expect(CATALOG_CONTRIBUTION).not.toHaveProperty('sessionRuntimePreferences');
+  it('does not retain a private catalog callback bag beside the public Agent declaration', () => {
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions.agentCatalogEntry');
   });
 });

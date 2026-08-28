@@ -1,25 +1,11 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-
 import { describe, expect, it } from 'vitest';
 
 import {
   readCodexActiveProviderAccount,
   readCodexAuthStoreProviderAccountIdProofFromValue,
-  readCodexAuthStoreProviderAccountId,
   readCodexAuthStoreProviderAccountIdFromJson,
   verifyCodexActiveProviderAccount,
 } from './accountId.js';
-
-async function withTempDir<T>(prefix: string, run: (directory: string) => Promise<T>): Promise<T> {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
-  try {
-    return await run(directory);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-}
 
 function buildJwt(payload: Record<string, unknown>): string {
   return [
@@ -53,47 +39,35 @@ describe('readCodexAuthStoreProviderAccountId', () => {
     });
   });
 
-  it('reads the upstream Codex token account id', async () => {
-    await withTempDir('happier-codex-auth-store-', async (root) => {
-      const codexHome = join(root, 'codex-home');
-      await mkdir(codexHome, { recursive: true });
-      await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
-        auth_mode: 'chatgptAuthTokens',
-        tokens: {
-          access_token: 'redacted',
-          refresh_token: 'redacted',
-          account_id: 'acct_tokens',
-        },
-      }));
-
-      await expect(readCodexAuthStoreProviderAccountId(codexHome)).resolves.toEqual({
-        status: 'resolved',
-        accountId: 'acct_tokens',
-      });
+  it('reads the upstream Codex token account id', () => {
+    expect(readCodexAuthStoreProviderAccountIdFromJson({
+      auth_mode: 'chatgptAuthTokens',
+      tokens: {
+        access_token: 'redacted',
+        refresh_token: 'redacted',
+        account_id: 'acct_tokens',
+      },
+    })).toEqual({
+      status: 'resolved',
+      accountId: 'acct_tokens',
     });
   });
 
-  it('reads the upstream Codex token account id and email from an id_token JWT', async () => {
-    await withTempDir('happier-codex-auth-store-', async (root) => {
-      const codexHome = join(root, 'codex-home');
-      await mkdir(codexHome, { recursive: true });
-      await writeFile(join(codexHome, 'auth.json'), JSON.stringify({
-        auth_mode: 'chatgptAuthTokens',
-        tokens: {
-          access_token: 'redacted',
-          refresh_token: 'redacted',
-          id_token: buildJwt({
-            chatgpt_account_id: 'acct_from_jwt',
-            email: 'codex-user@example.test',
-          }),
-        },
-      }));
-
-      await expect(readCodexAuthStoreProviderAccountId(codexHome)).resolves.toEqual({
-        status: 'resolved',
-        accountId: 'acct_from_jwt',
-        accountEmail: 'codex-user@example.test',
-      });
+  it('reads the upstream Codex token account id and email from an id_token JWT', () => {
+    expect(readCodexAuthStoreProviderAccountIdFromJson({
+      auth_mode: 'chatgptAuthTokens',
+      tokens: {
+        access_token: 'redacted',
+        refresh_token: 'redacted',
+        id_token: buildJwt({
+          chatgpt_account_id: 'acct_from_jwt',
+          email: 'codex-user@example.test',
+        }),
+      },
+    })).toEqual({
+      status: 'resolved',
+      accountId: 'acct_from_jwt',
+      accountEmail: 'codex-user@example.test',
     });
   });
 

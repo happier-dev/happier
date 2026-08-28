@@ -112,7 +112,7 @@ async function runGitOrThrow(input: Readonly<{
     return result.stdout.trim();
 }
 
-async function readGitRevision(input: Readonly<{
+export async function readGitRevision(input: Readonly<{
     cwd: string;
     revision?: string;
     signal?: AbortSignal;

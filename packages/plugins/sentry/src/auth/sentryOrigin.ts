@@ -52,7 +52,7 @@ export function resolveSentryCloudDeployment(region: string): SentryDeploymentRe
 }
 
 /**
- * Mirrors the host's `CanonicalHttpOriginSchema`: an http/https origin with no
+ * Mirrors the credential-bearing provider boundary: an HTTPS origin with no
  * credentials, no path, no query and no fragment. A pasted trailing slash is
  * normalized away; anything else is refused rather than silently reinterpreted.
  */
@@ -69,7 +69,7 @@ export function normalizeSentryOrigin(
   if (url.username !== '' || url.password !== '') {
     return Object.freeze({ ok: false as const, reason: 'origin-carries-credentials' as const });
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+  if (url.protocol !== 'https:') {
     return Object.freeze({ ok: false as const, reason: 'origin-scheme-unsupported' as const });
   }
   if ((url.pathname !== '' && url.pathname !== '/') || url.search !== '' || url.hash !== '') {

@@ -8,7 +8,10 @@ import {
     defineProtocolString,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
-import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
+import {
+    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1,
+    type ScopedSettingsService,
+} from '@happier-dev/plugin-sdk/settings';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
@@ -65,8 +68,6 @@ import { readExactKeys } from './storedValue.js';
 /** The one versioned Account Settings key this document owns. */
 export const TRIAGE_ACTIONS_SETTING_ID_V1 = 'triage.actions';
 
-/** Label bound, measured in UTF-8 bytes after trimming, not in characters. */
-export const MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1 = 64;
 /**
  * `LaunchProfileV2.id` is bounded at 256 characters
  * (`packages/protocol/src/profiles/v2/schema.ts`); a profile id this record
@@ -76,9 +77,11 @@ export const MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1 = 256;
 /**
  * The whole serialized `triage.actions` value, measured over the complete value
  * rather than per member, because a set of individually valid actions is exactly
- * how a Settings record overflows.
+ * how a Settings record overflows. Settings owns this boundary; Triage aliases the
+ * public field limit instead of maintaining a second 64-KiB ledger.
  */
-export const MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 = 64 * 1024;
+export const MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 =
+    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFieldEncodedBytes;
 
 /**
  * The opaque Settings revision token, bounded by the owner that already bounds
@@ -220,7 +223,6 @@ const triageActionIdSchema = defineProtocolString({
 
 const triageActionLabelSchema = defineProtocolString({
     minLength: 1,
-    maxLength: MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1,
     pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 });
 
@@ -351,10 +353,9 @@ export function triageActionsSettingFieldJsonSchemaV1(): PluginJsonSchema {
  *    Session with the reader's own profile and prompt and asks that agent to
  *    review the change. This is the arm that works today.
  *
- * `reviewStart` remains a declared record arm for the producer work tracked by
- * `U-SCM-AGENT-REVIEW-UI` and `U-SCM-AGENT-REVIEW-SCOPE`, but it is not seeded
- * while those units are partial: a default action is a product offer, and an
- * offer whose only reachable result is a refusal is false availability.
+ * `reviewStart` remains configurable rather than seeded: Ask, Fix and the
+ * ordinary agent Review are the shipped defaults, while a reader who wants the
+ * formal engine-selection flow can add or retarget an action explicitly.
  */
 export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
     Object.freeze({
@@ -392,15 +393,24 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
 /**
  * The one current target-availability decision.
  *
- * `reviewStart` is a valid declared configuration shape, but its two required
- * producers are not landed end to end. Keeping schema admission separate from
- * current offerability lets stored/future records remain readable without
- * presenting a control whose only runtime outcome is refusal.
+ * Both declared target arms have mounted producers. Keeping this decision at
+ * the catalog owner means the editor and every mounted action surface expose
+ * the same current set rather than independently guessing availability.
  */
 export function isTriageActionTargetOfferableV1(
     kind: TriageActionTargetV1['kind'],
 ): boolean {
-    return kind === 'agent';
+    return kind === 'agent' || kind === 'reviewStart';
+}
+
+/** The one valid target/materialization/subject rule shared by storage and mounts. */
+export function isTriageActionConfigurationCoherentV1(
+    action: Pick<TriageActionV1, 'target' | 'workspaceMode' | 'appliesTo'>,
+): boolean {
+    return action.target.kind === 'agent'
+        || (action.workspaceMode === 'pull_request'
+            && action.appliesTo.length === 1
+            && action.appliesTo[0] === 'pullRequest');
 }
 
 /** The catalog projection shared by surfaces that do not know one subject. */
@@ -408,7 +418,9 @@ export function planTriageOfferableActionsV1(
     actions: readonly TriageActionV1[],
 ): readonly TriageActionV1[] {
     return actions.filter(
-        (action) => action.enabled && isTriageActionTargetOfferableV1(action.target.kind),
+        (action) => action.enabled
+            && isTriageActionTargetOfferableV1(action.target.kind)
+            && isTriageActionConfigurationCoherentV1(action),
     );
 }
 
@@ -571,6 +583,12 @@ function readBoundedString(value: unknown, maxUtf8Bytes: number): string | null 
     return utf8ByteLength(normalized) > maxUtf8Bytes ? null : normalized;
 }
 
+function readSingleLineString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = normalizeTriageSingleLineV1(value);
+    return normalized.length === 0 ? null : normalized;
+}
+
 function readClosedValue<TValue extends string>(
     admitted: readonly TValue[],
 ): (value: unknown) => TValue | null {
@@ -654,7 +672,9 @@ function readAction(actionId: string, draft: Readonly<{
     workspaceMode: unknown;
     target: unknown;
 }>): Outcome<TriageActionV1> {
-    const label = readBoundedString(draft.label, MAX_TRIAGE_ACTION_LABEL_UTF8_BYTES_V1);
+    // The enclosing Account Settings field owns the real byte boundary. A
+    // second per-label ceiling would reject otherwise valid user configuration.
+    const label = readSingleLineString(draft.label);
     if (label === null) return { ok: false, reason: 'label' };
     if (typeof draft.enabled !== 'boolean') return { ok: false, reason: 'enabled' };
     const appliesTo = readAppliesTo(draft.appliesTo);
@@ -667,6 +687,13 @@ function readAction(actionId: string, draft: Readonly<{
     if (workspaceMode === null) return { ok: false, reason: 'workspaceMode' };
     const target = readTarget(draft.target);
     if (!target.ok) return target;
+    if (!isTriageActionConfigurationCoherentV1({
+        workspaceMode,
+        target: target.value,
+        appliesTo: appliesTo.value,
+    })) {
+        return { ok: false, reason: 'workspaceMode' };
+    }
     return {
         ok: true,
         value: {

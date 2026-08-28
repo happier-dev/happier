@@ -1,13 +1,8 @@
 import {
-  createExecutionRunHostBackendFromSessionRuntime,
-  type AgentExecutionRunRuntime,
-  type AgentRuntime,
-  type AgentRuntimeContext,
   type AgentRuntimeFactory,
   type AgentSessionOpenRequest,
   type AgentSessionRuntime,
   type AgentSessionRuntimeContext,
-  type AgentSessionUsageLimitRecoveryControl,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { join } from 'node:path';
@@ -23,26 +18,6 @@ import { readStrictCanonicalPiAgentRuntimeDescriptorV1 } from '../../protocol/ru
 export {
   piExternalSessionsContribution,
 } from '../externalSessions/contribution.js';
-
-const PI_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS = 600_000;
-
-const piUsageLimitRecovery: AgentSessionUsageLimitRecoveryControl = {
-  async execute(request) {
-    if (request.kind !== 'checkNow') {
-      return {
-        status: 'unsupported',
-        diagnostic: {
-          code: 'pi_reset_credit_unsupported',
-          severity: 'error',
-        },
-      };
-    }
-    return {
-      status: 'waiting',
-      retryAfterMs: PI_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS,
-    };
-  },
-};
 
 function readPermissionMode(request: AgentSessionOpenRequest): string | undefined {
   return request.configuration?.permissionIntent.value ?? undefined;
@@ -72,7 +47,7 @@ function resolvePiResumeSessionId(request: AgentSessionOpenRequest): string | nu
 
 async function openPiSession(
   request: AgentSessionOpenRequest,
-  context: Pick<AgentRuntimeContext, 'services' | 'signal' | 'session'>,
+  context: AgentSessionRuntimeContext,
 ): Promise<AgentSessionRuntime> {
   if (request.kind === 'fork') {
     throw new Error('Pi does not support native session fork');
@@ -84,9 +59,7 @@ async function openPiSession(
   let preparedTools: PreparedPiHappierToolsExtension | null = null;
   let runtime: AgentSessionRuntime;
   try {
-    const session = context.session as AgentSessionRuntimeContext['session'] | undefined;
-    const models = session && 'services' in session ? session.services.models : null;
-    const happierTools = session && 'services' in session ? session.services.happierTools : null;
+    const { models, happierTools } = context.session.services;
     if (happierTools) {
       const config = await happierTools.resolveNativeBridge({
         systemPrompt: request.startupInstructions?.instructions,
@@ -101,7 +74,7 @@ async function openPiSession(
     }
     runtime = prepared.bind(await createPiRuntimeOperations({
       services: context.services,
-      ...(models ? { models } : {}),
+      models,
       logger: context.services.logger,
       cwd: request.cwd,
       env: prepared.launchEnvironment.values,
@@ -154,28 +127,8 @@ async function openPiSession(
   throw failure;
 }
 
-async function openPiExecutionRun(
-  request: Parameters<NonNullable<AgentRuntime['executionRuns']>['open']>[0],
-  context: AgentRuntimeContext,
-): Promise<AgentExecutionRunRuntime> {
-  if (request.kind !== 'create') {
-    throw new Error(`Pi execution runs do not support ${request.kind}`);
-  }
-  return await createExecutionRunHostBackendFromSessionRuntime({
-    request,
-    openSession: async () => await openPiSession({
-      kind: 'create',
-      sessionId: request.runId,
-      cwd: request.cwd,
-      ...(request.launchEnvironment ? { launchEnvironment: request.launchEnvironment } : {}),
-    }, context),
-  });
-}
-
 export const createPiAgentRuntime: AgentRuntimeFactory = () => ({
   sessions: {
     open: openPiSession,
-    usageLimitRecovery: piUsageLimitRecovery,
   },
-  executionRuns: { open: openPiExecutionRun },
 });

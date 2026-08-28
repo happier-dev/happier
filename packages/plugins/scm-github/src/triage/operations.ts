@@ -1,16 +1,20 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isExternalActionResultWithinResponseEnvelopeLimitV1 } from '@happier-dev/plugin-sdk/actions';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
-  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
   TriageGetInputV1Schema,
   TriageListInstancesInputV1Schema,
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriageScanInputV1Schema,
+  TriageVerifyReviewWorkspaceInputV1Schema,
   type TriageConfiguredSourceInstanceV1,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
   type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
   type TriageSourceFailureV1,
+  type TriageVerifyReviewWorkspaceInputV1,
+  type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -50,7 +54,7 @@ import { runGithubTriageScan } from './scan/scan.js';
 import type { GithubTriageEntryLocalRefV1 } from './types.js';
 
 /**
- * The three GitHub source operations, expressed in the published source ABI.
+ * The GitHub source operations, expressed in the published source ABI.
  *
  * This module is the ONLY Triage boundary in this plugin. Everything below it is
  * GitHub's own vertical — the shared REST client, the five-lane scan, the
@@ -73,6 +77,23 @@ const FOREIGN_BINDING_FAILURE: TriageSourceFailureV1 = Object.freeze({
   class: 'unsupportedContract',
   code: 'github_instance_binding_foreign',
 });
+
+function readScmWorkspaceVerification(value: unknown): Readonly<{
+  targetPath: string;
+  sourceHeadSha: string;
+}> | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Readonly<Record<string, unknown>>;
+  return typeof record.targetPath === 'string' && typeof record.sourceHeadSha === 'string'
+    ? Object.freeze({ targetPath: record.targetPath, sourceHeadSha: record.sourceHeadSha })
+    : null;
+}
+
+/** Preserve cancellation across the SCM process boundary for both workspace roles. */
+function rethrowGithubReviewWorkspaceAbort(error: unknown, signal: AbortSignal): void {
+  signal.throwIfAborted();
+  if (error instanceof Error && error.name === 'AbortError') throw error;
+}
 
 
 export type GithubResolvedTriageInstanceV1 =
@@ -111,7 +132,7 @@ function resolveInstance(instance: TriageConfiguredSourceInstanceV1): ResolvedIn
  * one credential holder and retains nothing beyond the call.
  *
  * Exported for the same reason as the admission above: every GitHub Triage read,
- * including the four source-native detail planes, materializes its account
+ * including the six source-native detail planes, materializes its account
  * through this one seam.
  */
 export async function openGithubTriageClient(
@@ -235,7 +256,10 @@ function toGithubReviewWorkspaceSourceTip(
 
 function mapGithubReviewWorkspaceMaterializationFailure(
   errorCode: string,
-): TriagePrepareReviewWorkspaceResultV1 {
+): Extract<
+  TriagePrepareReviewWorkspaceResultV1,
+  Readonly<{ kind: 'workspaceMismatch' | 'unavailable' }>
+> {
   switch (errorCode) {
     case 'NOT_REPOSITORY':
     case 'INVALID_PATH':
@@ -244,6 +268,91 @@ function mapGithubReviewWorkspaceMaterializationFailure(
     default:
       return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
+}
+
+type GithubReviewWorkspaceRequestV1 = Readonly<{
+  instance: TriageVerifyReviewWorkspaceInputV1['instance'];
+  entryRef: TriageVerifyReviewWorkspaceInputV1['entryRef'];
+  lastKnownLocator: TriageVerifyReviewWorkspaceInputV1['lastKnownLocator'];
+  observed: TriageVerifyReviewWorkspaceInputV1['observed'];
+}>;
+
+type GithubAuthorizedReviewWorkspaceV1 =
+  | Readonly<{
+    kind: 'authorized';
+    sourceTip: NonNullable<ReturnType<typeof toGithubReviewWorkspaceSourceTip>>;
+    pullRequest: Readonly<{ number: number }>;
+  }>
+  | Readonly<{ kind: 'unavailable'; reason: 'account' }>
+  | Readonly<{ kind: 'refused'; reason: 'instanceMoved' | 'pullRequestMoved' | 'observedHeadMoved' }>;
+
+/** One provider authority path shared by initial preparation and final verification. */
+async function authorizeGithubReviewWorkspace(
+  request: GithubReviewWorkspaceRequestV1,
+  context: PluginInvocationContext,
+  dependencies: GithubTriageOperationDependenciesV1,
+): Promise<GithubAuthorizedReviewWorkspaceV1> {
+  if (!isGithubPullRequestEntryRef(request.entryRef)) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+  const resolved = resolveInstance(request.instance);
+  if (!resolved.ok) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'instanceMoved' as const });
+  }
+  const routingToken = resolveGithubTriageRoutingToken(resolved.configuration, request.lastKnownLocator);
+  const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
+  if (route === null) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+  const localRef: GithubTriageEntryLocalRefV1 = Object.freeze({
+    kindId: 'pull-request',
+    collisionScope: request.entryRef.collisionScope,
+    entryId: request.entryRef.entryId,
+  });
+  const opened = await openClient(request.instance, context);
+  context.signal.throwIfAborted();
+  if (!opened.ok) return Object.freeze({ kind: 'unavailable' as const, reason: 'account' as const });
+
+  const reread = await readGithubPullRequest(
+    localRef,
+    route,
+    createGithubRepositoryReader({
+      client: opened.client,
+      now: dependencies.now ?? (() => context.invokedAtMs),
+    }),
+    {
+      client: opened.client,
+      now: dependencies.now ?? (() => context.invokedAtMs),
+      signal: context.signal,
+    },
+  );
+  context.signal.throwIfAborted();
+  if (
+    reread.observation.kind !== 'present'
+    || reread.facts === null
+    || !hasSameGithubLocalRef(reread.observation.localRef, localRef)
+    || reread.facts.reviewRevision === null
+    || reread.facts.sourceTip === null
+  ) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+  const revision = reread.facts.reviewRevision;
+  if (
+    revision.baseSha !== request.observed.baseSha
+    || revision.headSha !== request.observed.headSha
+    || revision.nativeRevision !== request.observed.nativeRevision
+  ) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'observedHeadMoved' as const });
+  }
+  const sourceTip = toGithubReviewWorkspaceSourceTip(reread.facts.sourceTip);
+  if (sourceTip === null) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+  return Object.freeze({
+    kind: 'authorized' as const,
+    sourceTip,
+    pullRequest: Object.freeze({ number: reread.facts.number }),
+  });
 }
 
 export async function listGithubTriageInstancesOperation(
@@ -257,8 +366,37 @@ export async function listGithubTriageInstancesOperation(
   }
   return await listGithubTriageInstances(
     context,
-    dependencies.now === undefined ? {} : { now: dependencies.now },
+    { now: dependencies.now ?? (() => context.invokedAtMs) },
   );
+}
+
+type GithubPublicScanPageV1 = Extract<TriageScanResultV1, Readonly<{ kind: 'page' }>>;
+
+/** Final Action-envelope settlement for one source-minted GitHub scan page. */
+export function settleGithubTriageScanPage(
+  observations: GithubPublicScanPageV1['observations'],
+  evidence: GithubPublicScanPageV1['evidence'],
+  continuationToken: string,
+): TriageScanResultV1 {
+  const pageResult: TriageScanResultV1 = Object.freeze({
+    kind: 'page' as const,
+    observations,
+    evidence,
+    continuation: Object.freeze({ v: 1 as const, token: continuationToken }),
+  });
+  if (isExternalActionResultWithinResponseEnvelopeLimitV1(pageResult)) return pageResult;
+
+  return Object.freeze({
+    kind: 'complete' as const,
+    observations,
+    evidence: Object.freeze({
+      kind: 'partial' as const,
+      reason: 'continuation-unavailable' as const,
+      ...(evidence.kind === 'partial' && evidence.omittedItemCount !== undefined
+        ? { omittedItemCount: evidence.omittedItemCount }
+        : {}),
+    }),
+  });
 }
 
 export async function scanGithubTriageSource(
@@ -286,12 +424,11 @@ export async function scanGithubTriageSource(
       : Object.freeze({
         kind: 'continuation' as const,
         token: scanInput.page.continuation.token,
-        maxLimit: MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
       }),
     repositoryKey: readGithubScanRepositoryKey(resolved.configuration),
   }, {
     client: opened.client,
-    now: dependencies.now ?? Date.now,
+    now: dependencies.now ?? (() => context.invokedAtMs),
     signal: context.signal,
   });
 
@@ -307,12 +444,7 @@ export async function scanGithubTriageSource(
   }
   // The token is this source's own bytes. The target copies it back on the next page
   // without parsing it, and drops it on cancellation, deadline, failure, or restart.
-  return Object.freeze({
-    kind: 'page' as const,
-    observations,
-    evidence,
-    continuation: Object.freeze({ v: 1 as const, token: result.continuation }),
-  });
+  return settleGithubTriageScanPage(observations, evidence, result.continuation);
 }
 
 export async function getGithubTriageEntry(
@@ -381,7 +513,7 @@ export async function getGithubTriageEntry(
 
   const observation = await runGithubTriageGet({ localRef, routingToken }, {
     client: opened.client,
-    now: dependencies.now ?? Date.now,
+    now: dependencies.now ?? (() => context.invokedAtMs),
     signal: context.signal,
   });
   return toTriageObservation(observation);
@@ -403,7 +535,7 @@ export async function prepareGithubTriageReviewWorkspace(
   const preparation = parsed.data;
 
   context.signal.throwIfAborted();
-  if (preparation.workspace === null) {
+  if (preparation.workspace === undefined) {
     // No local state was selected, so no credential, network, local-SCM or
     // fallback path may be touched.
     return Object.freeze({ kind: 'workspaceRequired' as const });
@@ -411,60 +543,8 @@ export async function prepareGithubTriageReviewWorkspace(
   if (!isGithubPullRequestEntryRef(preparation.entryRef)) {
     return Object.freeze({ kind: 'unsupported' as const });
   }
-
-  const resolved = resolveInstance(preparation.instance);
-  if (!resolved.ok) {
-    return Object.freeze({ kind: 'refused' as const, reason: 'instanceMoved' as const });
-  }
-  const routingToken = resolveGithubTriageRoutingToken(
-    resolved.configuration,
-    preparation.lastKnownLocator,
-  );
-  const route = routingToken === null ? null : parseGithubRoutingToken(routingToken);
-  if (route === null) {
-    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
-  }
-
-  const localRef: GithubTriageEntryLocalRefV1 = Object.freeze({
-    kindId: 'pull-request',
-    collisionScope: preparation.entryRef.collisionScope,
-    entryId: preparation.entryRef.entryId,
-  });
-  const opened = await openClient(preparation.instance, context);
-  context.signal.throwIfAborted();
-  if (!opened.ok) {
-    return Object.freeze({ kind: 'unavailable' as const, reason: 'account' as const });
-  }
-
-  const reread = await readGithubPullRequest(
-    localRef,
-    route,
-    createGithubRepositoryReader({ client: opened.client, now: dependencies.now ?? Date.now }),
-    { client: opened.client, now: dependencies.now ?? Date.now, signal: context.signal },
-  );
-  context.signal.throwIfAborted();
-  if (
-    reread.observation.kind !== 'present'
-    || reread.facts === null
-    || !hasSameGithubLocalRef(reread.observation.localRef, localRef)
-    || reread.facts.reviewRevision === null
-    || reread.facts.sourceTip === null
-  ) {
-    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
-  }
-
-  const reviewRevision = reread.facts.reviewRevision;
-  if (
-    reviewRevision.baseSha !== preparation.observed.baseSha
-    || reviewRevision.headSha !== preparation.observed.headSha
-    || reviewRevision.nativeRevision !== preparation.observed.nativeRevision
-  ) {
-    return Object.freeze({ kind: 'refused' as const, reason: 'observedHeadMoved' as const });
-  }
-  const sourceTip = toGithubReviewWorkspaceSourceTip(reread.facts.sourceTip);
-  if (sourceTip === null) {
-    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
-  }
+  const authorized = await authorizeGithubReviewWorkspace(preparation, context, dependencies);
+  if (authorized.kind !== 'authorized') return authorized;
 
   let materialized;
   try {
@@ -472,18 +552,21 @@ export async function prepareGithubTriageReviewWorkspace(
       'scm.reviewWorkspace.materializePrepared',
       {
         cwd: preparation.workspace.rootPath,
-        displayName: sourceTip.branch,
-        sourceTip,
+        displayName: authorized.sourceTip.branch,
+        sourceTip: authorized.sourceTip,
       },
       { signal: context.signal },
     );
-  } catch {
-    context.signal.throwIfAborted();
+  } catch (error) {
+    rethrowGithubReviewWorkspaceAbort(error, context.signal);
     return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
   context.signal.throwIfAborted();
   if (!materialized.success) {
     return mapGithubReviewWorkspaceMaterializationFailure(materialized.errorCode);
+  }
+  if ('verification' in materialized) {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
   return Object.freeze({
     kind: 'prepared' as const,
@@ -493,6 +576,66 @@ export async function prepareGithubTriageReviewWorkspace(
     currentness: materialized.currentness,
     // The source only transports the exact reread number. Generic SCM/Reviews
     // remains the one parser and validity owner for the reference grammar.
-    pullRequest: Object.freeze({ number: reread.facts.number }),
+    pullRequest: authorized.pullRequest,
   });
+}
+
+/**
+ * Reauthorizes the exact provider revision and then asks the canonical SCM
+ * owner to resolve the already prepared checkout's local HEAD. Verification is
+ * a read arm of the incumbent materialization Action: it never fetches, moves,
+ * recreates, or substitutes a workspace.
+ */
+export async function verifyGithubTriageReviewWorkspace(
+  input: unknown,
+  context: PluginInvocationContext,
+  dependencies: GithubTriageOperationDependenciesV1 = {},
+): Promise<TriageVerifyReviewWorkspaceResultV1> {
+  const parsed = TriageVerifyReviewWorkspaceInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+  const verification = parsed.data;
+  context.signal.throwIfAborted();
+
+  const authorized = await authorizeGithubReviewWorkspace(verification, context, dependencies);
+  if (authorized.kind !== 'authorized') return authorized;
+  if (!pluginJsonValuesEqual(authorized.pullRequest, verification.prepared.pullRequest)) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
+  }
+
+  let localResult;
+  try {
+    localResult = await context.services.actions.execute(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: verification.workspace.rootPath,
+        displayName: authorized.sourceTip.branch,
+        sourceTip: authorized.sourceTip,
+        verification: { targetPath: verification.prepared.repositoryPath },
+      },
+      { signal: context.signal },
+    );
+  } catch (error) {
+    rethrowGithubReviewWorkspaceAbort(error, context.signal);
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
+  }
+  context.signal.throwIfAborted();
+  if (!localResult.success) {
+    return mapGithubReviewWorkspaceMaterializationFailure(localResult.errorCode);
+  }
+  if (!('verification' in localResult)) {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
+  }
+  const resolved = readScmWorkspaceVerification(localResult.verification);
+  if (resolved === null) {
+    return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
+  }
+  if (resolved.targetPath !== verification.prepared.repositoryPath) {
+    return Object.freeze({ kind: 'workspaceMismatch' as const });
+  }
+  if (resolved.sourceHeadSha.toLowerCase() !== authorized.sourceTip.sourceHeadSha.toLowerCase()) {
+    return Object.freeze({ kind: 'refused' as const, reason: 'observedHeadMoved' as const });
+  }
+  return Object.freeze({ kind: 'verified' as const, pullRequest: authorized.pullRequest });
 }

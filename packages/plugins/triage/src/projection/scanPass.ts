@@ -2,7 +2,6 @@ import { raceWithTimeout, type RaceWithTimeoutResult } from '@happier-dev/plugin
 import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import {
-    MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
     type TriageConfiguredSourceInstanceV1,
     type TriageScanContinuationV1,
     type TriageScanInputV1,
@@ -45,7 +44,7 @@ import type { TriageListLaneHealthV1, TriageListLaneV1 } from './listWindow.js';
  * partial view of a broken source.
  *
  * A page that neither answers nor fails is the third outcome, and it is not a
- * contract violation: it is bounded by this owner's private per-page deadline
+ * contract violation: it is bounded by this owner's private per-lane deadline
  * (`CONTRACT.md` §5.2, `PLAN.md` `REQ-13`). Reaching it settles the lane as a
  * classified `transient` failure and leaves the rotation, and it stops the
  * provider work we stopped waiting for — but it keeps every page that lane
@@ -103,22 +102,18 @@ type LaneState = {
     health: TriageListLaneHealthV1;
     exhausted: boolean;
     active: boolean;
-    /**
-     * Provider rows this lane has consumed across the whole walk — qualified
-     * observations plus tolerantly-omitted rows. It is the only quantity that
-     * bounds a walk whose pages all answer promptly, so it is carried per lane
-     * rather than recomputed per page.
-     */
-    charged: number;
+    /** One absolute budget and signal for this lane's whole walk. */
+    deadlineStartedAtMs: number | null;
+    deadline: AbortController;
+    signal: AbortSignal;
 };
 
 /**
- * How long this owner waits for one submitted scan page before it stops
- * waiting.
+ * How long this owner lets one source lane's whole walk run.
  *
- * It bounds one `scan` invocation, which is the several provider round trips a
- * source makes to fill one page — so a single request timeout would be too
- * tight — and it is a third of `TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS`, the
+ * It spans every `scan` invocation used to walk that lane, each of which may
+ * itself make several provider round trips, and it is a third of
+ * `TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS`, the
  * interval measured from a read's *start* that decides when the next
  * view-triggered pass may run. A page allowed to outlast that interval would
  * still be hanging when the next pass is already eligible.
@@ -127,29 +122,25 @@ type LaneState = {
  * per-source override, or a generic host timer: a source owns its own deadlines
  * for the mounted detail reads and provider operations it starts.
  *
- * The deadline alone does NOT bound the pass, and must not be read as if it
- * did: it bounds how long one page may take, not how many pages a source may
- * offer. A source answering every page instantly while never converging is
- * bounded separately, by the non-progress exits beside the continuation arm
- * below — without them that shape spins entirely inside the microtask queue and
- * starves the event loop rather than hanging one Action.
+ * A source answering every page instantly while never converging still needs
+ * the structural non-progress exits beside the continuation arm below, because
+ * that shape can stay entirely inside one millisecond and starve the event loop
+ * rather than hanging one Action.
  *
- * The bounded ceiling it assumes is one lane per deadline, not one page per
- * deadline — a lane that reaches it leaves the rotation — so a pass over N configured
- * instances that all hang settles in N deadlines rather than unboundedly.
- * `pageDeadlineMs` exists so owner tests inject a short one.
+ * The bounded ceiling is one absolute deadline per lane, not one deadline per
+ * page. A lane reaches it once and leaves the rotation, while another lane's
+ * budget starts only when that lane is first asked. `passDeadlineMs` exists so
+ * owner tests inject a short one.
  */
-const TRIAGE_SCAN_PAGE_DEADLINE_MS = 10_000;
+const TRIAGE_SCAN_PASS_DEADLINE_MS = 10_000;
 
 /**
  * Every way one returned page can fail the V1 page contract: the per-observation
  * qualification reasons, plus the page-level bound only this caller knows.
  *
- * A walk this owner stopped because it was not converging is deliberately NOT
- * here. Nothing in the published page contract obliges a source to converge
- * within this aggregate's private budget, so a page that stays inside every
- * published bound and merely asks to be called again has broken no invariant —
- * see `nonConvergingFailure`.
+ * An exact same-position zero-progress page is deliberately NOT here. It stays
+ * inside the published page contract; the aggregate settles that transient
+ * provider state without accusing the source of malformed output.
  */
 type TriageScanPageViolationV1 = CorpusQualificationRejectionV1 | 'pageLimitExceeded';
 
@@ -180,20 +171,20 @@ function contractFailure(reason: TriageScanPageViolationV1): TriageListLaneHealt
  * Refresh retries after a bounded backoff instead of being parked behind a
  * connection the user cannot fix.
  */
-const SCAN_PAGE_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
+const SCAN_PASS_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
     kind: 'failed',
     failure: Object.freeze({
         class: 'transient',
-        code: 'triage/scanPageDeadline',
-        detail: 'The source did not answer this scan page before the aggregate deadline.',
+        code: 'triage/scanPassDeadline',
+        detail: 'The source did not answer before the aggregate pass deadline.',
     }),
 });
 
 /**
- * The lane health this owner's own non-convergence bound produces.
+ * The lane health an exact zero-progress continuation produces.
  *
- * It is the same shape as the per-page deadline above, and for the same reason:
- * both are bounds this aggregate owns rather than invariants the source broke.
+ * It is the same shape as the lane deadline above, and for the same reason:
+ * both are aggregate settlement rather than invariants the source broke.
  * A page that stays inside every published bound and asks to be called again is
  * a legal page — an omission-only continuation page, which the contract admits
  * precisely so a source can decode tolerantly, is the ordinary shape of it — so
@@ -204,13 +195,13 @@ const SCAN_PAGE_DEADLINE_FAILURE_V1: TriageListLaneHealthV1 = Object.freeze({
  * is exactly right: the walk is unfinished, not broken. The lane keeps its pages
  * and keeps `exhausted: false`, so the window reports a truthful partial.
  */
-function nonConvergingFailure(reason: 'stalledWalk' | 'nonProgressingWalk'): TriageListLaneHealthV1 {
+function stalledWalkFailure(): TriageListLaneHealthV1 {
     return {
         kind: 'failed',
         failure: {
             class: 'transient',
-            code: `triage/${reason}`,
-            detail: 'The source did not converge within the bound this pass allows one walk.',
+            code: 'triage/stalledWalk',
+            detail: 'The source returned the same continuation without consuming provider position.',
         },
     };
 }
@@ -237,26 +228,33 @@ function scanInputFor(state: LaneState, pageLimit: number): TriageScanInputV1 {
 
 export async function runTriageScanPass(input: Readonly<{
     lanes: readonly TriageScanLaneV1[];
-    /** Per-page request, bounded by the shared published scan-page maximum. */
+    /** Positive per-page request chosen for this aggregate invocation. */
     pageLimit: number;
     /** The pass stops rotating once this many observations have been qualified. */
     observationBudget: number;
     nowMs: () => number;
     signal?: AbortSignal;
-    /** Owner-private per-page deadline; owner tests inject a short one. */
-    pageDeadlineMs?: number;
+    /** Owner-private absolute deadline for one lane's whole pass. */
+    passDeadlineMs?: number;
 }>): Promise<TriageScanPassResultV1> {
-    const pageLimit = Math.max(1, Math.min(input.pageLimit, MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1));
-    const pageDeadlineMs = input.pageDeadlineMs ?? TRIAGE_SCAN_PAGE_DEADLINE_MS;
-    const states: LaneState[] = input.lanes.map((lane) => ({
-        lane,
-        continuation: lane.resume ?? null,
-        // A lane that never ran is not evidence that the walk finished.
-        health: { kind: 'unavailable' },
-        exhausted: false,
-        active: true,
-        charged: 0,
-    }));
+    const pageLimit = Math.max(1, Math.trunc(input.pageLimit));
+    const passDeadlineMs = input.passDeadlineMs ?? TRIAGE_SCAN_PASS_DEADLINE_MS;
+    const states: LaneState[] = input.lanes.map((lane) => {
+        const deadline = new AbortController();
+        return {
+            lane,
+            continuation: lane.resume ?? null,
+            // A lane that never ran is not evidence that the walk finished.
+            health: { kind: 'unavailable' },
+            exhausted: false,
+            active: true,
+            deadlineStartedAtMs: null,
+            deadline,
+            signal: input.signal
+                ? AbortSignal.any([input.signal, deadline.signal])
+                : deadline.signal,
+        };
+    });
     const observations: CorpusQualifiedObservationV1[] = [];
     /** Lanes whose page violated the contract; nothing they produced is adopted. */
     const contractFailed = new Set<string>();
@@ -285,39 +283,44 @@ export async function runTriageScanPass(input: Readonly<{
                 continue;
             }
 
-            // One controller per invocation: it carries our deadline, and it
-            // composes with the caller's canonical signal so retirement,
-            // reconfiguration and shutdown still reach the source unchanged.
-            const deadline = new AbortController();
-            const options: PluginCancellationOptions = {
-                signal: input.signal
-                    ? AbortSignal.any([input.signal, deadline.signal])
-                    : deadline.signal,
-            };
+            // One controller per LANE, not per page. A provider cannot spend a
+            // fresh deadline on every continuation, while another lane keeps
+            // an independent budget so one unanswered source never consumes
+            // every other source's chance to answer.
+            const nowMs = performance.now();
+            state.deadlineStartedAtMs ??= nowMs;
+            const elapsedMs = nowMs - state.deadlineStartedAtMs;
+            const remainingMs = Math.max(0, passDeadlineMs - elapsedMs);
+            if (remainingMs === 0) {
+                // Do not start another provider page after this lane has spent
+                // its absolute budget. An already-resolved page can otherwise
+                // win `Promise.race` against a zero-delay timer forever.
+                state.deadline.abort();
+                state.health = SCAN_PASS_DEADLINE_FAILURE_V1;
+                state.active = false;
+                continue;
+            }
+            const options: PluginCancellationOptions = { signal: state.signal };
             let settled: RaceWithTimeoutResult<TriageScanResultV1>;
             try {
                 settled = await raceWithTimeout(
                     state.lane.scan(scanInputFor(state, pageLimit), options),
-                    pageDeadlineMs,
+                    remainingMs,
                 );
             } catch (error) {
                 // A synchronous throw is the same defect as a rejection.
                 settled = { type: 'rejected', error };
-            } finally {
-                // However this invocation ended, it is over for us. Aborting
-                // releases the composed signal and, on a deadline, stops the
-                // provider work we stopped waiting for — otherwise the pass
-                // that replaces this one starts a second walk beside a first
-                // that is still running.
-                deadline.abort();
             }
 
             if (settled.type === 'timeout') {
+                // We are done with this lane, so stop the provider work we
+                // stopped waiting for. Every page received the same signal.
+                state.deadline.abort();
                 // Neither an answer nor a failure. The lane leaves the rotation
                 // as a classified transient failure, and every page it already
                 // gave stays: an unanswered page is not evidence against the
                 // ones that answered.
-                state.health = SCAN_PAGE_DEADLINE_FAILURE_V1;
+                state.health = SCAN_PASS_DEADLINE_FAILURE_V1;
                 state.active = false;
                 continue;
             }
@@ -411,66 +414,34 @@ export async function runTriageScanPass(input: Readonly<{
                 continue;
             }
 
-            /*
-             * A walk has to end. The per-page deadline bounds how long ONE page
-             * may take; it cannot bound a source that answers every page
-             * instantly and never finishes, and that shape does not merely hang
-             * this Action — the whole loop settles in the microtask queue, so it
-             * starves the event loop the daemon runs on.
-             *
-             * Two exits, both derived from what the page already reports rather
-             * than from a new budget:
-             *
-             *  - A page that qualifies nothing, charges no provider row AND
-             *    hands back the very continuation it was given has consumed
-             *    nothing at all and cannot answer differently next time. That
-             *    is non-progress by construction, whatever the provider holds.
-             *    The position is the discriminator, and it has to be: a source
-             *    whose subject set is CONTAINERS — a forge whose review
-             *    involvement is repository-scoped — returns an empty, unbilled
-             *    page for every container with nothing in it, while advancing
-             *    strictly past it. Condemning that page killed the lane on its
-             *    first empty container, and a killed lane is offered no
-             *    continuation, so the next refresh restarted at the same empty
-             *    containers: the rows behind them were unreachable, not slow.
-             *  - Otherwise the walk is bounded by what it could ever need: a
-             *    source cannot require more rows than the observation budget it
-             *    is filling plus one final page. Past that it is not converging.
-             *    A page that delivered nothing still cost this pass one round
-             *    trip, so it is charged as one — that is what keeps the same
-             *    derived ceiling binding on a lane that only traverses, without
-             *    inventing a second budget to bound it with.
-             *
-             * Neither is a broken published invariant, so neither is a contract
-             * failure: every such page stayed inside the limit it was submitted,
-             * carried a valid continuation, and said honestly what it omitted.
-             * The bound is ours, so the settlement is ours too — a classified
-             * `transient` failure that keeps every page the lane already gave
-             * and leaves `exhausted: false`, exactly as the per-page deadline
-             * does. Discarding the lane's valid pages here punished a conforming
-             * source for a budget it was never told about.
-             */
-            state.charged += Math.max(charged, 1);
+            // Exact zero progress can settle immediately. An advancing cursor,
+            // however, may legitimately traverse any number of empty provider
+            // containers before reaching a row; counting those pages against an
+            // observation-derived ceiling made deep repositories unreachable.
             if (
                 page.length === 0
                 && charged === 0
                 && state.continuation !== null
                 && state.continuation.token === result.continuation.token
             ) {
-                state.health = nonConvergingFailure('stalledWalk');
-                state.exhausted = false;
-                state.active = false;
-                continue;
-            }
-            if (state.charged > input.observationBudget + pageLimit) {
-                state.health = nonConvergingFailure('nonProgressingWalk');
+                state.health = stalledWalkFailure();
                 state.exhausted = false;
                 state.active = false;
                 continue;
             }
             state.continuation = result.continuation;
+            // A trusted source can answer synchronously. Yielding between prompt
+            // advancing pages lets the lane's one absolute deadline and caller
+            // cancellation run instead of allowing an infinite microtask chain
+            // to starve the daemon. Time remains the bound; this adds no count.
+            await new Promise<void>((resolve) => { setTimeout(resolve, 0); });
         }
     }
+
+    // Retire every lane signal after its last possible consumer. Resolved
+    // providers have already answered; unresolved providers were aborted at
+    // their timeout above. This also releases caller-signal composition.
+    for (const state of states) state.deadline.abort();
 
     return Object.freeze({
         observations: Object.freeze(

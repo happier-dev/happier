@@ -5,17 +5,14 @@ import {
     POSTHOG_ISSUE_EVENTS_MAX_LIMIT,
     parsePosthogIssueEventsEnvelope,
 } from '../../api/types/events.js';
-import {
-    POSTHOG_SAMPLED_EVENT_BOUNDS_V1,
-    projectPosthogIssueEvents,
-} from './issueEventProjection.js';
+import { projectPosthogIssueEvents } from './issueEventProjection.js';
 
 function projectFixture() {
     const envelope = parsePosthogIssueEventsEnvelope(eventsPage);
     if (envelope === null) {
         throw new Error('recorded issue-events fixture must satisfy the strict envelope');
     }
-    return projectPosthogIssueEvents(envelope.rawEvents, POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+    return projectPosthogIssueEvents(envelope.rawEvents);
 }
 
 /** Every string anywhere inside a projected value, for leak detection. */
@@ -132,12 +129,12 @@ describe('projectPosthogIssueEvents', () => {
                     $exception_list: 'not-an-array',
                 },
             },
-        ], POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+        ]);
 
         expect(projected).toEqual([{ uuid: 'e1', exceptions: [] }]);
     });
 
-    it('bounds one published sample and says so, rather than dropping the event', () => {
+    it('does not invent per-event content or count ceilings before envelope fitting', () => {
         const frame = {
             function: `renderSummary${'X'.repeat(400)}`,
             source: `app/checkout/${'deeply/nested/'.repeat(60)}summary.tsx`,
@@ -160,25 +157,19 @@ describe('projectPosthogIssueEvents', () => {
                     $exception_list: Array.from({ length: 9 }, () => exception),
                 },
             },
-        ], POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+        ]);
 
         if (projected === undefined) throw new Error('a provider-valid event must stay visible');
-        // A pathological but provider-valid event is still shown; what changes is that
-        // the projection says it was shortened.
-        expect(projected.truncated).toBe(true);
-        expect(projected.exceptions.length)
-            .toBe(POSTHOG_SAMPLED_EVENT_BOUNDS_V1.maxExceptionsPerEvent);
-        expect(projected.exceptions[0]?.frames.length)
-            .toBe(POSTHOG_SAMPLED_EVENT_BOUNDS_V1.maxFramesPerException);
-        expect(new TextEncoder().encode(projected.url ?? '').length)
-            .toBeLessThanOrEqual(POSTHOG_SAMPLED_EVENT_BOUNDS_V1.urlUtf8Bytes);
-        expect(new TextEncoder().encode(projected.exceptions[0]?.value ?? '').length)
-            .toBeLessThanOrEqual(POSTHOG_SAMPLED_EVENT_BOUNDS_V1.exceptionValueUtf8Bytes);
-        expect(new TextEncoder().encode(projected.exceptions[0]?.frames[0]?.source ?? '').length)
-            .toBeLessThanOrEqual(POSTHOG_SAMPLED_EVENT_BOUNDS_V1.frameSourceUtf8Bytes);
+        expect('truncated' in projected).toBe(false);
+        expect(projected.exceptions).toHaveLength(9);
+        expect(projected.exceptions[0]?.frames).toHaveLength(400);
+        expect(projected.url).toBe(`https://shop.example/checkout?${'q=1&'.repeat(600)}`);
+        expect(projected.exceptions[0]?.value)
+            .toBe('Cannot read properties of undefined'.repeat(80));
+        expect(projected.exceptions[0]?.frames[0]?.source).toBe(frame.source);
     });
 
-    it('keeps a whole provider page of bounded samples inside the Action byte gate', () => {
+    it('preserves every allowlisted value for the final Action-envelope owner to fit', () => {
         const frame = {
             function: 'X'.repeat(400),
             source: 'Y'.repeat(400),
@@ -200,12 +191,10 @@ describe('projectPosthogIssueEvents', () => {
             },
         }));
 
-        const projected = projectPosthogIssueEvents(saturated, POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+        const projected = projectPosthogIssueEvents(saturated);
 
-        const bytes = new TextEncoder().encode(JSON.stringify(projected)).length;
-        // The strict Action aggregate rejects a result over 1 MiB, and a rejected page
-        // shows a reader nothing at all.
-        expect(bytes).toBeLessThan(1_024 * 1_024);
+        expect(projected).toHaveLength(POSTHOG_ISSUE_EVENTS_MAX_LIMIT);
+        expect(collectStrings(projected)).toContain('V'.repeat(4_000));
     });
 });
 
@@ -234,11 +223,11 @@ describe('projectPosthogIssueEvents — one owner for the single-line rule', () 
                     },
                 }],
             },
-        }], POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+        }]);
 
         expect(projected?.exceptions[0]?.value).toBe('first line second line third');
         expect(projected?.exceptions[0]?.frames[0]?.function).toBe('render Summary');
         // Collapsing a control run is not truncation: the words on both sides survive.
-        expect(projected?.truncated).toBeUndefined();
+        expect(projected === undefined ? false : 'truncated' in projected).toBe(false);
     });
 });

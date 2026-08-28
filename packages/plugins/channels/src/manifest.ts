@@ -46,6 +46,7 @@ import {
 } from './ingress.js';
 import {
   abandonConversationConnectionForInvocation,
+  acceptConversationSessionProjectionBaselineForInvocation,
   createConversationBindingForInvocation,
   createConversationConnectionForInvocation,
   createConversationPairingManagementHandlers,
@@ -70,6 +71,7 @@ import {
   listConversationProviderConnectionsForInvocation,
   readConversationProviderConnectionForInvocation,
 } from './reconciliation.js';
+import { MAX_CHANNELS_BINDINGS_RESOURCE_BYTES } from './resourceBounds.js';
 import {
   CHANNELS_TRANSCRIPT_ACTIVITIES_RESOURCE_ID,
   TRANSCRIPT_ACTIVITIES_RESOURCE_RUNTIME,
@@ -316,7 +318,7 @@ function createChannelsPlugin() {
         kind: 'config',
         scope: 'global',
         contentType: 'application/json',
-        maxBytes: 212_992,
+        maxBytes: MAX_CHANNELS_BINDINGS_RESOURCE_BYTES,
         hostAccess: ['account-storage'],
         runtime: BINDINGS_RESOURCE_RUNTIME,
       },
@@ -726,6 +728,23 @@ function createChannelsPlugin() {
         },
         hostAccess: ['account-storage'],
         run: deleteConversationBindingForInvocation,
+      },
+      [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.sessionProjectionBaselineAccept]: {
+        ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.sessionProjectionBaselineAccept,
+        title: 'Accept Session conversation transcript baseline',
+        description: 'Resumes one paused Session conversation from the current transcript tail.',
+        scopes: ['global'],
+        surfaces: ['cli', 'ui'],
+        placementBindings: ['primary'],
+        dangerLevel: 'writesLocal',
+        execution: { target: 'daemon' },
+        confirmation: {
+          title: 'Continue without unavailable transcript history?',
+          body: 'This resumes the conversation from the Session’s current transcript tail without replaying unavailable history.',
+          confirmLabel: 'Accept baseline',
+        },
+        hostAccess: ['account-storage'],
+        run: acceptConversationSessionProjectionBaselineForInvocation,
       },
       [CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry]: {
         ...CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1.ingressRetry,

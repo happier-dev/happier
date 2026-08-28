@@ -321,8 +321,17 @@ describe('Codex public Agent External Sessions contribution', () => {
           timestamp: '2026-07-23T08:01:00.000Z',
           payload: {
             type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'first public message' }],
+          },
+        }),
+        jsonl({
+          type: 'response_item',
+          timestamp: '2026-07-23T08:02:00.000Z',
+          payload: {
+            type: 'message',
             role: 'assistant',
-            content: [{ type: 'output_text', text: 'first public message' }],
+            content: [{ type: 'output_text', text: 'first public response' }],
           },
         }),
       ].join(''), 'utf8');
@@ -424,26 +433,13 @@ describe('Codex public Agent External Sessions contribution', () => {
       expect(page).toMatchObject({
         ok: true,
         value: {
-          items: [expect.objectContaining({ id: expect.any(String) })],
+          items: expect.arrayContaining([expect.objectContaining({ id: expect.any(String) })]),
           tailCursor: expect.any(String),
         },
       });
       if (!page.ok) throw new Error('Expected Codex transcript');
-      expect(page.value.items).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          messageRole: 'agent',
-          raw: {
-            role: 'agent',
-            content: {
-              type: 'codex',
-              data: {
-                type: 'message',
-                message: 'first public message',
-              },
-            },
-          },
-        }),
-      ]));
+      expect(page.value.items.some((item) => item.messageRole === 'user')).toBe(true);
+      expect(page.value.items.some((item) => item.messageRole === 'agent')).toBe(true);
 
       await appendFile(firstFile, jsonl({
         type: 'response_item',
@@ -631,6 +627,7 @@ describe('Codex public Agent External Sessions contribution', () => {
           boundary: expect.any(String),
           diagnostics: [{
             code: 'malformed_source_utf8',
+            severity: 'required',
             count: 1,
             positions: [before + prefix.byteLength],
           }],

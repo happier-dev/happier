@@ -3128,7 +3128,6 @@ describe('Channels mounted binding creation', () => {
           return {
             items: [{
               automationId: 'automation-1',
-              templateVersion: 7,
               label: 'Initial report',
               execution: { targetType: 'new_session', enabled: true },
             }],
@@ -3139,7 +3138,6 @@ describe('Channels mounted binding creation', () => {
           return {
             items: [{
               automationId: 'automation-2',
-              templateVersion: 8,
               label: 'Build report',
               execution: { targetType: 'existing_session', enabled: true },
             }],
@@ -3152,7 +3150,7 @@ describe('Channels mounted binding creation', () => {
         };
       }
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingCreate) {
-        return { kind: 'stale' };
+        return { kind: 'notVerified', reason: 'resultDeliveryUnsupported' };
       }
       throw new Error(`Unexpected mounted Action: ${String(action)}`);
     });
@@ -3232,12 +3230,13 @@ describe('Channels mounted binding creation', () => {
             target: {
               kind: 'automation',
               automationId: 'automation-2',
-              expectedTemplateVersion: 8,
               policy: { resultDelivery: 'finalResult' },
             },
           }),
         }));
       });
+      await expect(fixture.getByText('This Automation cannot return a final result')).resolves.toBeDefined();
+      expect(document.body.textContent).not.toContain('The selected target is no longer available');
       expect(executeAction.mock.calls.map(([request]) => request.action)).not.toContain(
         'automation.conversation.target.verify',
       );
@@ -3260,7 +3259,6 @@ describe('Channels mounted binding creation', () => {
       target: {
         kind: 'automation' as const,
         automationId: 'automation-1',
-        templateVersion: 7,
         policy: { resultDelivery: 'none' as const },
       },
       allowedPrincipalIds: ['provider-principal-private-4'],
@@ -3280,7 +3278,6 @@ describe('Channels mounted binding creation', () => {
       target: {
         kind: 'automation' as const,
         automationId: 'automation-2',
-        templateVersion: 8,
         policy: { resultDelivery: 'finalResult' as const },
       },
       updatedAt: 2,
@@ -3301,7 +3298,6 @@ describe('Channels mounted binding creation', () => {
         return {
           items: [{
             automationId: 'automation-2',
-            templateVersion: 8,
             label: 'Build report',
             execution: { targetType: 'existing_session', enabled: true },
           }],
@@ -3366,7 +3362,6 @@ describe('Channels mounted binding creation', () => {
           target: {
             kind: 'automation',
             automationId: 'automation-2',
-            expectedTemplateVersion: 8,
             policy: { resultDelivery: 'finalResult' },
           },
         })]);
@@ -3400,7 +3395,6 @@ describe('Channels mounted binding creation', () => {
       target: {
         kind: 'automation' as const,
         automationId: 'automation-1',
-        templateVersion: 7,
         policy: { resultDelivery: 'none' as const },
       },
       allowedPrincipalIds: ['provider-principal-private-4'],

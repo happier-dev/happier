@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { AGENT_DEFINITION } from './definition.js';
 import { PI_DIRECT_AUTH_ENV_KEYS } from './launchEnvironment.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { PI_AGENT_RUNTIME_CONTRIBUTION as CATALOG_CONTRIBUTION } from './contributions/catalog.js';
 
 describe('Pi AGENT_DEFINITION', () => {
   it('declares native-extension Happier tool delivery', () => {
@@ -21,14 +20,19 @@ describe('Pi AGENT_DEFINITION', () => {
     expect(AGENT_DEFINITION).not.toHaveProperty('authProbeConfig');
   });
 
-  it('binds the bundled catalog projection to its static catalog contribution leaf', () => {
-    expect(AGENT_DEFINITION.runtimeContributions?.agentCatalogEntry).toEqual({
-      importName: 'PI_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
+  it('keeps launch authority in the canonical plugin registration', () => {
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
+    expect(PLUGIN_MANIFEST.contributes.agents[0]).toMatchObject({
+      connectedAccounts: expect.any(Array),
     });
   });
 
-  it('does not retain Session preferences in the catalog contribution', () => {
-    expect(CATALOG_CONTRIBUTION).not.toHaveProperty('sessionRuntimePreferences');
+  it('does not advertise a usage-limit readiness probe without provider truth', () => {
+    expect(AGENT_DEFINITION.core.sessionCapabilities.usageLimitRecovery).toEqual({
+      checkNow: 'unsupported',
+    });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities.sessions).toMatchObject({
+      usageLimitRecovery: undefined,
+    });
   });
 });

@@ -7,6 +7,11 @@ const OLLAMA_LOCAL_ORIGINS = [
 
 const OLLAMA_OPENAI_BASE_URLS = OLLAMA_LOCAL_ORIGINS.map((origin) => `${origin}/v1`);
 
+// The managed catalog projects Ollama's `/api/tags` response through the
+// bundled `ollama-tags` parser. Change this semantic identity only when that
+// source/projection contract can produce different model rows.
+const OLLAMA_CATALOG_SOURCE_REGISTRY_VERSION = 'ollama-tags/v1';
+
 export const OLLAMA_PROVIDER_CONTRIBUTION = {
   v: 1,
   id: 'ollama',
@@ -51,6 +56,7 @@ export const OLLAMA_PROVIDER_CONTRIBUTION = {
   catalog: {
     source: 'probe',
     manualModelPolicy: 'allowed',
+    sourceRegistryVersion: OLLAMA_CATALOG_SOURCE_REGISTRY_VERSION,
     probes: [{ endpointTemplateId: 'ollama-native', path: '/api/tags', parser: 'ollama-tags' }],
   },
   managedRuntime: {

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -712,8 +712,10 @@ describe('Claude native External Sessions contribution', () => {
                 items: [],
                 nextCursor: expect.any(String),
                 boundary: expect.any(String),
+                hasMore: false,
                 diagnostics: [{
                     code: 'malformed_source_utf8',
+                    severity: 'required',
                     count: 1,
                     positions: [before + prefix.byteLength],
                 }],
@@ -758,8 +760,9 @@ describe('Claude native External Sessions contribution', () => {
 
         if (mutation === 'identical replacement') {
             const identicalBytes = await readFile(transcriptPath);
-            await rm(transcriptPath);
-            await writeFile(transcriptPath, identicalBytes);
+            const replacementPath = `${transcriptPath}.replacement`;
+            await writeFile(replacementPath, identicalBytes);
+            await rename(replacementPath, transcriptPath);
         } else {
             await writeFile(transcriptPath, [
                 JSON.stringify({
@@ -831,8 +834,9 @@ describe('Claude native External Sessions contribution', () => {
 
         if (mutation === 'identical replacement') {
             const identicalBytes = await readFile(transcriptPath);
-            await rm(transcriptPath);
-            await writeFile(transcriptPath, identicalBytes);
+            const replacementPath = `${transcriptPath}.replacement`;
+            await writeFile(replacementPath, identicalBytes);
+            await rename(replacementPath, transcriptPath);
         } else {
             await writeFile(
                 transcriptPath,
@@ -1117,7 +1121,11 @@ describe('Claude native External Sessions contribution', () => {
         });
         expect(first).toMatchObject({
             ok: true,
-            value: { outcome: 'advanced', nextCursor: expect.any(String) },
+            value: {
+                outcome: 'advanced',
+                nextCursor: expect.any(String),
+                hasMore: true,
+            },
         });
         expect(Buffer.byteLength(JSON.stringify(first), 'utf8')).toBeLessThanOrEqual(maxSerializedBytes);
         if (!first.ok || !first.value.nextCursor) throw new Error('expected a forward continuation cursor');

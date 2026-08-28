@@ -1,5 +1,5 @@
 import { TriageConfiguredSourceInstanceV1Schema, type TriageScanResultV1 } from '@happier-dev/triage-protocol/v1';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
     testkitLocator,
@@ -166,13 +166,7 @@ describe('one materialization pass', () => {
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
 
-    it('ends a walk that advances forever without ever delivering a row', async () => {
-        // A page that qualifies no observation AND charges no provider row has
-        // made no progress of any kind, yet offers a continuation. Before this
-        // was refused the pass simply asked again — forever, and entirely inside
-        // the microtask queue, so it starved the event loop rather than merely
-        // hanging this one Action. The per-page deadline cannot catch it: every
-        // page answers instantly.
+    it('reaches a terminal row beyond the former empty-page depth wall', async () => {
         const pass = await runTriageScanPass({
             lanes: [lane({
                 sourceInstanceId: INSTANCE_ID,
@@ -190,6 +184,7 @@ describe('one materialization pass', () => {
                         observations: [],
                         continuation: { v: 1, token: `next-${String(index)}` },
                     } as unknown as TriageScanResultV1)),
+                    completedPage('after-empty-containers'),
                 ],
             })],
             pageLimit: 16,
@@ -197,69 +192,41 @@ describe('one materialization pass', () => {
             nowMs: () => 1_000,
         });
 
-        // The bound is THIS owner's, not a published invariant the source broke:
-        // every page here stayed inside its submitted limit, carried a valid
-        // continuation and reported honestly. So the lane settles the way the
-        // per-page deadline settles — a classified `transient` failure that
-        // keeps the page it already gave — instead of `unsupportedContract`,
-        // which accused a conforming plugin and threw its real rows away.
-        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
-        expect(pass.lanes[0]?.health).toMatchObject({
-            kind: 'failed',
-            // The page count is what bounds it now, not the first empty page: a
-            // page that delivers nothing still costs the pass one round trip,
-            // and a source that keeps ADVANCING its position while delivering
-            // nothing is the same non-converging shape as one that keeps
-            // charging rows. It is settled by the same derived ceiling.
-            failure: { class: 'transient', code: 'triage/nonProgressingWalk' },
-        });
-        expect(pass.lanes[0]?.exhausted).toBe(false);
+        expect(pass.observations.map((observation) => observation.entryRef.entryId))
+            .toEqual(['17', 'after-empty-containers']);
+        expect(pass.lanes[0]?.health).toEqual(WALK_FINISHED);
+        expect(pass.lanes[0]?.exhausted).toBe(true);
     });
 
-    it('ends a walk that keeps consuming rows without ever converging', async () => {
-        // The harder case, and the one that was reproduced: every page answers
-        // INSIDE the deadline, charges provider rows, and qualifies nothing. The
-        // lane makes "progress" by the only measure the loop had, so it never
-        // exits. A source cannot need to consume more rows than the budget it is
-        // filling plus one final page; past that it is not converging.
-        //
-        // The fixture throws once the pass asks past the pages it offered, so a
-        // regression fails this test in bounded time instead of hanging the suite.
+    it('lets the absolute deadline settle an infinite prompt advancing walk', async () => {
+        let calls = 0;
         const pass = await runTriageScanPass({
-            lanes: [lane({
+            lanes: [answeringLane({
                 sourceInstanceId: INSTANCE_ID,
                 declaredKindIds: ['pull-request'],
-                pages: [
-                    {
-                        kind: 'page',
-                        evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 0 },
-                        observations: [presentObservation('pull-request', '17')],
-                        continuation: { v: 1, token: 'next' },
-                    } as unknown as TriageScanResultV1,
-                    ...Array.from({ length: 200 }, (_unused, index) => ({
+                scan: async () => {
+                    calls += 1;
+                    return {
                         kind: 'page',
                         evidence: { kind: 'partial', reason: 'undecodable-items', omittedItemCount: 4 },
                         observations: [],
-                        continuation: { v: 1, token: `next-${String(index)}` },
-                    } as unknown as TriageScanResultV1)),
-                ],
+                        continuation: { v: 1, token: `next-${calls}` },
+                    } as unknown as TriageScanResultV1;
+                },
             })],
             pageLimit: 16,
             observationBudget: 64,
             nowMs: () => 1_000,
+            passDeadlineMs: 10,
         });
 
-        // Same settlement, same reason: an omission-only continuation page is a
-        // LEGAL page — the contract admits it precisely so a source can decode
-        // tolerantly — so the walk that would not converge keeps the rows it
-        // did give and says, truthfully, that it is unfinished.
-        expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+        expect(pass.observations).toEqual([]);
         expect(pass.lanes[0]?.health).toEqual({
             kind: 'failed',
             failure: {
                 class: 'transient',
-                code: 'triage/nonProgressingWalk',
-                detail: 'The source did not converge within the bound this pass allows one walk.',
+                code: 'triage/scanPassDeadline',
+                detail: expect.any(String),
             },
         });
         expect(pass.lanes[0]?.exhausted).toBe(false);
@@ -529,7 +496,7 @@ describe('one materialization pass', () => {
             pageLimit: 4,
             observationBudget: 64,
             nowMs: () => 1_000,
-            pageDeadlineMs: 5,
+            passDeadlineMs: 5,
         });
 
         expect(pass.lanes[0]?.health).toEqual({
@@ -540,7 +507,7 @@ describe('one materialization pass', () => {
                 // so a later view or manual Refresh retries after a bounded
                 // backoff instead of being parked.
                 class: 'transient',
-                code: 'triage/scanPageDeadline',
+                code: 'triage/scanPassDeadline',
                 detail: expect.any(String),
             },
         });
@@ -585,13 +552,68 @@ describe('one materialization pass', () => {
             pageLimit: 4,
             observationBudget: 64,
             nowMs: () => 1_000,
-            pageDeadlineMs: 5,
+            passDeadlineMs: 5,
         });
 
         expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['21']);
         expect(pass.lanes[0]?.health).toMatchObject({ kind: 'failed', failure: { class: 'transient' } });
         expect(pass.lanes[0]?.exhausted).toBe(false);
     });
+
+    it('spends one absolute deadline across the whole pass instead of restarting it for each page', async () => {
+        vi.useFakeTimers();
+        try {
+            let call = 0;
+            const signals: AbortSignal[] = [];
+            const startedAt = performance.now();
+            const pending = runTriageScanPass({
+                lanes: [answeringLane({
+                    sourceInstanceId: INSTANCE_ID,
+                    declaredKindIds: ['pull-request'],
+                    scan: async (_scanInput, options) => {
+                        if (options?.signal) signals.push(options.signal);
+                        call += 1;
+                        if (call === 1) {
+                            await new Promise<void>((resolve) => setTimeout(resolve, 8));
+                            return {
+                                kind: 'page',
+                                evidence: { kind: 'partial', reason: 'pageLimit' },
+                                observations: [presentObservation('pull-request', '17')],
+                                continuation: { v: 1, token: 'next' },
+                            } as unknown as TriageScanResultV1;
+                        }
+                        return await new Promise<TriageScanResultV1>(() => {});
+                    },
+                })],
+                pageLimit: 4,
+                observationBudget: 64,
+                nowMs: () => 1_000,
+                passDeadlineMs: 12,
+            });
+
+            // Page one spends eight of the lane's twelve milliseconds. The
+            // unanswered continuation receives only the four that remain.
+            await vi.advanceTimersByTimeAsync(8);
+            // Run the deliberate between-pages macrotask without also advancing
+            // the second page's remaining four-millisecond deadline.
+            await vi.advanceTimersToNextTimerAsync();
+            expect(call).toBe(2);
+            const elapsedBeforeSecondPage = performance.now() - startedAt;
+            await vi.advanceTimersByTimeAsync(12 - elapsedBeforeSecondPage);
+            const pass = await pending;
+
+            expect(performance.now() - startedAt).toBe(12);
+            expect(pass.observations.map((observation) => observation.entryRef.entryId)).toEqual(['17']);
+            expect(pass.lanes[0]?.health).toMatchObject({
+                kind: 'failed',
+                failure: { class: 'transient', code: 'triage/scanPassDeadline' },
+            });
+            expect(new Set(signals).size).toBe(1);
+            expect(signals[0]?.aborted).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
+    }, 1_000);
 
     /**
      * `CONTRACT.md` §5.1. The published schema can only enforce the global

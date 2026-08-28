@@ -4,6 +4,7 @@ import {
   claimStaleConversationDeliveryAttemptRecovery,
   createReadyConversationDeliveryCustody,
   deriveConversationDeliveryProjection,
+  isConversationDeliveryContentFree,
   isConversationDeliveryRetentionEligible,
   resolveConversationDeliveryCustody,
   retryConversationDeliveryAfterArchiveRecovery,
@@ -347,5 +348,62 @@ describe('Channels outward delivery custody', () => {
         reason: 'externalEffectMayExist',
       });
     }
+  });
+
+  it('frees delivery bodies exactly where the canonical content-free predicate says no retry can consume them', () => {
+    // Terminal states whose replay identity alone settles the obligation.
+    for (const custody of [
+      { state: 'delivered' as const, attemptCount: 1, providerMessageIds: ['message-1'] },
+      { state: 'suppressed' as const, attemptCount: 1, providerMessageIds: [] },
+      { state: 'connectionDeleted' as const, attemptCount: 1, providerMessageIds: [] },
+      { state: 'resolvedAccepted' as const, attemptCount: 1, providerMessageIds: ['message-1'] },
+      // Terminal not-delivered attention, including the archive arm no owner
+      // retry can consume: compaction keeps the attention evidence in the
+      // state itself and frees only the body.
+      { state: 'notDelivered' as const, attemptCount: 3, providerMessageIds: [] },
+      {
+        state: 'notDelivered' as const,
+        attemptCount: 1,
+        providerMessageIds: [],
+        archiveRecovery: 'ownerMustUnarchiveOrRebind',
+      },
+    ]) {
+      expect(isConversationDeliveryContentFree(custody)).toBe(true);
+    }
+
+    // Bodies that live work or owner-led retry still needs.
+    for (const custody of [
+      createReadyConversationDeliveryCustody(),
+      { state: 'retryDue' as const, attemptCount: 1, providerMessageIds: [], retryNotBefore: 200 },
+      {
+        state: 'attempting' as const,
+        attemptCount: 1,
+        attemptId: 'attempt-1',
+        startedAt: 100,
+        providerMessageIds: [],
+      },
+      { state: 'partial' as const, attemptCount: 1, providerMessageIds: ['message-1'], failedChunk: 1 },
+      { state: 'outcomeUnknown' as const, attemptCount: 1, providerMessageIds: [] },
+      {
+        state: 'notDelivered' as const,
+        attemptCount: 1,
+        providerMessageIds: [],
+        archiveRecovery: 'unarchiveAndRetry',
+      },
+    ]) {
+      expect(isConversationDeliveryContentFree(custody)).toBe(false);
+    }
+
+    // Content-freedom is deliberately narrower than retention: the
+    // unarchive-and-retry row still expires with its row after the recovery
+    // window, but until then its body is the owner's retry input.
+    const recoverable = {
+      state: 'notDelivered' as const,
+      attemptCount: 1,
+      providerMessageIds: [],
+      archiveRecovery: 'unarchiveAndRetry',
+    } as const;
+    expect(isConversationDeliveryRetentionEligible(recoverable)).toBe(true);
+    expect(isConversationDeliveryContentFree(recoverable)).toBe(false);
   });
 });

@@ -8,7 +8,6 @@ import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../corpus/query/smartPolicy.js';
 import {
     CORPUS_EMPTY_SAVED_VIEWS_V1,
     MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1,
-    MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1,
     TRIAGE_SAVED_VIEWS_SETTING_ID_V1,
     mutateTriageSavedViews,
     parseTriageSavedViews,
@@ -220,32 +219,27 @@ describe('mutateTriageSavedViews', () => {
             .toEqual({ status: 'unknownView' });
     });
 
-    it('enforces label, duplicate identity and whole-value bounds before CAS', async () => {
+    it('enforces label shape, duplicate identity and the canonical whole-value bound before CAS', async () => {
         const fixture = createTestkitAccountSettings();
         const deps = createDeps(fixture);
 
-        const maximalLabel = 'a'.repeat(MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1);
-        expect((await create(fixture, deps, maximalLabel)).status).toBe('applied');
+        const longLabel = 'a'.repeat(4 * 1024);
+        expect((await create(fixture, deps, longLabel)).status).toBe('applied');
         // A trimmed label is measured after trimming, and the stored value is
         // exactly what was validated.
-        const trimmed = await create(fixture, deps, `   ${maximalLabel}   `);
+        const trimmed = await create(fixture, deps, `   ${longLabel}   `);
         expect(trimmed.status).toBe('applied');
         if (trimmed.status === 'applied') {
             const stored = (await readTriageSavedViews({ settings: fixture.settings })).value.views
                 .find((view) => view.viewId === trimmed.viewId);
-            expect(stored?.label).toBe(maximalLabel);
+            expect(stored?.label).toBe(longLabel);
         }
 
         const writesBeforeRejections = fixture.setCallCount();
         expect(await create(fixture, deps, '')).toEqual({ status: 'rejected', reason: 'label' });
         expect(await create(fixture, deps, '   ')).toEqual({ status: 'rejected', reason: 'label' });
-        // 129 bytes: one over, measured in UTF-8 bytes and not characters.
-        expect(await create(fixture, deps, 'a'.repeat(MAX_TRIAGE_SAVED_VIEW_LABEL_UTF8_BYTES_V1 + 1)))
-            .toEqual({ status: 'rejected', reason: 'label' });
-        // A three-byte code point counts three times, so 43 of them overflow.
-        expect(await create(fixture, deps, '本'.repeat(43)))
-            .toEqual({ status: 'rejected', reason: 'label' });
-        expect(await create(fixture, deps, '本'.repeat(42))).toMatchObject({ status: 'applied' });
+        expect(await create(fixture, deps, '本'.repeat(1_024)))
+            .toMatchObject({ status: 'applied' });
 
         // Facet cardinality is governed by the complete serialized value, not
         // an independent member count. Duplicates still reject by canonical

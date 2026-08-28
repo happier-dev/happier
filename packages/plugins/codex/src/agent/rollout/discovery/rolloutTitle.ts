@@ -117,7 +117,6 @@ export async function readCodexSessionTitleFromRollout(
 ): Promise<string | null> {
   const fileSystem = createCodexExternalSessionJsonlScannerFileSystem(bounds);
   let fallbackUserText: string | null = null;
-  let fallbackAssistantText: string | null = null;
   let offsetBytes = 0;
   let traversedBytes = 0;
   let consideredBytes = 0;
@@ -170,9 +169,6 @@ export async function readCodexSessionTitleFromRollout(
         if (action.type === 'user-text' && fallbackUserText === null) {
           fallbackUserText = readCodexExternalSessionTitleCandidate(action.text);
         }
-        if (action.type === 'assistant-text' && fallbackAssistantText === null) {
-          fallbackAssistantText = readCodexExternalSessionTitleCandidate(action.text);
-        }
       }
     }
 
@@ -181,5 +177,5 @@ export async function readCodexSessionTitleFromRollout(
     offsetBytes = page.nextOffsetBytes;
   }
 
-  return fallbackUserText ?? fallbackAssistantText;
+  return fallbackUserText;
 }

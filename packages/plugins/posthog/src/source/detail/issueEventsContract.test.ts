@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { POSTHOG_ISSUE_EVENTS_MAX_LIMIT } from '../../api/types/events.js';
-import { POSTHOG_SAMPLED_EVENT_BOUNDS_V1 } from '../../ui/detail/issueEventProjection.js';
 import {
     PosthogSampledEventsInputV1Schema,
     PosthogSampledEventsResultV1Schema,
@@ -77,7 +76,6 @@ describe('PosthogSampledEventsResultV1Schema', () => {
                     value: 'Cannot read properties of undefined',
                     frames: [{ function: 'renderSummary', source: 'a.tsx', line: 1, column: 2, inApp: true }],
                 }],
-                truncated: true,
             }],
             omittedRowCount: 1,
         });
@@ -90,25 +88,23 @@ describe('PosthogSampledEventsResultV1Schema', () => {
         expect(unavailable.kind).toBe('unavailable');
     });
 
-    it('publishes exactly the bounds the boundary projector applies', () => {
+    it('admits provider-valid event depth and content without a duplicate local ledger', () => {
         const frame = { function: 'f', source: 's', line: 1, column: 2, inApp: false };
-        const overFramed = {
+        const deepEvent = {
             kind: 'sampled',
             events: [{
-                uuid: 'e1',
+                uuid: `e${'1'.repeat(512)}`,
+                url: `https://example.com/${'deep/'.repeat(900)}`,
                 exceptions: [{
-                    frames: Array.from(
-                        { length: POSTHOG_SAMPLED_EVENT_BOUNDS_V1.maxFramesPerException + 1 },
-                        () => frame,
-                    ),
+                    value: 'provider content '.repeat(400),
+                    frames: Array.from({ length: 41 }, () => frame),
                 }],
             }],
             omittedRowCount: 0,
         };
-        // A result the projector could never produce is rejected here too, so the two
-        // cannot drift into disagreeing about what one published sample may contain.
-        expect(PosthogSampledEventsResultV1Schema.safeParse(overFramed).success).toBe(false);
+        expect(PosthogSampledEventsResultV1Schema.safeParse(deepEvent).success).toBe(true);
 
+        // The provider's documented sampled-page ceiling remains the one real row bound.
         const overPaged = {
             kind: 'sampled',
             events: Array.from(
@@ -118,6 +114,26 @@ describe('PosthogSampledEventsResultV1Schema', () => {
             omittedRowCount: 0,
         };
         expect(PosthogSampledEventsResultV1Schema.safeParse(overPaged).success).toBe(false);
+    });
+
+    it('publishes the same single-line grammar the sampled-event projector emits', () => {
+        expect(PosthogSampledEventsResultV1Schema.safeParse({
+            kind: 'sampled',
+            events: [{
+                uuid: 'event-1',
+                url: 'https://example.com/one\ntwo',
+                exceptions: [],
+            }],
+            omittedRowCount: 0,
+        }).success).toBe(false);
+        expect(PosthogSampledEventsResultV1Schema.safeParse({
+            kind: 'sampled',
+            events: [{
+                uuid: 'event-1',
+                exceptions: [{ type: 'Type\u0000Error', frames: [] }],
+            }],
+            omittedRowCount: 0,
+        }).success).toBe(false);
     });
 });
 
@@ -138,6 +154,20 @@ describe('the sampled-events continuation', () => {
             offset: 20,
             limit: 20,
         });
+    });
+
+    it('round-trips a wide valid frozen window without a local token ceiling', () => {
+        const from = `2026-07-16T00:00:00.000Z-${'x'.repeat(32 * 1024)}`;
+        const token = encodePosthogSampledEventsContinuation({
+            v: 1,
+            from,
+            to: null,
+            offset: 20,
+            limit: 20,
+        });
+
+        expect(token).not.toBeNull();
+        expect(decodePosthogSampledEventsContinuation(token ?? '')?.from).toBe(from);
     });
 
     it('refuses a token this source did not mint', () => {

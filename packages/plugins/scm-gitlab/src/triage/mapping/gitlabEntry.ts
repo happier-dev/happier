@@ -34,9 +34,6 @@ import {
   readGitlabMergeRequestReviewRevision,
 } from './mergeRequestHead.js';
 
-/** Bounded native label for a state GitLab added after this client shipped. */
-const MAX_NATIVE_LABEL_UTF8_BYTES = 64;
-
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -106,7 +103,7 @@ export function projectGitlabMergeRequestState(
   return {
     presentation: 'unknown',
     nativeLabel: state
-      ? boundGitlabText(state, MAX_NATIVE_LABEL_UTF8_BYTES).text
+      ? boundGitlabText(state).text
       : 'Unknown',
   };
 }
@@ -120,7 +117,7 @@ export function projectGitlabIssueState(
   return {
     presentation: 'unknown',
     nativeLabel: state
-      ? boundGitlabText(state, MAX_NATIVE_LABEL_UTF8_BYTES).text
+      ? boundGitlabText(state).text
       : 'Unknown',
   };
 }

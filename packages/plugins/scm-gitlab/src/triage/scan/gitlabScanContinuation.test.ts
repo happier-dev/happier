@@ -1,8 +1,5 @@
-import {
-  MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
-  MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1,
-} from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
+import { advanceCursorCycleWalkV1 } from '@happier-dev/triage-sources/runtime';
 
 import { buildGitlabScanLanes, type GitlabLaneRequest } from '../mapping/gitlabInvolvement.js';
 import { normalizeGitlabConfiguredBaseUrl } from '../origin.js';
@@ -25,10 +22,12 @@ function frontierOf(laneRequests: readonly GitlabLaneRequest[] = lanes()) {
 }
 
 describe('the GitLab scan continuation codec', () => {
-  it('carries the rotation, the fixed geometry and the sticky reasons, and nothing else', () => {
+  it('carries the rotation, geometry, sticky reasons and transient loop evidence', () => {
     const frontier = frontierOf();
     frontier.nextLaneIndex = 2;
     frontier.walkHealth.add('undecodable-items');
+    const watchedUrl = frontier.lanes[0]?.nextUrl;
+    if (watchedUrl === undefined) throw new Error('expected a lane URL');
     const continuation = encodeGitlabScanContinuation(frontier);
     if (continuation === null) throw new Error('expected an encodable frontier');
 
@@ -37,10 +36,11 @@ describe('the GitLab scan continuation codec', () => {
     expect(resumed.nextLaneIndex).toBe(2);
     expect(resumed.nativePageSize).toBe(frontier.nativePageSize);
     expect([...resumed.walkHealth]).toEqual(['undecodable-items']);
+    expect(resumed.lanes[0]!.cycleProbe).toEqual(frontier.lanes[0]!.cycleProbe);
 
     // No credential, account ref, extra viewer field, delivered-id history or
-    // accumulated row ever rides in the token. The reviewed lane's existing
-    // provider URL already carries the id needed to rebuild that same lane.
+    // accumulated row or growing URL history ever rides in the token. Only the
+    // constant-space cursor probe is retained to settle Link cycles.
     const token = continuation.token.toLowerCase();
     expect(token).not.toContain('authorization');
     expect(token).not.toContain('bearer');
@@ -92,12 +92,6 @@ describe('the GitLab scan continuation codec', () => {
       });
     };
 
-    // A budget above the ceiling the protocol admits on the initial arm. Adopted, it
-    // bought one call a hundred provider pages for a result that can carry 64 rows.
-    expect(decodeTampered((record) => {
-      record.scanLimit = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 + 1;
-      record.nativePageSize = MAX_TRIAGE_SCAN_PAGE_ENTRIES_V1 + 1;
-    })).toBeNull();
     // A page size that is admissible on its own but is not the one this source derives
     // for that budget: the walk's geometry is not a property of the token's bytes.
     expect(decodeTampered((record) => { record.nativePageSize = 1; })).toBeNull();
@@ -107,10 +101,7 @@ describe('the GitLab scan continuation codec', () => {
       .not.toBeNull();
   });
 
-  it('reports a frontier it cannot fit inside the published token bound', () => {
-    // The ceiling is the contract's symbol, not a number this package remembers. A source
-    // sized against a remembered number emits a token the strict target rejects, and it
-    // does so at exactly the large accounts the fairness rule exists to serve.
+  it('preserves a wide valid frontier and leaves size to the Action envelope', () => {
     const wide: GitlabLaneRequest[] = Array.from({ length: 400 }, (_unused, index) => ({
       laneId: 'authored',
       kindId: 'merge-request',
@@ -119,10 +110,32 @@ describe('the GitLab scan continuation codec', () => {
       involvement: 'author',
     }));
 
-    const oversize = encodeGitlabScanContinuation(frontierOf(wide));
-    expect(oversize).toBeNull();
-    // The bound is read, so this test states the relationship rather than a literal.
-    expect(encodeGitlabScanContinuation(frontierOf())?.token.length)
-      .toBeLessThan(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1);
+    const continuation = encodeGitlabScanContinuation(frontierOf(wide));
+    expect(continuation).not.toBeNull();
+    expect(continuation === null ? null : decodeGitlabScanContinuation({
+      continuation,
+      origin: GITLAB_COM,
+      lanes: wide,
+    })).not.toBeNull();
+  });
+
+  it('keeps loop evidence constant-size however deep one lane walks', () => {
+    const frontier = frontierOf([lanes()[0]!]);
+    const initialLength = encodeGitlabScanContinuation(frontier)?.token.length ?? Infinity;
+    const lane = frontier.lanes[0]!;
+    for (let page = 1; page <= 5_000; page += 1) {
+      const nextUrl = `https://gitlab.com/api/v4/merge_requests?page=${page}`;
+      const advanced = advanceCursorCycleWalkV1(
+        { cursor: lane.nextUrl, probe: lane.cycleProbe },
+        nextUrl,
+      );
+      if (advanced.kind !== 'advanced') throw new Error('unique URLs cannot revisit a position');
+      lane.nextUrl = advanced.walk.cursor;
+      lane.cycleProbe = advanced.walk.probe;
+    }
+
+    const deep = encodeGitlabScanContinuation(frontier);
+    expect(deep).not.toBeNull();
+    expect(deep?.token.length ?? Infinity).toBeLessThan(initialLength + 128);
   });
 });

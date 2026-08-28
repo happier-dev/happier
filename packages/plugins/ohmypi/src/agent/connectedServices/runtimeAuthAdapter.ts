@@ -1,5 +1,5 @@
-import { summarizeOhMyPiConnectedServiceActiveProfiles } from './activeProfiles.js';
 import { isRecord, readTrimmedString as readString } from '@happier-dev/plugin-sdk';
+import type { AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 const REQUIRED_SERVICE_IDS = [
   'openai-codex',
@@ -38,16 +38,12 @@ type RuntimeAuthTargetInput = Readonly<{
 
 function activeProfiles(input: RuntimeAuthTargetInput) {
   const selection = isRecord(input.selection) ? input.selection : null;
-  return summarizeOhMyPiConnectedServiceActiveProfiles({
-    openaiCodexProfileId: readString(selection?.openaiCodexProfileId),
-    openaiProfileId: readString(selection?.openaiProfileId),
-    claudeSubscriptionProfileId: readString(selection?.claudeSubscriptionProfileId),
-    anthropicProfileId: readString(selection?.anthropicProfileId),
-    geminiProfileId: readString(selection?.geminiProfileId),
-  });
+  const serviceId = readString(selection?.serviceId);
+  const profileId = readString(selection?.activeProfileId ?? selection?.profileId);
+  return serviceId && profileId ? { [serviceId]: profileId } : {};
 }
 
-export function createOhMyPiConnectedServiceRuntimeAuthAdapter() {
+export function createOhMyPiConnectedServiceRuntimeAuthAdapter(): AgentConnectedAccountRuntimeAuthAdapterV1 {
   return {
     classifyRuntimeAuthFailure() {
       return null;
@@ -60,9 +56,6 @@ export function createOhMyPiConnectedServiceRuntimeAuthAdapter() {
     },
     async hotApply() {
       return { applied: false, reason: 'hot_apply_unsupported' };
-    },
-    async recoverAfterRuntimeAuthSwitch() {
-      return { recovered: false, recovery: 'restart_rematerialize' };
     },
     async verifyActiveAccount() {
       return {

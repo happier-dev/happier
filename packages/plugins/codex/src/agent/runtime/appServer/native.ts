@@ -1,6 +1,5 @@
 import {
   AgentRuntimeJsonValueSchema,
-  type AgentRuntimeContext,
   type AgentSessionOpenRequest,
   type AgentSessionRuntime,
   type AgentSessionRuntimeContext,
@@ -40,7 +39,7 @@ type NativeSessionEventInput = AgentSessionRuntimeEvent extends infer Event
     : never
   : never;
 
-type NativeCurrentSession = NonNullable<AgentRuntimeContext['services']['sessions']['current']>;
+type NativeCurrentSession = NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>;
 type NativeMediaSourceRoot = Awaited<ReturnType<
   NativeCurrentSession['media']['registerSourceRoot']
 >>;
@@ -73,20 +72,17 @@ function readInitialModelId(request: AgentSessionOpenRequest): string | null {
 
 export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
   request: AgentSessionOpenRequest;
-  context: AgentRuntimeContext;
+  context: AgentSessionRuntimeContext;
   processEnv: Readonly<Record<string, string>>;
 }>): CodexAppServerRuntimeHost {
-  const sessionContext = 'session' in params.context
-    ? params.context as AgentSessionRuntimeContext
-    : null;
-  const accountUsage: CodexAccountUsageService | null = sessionContext ? {
+  const accountUsage: CodexAccountUsageService = {
     resolveSourceContext: async (input, options) =>
-      await sessionContext.session.services.accountUsage.resolveSourceContext(input, options),
+      await params.context.session.services.accountUsage.resolveSourceContext(input, options),
     recordSnapshot: async (input, options) =>
-      await sessionContext.session.services.accountUsage.recordSnapshot(input, options),
+      await params.context.session.services.accountUsage.recordSnapshot(input, options),
     adoptProvisionalRecord: async (input, options) =>
-      await sessionContext.session.services.accountUsage.adoptProvisionalRecord(input, options),
-  } : null;
+      await params.context.session.services.accountUsage.adoptProvisionalRecord(input, options),
+  };
   const currentSession = params.context.services.sessions.current;
   const mediaSourceRoots = new Map<string, Promise<NativeMediaSourceRoot>>();
   let mediaDisposed = false;
@@ -105,6 +101,9 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
   };
   return {
     baseProcessEnv: params.processEnv,
+    ...(params.context.session.services.nativeHome
+      ? { nativeHome: params.context.session.services.nativeHome }
+      : {}),
     logger: params.context.services.logger,
     ui: params.context.services.interactions,
     ...(params.context.services.sessions.current?.mcp
@@ -134,21 +133,21 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
       }
       return JSON.parse(new TextDecoder().decode(response.body)) as unknown;
     },
-    ...(accountUsage ? { accountUsage } : {}),
+    accountUsage,
     ...(currentSession ? {
       setTitle: async (title) => {
         await currentSession.setDisplayTitle(title, { signal: params.context.signal });
       },
     } : {}),
-    ...(sessionContext ? { refreshRuntimeAuth: async (request) => {
+    refreshRuntimeAuth: async (request) => {
       const refreshRuntimeAuth = params.context.services.sessions.current?.auth.services.refreshRuntimeAuth;
       if (!refreshRuntimeAuth) throw new Error('Codex Session-handle runtime authentication is unavailable.');
       return await refreshRuntimeAuth(
         request,
         { signal: params.context.signal },
       );
-    } } : {}),
-    ...(sessionContext ? { reportCapacityFailure: async (classification: Readonly<Record<string, JsonValue>>) => {
+    },
+    reportCapacityFailure: async (classification: Readonly<Record<string, JsonValue>>) => {
       const refreshRuntimeAuth = params.context.services.sessions.current?.auth.services.refreshRuntimeAuth;
       if (!refreshRuntimeAuth) throw new Error('Codex Session-handle runtime authentication is unavailable.');
       await refreshRuntimeAuth({
@@ -157,7 +156,7 @@ export function createCodexNativeAppServerRuntimeHost(params: Readonly<{
         classification,
         reason: 'provider_session_capacity_failure',
       }, { signal: params.context.signal });
-    } } : {}),
+    },
     ...(currentSession ? { publishGeneratedMedia: async (candidate) => {
       if (mediaDisposed) throw new Error('Codex generated-media publication is disposed.');
       const source = await acquireMediaSourceRoot(currentSession, candidate.source.restrictedRoot);
@@ -644,7 +643,7 @@ export function createCodexNativeAppServerSessionRuntime(
 
 export async function openCodexNativeAppServerSession(
   request: AgentSessionOpenRequest,
-  context: AgentRuntimeContext,
+  context: AgentSessionRuntimeContext,
 ): Promise<AgentSessionRuntime> {
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')

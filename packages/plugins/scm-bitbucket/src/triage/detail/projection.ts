@@ -2,9 +2,10 @@ import {
   MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
   MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
+  normalizeTriageSingleLineV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { toBoundedDisplayLine, truncateUtf8 } from '../text.js';
+import { toBoundedDisplayLine } from '../text.js';
 
 /**
  * The Bitbucket Cloud detail boundary projector.
@@ -26,23 +27,15 @@ import { toBoundedDisplayLine, truncateUtf8 } from '../text.js';
 
 export type BitbucketDetailBoundsV1 = Readonly<{
   identifierUtf8Bytes: number;
-  labelUtf8Bytes: number;
   textUtf8Bytes: number;
   locationUtf8Bytes: number;
-  /** One comment body, which is document content rather than a row label. */
-  commentBodyUtf8Bytes: number;
 }>;
 
 export const BITBUCKET_DETAIL_BOUNDS_V1: BitbucketDetailBoundsV1 = Object.freeze({
   identifierUtf8Bytes: MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
-  labelUtf8Bytes: 128,
   textUtf8Bytes: MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   locationUtf8Bytes: MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
-  commentBodyUtf8Bytes: 8_192,
 });
-
-/** The largest number of rows any one Bitbucket detail page publishes. */
-export const BITBUCKET_MAX_DETAIL_ROWS_V1 = 100;
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -81,35 +74,32 @@ function boundedWebUrl(value: unknown, bounds: BitbucketDetailBoundsV1): string 
 /** Bitbucket nests an actor as `{ display_name, nickname, uuid }`. */
 function readActor(
   value: unknown,
-  bounds: BitbucketDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> | null {
   if (!isRecord(value)) return null;
   const raw = readString(value.display_name) ?? readString(value.nickname);
-  return raw === null ? null : toBoundedDisplayLine(raw, bounds.labelUtf8Bytes);
+  if (raw === null) return null;
+  const normalized = normalizeTriageSingleLineV1(raw);
+  return normalized === '' ? null : { value: normalized, truncated: false };
 }
 
 /** C0 controls that are not line structure, plus `U+007F`. */
 const NON_STRUCTURAL_CONTROLS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]+/gu;
 const CARRIAGE_RETURNS = /\r\n?/gu;
-const EXCESSIVE_BLANK_LINES = /\n{3,}/gu;
 
 /**
  * A comment body keeps its line structure, because its line structure IS its
- * content. Only the control characters that are not line structure are removed,
- * and the cut is made on a whole code point by the published truncator.
+ * content. Only the control characters that are not line structure are removed.
  */
 function projectCommentBody(
   value: unknown,
-  bounds: BitbucketDetailBoundsV1,
 ): Readonly<{ value: string; truncated: boolean }> {
   const raw = isRecord(value) ? value.raw : value;
   if (typeof raw !== 'string') return { value: '', truncated: false };
   const normalized = raw
     .replace(CARRIAGE_RETURNS, '\n')
     .replace(NON_STRUCTURAL_CONTROLS, '')
-    .replace(EXCESSIVE_BLANK_LINES, '\n\n')
     .trim();
-  return truncateUtf8(normalized, bounds.commentBodyUtf8Bytes);
+  return { value: normalized, truncated: false };
 }
 
 export type BitbucketPageProjectionV1<TRow> = Readonly<{
@@ -122,14 +112,13 @@ export type BitbucketPageProjectionV1<TRow> = Readonly<{
 
 function projectRows<TRow>(
   values: readonly unknown[],
-  maxRows: number,
   projectOne: (row: JsonRecord) => Readonly<{ row: TRow; truncated: boolean }> | null,
 ): BitbucketPageProjectionV1<TRow> {
   const rows: TRow[] = [];
   let omitted = 0;
   let truncated = false;
   for (const candidate of values) {
-    if (rows.length >= maxRows || !isRecord(candidate)) {
+    if (!isRecord(candidate)) {
       omitted += 1;
       continue;
     }
@@ -188,9 +177,8 @@ const ACTIVITY_ARM_KINDS: Readonly<Record<string, BitbucketActivityKindV1 | unde
 export function projectBitbucketActivityRows(
   values: readonly unknown[],
   bounds: BitbucketDetailBoundsV1,
-  maxRows: number = BITBUCKET_MAX_DETAIL_ROWS_V1,
 ): BitbucketPageProjectionV1<BitbucketProjectedActivityRowV1> {
-  return projectRows(values, maxRows, (raw) => {
+  return projectRows(values, (raw) => {
     // The entry is a single-armed object; the arm name IS the event.
     const armName = Object.keys(raw).find((key) => ACTIVITY_ARM_KINDS[key] !== undefined)
       ?? Object.keys(raw)[0];
@@ -198,26 +186,28 @@ export function projectBitbucketActivityRows(
     const kind = ACTIVITY_ARM_KINDS[armName] ?? 'unsupported';
     const arm = isRecord(raw[armName]) ? raw[armName] as JsonRecord : {};
 
-    const actor = readActor(arm.user, bounds) ?? readActor(arm.author, bounds);
+    const actor = readActor(arm.user) ?? readActor(arm.author);
     const atMs = readTimestampMs(arm.date) ?? readTimestampMs(arm.created_on);
     const commentId = readPositiveId(arm.id, bounds.identifierUtf8Bytes);
     const summary = kind === 'comment'
-      ? projectCommentBody(arm.content, bounds)
+      ? projectCommentBody(arm.content)
       : null;
-    const boundedRawKind = toBoundedDisplayLine(armName, bounds.labelUtf8Bytes);
-    if (boundedRawKind === null) return null;
+    const rawKind = normalizeTriageSingleLineV1(armName);
+    if (rawKind === '') return null;
 
-    const key = commentId === null
+    const rawKey = commentId === null
       ? `${armName}:${String(atMs ?? 0)}:${actor?.value ?? ''}`
       : `${armName}:${commentId}`;
-    const truncated = boundedRawKind.truncated
-      || (actor?.truncated ?? false)
-      || (summary?.truncated ?? false);
+    const key = toBoundedDisplayLine(rawKey, bounds.textUtf8Bytes);
+    if (key === null) return null;
+    const truncated = (actor?.truncated ?? false)
+      || (summary?.truncated ?? false)
+      || key.truncated;
     return {
       row: Object.freeze({
-        key,
+        key: key.value,
         kind,
-        rawKind: boundedRawKind.value,
+        rawKind,
         ...(actor === null ? {} : { actor: actor.value }),
         ...(atMs === null ? {} : { atMs }),
         ...(summary === null || summary.value === '' ? {} : { summary: summary.value }),
@@ -244,16 +234,15 @@ export type BitbucketProjectedStatusRowV1 = Readonly<{
 export function projectBitbucketStatusRows(
   values: readonly unknown[],
   bounds: BitbucketDetailBoundsV1,
-  maxRows: number = BITBUCKET_MAX_DETAIL_ROWS_V1,
 ): BitbucketPageProjectionV1<BitbucketProjectedStatusRowV1> {
-  return projectRows(values, maxRows, (raw) => {
+  return projectRows(values, (raw) => {
     const key = readPositiveId(raw.uuid ?? raw.key, bounds.identifierUtf8Bytes);
     const state = readString(raw.state);
     if (key === null || state === null) return null;
-    const boundedState = toBoundedDisplayLine(state, bounds.labelUtf8Bytes);
-    if (boundedState === null) return null;
+    const normalizedState = normalizeTriageSingleLineV1(state);
+    if (normalizedState === '') return null;
     const rawName = readString(raw.name) ?? readString(raw.key);
-    const name = rawName === null ? null : toBoundedDisplayLine(rawName, bounds.labelUtf8Bytes);
+    const name = rawName === null ? null : normalizeTriageSingleLineV1(rawName);
     const description = toBoundedDisplayLine(
       readString(raw.description) ?? '',
       bounds.textUtf8Bytes,
@@ -261,14 +250,12 @@ export function projectBitbucketStatusRows(
     const url = boundedWebUrl(raw.url, bounds);
     const createdAtMs = readTimestampMs(raw.created_on);
     const updatedAtMs = readTimestampMs(raw.updated_on);
-    const truncated = boundedState.truncated
-      || (name?.truncated ?? false)
-      || (description?.truncated ?? false);
+    const truncated = description?.truncated ?? false;
     return {
       row: Object.freeze({
         key,
-        name: name?.value ?? key,
-        state: boundedState.value,
+        name: name === null || name === '' ? key : name,
+        state: normalizedState,
         ...(description === null ? {} : { description: description.value }),
         ...(url === null ? {} : { url }),
         ...(createdAtMs === null ? {} : { createdAtMs }),
@@ -365,13 +352,12 @@ export function readBitbucketCommentResolution(raw: unknown): BitbucketCommentRe
 export function projectBitbucketCommentRows(
   values: readonly unknown[],
   bounds: BitbucketDetailBoundsV1,
-  maxRows: number = BITBUCKET_MAX_DETAIL_ROWS_V1,
 ): BitbucketPageProjectionV1<BitbucketProjectedCommentRowV1> {
-  return projectRows(values, maxRows, (raw) => {
+  return projectRows(values, (raw) => {
     const id = readPositiveId(raw.id, bounds.identifierUtf8Bytes);
     if (id === null) return null;
-    const author = readActor(raw.user, bounds);
-    const body = projectCommentBody(raw.content, bounds);
+    const author = readActor(raw.user);
+    const body = projectCommentBody(raw.content);
     const atMs = readTimestampMs(raw.created_on);
     const updatedAtMs = readTimestampMs(raw.updated_on);
     const parentId = isRecord(raw.parent)
@@ -416,28 +402,27 @@ export type BitbucketProjectedDiffstatRowV1 = Readonly<{
 export function projectBitbucketDiffstatRows(
   values: readonly unknown[],
   bounds: BitbucketDetailBoundsV1,
-  maxRows: number = BITBUCKET_MAX_DETAIL_ROWS_V1,
 ): BitbucketPageProjectionV1<BitbucketProjectedDiffstatRowV1> {
-  return projectRows(values, maxRows, (raw) => {
+  return projectRows(values, (raw) => {
     const oldPath = isRecord(raw.old) ? readString(raw.old.path) : null;
     const newPath = isRecord(raw.new) ? readString(raw.new.path) : null;
     const rawPath = newPath ?? oldPath;
     const rawStatus = readString(raw.status);
     if (rawPath === null || rawStatus === null) return null;
     const path = toBoundedDisplayLine(rawPath, bounds.textUtf8Bytes);
-    const status = toBoundedDisplayLine(rawStatus, bounds.labelUtf8Bytes);
-    if (path === null || status === null) return null;
+    const status = normalizeTriageSingleLineV1(rawStatus);
+    if (path === null || status === '') return null;
     const linesAdded = typeof raw.lines_added === 'number'
       && Number.isSafeInteger(raw.lines_added) && raw.lines_added >= 0
       ? raw.lines_added : 0;
     const linesRemoved = typeof raw.lines_removed === 'number'
       && Number.isSafeInteger(raw.lines_removed) && raw.lines_removed >= 0
       ? raw.lines_removed : 0;
-    const truncated = path.truncated || status.truncated;
+    const truncated = path.truncated;
     return {
       row: Object.freeze({
         path: path.value,
-        status: status.value,
+        status,
         linesAdded,
         linesRemoved,
         ...(truncated ? { truncated: true as const } : {}),

@@ -29,6 +29,7 @@ import {
   Stack,
   Text,
   useExecutePluginAction,
+  usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 
 import {
@@ -41,7 +42,6 @@ import {
   type PosthogConfigurationDirectoryInputV1,
   type PosthogConfigurationDirectoryResultV1,
 } from '../../connect/configurationContract.js';
-import { PosthogCapabilityProbeResultV1Schema } from '../../connect/capabilityProbe.js';
 import {
   decodePosthogConfiguration,
   encodePosthogConfiguration,
@@ -95,19 +95,20 @@ function readWindowPolicy(draft: WindowDraft): PosthogWindowPolicy | null {
 }
 
 function WindowPolicyEditor(props: Readonly<{
-  name: 'Scan' | 'Detail';
+  name: string;
   value: WindowDraft;
   onChange: (value: WindowDraft) => void;
   disabled: boolean;
 }>): React.ReactElement {
-  const lower = props.name.toLowerCase();
+  const text = usePluginTranslation();
+  const lower = props.name.toLocaleLowerCase();
   return (
     <Stack gap="small">
       <Form.Select
-        label={`${props.name} window mode`}
+        label={text('plugins.posthog.ui.settings.windowMode', '{name} window mode', { name: props.name })}
         options={[
-          { value: 'relative', label: `Relative ${lower} window` },
-          { value: 'exact', label: `Exact ${lower} window` },
+          { value: 'relative', label: text('plugins.posthog.ui.settings.relativeWindow', 'Relative {name} window', { name: lower }) },
+          { value: 'exact', label: text('plugins.posthog.ui.settings.exactWindow', 'Exact {name} window', { name: lower }) },
         ]}
         value={props.value.mode}
         onChange={(next) => {
@@ -119,7 +120,7 @@ function WindowPolicyEditor(props: Readonly<{
       />
       {props.value.mode === 'relative' ? (
         <Form.TextField
-          label={`${props.name} window (days)`}
+          label={text('plugins.posthog.ui.settings.windowDays', '{name} window (days)', { name: props.name })}
           value={props.value.relativeDays}
           onChange={(relativeDays) => props.onChange({ ...props.value, relativeDays })}
           keyboardType="numeric"
@@ -128,13 +129,13 @@ function WindowPolicyEditor(props: Readonly<{
       ) : (
         <>
           <Form.TextField
-            label={`${props.name} window start (ISO 8601)`}
+            label={text('plugins.posthog.ui.settings.windowStart', '{name} window start (ISO 8601)', { name: props.name })}
             value={props.value.exactFrom}
             onChange={(exactFrom) => props.onChange({ ...props.value, exactFrom })}
             disabled={props.disabled}
           />
           <Form.TextField
-            label={`${props.name} window end (ISO 8601)`}
+            label={text('plugins.posthog.ui.settings.windowEnd', '{name} window end (ISO 8601)', { name: props.name })}
             value={props.value.exactTo}
             onChange={(exactTo) => props.onChange({ ...props.value, exactTo })}
             disabled={props.disabled}
@@ -160,15 +161,12 @@ function PosthogDraftEditor({
   onSubmit,
   onCancel,
 }: TriageSourceSettingsDraftEditorPropsV1): React.ReactElement {
+  const text = usePluginTranslation();
   const action = React.useMemo(() => ({
     pluginId: POSTHOG_PLUGIN_ID,
     localId: POSTHOG_ACTION_IDS.configuration,
   }), []);
   const directory = useExecutePluginAction(action);
-  const capability = useExecutePluginAction(React.useMemo(() => ({
-    pluginId: POSTHOG_PLUGIN_ID,
-    localId: POSTHOG_ACTION_IDS.capability,
-  }), []));
   const decoded = React.useMemo(() => decodePosthogConfiguration(draft.configuration), [draft]);
   const [organizations, setOrganizations] = React.useState<readonly Organization[]>([]);
   const [organizationNext, setOrganizationNext] = React.useState<string | null>(null);
@@ -185,7 +183,6 @@ function PosthogDraftEditor({
   const [message, setMessage] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const mountedGeneration = React.useRef(0);
-  const pendingCapability = React.useRef<AbortController | null>(null);
   const environmentDirectoryGeneration = React.useRef(0);
   const pendingEnvironmentDirectory = React.useRef<AbortController | null>(null);
 
@@ -193,8 +190,6 @@ function PosthogDraftEditor({
     mountedGeneration.current += 1;
     return () => {
       mountedGeneration.current += 1;
-      pendingCapability.current?.abort();
-      pendingCapability.current = null;
       environmentDirectoryGeneration.current += 1;
       pendingEnvironmentDirectory.current?.abort();
       pendingEnvironmentDirectory.current = null;
@@ -216,22 +211,22 @@ function PosthogDraftEditor({
         : await execute(input, { signal: current.signal });
       if (current !== undefined && !current.isCurrent()) return null;
       if (execution.status !== 'success') {
-        setMessage('PostHog could not read this configuration page.');
+        setMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
         return null;
       }
       const parsed = PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result);
       if (!parsed.success || parsed.data.kind === 'unavailable') {
-        setMessage('PostHog could not read this configuration page.');
+        setMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
         return null;
       }
       setMessage(parsed.data.incomplete === true
-        ? 'Some provider rows or paging information could not be read; the visible choices remain usable.'
+        ? text('plugins.posthog.ui.settings.partial', 'Some provider rows or paging information could not be read; the visible choices remain usable.')
         : null);
       return parsed.data;
     } finally {
       if (current === undefined || current.isCurrent()) setLoading(false);
     }
-  }, [execute]);
+  }, [execute, text]);
 
   const loadOrganizations = React.useCallback(async (next: string | null) => {
     const result = await readPage({
@@ -295,11 +290,11 @@ function PosthogDraftEditor({
     const scanWindowPolicy = readWindowPolicy(scanWindow);
     const detailWindowPolicy = readWindowPolicy(detailWindow);
     if (scanWindowPolicy === null || detailWindowPolicy === null) {
-      return { ok: false as const, message: 'Use positive whole days or valid ISO 8601 exact window endpoints.' };
+      return { ok: false as const, message: text('plugins.posthog.ui.settings.invalidWindow', 'Use positive whole days or valid ISO 8601 exact window endpoints.') };
     }
     const organization = organizations.find((entry) => entry.organizationUuid === organizationUuid);
     if (organization === undefined) {
-      return { ok: false as const, message: 'Choose a PostHog organization.' };
+      return { ok: false as const, message: text('plugins.posthog.ui.settings.chooseOrganization', 'Choose a PostHog organization.') };
     }
     const encoded = encodePosthogConfiguration({
       v: 1,
@@ -312,8 +307,8 @@ function PosthogDraftEditor({
       return {
         ok: false as const,
         message: encoded.reason === 'tokenTooLarge'
-          ? `This environment selection needs ${String(encoded.utf8Bytes)} UTF-8 bytes and cannot fit one source configuration.`
-          : 'Choose at least one valid PostHog environment.',
+          ? text('plugins.posthog.ui.settings.selectionTooLarge', 'This environment selection needs {bytes} UTF-8 bytes and cannot fit one source configuration.', { bytes: encoded.utf8Bytes })
+          : text('plugins.posthog.ui.settings.chooseEnvironment', 'Choose at least one valid PostHog environment.'),
       };
     }
     return {
@@ -325,7 +320,7 @@ function PosthogDraftEditor({
         locator: { v: 1 as const, displayLabel: organization.displayName },
       } satisfies TriageSourceInstanceDraftV1,
     };
-  }, [detailWindow, draft, organizationUuid, organizations, scanWindow]);
+  }, [detailWindow, draft, organizationUuid, organizations, scanWindow, text]);
 
   const changeSelection = React.useCallback((value: FormSelectValue) => {
     const values = typeof value === 'string' ? [value] : Array.isArray(value) ? value : [];
@@ -340,7 +335,7 @@ function PosthogDraftEditor({
     const scanWindowPolicy = readWindowPolicy(scanWindow);
     const detailWindowPolicy = readWindowPolicy(detailWindow);
     if (scanWindowPolicy === null || detailWindowPolicy === null) {
-      setMessage('Use positive whole days or valid ISO 8601 exact window endpoints.');
+      setMessage(text('plugins.posthog.ui.settings.invalidWindow', 'Use positive whole days or valid ISO 8601 exact window endpoints.'));
       return;
     }
     const preflight = preflightPosthogEnvironmentSelection(selectedEnvironments, proposedRows, {
@@ -349,20 +344,20 @@ function PosthogDraftEditor({
       detailWindowPolicy,
     });
     if (!preflight.encoding.ok && preflight.encoding.reason === 'tokenTooLarge') {
-      setMessage(`This environment selection needs ${String(preflight.encoding.utf8Bytes)} UTF-8 bytes and cannot fit one source configuration.`);
+      setMessage(text('plugins.posthog.ui.settings.selectionTooLarge', 'This environment selection needs {bytes} UTF-8 bytes and cannot fit one source configuration.', { bytes: preflight.encoding.utf8Bytes }));
       return;
     }
     setSelected(nextIds);
     setMessage(null);
-  }, [detailWindow, environments, organizationUuid, scanWindow, selectedEnvironments]);
+  }, [detailWindow, environments, organizationUuid, scanWindow, selectedEnvironments, text]);
 
   return (
     <Stack gap="medium">
-      <Heading level={3} value="Choose PostHog environments" />
-      <Text value="Choose an organization, any non-empty subset of its environments, and the scan and detail windows." />
-      {message === null ? null : <Banner tone="warning" title="Configuration needs attention" description={message} />}
+      <Heading level={3} valueKey="plugins.posthog.ui.settings.heading" fallback="Choose PostHog environments" />
+      <Text valueKey="plugins.posthog.ui.settings.description" fallback="Choose an organization, any non-empty subset of its environments, and the scan and detail windows." />
+      {message === null ? null : <Banner tone="warning" title="Configuration needs attention" titleKey="plugins.posthog.ui.settings.attention" description={message} />}
       <Form.Select
-        label="Organization"
+        label={text('plugins.posthog.ui.settings.organization', 'Organization')}
         options={organizations.map((organization) => ({
           value: organization.organizationUuid,
           label: organization.displayName,
@@ -384,6 +379,7 @@ function PosthogDraftEditor({
       {organizationNext === null ? null : (
         <Button
           title="Load more organizations"
+          titleKey="plugins.posthog.ui.settings.loadMoreOrganizations"
           variant="secondary"
           busy={loading}
           disabled={busy || loading}
@@ -391,7 +387,7 @@ function PosthogDraftEditor({
         />
       )}
       <Form.Select
-        label="Environments"
+        label={text('plugins.posthog.ui.settings.environments', 'Environments')}
         multiple
         minimumSelections={1}
         options={environments.map((environment) => ({
@@ -405,17 +401,19 @@ function PosthogDraftEditor({
       {environmentNext === null ? null : (
         <Button
           title="Load more environments"
+          titleKey="plugins.posthog.ui.settings.loadMoreEnvironments"
           variant="secondary"
           busy={loading}
           disabled={busy || loading}
           onPress={() => { void loadEnvironments(organizationUuid, environmentNext); }}
         />
       )}
-      <WindowPolicyEditor name="Scan" value={scanWindow} onChange={setScanWindow} disabled={busy} />
-      <WindowPolicyEditor name="Detail" value={detailWindow} onChange={setDetailWindow} disabled={busy} />
+      <WindowPolicyEditor name={text('plugins.posthog.ui.settings.scan', 'Scan')} value={scanWindow} onChange={setScanWindow} disabled={busy} />
+      <WindowPolicyEditor name={text('plugins.posthog.ui.settings.detail', 'Detail')} value={detailWindow} onChange={setDetailWindow} disabled={busy} />
       <Row gap="small">
         <Button
           title="Save PostHog configuration"
+          titleKey="plugins.posthog.ui.settings.save"
           variant="primary"
           busy={busy}
           disabled={busy || loading}
@@ -425,40 +423,10 @@ function PosthogDraftEditor({
               setMessage(prospective.message);
               return;
             }
-            void (async () => {
-              pendingCapability.current?.abort();
-              const controller = new AbortController();
-              pendingCapability.current = controller;
-              const generation = mountedGeneration.current;
-              const isCurrent = () => (
-                !controller.signal.aborted
-                && pendingCapability.current === controller
-                && mountedGeneration.current === generation
-              );
-              setLoading(true);
-              const execution = await capability.execute(
-                { v: 1, draft: prospective.draft },
-                { signal: controller.signal },
-              );
-              const result = execution.status === 'success'
-                ? PosthogCapabilityProbeResultV1Schema.safeParse(execution.result)
-                : null;
-              if (!isCurrent()) return;
-              setLoading(false);
-              if (execution.status !== 'success') {
-                setMessage('PostHog could not verify Error Tracking access for this selection.');
-                return;
-              }
-              if (result === null || !result.success || result.data.kind !== 'available') {
-                setMessage('PostHog Error Tracking is unavailable for this selection.');
-                return;
-              }
-              await onSubmit(prospective.draft);
-              if (pendingCapability.current === controller) pendingCapability.current = null;
-            })();
+            void onSubmit(prospective.draft);
           }}
         />
-        <Button title="Cancel" variant="secondary" disabled={busy} onPress={onCancel} />
+        <Button title="Cancel" titleKey="plugins.posthog.ui.settings.cancel" variant="secondary" disabled={busy} onPress={onCancel} />
       </Row>
     </Stack>
   );

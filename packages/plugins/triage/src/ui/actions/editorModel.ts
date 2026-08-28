@@ -111,6 +111,9 @@ export function withTriageActionTargetKindV1(
   const promptInvocationId = draft.target.promptInvocationId;
   return {
     ...draft,
+    ...(kind === 'reviewStart'
+      ? { workspaceMode: 'pull_request' as const, appliesTo: ['pullRequest'] as const }
+      : {}),
     target: kind === 'reviewStart'
       ? { kind: 'reviewStart', promptInvocationId }
       : { kind: 'agent', promptInvocationId, delivery: 'compose' },

@@ -152,6 +152,14 @@ export type TriageListWindowV1 = Readonly<{
     rows: readonly TriageListRowV1[];
     lanes: readonly TriageListLaneV1[];
     /**
+     * Type and Scope identities observed before this lens applies search or
+     * facets. The rail consumes this exact census rather than rediscovering
+     * options from the already-filtered rows and trapping the reader inside a
+     * narrowing choice. Coverage is the census's own lane truth, not a global
+     * provider count.
+     */
+    facetCensus: TriageListFacetCensusV1;
+    /**
      * `complete` only when every lane reported exhaustion and the row bound did
      * not truncate. A zero-row `partial` window is not an empty result.
      */
@@ -172,6 +180,12 @@ export type CorpusTypeFilterValueV1 = Readonly<{ source: PluginContributionIdent
 export type CorpusScopeFilterValueV1 = Readonly<{ source: PluginContributionIdentity; collisionScope: string }>;
 export type CorpusStateFilterValueV1 = 'open' | 'done' | 'absent' | 'unresolved';
 export type CorpusAttentionFilterValueV1 = 'required' | 'suggested' | 'none';
+
+export type TriageListFacetCensusV1 = Readonly<{
+    types: readonly CorpusTypeFilterValueV1[];
+    scopes: readonly CorpusScopeFilterValueV1[];
+    coverage: 'complete' | 'partial';
+}>;
 
 export type SurfaceFilterSelectionV1 = Readonly<{
     sources: readonly CorpusSourceFilterValueV1[];
@@ -448,6 +462,7 @@ export function foldTriageListWindow(input: Readonly<{
         bucket.observations.push(projected);
     }
 
+    const unfilteredRows: TriageListRowV1[] = [];
     const rows: TriageListRowV1[] = [];
     const terms = parseTriageSearchQuery(input.lens.query);
     for (const { entryRef, observations: answers } of grouped.values()) {
@@ -471,6 +486,7 @@ export function foldTriageListWindow(input: Readonly<{
             selected: selectObservationInstance(observations, activeSourceInstanceIds, attention, null),
             observations,
         };
+        unfilteredRows.push(row);
         // Search has one owner, shared with the Composer picker: two matchers
         // over one projection gave the same query two answers.
         const matchesQuery = triageEntryMatchesSearch(
@@ -494,19 +510,42 @@ export function foldTriageListWindow(input: Readonly<{
     const limit = Math.max(0, input.lens.limit);
     const bounded = boundAcrossSourceLanes(ordered, limit);
     const everyLaneExhausted = input.lanes.every((lane) => lane.exhausted);
-    const complete = input.configuredSourcesStatus === 'complete'
+    const censusComplete = input.configuredSourcesStatus === 'complete'
         // A window that asked no lane has no basis for saying every configured
         // source answered, and `lanes.every` is vacuously true over none — which
         // is how an enumeration-only read reported an authoritative "nothing
         // needs you" from a call that asked nobody.
         && input.lanes.length > 0
-        && everyLaneExhausted
+        && everyLaneExhausted;
+    const complete = censusComplete
         && bounded.length === ordered.length;
+
+    const typeValues = new Map<string, CorpusTypeFilterValueV1>();
+    const scopeValues = new Map<string, CorpusScopeFilterValueV1>();
+    for (const row of unfilteredRows) {
+        const sourceKey = JSON.stringify([row.entryRef.source.pluginId, row.entryRef.source.localId]);
+        typeValues.set(`${sourceKey}:${JSON.stringify(row.entryRef.kindId)}`, Object.freeze({
+            source: row.entryRef.source,
+            kindId: row.entryRef.kindId,
+        }));
+        scopeValues.set(`${sourceKey}:${JSON.stringify(row.entryRef.collisionScope)}`, Object.freeze({
+            source: row.entryRef.source,
+            collisionScope: row.entryRef.collisionScope,
+        }));
+    }
+    const facetCensus: TriageListFacetCensusV1 = Object.freeze({
+        types: Object.freeze([...typeValues.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+            .map(([, value]) => value)),
+        scopes: Object.freeze([...scopeValues.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+            .map(([, value]) => value)),
+        coverage: censusComplete ? 'complete' : 'partial',
+    });
 
     return Object.freeze({
         v: 1,
         rows: Object.freeze(bounded),
         lanes: Object.freeze([...input.lanes]),
+        facetCensus,
         coverage: complete ? 'complete' : 'partial',
         assembledAtMs: input.assembledAtMs,
     });

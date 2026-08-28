@@ -1,5 +1,6 @@
 import type {
     ScmBackendContext,
+    ScmWorkspaceIntegration,
     ScmWorkspaceIntegrationPostMaterializationInput,
     ScmWorkspaceIntegrationPortableWorkspacePathInput,
     ScmWorkspaceIntegrationPortableWorkspaceEntriesInput,
@@ -43,6 +44,7 @@ import {
     createGitWorkspaceCheckoutAtDefaultPath,
     materializeGitWorkspaceCheckoutAtPath,
     prepareGitReviewWorkspace,
+    readGitRevision,
 } from './operations/materializeGitWorkspaceCheckout.js';
 import { reconcileGitWorkspaceCheckout } from './operations/reconcileWorkspaceCheckout.js';
 import { resolveGitWorkspaceTransferEntries } from './operations/resolveGitWorkspaceTransferEntries.js';
@@ -178,6 +180,45 @@ export async function prepareGitReviewWorkspaceAtSelectedRoot(input: Readonly<{
             currentness: prepared.currentness,
         };
     } catch (error) {
+        return {
+            success: false as const,
+            error: error instanceof Error ? error.message : String(error),
+            errorCode: 'COMMAND_FAILED' as const,
+        };
+    }
+}
+
+/**
+ * Reports the current local HEAD of one already-prepared checkout. Provider
+ * currentness remains source-owned, so this deliberately performs no fetch,
+ * repair, branch movement, or rematerialization.
+ */
+export async function verifyGitPreparedReviewWorkspace(
+    input: Parameters<NonNullable<ScmWorkspaceIntegration['verifyPreparedReviewWorkspace']>>[0],
+) {
+    try {
+        input.signal.throwIfAborted();
+        const sourceHeadSha = await readGitRevision({
+            cwd: input.request.verification.targetPath,
+            signal: input.signal,
+        });
+        input.signal.throwIfAborted();
+        if (!sourceHeadSha) {
+            return {
+                success: false as const,
+                error: 'The prepared review workspace has no readable local HEAD',
+                errorCode: 'NOT_REPOSITORY' as const,
+            };
+        }
+        return {
+            success: true as const,
+            verification: {
+                targetPath: input.request.verification.targetPath,
+                sourceHeadSha,
+            },
+        };
+    } catch (error) {
+        input.signal.throwIfAborted();
         return {
             success: false as const,
             error: error instanceof Error ? error.message : String(error),

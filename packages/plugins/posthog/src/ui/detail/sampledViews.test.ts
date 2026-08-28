@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import eventsPage from '../../api/__fixtures__/queryIssueEventsPage.json' with { type: 'json' };
 import { parsePosthogIssueEventsEnvelope } from '../../api/types/events.js';
 import {
-    POSTHOG_SAMPLED_EVENT_BOUNDS_V1,
     projectPosthogIssueEvents,
     type PosthogProjectedIssueEvent,
 } from './issueEventProjection.js';
@@ -16,7 +15,7 @@ import {
 function sample(): readonly PosthogProjectedIssueEvent[] {
     const envelope = parsePosthogIssueEventsEnvelope(eventsPage);
     if (envelope === null) throw new Error('recorded issue-events fixture must parse');
-    return projectPosthogIssueEvents(envelope.rawEvents, POSTHOG_SAMPLED_EVENT_BOUNDS_V1);
+    return projectPosthogIssueEvents(envelope.rawEvents);
 }
 
 describe('posthogOccurrenceRows', () => {
@@ -68,15 +67,6 @@ describe('posthogStackTrace', () => {
         );
     });
 
-    it('says the stack was shortened when the boundary projector bounded it', () => {
-        const trace = posthogStackTrace({
-            uuid: 'e1',
-            exceptions: [{ type: 'TypeError', frames: [] }],
-            truncated: true,
-        });
-
-        expect(trace.truncated).toBe(true);
-    });
 });
 
 describe('posthogAffectedSessionRows', () => {

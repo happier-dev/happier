@@ -23,6 +23,24 @@ describe('Azure DevOps failure projection', () => {
     expect(() => TriageSourceFailureV1Schema.parse(projected)).not.toThrow();
   });
 
+  it('keeps provider detail intact until the canonical public failure projection bounds it', () => {
+    const providerMessage = '\u{1F680}'.repeat(400);
+    const failure = classifyAzureDevOpsResponse({
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+      bodyText: JSON.stringify({ message: providerMessage }),
+      nowMs: 1_760_000_000_000,
+    });
+
+    if (failure === null) throw new Error('a 500 is not a usable response');
+    expect(failure.detail).toBe(providerMessage);
+
+    const projected = projectAzureSourceFailure(failure);
+    expect(new TextEncoder().encode(projected.detail ?? '').byteLength)
+      .toBeLessThanOrEqual(MAX_TRIAGE_FAILURE_DETAIL_UTF8_BYTES_V1);
+    expect(() => TriageSourceFailureV1Schema.parse(projected)).not.toThrow();
+  });
+
   /**
    * `sources/SCM.md` §6.1 sets Azure DevOps Server 2022.1 / REST 7.1 as this vertical's floor and
    * says a deployment that cannot prove it is reported as unsupported rather than sent a

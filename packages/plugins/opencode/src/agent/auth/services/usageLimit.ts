@@ -75,11 +75,3 @@ export function classifyOpenCodeUsageLimitError(params: Readonly<{
     action: actionUrl ? { kind: 'open_url', url: actionUrl } : null,
   };
 }
-
-export const OPEN_CODE_USAGE_LIMIT_RECOVERY = Object.freeze({
-  providerId: 'opencode',
-  fallbackBackoffEnvKey: 'HAPPIER_OPENCODE_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS',
-  maxAttemptsEnvKey: 'HAPPIER_OPENCODE_USAGE_LIMIT_RECOVERY_MAX_ATTEMPTS',
-  defaultFallbackBackoffMs: 600_000,
-  defaultMaxAttempts: 3,
-} as const);

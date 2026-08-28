@@ -16,12 +16,13 @@
  *   omitted raw rows increment `omittedItemCount`; semantic truncation does not.
  */
 
+import {
+  advanceCursorCycleWalkV1,
+  type CursorCycleWalkV1,
+} from '@happier-dev/triage-sources/runtime';
+
 import { SENTRY_FAILURE_CODES, type SentryFailureV1 } from '../sentryContracts.js';
 import type { SentryApiClientV1 } from '../api/sentryApiClient.js';
-import {
-  advanceSentryCursorWalk,
-  type SentryCursorWalkV1,
-} from '../api/sentryCursorCycle.js';
 import { classifySentryFailure } from '../api/sentryFailure.js';
 import { parseSentryLinkHeader } from '../api/sentryLinkHeader.js';
 import { mapSentryIssueForInvokedInstance } from '../entries/sentryIssueMapping.js';
@@ -99,7 +100,7 @@ export async function executeSentryScanPage(
    * one it is watching for. The initial page has requested nothing, so it starts
    * at `null` rather than at a cursor the walk never used.
    */
-  let position: SentryCursorWalkV1 | null = null;
+  let position: CursorCycleWalkV1 | null = null;
   /**
    * What this walk has already established about itself. It arrives in the
    * continuation and leaves in the next one, so a caveat raised on page one is
@@ -231,7 +232,7 @@ export async function executeSentryScanPage(
   // repeat and an `A → B → A` alternation — invisible to a comparison that can
   // only see the current request — are both caught, without an evidence record
   // that grows with the walk.
-  const advanced = advanceSentryCursorWalk(position, next.cursor);
+  const advanced = advanceCursorCycleWalkV1(position, next.cursor);
   if (advanced.kind === 'revisited') {
     return page(sentryPartialHealth(SENTRY_FAILURE_CODES.paginationCursorNotAdvancing), null);
   }
@@ -248,11 +249,11 @@ export async function executeSentryScanPage(
     sort: SENTRY_SCAN_SORT,
   });
   if (continuation === null) {
-    // The walk is open and the cursor is intact; the frontier simply does not
-    // fit the bounded token, so this page is the last one this pass can hand
-    // back. Saying `cursor-malformed` here would blame the provider for a bound
-    // this side owns, and it outranks the row caveat because it is the reason
-    // the walk stops.
+    // The walk is open and the cursor is intact; this source simply failed to
+    // serialize the frontier, so this page is the last one this pass can hand
+    // back. Saying `cursor-malformed` here would blame the provider for a
+    // failure this side owns, and it outranks the row caveat because it is the
+    // reason the walk stops.
     return page(sentryPartialHealth(SENTRY_CONTINUATION_UNAVAILABLE_REASON), null);
   }
 

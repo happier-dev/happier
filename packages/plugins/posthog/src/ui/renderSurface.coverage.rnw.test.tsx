@@ -149,13 +149,27 @@ function activityResult(overrides: Readonly<Record<string, JsonValue>>): JsonVal
     };
 }
 
-function createHarness(activity: JsonValue, sampled: JsonValue = SAMPLED_EVENTS) {
+function createHarness(
+    activity: JsonValue,
+    sampled: JsonValue = SAMPLED_EVENTS,
+    options: Readonly<{
+        onExecute?: (localId: string) => void;
+        readCodeVariables?: (signal: AbortSignal) => Promise<JsonValue>;
+    }> = {},
+) {
     async function executeAction(
-        { action }: Readonly<{ action: unknown; input: unknown }>,
+        { action, signal }: Readonly<{ action: unknown; input: unknown; signal: AbortSignal }>,
     ): Promise<JsonValue> {
         const { localId } = action as Readonly<{ localId: string }>;
+        options.onExecute?.(localId);
         if (localId === POSTHOG_ACTION_IDS.issueActivity) return activity;
         if (localId === POSTHOG_ACTION_IDS.issueEvents) return sampled;
+        if (localId === POSTHOG_ACTION_IDS.codeVariables) {
+            if (options.readCodeVariables !== undefined) {
+                return await options.readCodeVariables(signal);
+            }
+            return { kind: 'revealed', variablesText: '{\n  "token": "captured-secret"\n}' };
+        }
         // The live entry read is not what these cases are about; the body falls back to
         // the observation it was mounted with when it does not settle.
         if (localId === POSTHOG_ACTION_IDS.get) return { kind: 'unreadable-by-design' };
@@ -169,8 +183,9 @@ const mounted: PluginUiTestkit[] = [];
 async function mountDetail(
     activity: JsonValue,
     sampled: JsonValue = SAMPLED_EVENTS,
+    options: Parameters<typeof createHarness>[2] = {},
 ): Promise<PluginUiTestkit> {
-    const harness = createHarness(activity, sampled);
+    const harness = createHarness(activity, sampled, options);
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
@@ -185,8 +200,8 @@ async function mountDetail(
             adapter: createPluginUiRnwSemanticSurfaceAdapter(),
             launchInput: DETAIL_INPUT as unknown as JsonValue,
             handlers: {
-                executeAction: async ({ action, input }) =>
-                    await harness.executeAction({ action, input }),
+                executeAction: async ({ action, input, signal }) =>
+                    await harness.executeAction({ action, input, signal }),
             },
         });
     });
@@ -319,6 +334,26 @@ describe('the mounted PostHog Occurrences panel', () => {
     });
 });
 
+describe('the mounted PostHog Affected Sessions panel', () => {
+    it('uses a localized row label without exposing the opaque provider session id', async () => {
+        const opaqueSessionId = '01J6A9H4R2YQ4Y8B9F7P2Q6N3M';
+        const page = await mountDetail(activityResult({}), {
+            kind: 'sampled',
+            events: [{
+                uuid: 'aaaaaaaa-0000-4000-8000-000000000001',
+                sessionId: opaqueSessionId,
+                exceptions: [],
+            }],
+            omittedRowCount: 0,
+        });
+        await selectTab(page, 'Affected sessions');
+
+        await expect(page.getByText('Sampled session')).resolves.toBeDefined();
+        await expect(page.getByText('1 sampled occurrence(s)')).resolves.toBeDefined();
+        await expect(page.getByText(opaqueSessionId)).rejects.toBeDefined();
+    });
+});
+
 describe('the mounted PostHog selected-evidence control', () => {
     it('discloses the selected occurrence through Triage without receiving Composer authority', async () => {
         const mountedEvidence = await mountDetailWithEvidenceDisclosure();
@@ -336,5 +371,77 @@ describe('the mounted PostHog selected-evidence control', () => {
                 label: 'PostHog occurrence 00000000-0000-4000-8000-0000000000f1',
             },
         });
+    });
+});
+
+describe('the mounted PostHog sensitive code-variable control', () => {
+    it('requires confirmation and discards every revealed byte when the panel is left', async () => {
+        let revealReads = 0;
+        const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {
+            onExecute: (localId) => {
+                if (localId === POSTHOG_ACTION_IDS.codeVariables) revealReads += 1;
+            },
+        });
+        await selectTab(page, 'Stack trace');
+
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await expect(page.getByText('Reveal sensitive captured variables?')).resolves.toBeDefined();
+        await expect(page.getByText('{ "token": "captured-secret" }')).rejects.toBeDefined();
+        expect(revealReads).toBe(0);
+
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await expect(page.getByText('Captured variables')).resolves.toBeDefined();
+        await expect(page.getByText('{ "token": "captured-secret" }')).resolves.toBeDefined();
+        expect(revealReads).toBe(1);
+
+        await selectTab(page, 'Overview');
+        await selectTab(page, 'Stack trace');
+        await expect(page.getByText('{ "token": "captured-secret" }')).rejects.toBeDefined();
+        await expect(page.getByRole('button', { name: 'Reveal captured variables' }))
+            .resolves.toBeDefined();
+    });
+
+    it('aborts an in-flight reveal and ignores its late bytes after the panel is left', async () => {
+        let observedSignal: AbortSignal | undefined;
+        let settle!: (value: JsonValue) => void;
+        const pending = new Promise<JsonValue>((resolve) => {
+            settle = resolve;
+        });
+        const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {
+            readCodeVariables: async (signal) => {
+                observedSignal = signal;
+                return await pending;
+            },
+        });
+        await selectTab(page, 'Stack trace');
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+        });
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+        });
+        await expect(page.getByRole('button', { name: 'Revealing captured variables' }))
+            .resolves.toBeDefined();
+
+        await selectTab(page, 'Overview');
+        expect(observedSignal?.aborted).toBe(true);
+        await act(async () => {
+            settle({ kind: 'revealed', variablesText: 'late-sensitive-byte' });
+            await pending;
+            await Promise.resolve();
+        });
+        await selectTab(page, 'Stack trace');
+
+        await expect(page.getByText('late-sensitive-byte')).rejects.toBeDefined();
+        await expect(page.getByRole('button', { name: 'Reveal captured variables' }))
+            .resolves.toBeDefined();
     });
 });

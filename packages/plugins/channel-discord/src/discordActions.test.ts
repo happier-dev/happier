@@ -9,6 +9,7 @@ import {
   setupDiscordChannels,
   testDiscordConnection,
 } from './discordActions.js';
+import { setupDiscordAutomationMessageSource } from './discordAutomationEvent.js';
 import {
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
@@ -49,6 +50,7 @@ function channelsCallerContext(input: Readonly<{
     env: Readonly<Record<string, string>>;
   }>>;
   signal?: AbortSignal;
+  execute?: PluginInvocationContext['services']['actions']['execute'];
 }>) {
   const controller = new AbortController();
   const materialize = vi.fn(input.materialize ?? (async () => ({
@@ -79,12 +81,93 @@ function channelsCallerContext(input: Readonly<{
           return await input.request(request);
         },
       },
+      actions: { execute: input.execute ?? vi.fn() },
     } as unknown as PluginInvocationContext['services'],
   } satisfies PluginInvocationContext;
   return { context, materialize };
 }
 
 describe('Discord Channels provider Actions', () => {
+  it('requires a current Channels connection for the selected bot before arming an Event source', async () => {
+    const { context } = channelsCallerContext({
+      async request(request) {
+        if (request.url.endsWith('/oauth2/applications/@me')) {
+          return jsonResponse({ id: 'application-1', name: 'Happier Discord' });
+        }
+        if (request.url.endsWith('/users/@me')) {
+          return jsonResponse({ id: 'discord-bot-1', username: 'Happier', bot: true });
+        }
+        if (request.url.endsWith('/channels/4242')) {
+          return jsonResponse({ id: '4242', type: 0, name: 'general' });
+        }
+        throw new Error(`Unexpected Discord request: ${request.url}`);
+      },
+      execute: vi.fn(async (action: unknown) => {
+        if (typeof action === 'object' && action !== null && 'localId' in action
+          && action.localId === 'provider/connections-list-v1') return {};
+        throw new Error('Unexpected Action');
+      }) as PluginInvocationContext['services']['actions']['execute'],
+    });
+
+    await expect(setupDiscordAutomationMessageSource(
+      { credentialRef, channelId: '4242' },
+      context,
+    )).rejects.toMatchObject({
+      code: 'discord_automation_channels_connection_required',
+      remediation: {
+        kind: 'openSettings',
+        path: '/settings/plugins/happier.channels/connections',
+      },
+    });
+  });
+
+  it('arms an Event source through the exact enabled Channels connection', async () => {
+    const execute = vi.fn(async (action: unknown) => {
+      if (typeof action === 'object' && action !== null && 'localId' in action
+        && action.localId === 'provider/connections-list-v1') {
+        return {
+          'discord-connection-1': {
+            v: 1,
+            connectionId: 'discord-connection-1',
+            providerConnectionKey: 'discord:application:application-1',
+            providerConfigVersion: 1,
+            providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' },
+            credentialRef,
+            authorityEpoch: 1,
+            enabled: true,
+            deletionState: 'none',
+            requiresFullSharedMessageContent: false,
+          },
+        };
+      }
+      throw new Error('Unexpected Action');
+    });
+    const { context } = channelsCallerContext({
+      async request(request) {
+        if (request.url.endsWith('/oauth2/applications/@me')) {
+          return jsonResponse({ id: 'application-1', name: 'Happier Discord' });
+        }
+        if (request.url.endsWith('/users/@me')) {
+          return jsonResponse({ id: 'discord-bot-1', username: 'Happier', bot: true });
+        }
+        if (request.url.endsWith('/channels/4242')) {
+          return jsonResponse({ id: '4242', type: 0, name: 'general' });
+        }
+        throw new Error(`Unexpected Discord request: ${request.url}`);
+      },
+      execute: execute as PluginInvocationContext['services']['actions']['execute'],
+    });
+
+    await expect(setupDiscordAutomationMessageSource(
+      { credentialRef, channelId: '4242' },
+      context,
+    )).resolves.toMatchObject({
+      sourceInstanceId: 'discord:application:application-1:channel:4242',
+      sourceConfig: { v: 1, applicationId: 'application-1', channelId: '4242' },
+      displayLabel: '#general',
+    });
+  });
+
   it('rejects a connection whose replay-scope key is not its exact setup-derived Discord application key', () => {
     for (const providerConnectionKey of [
       'discord:application:application-other',

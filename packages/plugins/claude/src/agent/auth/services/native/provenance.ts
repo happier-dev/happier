@@ -1,7 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
 import type {
     OauthCredentialRecord,
     TokenCredentialRecord,
@@ -45,10 +41,6 @@ function readCredentialFingerprint(value: unknown): string | undefined {
     return text?.match(/^sha256:[a-f0-9]{64}$/u) ? text : undefined;
 }
 
-export function resolveClaudeCodeNativeAuthProvenancePath(claudeConfigDir: string): string {
-    return join(claudeConfigDir, CLAUDE_CODE_NATIVE_AUTH_PROVENANCE_FILE_NAME);
-}
-
 export function buildClaudeCodeNativeAuthProvenance(params: Readonly<{
     record: OauthCredentialRecord | TokenCredentialRecord;
     payload: ClaudeCodeNativeCredentialPayload;
@@ -88,39 +80,4 @@ export function parseClaudeCodeNativeAuthProvenance(value: unknown): ClaudeCodeN
         ...(generation !== null && Number.isInteger(generation) && generation >= 0 ? { generation } : {}),
         ...(credentialRevision ? { credentialRevision } : {}),
     };
-}
-
-export async function readClaudeCodeNativeAuthProvenance(
-    claudeConfigDir: string,
-): Promise<ClaudeCodeNativeAuthProvenanceV1 | null> {
-    try {
-        return parseClaudeCodeNativeAuthProvenance(
-            JSON.parse(await readFile(resolveClaudeCodeNativeAuthProvenancePath(claudeConfigDir), 'utf8')),
-        );
-    } catch {
-        return null;
-    }
-}
-
-export async function writeClaudeCodeNativeAuthProvenance(params: Readonly<{
-    claudeConfigDir: string;
-    provenance: ClaudeCodeNativeAuthProvenanceV1;
-}>): Promise<string> {
-    await mkdir(params.claudeConfigDir, { recursive: true });
-    const provenancePath = resolveClaudeCodeNativeAuthProvenancePath(params.claudeConfigDir);
-    const tempPath = join(params.claudeConfigDir, `.native-auth-provenance.${randomUUID()}.tmp`);
-    try {
-        await writeFile(tempPath, `${JSON.stringify(params.provenance)}\n`, { mode: 0o600 });
-        if (process.platform !== 'win32') {
-            await chmod(tempPath, 0o600);
-        }
-        await rename(tempPath, provenancePath);
-        if (process.platform !== 'win32') {
-            await chmod(provenancePath, 0o600);
-        }
-        return provenancePath;
-    } catch (error) {
-        await rm(tempPath, { force: true }).catch(() => {});
-        throw error;
-    }
 }

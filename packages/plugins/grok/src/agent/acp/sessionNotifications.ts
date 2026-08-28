@@ -15,6 +15,40 @@ import {
   type SessionWorkflowRunStatusV1,
 } from '@happier-dev/plugin-sdk/sessions/work-state';
 
+type GrokCurrentSession = NonNullable<AgentSessionRuntimeContext['services']['sessions']['current']>;
+type GrokSubagentsService = AgentSessionRuntimeContext['services']['sessions']['subagents'];
+type GrokWorkStatePublisher = ReturnType<AgentSessionRuntimeContext['workState']['publisher']>;
+
+type GrokSessionNotificationObserverContext = Readonly<{
+  services: Readonly<{
+    logger: Pick<AgentSessionRuntimeContext['services']['logger'], 'warn'>;
+    sessions: Readonly<{
+      current: Readonly<{
+        upsertSystemRecord(
+          request: Parameters<GrokCurrentSession['upsertSystemRecord']>[0],
+        ): Promise<unknown>;
+        readSystemRecord(
+          request: Parameters<GrokCurrentSession['readSystemRecord']>[0],
+        ): Promise<Readonly<{ content?: unknown }> | null>;
+      }> | null;
+      subagents: Readonly<{
+        observe(
+          input: Parameters<GrokSubagentsService['observe']>[0],
+          options?: Parameters<GrokSubagentsService['observe']>[1],
+        ): Promise<unknown>;
+      }>;
+    }>;
+  }>;
+  session: Readonly<{
+    services: Pick<AgentSessionRuntimeContext['session']['services'], 'workflowActivity'>;
+  }>;
+  workState: Readonly<{
+    publisher(
+      declaredSourceId: string,
+    ): Pick<GrokWorkStatePublisher, 'publish'>;
+  }>;
+}>;
+
 export const GROK_SESSION_NOTIFICATION_METHODS = [
   'x.ai/session_notification',
   '_x.ai/session_notification',
@@ -214,7 +248,7 @@ function mapGoalStatus(value: unknown): 'active' | 'paused' | 'blocked' | 'compl
 }
 
 export function createGrokSessionNotificationObserver(params: Readonly<{
-  context: AgentSessionRuntimeContext;
+  context: GrokSessionNotificationObserverContext;
   now?: () => number;
 }>): AgentAcpNotificationExtension {
   const now = params.now ?? Date.now;
@@ -222,7 +256,7 @@ export function createGrokSessionNotificationObserver(params: Readonly<{
   const providerRevisionByRun = new Map<string, number>();
   const subagentDetailById = new Map<string, JsonObject>();
   const workflowRecordKind = ACTIVITY_SESSION_SYSTEM_RECORD_KINDS[0];
-  const currentSession = params.context.services?.sessions?.current ?? null;
+  const currentSession = params.context.services.sessions.current;
   const workflowPublisher = currentSession ? createWorkflowActivityPublisher({
     backendId: 'grok',
     agentId: 'grok',
@@ -257,7 +291,7 @@ export function createGrokSessionNotificationObserver(params: Readonly<{
     }),
     now,
   }) : null;
-  const goalPublisher = params.context.workState?.publisher?.('goals') ?? null;
+  const goalPublisher = params.context.workState.publisher('goals');
   let goalSourceSequence = 0;
   let tail: Promise<void> = Promise.resolve();
 
@@ -302,8 +336,7 @@ export function createGrokSessionNotificationObserver(params: Readonly<{
         },
       } satisfies JsonObject;
       subagentDetailById.set(subagentId, detail);
-      const subagentObserver = params.context.services?.sessions?.subagents;
-      if (!subagentObserver) return;
+      const subagentObserver = params.context.services.sessions.subagents;
       await subagentObserver.observe({
         observationId: `grok-native:${subagentId}`,
         ...(groupId ? { groupId } : {}),
@@ -318,8 +351,7 @@ export function createGrokSessionNotificationObserver(params: Readonly<{
       };
       const status = update.sessionUpdate === 'subagent_finished' ? mapSubagentStatus(update.status) : 'running';
       const groupId = string((asRecord(baseDetail.agentMetadata))?.workflowRunId) ?? undefined;
-      const subagentObserver = params.context.services?.sessions?.subagents;
-      if (!subagentObserver) return;
+      const subagentObserver = params.context.services.sessions.subagents;
       await subagentObserver.observe({
         observationId: `grok-native:${subagentId}`,
         ...(groupId ? { groupId } : {}),

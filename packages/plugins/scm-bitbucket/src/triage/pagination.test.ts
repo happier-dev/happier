@@ -63,6 +63,18 @@ describe('Bitbucket page envelope', () => {
     }
   });
 
+  it.each([42, ''])('rejects malformed next cursor %j instead of claiming the walk ended', (next) => {
+    const decoded = decodeBitbucketPageEnvelope({ values: [], next });
+
+    expect(decoded.ok).toBe(false);
+    if (!decoded.ok) {
+      expect(decoded.failure).toMatchObject({
+        class: 'unsupportedContract',
+        code: 'page-next-invalid',
+      });
+    }
+  });
+
   it('follows only an absolute same-origin next link and ends the walk when it is absent', () => {
     const first = decodeBitbucketPageEnvelope(pageOne);
     const last = decodeBitbucketPageEnvelope(pageTwo);

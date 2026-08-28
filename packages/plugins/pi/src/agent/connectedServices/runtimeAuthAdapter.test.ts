@@ -12,10 +12,7 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
     expect(adapter.classifyRuntimeAuthFailure({
       target: { agentId: 'pi' },
       error: new Error('usage limit reached'),
-      selection: {
-        openaiCodexProfileId: 'codex-work',
-        anthropicProfileId: 'anthropic-work',
-      },
+      selection: {},
     })).toBeNull();
   });
 
@@ -187,14 +184,15 @@ describe('createPiConnectedServiceRuntimeAuthAdapter', () => {
     await expect(adapter.materializeActiveProfile({
       target: { agentId: 'pi' },
       selection: {
-        openaiCodexProfileId: 'codex-work',
-        anthropicProfileId: 'anthropic-work',
+        kind: 'group',
+        serviceId: 'external.example/auth',
+        activeProfileId: 'external-work',
+        groupId: 'external-main',
       },
     })).resolves.toEqual({
       supported: true,
       activeProfiles: {
-        'openai-codex': 'codex-work',
-        anthropic: 'anthropic-work',
+        'external.example/auth': 'external-work',
       },
     });
   });

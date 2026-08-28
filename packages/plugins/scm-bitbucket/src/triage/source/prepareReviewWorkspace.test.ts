@@ -2,6 +2,8 @@ import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
 import {
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
+  TriageVerifyReviewWorkspaceInputV1Schema,
+  TriageVerifyReviewWorkspaceResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
@@ -11,7 +13,10 @@ import { decodeBitbucketPullRequestRow } from '../entries.js';
 import { encodeBitbucketConfiguration } from '../instance.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './descriptor.js';
 import { toBitbucketPresentObservation } from './observations.js';
-import { prepareBitbucketReviewWorkspace } from './prepareReviewWorkspace.js';
+import {
+  prepareBitbucketReviewWorkspace,
+  verifyBitbucketReviewWorkspace,
+} from './prepareReviewWorkspace.js';
 import {
   accountRef,
   createConnectedAccountsStub,
@@ -83,6 +88,29 @@ function preparationInput(input: Readonly<{
   });
 }
 
+function verificationInput(input: Readonly<{
+  observed?: Partial<Readonly<{ baseSha: string; headSha: string; nativeRevision: string }>>;
+  lastKnownLocator?: Readonly<{ v: 1; routingToken?: string }>;
+  repositoryPath?: string;
+  pullRequest?: unknown;
+}> = {}) {
+  const prepared = preparationInput({
+    ...(input.observed === undefined ? {} : { observed: input.observed }),
+    ...(input.lastKnownLocator === undefined ? {} : {
+      lastKnownLocator: input.lastKnownLocator,
+    }),
+  });
+  if (prepared.workspace === undefined) throw new Error('verification fixture requires a workspace');
+  return TriageVerifyReviewWorkspaceInputV1Schema.parse({
+    ...prepared,
+    workspace: prepared.workspace,
+    prepared: {
+      repositoryPath: input.repositoryPath ?? '/selected/repository/.happier/review/fork-tools',
+      pullRequest: input.pullRequest ?? { number: 42 },
+    },
+  });
+}
+
 function pullRequestFromFork(): Record<string, unknown> {
   const result = structuredClone(pullRequestSelf) as Record<string, unknown>;
   const source = result.source as Record<string, unknown>;
@@ -105,6 +133,7 @@ function pullRequestFromFork(): Record<string, unknown> {
 function workspaceRuntime(input: Readonly<{
   pullRequest?: unknown;
   providerReply?: Readonly<{ status?: number; body?: unknown }>;
+  onProviderRead?: () => void;
   execute: ReturnType<typeof vi.fn>;
   signal?: AbortSignal;
 }>) {
@@ -113,6 +142,7 @@ function workspaceRuntime(input: Readonly<{
   });
   const { http, requests } = createHttpStub((url) => {
     if (url.includes('/pullrequests/42')) {
+      input.onProviderRead?.();
       return input.providerReply ?? { body: input.pullRequest ?? pullRequestFromFork() };
     }
     throw new Error(`unexpected provider request: ${url}`);
@@ -238,9 +268,10 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
   it('requires a selected workspace before provider authorization or local materialization', async () => {
     const execute = vi.fn();
     const seam = workspaceRuntime({ execute });
+    const { workspace: _workspace, ...withoutWorkspace } = preparationInput();
 
     await expect(prepareBitbucketReviewWorkspace(
-      preparationInput({ workspace: null }),
+      withoutWorkspace,
       seam.runtime,
     )).resolves.toEqual({ kind: 'workspaceRequired' });
 
@@ -277,6 +308,30 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
       .rejects.toBe(cancellation);
   });
 
+  it('projects a non-cancellation preparation dispatch failure through the source contract', async () => {
+    const execute = vi.fn(async () => {
+      throw new Error('SCM backend unavailable');
+    });
+    const seam = workspaceRuntime({ execute });
+
+    await expect(prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+
+  it('fails closed when preparation receives the verification success arm', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/repository/.happier/review/fork-tools',
+        sourceHeadSha: HEAD_SHA,
+      },
+    }));
+    const seam = workspaceRuntime({ execute });
+
+    await expect(prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+
   it('publishes all three source-owned revision facts together when a PR read proves them', () => {
     const decoded = decodeBitbucketPullRequestRow(pullRequestFromFork());
     if (!decoded.ok) throw new Error('fixture pull request must decode');
@@ -290,5 +345,195 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
       headSha: HEAD_SHA,
       nativeRevision: HEAD_SHA,
     });
+  });
+});
+
+describe('Bitbucket final review workspace verification', () => {
+  it('refuses an entry kind this source does not declare before provider or SCM access', async () => {
+    const execute = vi.fn();
+    const seam = workspaceRuntime({ execute });
+    const input = verificationInput();
+
+    await expect(verifyBitbucketReviewWorkspace({
+      ...input,
+      entryRef: { ...input.entryRef, kindId: 'issue' },
+    }, seam.runtime)).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+
+    expect(seam.requests).toEqual([]);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rereads the exact PR and verifies the prepared path through the canonical SCM Action', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/repository/.happier/review/fork-tools',
+        sourceHeadSha: HEAD_SHA,
+      },
+    }));
+    const signal = new AbortController().signal;
+    const seam = workspaceRuntime({ execute, signal });
+
+    const result = await verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime);
+
+    expect(TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).toEqual({
+      kind: 'verified',
+      pullRequest: { number: 42 },
+    });
+    expect(seam.requests.map((request) => request.url)).toEqual([
+      `https://api.bitbucket.org/2.0/repositories/${encodeURIComponent(WORKSPACE_UUID)}`
+        + `/${encodeURIComponent(REPOSITORY_UUID)}/pullrequests/42`,
+    ]);
+    expect(execute).toHaveBeenCalledWith(
+      'scm.reviewWorkspace.materializePrepared',
+      {
+        cwd: '/selected/repository',
+        displayName: 'fix/poller-deadline',
+        sourceTip: {
+          repository: {
+            kind: 'bitbucket',
+            deployment: 'https://bitbucket.org',
+            repository: 'contributor/fork-tools',
+          },
+          cloneUrl: 'https://bitbucket.org/contributor/fork-tools.git',
+          branch: 'fix/poller-deadline',
+          sourceHeadSha: HEAD_SHA,
+          fetchRef: 'refs/heads/fix/poller-deadline',
+        },
+        verification: {
+          targetPath: '/selected/repository/.happier/review/fork-tools',
+        },
+      },
+      { signal },
+    );
+  });
+
+  it.each([
+    ['baseSha', 'ffffffffffff'],
+    ['headSha', 'eeeeeeeeeeee'],
+    ['nativeRevision', 'dddddddddddd'],
+  ] as const)('refuses a changed provider %s before local verification', async (field, value) => {
+    const execute = vi.fn();
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(
+      verificationInput({ observed: { [field]: value } }),
+      seam.runtime,
+    )).resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a prepared pull-request reference that no longer names the exact reread', async () => {
+    const execute = vi.fn();
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(
+      verificationInput({ pullRequest: { number: 41 } }),
+      seam.runtime,
+    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a prepared pull-request reference with extra opaque fields', async () => {
+    const execute = vi.fn();
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(
+      verificationInput({ pullRequest: { number: 42, repository: 'other/repository' } }),
+      seam.runtime,
+    )).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale source-owned routing token before local verification', async () => {
+    const execute = vi.fn();
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput({
+      lastKnownLocator: { v: 1, routingToken: 'other/repository' },
+    }), seam.runtime)).resolves.toEqual({ kind: 'refused', reason: 'pullRequestMoved' });
+
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a local verifier result for another path', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/repository/.happier/review/other',
+        sourceHeadSha: HEAD_SHA,
+      },
+    }));
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'workspaceMismatch' });
+  });
+
+  it('fails closed when verification receives the materialization success arm', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      targetPath: '/selected/repository/.happier/review/fork-tools',
+      branchName: 'fix/poller-deadline',
+      created: false,
+      currentness: { kind: 'currentAtObservedHead' as const },
+    }));
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
+  });
+
+  it('treats a changed locally resolved source head as provider revision drift', async () => {
+    const execute = vi.fn(async () => ({
+      success: true as const,
+      verification: {
+        targetPath: '/selected/repository/.happier/review/fork-tools',
+        sourceHeadSha: 'ffffffffffff',
+      },
+    }));
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
+  });
+
+  it('preserves cancellation from canonical local verification', async () => {
+    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+    const execute = vi.fn(async () => {
+      throw cancellation;
+    });
+    const seam = workspaceRuntime({ execute, signal: new AbortController().signal });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .rejects.toBe(cancellation);
+  });
+
+  it('preserves cancellation that races the authoritative provider reread', async () => {
+    const caller = new AbortController();
+    const cancellation = new DOMException('cancelled', 'AbortError');
+    const execute = vi.fn();
+    const seam = workspaceRuntime({
+      execute,
+      signal: caller.signal,
+      onProviderRead: () => caller.abort(cancellation),
+    });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .rejects.toBe(cancellation);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('projects a non-cancellation SCM dispatch failure without losing the provider proof', async () => {
+    const execute = vi.fn(async () => {
+      throw new Error('SCM backend unavailable');
+    });
+    const seam = workspaceRuntime({ execute });
+
+    await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
+      .resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
   });
 });

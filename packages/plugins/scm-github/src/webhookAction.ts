@@ -24,15 +24,9 @@ type GithubAutomationWebhookSourceDefinitionV1 = Extract<
   Readonly<{ kind: 'page' }>
 >['definitions'][number];
 
-type GithubAutomationWebhookSourceSnapshotV1 = Readonly<{
+type GithubAutomationWebhookSourceScanV1 = Readonly<{
   revision: string;
   definitions: readonly GithubAutomationWebhookSourceDefinitionV1[];
-}>;
-
-type GithubAutomationWebhookSourceReadV1 = Readonly<{
-  snapshot: GithubAutomationWebhookSourceSnapshotV1;
-  /** True only for the read that first adopted this revision in this generation. */
-  adoptedRevision: boolean;
 }>;
 
 type AutomationEventSourceStatusReportV1 = PluginActionInputById['automation.event.source.status.report'];
@@ -45,19 +39,10 @@ type AutomationEventCatalogStatusInputV1 = Extract<
   Readonly<{ kind: 'catalogReconciliation' }>
 >;
 
-/**
- * One handler closure is registered for one active plugin generation. Its
- * bounded map only remembers host-confirmed source revisions; every read and
- * admission still enters the host's current invocation/target owner.
- */
 export type GithubWebhookActionHandlerV1 = (
   rawInput: unknown,
   context: PluginInvocationContext,
 ) => Promise<PluginWebhookActionResult>;
-
-function sourceSnapshotKey(endpointSourceInstanceId: string): string {
-  return `${GITHUB_PLUGIN_ID}\u0000${GITHUB_WEBHOOK_CONTRIBUTION_ID}\u0000${endpointSourceInstanceId}`;
-}
 
 function isWebhookIngressHostCaller(context: PluginInvocationContext): boolean {
   return context.surface === 'plugin'
@@ -104,33 +89,22 @@ function isCheckpointSafeAdmissionResult(
     && result.results.every((item) => item.checkpointSafe === true);
 }
 
-async function readCurrentAutomationSources(params: Readonly<{
-  context: PluginInvocationContext;
-  endpointSourceInstanceId: string;
-  sourceSnapshots: Map<string, GithubAutomationWebhookSourceSnapshotV1>;
-}>): Promise<GithubAutomationWebhookSourceReadV1> {
-  const key = sourceSnapshotKey(params.endpointSourceInstanceId);
-  const previous = params.sourceSnapshots.get(key) ?? null;
+async function readCurrentAutomationSources(
+  context: PluginInvocationContext,
+): Promise<GithubAutomationWebhookSourceScanV1> {
   const definitions: GithubAutomationWebhookSourceDefinitionV1[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
   let revision: string | null = null;
 
   while (true) {
-    params.context.signal.throwIfAborted();
-    const result = await params.context.services.actions.execute('automation.event.sources.list', {
+    context.signal.throwIfAborted();
+    const result = await context.services.actions.execute('automation.event.sources.list', {
       transport: { kind: 'durablePush' },
-      ...(cursor === undefined && previous !== null
-        ? { knownRevision: previous.revision }
-        : cursor === undefined ? {} : { cursor }),
-    }, { signal: params.context.signal });
-    params.context.signal.throwIfAborted();
-    if (result.kind === 'unchanged') {
-      if (cursor === undefined && previous !== null && result.revision === previous.revision) {
-        return { snapshot: previous, adoptedRevision: false };
-      }
-      throw new Error('github_automation_source_revision_unavailable');
-    }
+      ...(cursor === undefined ? {} : { cursor }),
+    }, { signal: context.signal });
+    context.signal.throwIfAborted();
+    if (result.kind === 'unchanged') throw new Error('github_automation_source_revision_unavailable');
     if (result.kind === 'cursorStale') {
       throw new Error('github_automation_source_cursor_stale');
     }
@@ -143,12 +117,10 @@ async function readCurrentAutomationSources(params: Readonly<{
     revision ??= result.revision;
     definitions.push(...result.definitions);
     if (result.nextCursor === null) {
-      const next = Object.freeze({
+      return Object.freeze({
         revision,
         definitions: Object.freeze([...definitions]),
       });
-      params.sourceSnapshots.set(key, next);
-      return { snapshot: next, adoptedRevision: previous === null || previous.revision !== revision };
     }
     if (seenCursors.has(result.nextCursor)) {
       throw new Error('github_automation_source_cursor_repeated');
@@ -213,45 +185,48 @@ function catalogStatusReports(params: Readonly<{
 function sourceStatusReports(params: Readonly<{
   definitions: readonly GithubAutomationWebhookSourceDefinitionV1[];
   observedAtMs: number;
-  admitted: boolean;
+  results: PluginActionResultById['automation.event.admit']['results'] | null;
 }>): readonly AutomationEventSourceStatusInputV1[] {
-  return params.definitions.map((definition) => ({
-    kind: 'source',
-    automationId: definition.automationId,
-    templateVersion: definition.templateVersion,
-    eventRef: definition.eventRef,
-    sourceSelectorId: definition.sourceSelectorId,
-    state: params.admitted ? 'observing' : 'attention',
-    code: params.admitted ? 'none' : 'admissionUnavailable',
-    lastObservedAt: params.observedAtMs,
-    lastDispositionAt: params.admitted ? params.observedAtMs : null,
-    nextRetryAt: null,
-    // Only a settled delivery advances the counters. An unavailable admission
-    // is redelivered, so counting it here would multiply one occurrence by its
-    // attempt count.
-    observedDelta: params.admitted ? 1 : 0,
-    admittedDelta: params.admitted ? 1 : 0,
-    skippedDelta: 0,
-  }));
+  return params.definitions.map((definition, index) => {
+    const result = params.results?.[index] ?? null;
+    const settled = result?.checkpointSafe === true;
+    const admitted = settled && result.kind === 'admitted';
+    const skipped = settled && result.kind === 'skipped';
+    return {
+      kind: 'source',
+      automationId: definition.automationId,
+      triggerId: definition.triggerId,
+      triggerRevision: definition.triggerRevision,
+      eventRef: definition.eventRef,
+      sourceSelectorId: definition.sourceSelectorId,
+      state: settled ? 'observing' : 'attention',
+      code: settled ? 'none' : 'admissionUnavailable',
+      lastObservedAt: params.observedAtMs,
+      lastDispositionAt: settled ? params.observedAtMs : null,
+      nextRetryAt: null,
+      // A retryable delivery has no terminal disposition, so it does not
+      // multiply counters. Settled outcomes are mapped positionally to the
+      // exact trigger definition that produced them.
+      observedDelta: settled ? 1 : 0,
+      admittedDelta: admitted ? 1 : 0,
+      skippedDelta: skipped ? 1 : 0,
+    };
+  });
 }
 
 async function admitAutomationWebhookEvent(params: Readonly<{
   input: PluginWebhookActionInput;
   normalized: NonNullable<ReturnType<typeof normalizeGithubWebhookDelivery>['automationEvent']>;
   context: PluginInvocationContext;
-  sourceSnapshots: Map<string, GithubAutomationWebhookSourceSnapshotV1>;
 }>): Promise<PluginWebhookActionResult> {
-  const read = await readCurrentAutomationSources({
-    context: params.context,
-    endpointSourceInstanceId: params.input.endpoint.sourceInstanceId,
-    sourceSnapshots: params.sourceSnapshots,
-  });
-  const providerDefinitions = read.snapshot.definitions.filter((definition) => (
+  const currentSources = await readCurrentAutomationSources(params.context);
+  const providerDefinitions = currentSources.definitions.filter((definition) => (
     isGithubAutomationDefinitionForSource(definition, params.normalized.sourceInstanceId)
   ));
-  const catalogReports = read.adoptedRevision
-    ? catalogStatusReports({ definitions: providerDefinitions, revision: read.snapshot.revision })
-    : [];
+  const catalogReports = catalogStatusReports({
+    definitions: providerDefinitions,
+    revision: currentSources.revision,
+  });
   const definitions = providerDefinitions.filter((definition) => (
     definition.eventRef.localId === params.normalized.eventRef.localId
   ));
@@ -259,7 +234,9 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     await reportAutomationWebhookStatus({ context: params.context, reports: catalogReports });
     return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'ignored' });
   }
-  const reportHealth = async (admitted: boolean): Promise<void> => {
+  const reportHealth = async (
+    results: PluginActionResultById['automation.event.admit']['results'] | null,
+  ): Promise<void> => {
     await reportAutomationWebhookStatus({
       context: params.context,
       reports: [
@@ -267,15 +244,16 @@ async function admitAutomationWebhookEvent(params: Readonly<{
         ...sourceStatusReports({
           definitions,
           observedAtMs: params.input.delivery.receivedAtMs,
-          admitted,
+          results,
         }),
       ],
     });
   };
 
+  let admitted: PluginActionResultById['automation.event.admit'];
   try {
     params.context.signal.throwIfAborted();
-    const admitted = await params.context.services.actions.execute('automation.event.admit', {
+    admitted = await params.context.services.actions.execute('automation.event.admit', {
       eventRef: {
         pluginId: params.normalized.eventRef.pluginId,
         localId: params.normalized.eventRef.localId,
@@ -286,13 +264,14 @@ async function admitAutomationWebhookEvent(params: Readonly<{
       payload: params.normalized.payload,
       definitions: definitions.map((definition) => ({
         automationId: definition.automationId,
-        templateVersion: definition.templateVersion,
+        triggerId: definition.triggerId,
+        triggerRevision: definition.triggerRevision,
         sourceSelectorId: definition.sourceSelectorId,
       })),
     }, { signal: params.context.signal });
     params.context.signal.throwIfAborted();
     if (!isCheckpointSafeAdmissionResult(admitted, definitions.length)) {
-      await reportHealth(false);
+      await reportHealth(null);
       return PluginWebhookActionResultSchema.parse({
         kind: 'retry',
         code: 'github.automation-unavailable',
@@ -300,13 +279,13 @@ async function admitAutomationWebhookEvent(params: Readonly<{
     }
   } catch (error) {
     if (params.context.signal.aborted) throw error;
-    await reportHealth(false);
+    await reportHealth(null);
     return PluginWebhookActionResultSchema.parse({
       kind: 'retry',
       code: 'github.automation-unavailable',
     });
   }
-  await reportHealth(true);
+  await reportHealth(admitted.results);
   return PluginWebhookActionResultSchema.parse({ kind: 'settled', disposition: 'accepted' });
 }
 
@@ -318,7 +297,6 @@ async function admitAutomationWebhookEvent(params: Readonly<{
 async function handleGithubWebhookActionV1(
   rawInput: unknown,
   context: PluginInvocationContext,
-  sourceSnapshots: Map<string, GithubAutomationWebhookSourceSnapshotV1>,
 ): Promise<PluginWebhookActionResult> {
   context.signal.throwIfAborted();
   if (!isWebhookIngressHostCaller(context)) return invalidWebhookCallerResult();
@@ -333,6 +311,7 @@ async function handleGithubWebhookActionV1(
       rawBody: decodePluginWebhookActionRawBody(input),
       eventType: input.verified.eventType,
       providerDeliveryId: input.delivery.providerDeliveryId,
+      receivedAtMs: input.delivery.receivedAtMs,
     });
     context.signal.throwIfAborted();
   } catch (error) {
@@ -354,7 +333,6 @@ async function handleGithubWebhookActionV1(
       input,
       normalized: normalized.automationEvent,
       context,
-      sourceSnapshots,
     });
   } catch (error) {
     if (context.signal.aborted) throw error;
@@ -365,16 +343,6 @@ async function handleGithubWebhookActionV1(
   }
 }
 
-/**
- * Creates the one generation-owned GitHub webhook handler. Call this exactly
- * once while activating the plugin; a per-delivery Action service is not a
- * generation boundary and therefore cannot own the revision cache.
- */
 export function createGithubWebhookActionHandlerV1(): GithubWebhookActionHandlerV1 {
-  const sourceSnapshots = new Map<string, GithubAutomationWebhookSourceSnapshotV1>();
-  return async (rawInput, context) => await handleGithubWebhookActionV1(
-    rawInput,
-    context,
-    sourceSnapshots,
-  );
+  return handleGithubWebhookActionV1;
 }

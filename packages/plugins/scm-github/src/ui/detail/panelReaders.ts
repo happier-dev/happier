@@ -10,7 +10,6 @@ import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js
 import {
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
-  GithubCommentsResultV1Schema,
   GithubFeedbackResultV1Schema,
   GithubReviewsResultV1Schema,
   GithubTimelineResultV1Schema,
@@ -24,7 +23,6 @@ import type {
 import type {
   GithubProjectedChangedFileRowV1,
   GithubProjectedCheckRowV1,
-  GithubProjectedCommentRowV1,
   GithubProjectedReviewRequestRowV1,
   GithubProjectedReviewerRowV1,
   GithubProjectedTimelineRowV1,
@@ -32,7 +30,6 @@ import type {
 import type { GithubChecksRowStateV1 } from '../../triage/mapping/facts.js';
 import {
   GITHUB_CHANGED_FILES_PAGE_SIZE_V1,
-  GITHUB_COMMENTS_PAGE_SIZE_V1,
   GITHUB_TIMELINE_PAGE_SIZE_V1,
 } from '../../triage/detail/routes.js';
 
@@ -366,52 +363,6 @@ export function useGithubChangedFiles(
   return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
 }
 
-/* ------------------------------------------------------------------ comments */
-
-export function useGithubComments(
-  input: TriageDetailSurfaceInputV1,
-): GithubPagedControllerV1<GithubProjectedCommentRowV1> {
-  const action = useMemo(
-    () => ({
-      pluginId: GITHUB_PLUGIN_ID,
-      localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listComments,
-    }),
-    [],
-  );
-  const { execute } = useExecutePluginAction(action);
-  const localRef = useLocalRef(input);
-  const routingToken = useGithubRoutingToken(input);
-  const { instance } = input;
-
-  const readPage: PageReader<GithubProjectedCommentRowV1> = useCallback(async (
-    continuation,
-    signal,
-  ) => {
-    const execution = await execute({
-      v: 1,
-      instance,
-      localRef,
-      routingToken: routingToken ?? '',
-      limit: GITHUB_COMMENTS_PAGE_SIZE_V1,
-      ...(continuation === null ? {} : { continuation }),
-    }, { signal }) as ExecuteResult;
-    if (execution.status !== 'success') {
-      return {
-        kind: 'failed' as const,
-        failure: dispatchFailure(execution.status, execution.code ?? 'github-detail-read-failed'),
-      };
-    }
-    const parsed = GithubCommentsResultV1Schema.safeParse(execution.result);
-    if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
-    if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
-    }
-    return { kind: 'page' as const, page: toPage(parsed.data) };
-  }, [execute, instance, localRef, routingToken]);
-
-  return useGithubPagedWalk(readPage, routingToken !== null, ROUTE_UNAVAILABLE);
-}
-
 /* ------------------------------------------------------------------ feedback */
 
 type GithubFeedbackRootConnectionV1 = 'comments' | 'threads' | 'reviews' | 'requests';
@@ -511,10 +462,12 @@ function useGithubFeedbackConnection<TRow>(
       kind: 'page' as const,
       page: {
         rows: rows as readonly TRow[],
-        omittedRowCount: 0,
-        projectionTruncated: rows.some((row) => row.truncated === true),
+        omittedRowCount: parsed.data.omittedRowCount,
+        projectionTruncated: parsed.data.projectionTruncated,
         continuation: cursor ?? null,
-        incomplete: null,
+        incomplete: parsed.data.incomplete === 'continuationUnavailable'
+          ? 'pagination' as const
+          : null,
       },
     };
   }, [connection, execute, instance, localRef, routingToken]);
@@ -589,10 +542,12 @@ export function useGithubFeedbackThreadReplies(
       kind: 'page' as const,
       page: {
         rows: parsed.data.rows.map(normalizeFeedbackComment),
-        omittedRowCount: 0,
-        projectionTruncated: parsed.data.rows.some((row) => row.truncated === true),
+        omittedRowCount: parsed.data.omittedRowCount,
+        projectionTruncated: parsed.data.projectionTruncated,
         continuation: parsed.data.previousCursor ?? null,
-        incomplete: null,
+        incomplete: parsed.data.incomplete === 'continuationUnavailable'
+          ? 'pagination' as const
+          : null,
       },
     };
   }, [execute, instance, localRef, routingToken, threadId]);

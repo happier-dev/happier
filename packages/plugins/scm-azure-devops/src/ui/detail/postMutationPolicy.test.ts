@@ -25,6 +25,14 @@ describe('Azure DevOps post-mutation provider semantics', () => {
     expect(azureEntryWriteMayHaveChangedProviderStateV1({
       status: 'success',
       result: {
+        kind: 'rejected',
+        reason: 'fields-ignored',
+        observation: FIXTURE.getResult,
+      },
+    })).toBe(true);
+    expect(azureEntryWriteMayHaveChangedProviderStateV1({
+      status: 'success',
+      result: {
         kind: 'refused',
         reason: 'entry-not-active',
         observation: FIXTURE.getResult,

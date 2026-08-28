@@ -1,10 +1,8 @@
-import { readFile, stat } from 'node:fs/promises';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it, vi } from 'vitest';
 
 import { GEMINI_ACP_RUNTIME_DEFINITION } from './agent/acp/definition.js';
-import { GEMINI_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
@@ -56,12 +54,35 @@ describe('Gemini native runtime migration', () => {
     }]);
   });
 
-  it('registers only the data-only Connected Account state-sharing descriptor before open', async () => {
+  it('registers only the focused data-only Connected Account launch facts before open', async () => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
       const launch = fixture.registration('agents', 'gemini')?.connectedAccountLaunch;
 
-      expect(Object.keys(launch ?? {}).sort()).toEqual(['stateSharingDescriptor']);
+      expect(Object.keys(launch ?? {}).sort()).toEqual([
+        'continuity',
+        'environmentUses',
+        'fileEnvironmentUses',
+        'stateSharingDescriptor',
+        'switchContinuity',
+      ]);
+      expect(launch?.fileEnvironmentUses).toEqual([{
+        purpose: 'model_upstream',
+        fileId: 'google-service-account.json',
+        environmentKey: 'GOOGLE_APPLICATION_CREDENTIALS',
+      }]);
+      expect(launch?.environmentUses).toEqual([
+        { purpose: 'model_upstream', environmentKey: 'GEMINI_API_KEY' },
+        { purpose: 'model_upstream', environmentKey: 'GOOGLE_API_KEY' },
+        { purpose: 'model_upstream', environmentKey: 'GOOGLE_GENAI_USE_VERTEXAI' },
+        { purpose: 'model_upstream', environmentKey: 'GOOGLE_CLOUD_PROJECT' },
+        { purpose: 'model_upstream', environmentKey: 'GOOGLE_CLOUD_LOCATION' },
+      ]);
+      expect(launch?.continuity?.runtimeAuthAdapter).toMatchObject({
+        classifyRuntimeAuthFailure: expect.any(Function),
+        verifyProviderOutcome: expect.any(Function),
+      });
+      expect(launch?.continuity?.verifyResumeReachable).toBeUndefined();
       expect(launch?.stateSharingDescriptor).toEqual({
         providerSupportStatus: 'unsupported',
         config: {
@@ -88,7 +109,6 @@ describe('Gemini native runtime migration', () => {
           ],
         },
       });
-      expect(GEMINI_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
     } finally {
       await fixture.dispose();
     }
@@ -184,13 +204,15 @@ describe('Gemini native runtime migration', () => {
     }));
   });
 
-  it('projects the declared execution-run capability through the native ACP session owner', async () => {
+  it('opens the native ACP Session owner and admits input for host-derived finite Runs', async () => {
     const runtime = await createGeminiRuntime();
-    if (!runtime.executionRuns) throw new Error('Expected Gemini execution-run runtime');
 
     let publishSessionEvent: ((event: never) => void) | null = null;
     const send = vi.fn(async () => ({ status: 'admitted' as const }));
-    const cancel = vi.fn(async () => ({ status: 'requested' as const }));
+    const cancel = vi.fn(async ({ turnId }: { turnId: string }) => ({
+      status: 'requested' as const,
+      turnId,
+    }));
     const disposeSession = vi.fn();
     const disposeSubscription = vi.fn();
     const open = vi.fn(async () => ({
@@ -209,16 +231,14 @@ describe('Gemini native runtime migration', () => {
       stdoutTruncated: false,
       stderrTruncated: false,
     }));
-    const execution = await runtime.executionRuns.open({
+    const openedSession = await runtime.sessions.open({
       kind: 'create',
-      runId: 'gemini-native-run',
+      sessionId: 'gemini-native-run',
       cwd: '/workspace',
-      profile: { pluginId: 'happier.agent.gemini', localId: 'review' },
       launchEnvironment: {
         values: { GEMINI_API_KEY: 'AIzaPluginScopedKey' },
         unset: [],
       },
-      input: { text: 'Review this change' },
     }, {
       signal: new AbortController().signal,
       services: { exec: { run }, connectedAccounts: disconnectedConnectedAccounts() },
@@ -230,14 +250,14 @@ describe('Gemini native runtime migration', () => {
       sessionId: 'gemini-native-run',
       cwd: '/workspace',
     }), expect.anything());
-    expect(send).toHaveBeenCalledWith({
-      inputIds: ['gemini-native-run-input-1'],
+    await expect(openedSession.send({
+      inputIds: ['gemini-input-1'],
       input: { text: 'Review this change' },
-      delivery: { kind: 'newTurn', turnId: 'gemini-native-run-turn-1' },
-    }, undefined);
+      delivery: { kind: 'newTurn', turnId: 'gemini-turn-1' },
+    })).resolves.toEqual({ status: 'admitted' });
 
     const events: Array<Record<string, unknown>> = [];
-    execution.watch((event) => events.push(event));
+    const eventSubscription = openedSession.watch((event) => events.push(event));
     publishSessionEvent?.({
       kind: 'provider-session-id',
       providerSessionId: 'gemini-checkpoint-1',
@@ -245,24 +265,27 @@ describe('Gemini native runtime migration', () => {
     } as never);
     publishSessionEvent?.({
       kind: 'message-delta',
-      turnId: 'gemini-native-run-turn-1',
+      turnId: 'gemini-turn-1',
       channel: 'assistant',
       text: 'Looks good',
       emittedAtMs: 11,
     } as never);
 
-    await expect(execution.stop()).resolves.toEqual({ status: 'requested' });
+    await expect(openedSession.cancel?.({ turnId: 'gemini-turn-1', reason: 'user' })).resolves.toEqual({
+      status: 'requested',
+      turnId: 'gemini-turn-1',
+    });
     expect(cancel).toHaveBeenCalledWith({
-      turnId: 'gemini-native-run-turn-1',
+      turnId: 'gemini-turn-1',
       reason: 'user',
-    }, undefined);
+    });
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'run-start', runId: 'gemini-native-run' }),
-      expect.objectContaining({ kind: 'checkpoint', checkpointId: 'gemini-checkpoint-1' }),
-      expect.objectContaining({ kind: 'output-delta', channel: 'assistant', text: 'Looks good' }),
+      expect.objectContaining({ kind: 'provider-session-id', providerSessionId: 'gemini-checkpoint-1' }),
+      expect.objectContaining({ kind: 'message-delta', channel: 'assistant', text: 'Looks good' }),
     ]));
 
-    await execution.dispose();
+    eventSubscription.dispose();
+    await openedSession.dispose();
     expect(disposeSubscription).toHaveBeenCalledOnce();
     expect(disposeSession).toHaveBeenCalledOnce();
   });
@@ -295,7 +318,7 @@ describe('Gemini native runtime migration', () => {
     await activation.dispose();
   });
 
-  it('materializes the selected Gemini Connected Account before opening ACP', async () => {
+  it('consumes the host-materialized Gemini API-key environment without recustodying the account', async () => {
     const runtime = await createGeminiRuntime();
     const connectedAccounts = {
       getBinding: vi.fn(async () => ({
@@ -331,22 +354,21 @@ describe('Gemini native runtime migration', () => {
       kind: 'create',
       sessionId: 'gemini-connected-account',
       cwd: '/workspace',
-      launchEnvironment: { values: {}, unset: [] },
+      launchEnvironment: {
+        values: {
+          GEMINI_API_KEY: 'selected-gemini-key',
+          GOOGLE_API_KEY: 'selected-gemini-key',
+        },
+        unset: [],
+      },
     }, {
       signal: new AbortController().signal,
       services: { exec: { run }, connectedAccounts },
       protocols: { acp: { open } },
     } as unknown as AgentSessionRuntimeContext);
 
-    expect(connectedAccounts.getBinding).toHaveBeenCalledWith(
-      'model_upstream',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(connectedAccounts.materialize).toHaveBeenCalledWith(
-      'model_upstream',
-      { kind: 'environment', keys: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'] },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
     expect(open).toHaveBeenCalledWith(expect.objectContaining({
       launchEnvironment: {
         values: expect.objectContaining({
@@ -358,7 +380,7 @@ describe('Gemini native runtime migration', () => {
     }), expect.anything());
   });
 
-  it('writes a selected service account inside the session-owned home with private permissions', async () => {
+  it('consumes the host-owned service-account path and Vertex environment without filesystem custody', async () => {
     const runtime = await createGeminiRuntime();
     const serviceAccount = JSON.stringify({
       type: 'service_account',
@@ -407,7 +429,15 @@ describe('Gemini native runtime migration', () => {
       kind: 'create',
       sessionId: 'gemini-service-account',
       cwd: '/workspace',
-      launchEnvironment: { values: {}, unset: [] },
+      launchEnvironment: {
+        values: {
+          GOOGLE_APPLICATION_CREDENTIALS: '/host/materialized/google-service-account.json',
+          GOOGLE_GENAI_USE_VERTEXAI: '1',
+          GOOGLE_CLOUD_PROJECT: 'project-one',
+          GOOGLE_CLOUD_LOCATION: 'global',
+        },
+        unset: [],
+      },
     }, {
       signal: new AbortController().signal,
       services: { exec: { run }, connectedAccounts },
@@ -416,17 +446,15 @@ describe('Gemini native runtime migration', () => {
 
     const launchEnvironment = open.mock.calls[0]?.[0].launchEnvironment;
     const credentialPath = launchEnvironment?.values.GOOGLE_APPLICATION_CREDENTIALS;
-    expect(credentialPath).toMatch(/google-service-account\.json$/u);
-    expect(await readFile(credentialPath!, 'utf8')).toBe(serviceAccount);
-    expect((await stat(credentialPath!)).mode & 0o777).toBe(0o600);
+    expect(credentialPath).toBe('/host/materialized/google-service-account.json');
     expect(launchEnvironment?.values).toMatchObject({
       GOOGLE_GENAI_USE_VERTEXAI: '1',
       GOOGLE_CLOUD_PROJECT: 'project-one',
       GOOGLE_CLOUD_LOCATION: 'global',
     });
-    expect(connectedAccounts.materialize).toHaveBeenCalledTimes(1);
+    expect(connectedAccounts.getBinding).not.toHaveBeenCalled();
+    expect(connectedAccounts.materialize).not.toHaveBeenCalled();
 
     await session.dispose();
-    await expect(stat(credentialPath!)).rejects.toThrow();
   });
 });

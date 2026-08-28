@@ -4,10 +4,12 @@ import {
   TriageListInstancesInputV1Schema,
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriageScanInputV1Schema,
+  TriageVerifyReviewWorkspaceInputV1Schema,
   type TriageGetResultV1,
   type TriageListInstancesResultV1,
   type TriagePrepareReviewWorkspaceResultV1,
   type TriageScanResultV1,
+  type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { createAzureSourceFailure } from './failureProjection.js';
@@ -17,11 +19,13 @@ import {
   runAzureTriageListInstances,
   runAzureTriagePrepareReviewWorkspace,
   runAzureTriageScan,
+  runAzureTriageVerifyReviewWorkspace,
   type AzureTriageReadServices,
 } from './operations.js';
 
 /**
- * The Action ids that carry this source's three required V1 roles.
+ * The Action ids that carry this source's three required V1 reads and its two review-workspace
+ * roles.
  *
  * They are plugin-local ids; the qualified handle is the host's, and the role binding lives in the
  * manifest contribution. `descriptor.ts` re-exports nothing here — this module is the single
@@ -32,6 +36,7 @@ export const AZURE_DEVOPS_TRIAGE_ACTION_IDS = Object.freeze({
   scan: 'triage-scan',
   get: 'triage-get',
   prepareReviewWorkspace: 'triage-prepare-review-workspace',
+  verifyReviewWorkspace: 'triage-verify-review-workspace',
 });
 
 function toReadServices(context: PluginInvocationContext): AzureTriageReadServices {
@@ -126,6 +131,29 @@ export async function prepareAzureDevOpsReviewWorkspaceAction(
     throw new TypeError('Azure DevOps review-workspace preparation received an invalid input');
   }
   return await runAzureTriagePrepareReviewWorkspace({
+    services: {
+      ...toReadServices(context),
+      actions: context.services.actions,
+    },
+    request: parsed.data,
+    signal: context.signal,
+  });
+}
+
+/**
+ * Revalidates the provider revision and the already prepared local HEAD immediately before review.
+ * This Action is read-only: it reuses the canonical SCM materializer's verification arm and never
+ * prepares, moves, or recreates a checkout.
+ */
+export async function verifyAzureDevOpsReviewWorkspaceAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<TriageVerifyReviewWorkspaceResultV1> {
+  const parsed = TriageVerifyReviewWorkspaceInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    throw new TypeError('Azure DevOps review-workspace verification received an invalid input');
+  }
+  return await runAzureTriageVerifyReviewWorkspace({
     services: {
       ...toReadServices(context),
       actions: context.services.actions,

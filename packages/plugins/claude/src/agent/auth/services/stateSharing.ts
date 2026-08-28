@@ -60,6 +60,7 @@ export const claudeAuthStateSharingDescriptor: ClaudeAuthStateSharingDescriptor 
             'ANTHROPIC_API_KEY',
             '.claude.json',
             '.credentials.json',
+            '.happier-claude-connected-service-home.json',
             'credentials.json',
             'auth.json',
             'accounts',

@@ -115,7 +115,9 @@ const SELF_HOSTED_ORIGIN_FIELD = {
     fallback: 'The origin of your self-hosted Sentry, for example https://sentry.example.com.',
   },
   semantic: 'connectedAccountOrigin' as const,
-  schema: { type: 'string' as const, minLength: 8, maxLength: 2048 },
+  // Canonical origin parsing/admission is host-owned. Do not add a second URL
+  // length policy at the provider declaration.
+  schema: { type: 'string' as const, minLength: 1 },
   required: true as const,
   secret: false as const,
 };

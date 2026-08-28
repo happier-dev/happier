@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { projectGitlabDiscussionRepliesV1 } from './discussionReplies.js';
+import {
+  hasEarlierGitlabDiscussionRepliesV1,
+  projectGitlabDiscussionRepliesV1,
+} from './discussionReplies.js';
 
 const notes = Array.from({ length: 6 }, (_unused, index) => ({
   id: String(index + 1),
@@ -14,5 +17,7 @@ describe('projectGitlabDiscussionRepliesV1', () => {
       .toEqual(['3', '4', '5', '6']);
     expect(projectGitlabDiscussionRepliesV1(notes, true).map((note) => note.id))
       .toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(hasEarlierGitlabDiscussionRepliesV1(notes)).toBe(true);
+    expect(hasEarlierGitlabDiscussionRepliesV1(notes.slice(-4))).toBe(false);
   });
 });

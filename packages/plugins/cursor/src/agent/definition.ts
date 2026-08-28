@@ -42,10 +42,4 @@ export const AGENT_DEFINITION = Object.freeze({
       description: 'Cursor Composer 2.5 fast model, discovered dynamically when the Cursor CLI is available.',
     }],
   },
-  runtimeContributions: {
-    agentCatalogEntry: {
-      importName: 'CURSOR_AGENT_RUNTIME_CONTRIBUTION',
-      source: './agent/contributions/catalog',
-    },
-  },
 });

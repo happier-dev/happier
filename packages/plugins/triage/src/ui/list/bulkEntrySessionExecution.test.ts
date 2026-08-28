@@ -18,6 +18,7 @@ import {
     runTriageBulkEntrySessionStartsV1,
     type TriageBulkSessionExecutionHostV1,
 } from './bulkEntrySessionExecution.js';
+import { resolveTriageBulkStartRouteV1 } from './useBulkEntrySessions.js';
 
 const SETTLEMENT = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
@@ -78,6 +79,31 @@ function unit(
     return Object.freeze({ creationKey, entries });
 }
 
+describe('bulk authoring route', () => {
+    it('fails closed before direct spawn for compose while keeping Attach all on the host New Session seed', () => {
+        expect(resolveTriageBulkStartRouteV1(
+            'oneSessionForAllEntries',
+            'reuseWorkspace',
+            action('compose').target,
+        )).toBe('refusedCompose');
+        expect(resolveTriageBulkStartRouteV1(
+            'oneSessionPerEntry',
+            'none',
+            action('compose').target,
+        )).toBe('refusedCompose');
+        expect(resolveTriageBulkStartRouteV1(
+            'attachAllToNewSession',
+            'ask',
+            action('compose').target,
+        )).toBe('seedNewSession');
+        expect(resolveTriageBulkStartRouteV1(
+            'oneSessionPerEntry',
+            'reuseWorkspace',
+            action('send').target,
+        )).toBe('direct');
+    });
+});
+
 /**
  * Generic Session Actions and the Account Collection are process boundaries.
  * The Triage start Action, link Action, delivery and lifecycle owner run for
@@ -86,12 +112,11 @@ function unit(
  */
 function executionHarness(input: Readonly<{
     spawnSessionIds: readonly string[];
-    sendResults?: readonly ('accepted' | 'rejected')[];
+    initialInputResults?: readonly ('accepted' | 'rejected')[];
 }>) {
     const lifecycle: string[] = [];
-    const composerTransactions: unknown[] = [];
     const sessions = [...input.spawnSessionIds];
-    const sends = [...(input.sendResults ?? [])];
+    const initialInputs = [...(input.initialInputResults ?? [])];
     let retired = false;
     const sessionLinks = {
         identityTag: async (request: Readonly<{ field: string; components: readonly string[] }>) => (
@@ -100,7 +125,7 @@ function executionHarness(input: Readonly<{
         get: async () => null,
         batch: async () => ({ status: 'updated' as const, results: [], changeCursor: 1 }),
     };
-    const execute = (async (actionId: string) => {
+    const execute = (async (actionId: string, actionInput: Readonly<{ initialInput?: unknown }>) => {
         if (retired) throw new Error('triage:test:mountRetired');
         if (actionId === 'session.spawn_new') {
             lifecycle.push('spawn');
@@ -112,14 +137,16 @@ function executionHarness(input: Readonly<{
                 sessionId,
                 executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                 organizationPlacement: { folderId: null, tagIds: [] },
-                initialInput: { status: 'notRequested' },
+                initialInput: actionInput.initialInput === undefined
+                    ? { status: 'notRequested' }
+                    : initialInputs.shift() === 'rejected'
+                        ? { status: 'rejected', code: 'session_input_archived' }
+                        : { status: 'accepted', localId: 'local-a' },
             };
         }
         if (actionId === 'session.message.send') {
             lifecycle.push('send');
-            return sends.shift() === 'rejected'
-                ? { status: 'rejected', code: 'session_input_archived' }
-                : { status: 'accepted', localId: 'local-a' };
+            return { status: 'accepted', localId: 'local-a' };
         }
         if (actionId === 'session.open') {
             lifecycle.push('open');
@@ -156,33 +183,21 @@ function executionHarness(input: Readonly<{
             }
             throw new Error(`triage:test:unexpectedAction:${actionId}`);
         },
-        readComposer: async () => {
-            if (retired) throw new Error('triage:test:mountRetired');
-            lifecycle.push('composer.read');
-            return { status: 'ready', snapshot: { revision: 7 } };
-        },
-        applyComposer: async (_ref: unknown, transaction: unknown) => {
-            if (retired) throw new Error('triage:test:mountRetired');
-            lifecycle.push('composer.apply');
-            composerTransactions.push(transaction);
-            return { status: 'applied' };
-        },
     } as unknown as TriageBulkSessionExecutionHostV1;
     return {
         host,
         lifecycle,
-        composerTransactions,
         get retired() { return retired; },
     };
 }
 
 describe('bulk Session execution lifecycle', () => {
-    it('finishes one-for-all links and compose before its one retained generic open', async () => {
+    it('refuses compose before the first direct Session start', async () => {
         const first = selectedEntry('17');
         const second = selectedEntry('18');
         const harness = executionHarness({ spawnSessionIds: ['session-all'] });
 
-        const results = await runTriageBulkEntrySessionStartsV1({
+        await expect(runTriageBulkEntrySessionStartsV1({
             host: harness.host,
             units: [unit('bulk-all', [first, second])],
             action: action('compose'),
@@ -190,27 +205,10 @@ describe('bulk Session execution lifecycle', () => {
             promptText: 'Compare both entries.',
             settlement: SETTLEMENT,
             signal: new AbortController().signal,
-        });
+        })).rejects.toThrow('triage:bulk:composeRequiresNewSessionAuthoring');
 
-        expect(harness.lifecycle).toEqual([
-            'spawn',
-            'link',
-            'composer.read',
-            'composer.apply',
-            'open',
-        ]);
-        expect(results).toEqual([expect.objectContaining({
-            status: 'settled',
-            outcome: expect.objectContaining({
-                start: expect.objectContaining({ type: 'opened', sessionId: 'session-all' }),
-                entries: [
-                    expect.objectContaining({ link: 'created', attachment: 'carried' }),
-                    expect.objectContaining({ link: 'created', attachment: 'carried' }),
-                ],
-            }),
-        })]);
-        expect(harness.retired).toBe(true);
-        expect(harness.composerTransactions).toHaveLength(1);
+        expect(harness.lifecycle).toEqual([]);
+        expect(harness.retired).toBe(false);
     });
 
     it('settles each one-per-entry unit without choosing a navigation winner, including a refused send', async () => {
@@ -218,7 +216,7 @@ describe('bulk Session execution lifecycle', () => {
         const second = selectedEntry('18');
         const harness = executionHarness({
             spawnSessionIds: ['session-17', 'session-18'],
-            sendResults: ['accepted', 'rejected'],
+            initialInputResults: ['accepted', 'rejected'],
         });
 
         const results = await runTriageBulkEntrySessionStartsV1({
@@ -231,7 +229,7 @@ describe('bulk Session execution lifecycle', () => {
             signal: new AbortController().signal,
         });
 
-        expect(harness.lifecycle).toEqual(['spawn', 'send', 'spawn', 'send']);
+        expect(harness.lifecycle).toEqual(['spawn', 'spawn']);
         expect(results).toEqual([
             expect.objectContaining({
                 status: 'settled',

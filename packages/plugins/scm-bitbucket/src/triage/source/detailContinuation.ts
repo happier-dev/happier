@@ -17,25 +17,13 @@ import { readBitbucketApiUrl } from '../apiUrl.js';
  * persisted, and is never a watermark.
  */
 
-/**
- * The largest continuation this source mints or accepts, in UTF-8 bytes.
- *
- * It holds one opaque provider URL. Bitbucket's `next` links carry an encoded
- * query, so the bound is generous; an unexpectedly longer value is refused at
- * the boundary rather than carried into panel state.
- */
-export const MAX_BITBUCKET_DETAIL_CONTINUATION_UTF8_BYTES_V1 = 2_048;
-
 const CONTINUATION_VERSION = 1;
 
 export type BitbucketDetailFrontierV1 = Readonly<{ v: 1; nextUrl: string }>;
 
 export function encodeBitbucketDetailContinuation(nextUrl: string): string | null {
   if (readBitbucketApiUrl(nextUrl) === null) return null;
-  const token = JSON.stringify({ v: CONTINUATION_VERSION, nextUrl });
-  return new TextEncoder().encode(token).length > MAX_BITBUCKET_DETAIL_CONTINUATION_UTF8_BYTES_V1
-    ? null
-    : token;
+  return JSON.stringify({ v: CONTINUATION_VERSION, nextUrl });
 }
 
 /**
@@ -45,10 +33,6 @@ export function encodeBitbucketDetailContinuation(nextUrl: string): string | nul
  * vouch for.
  */
 export function decodeBitbucketDetailContinuation(token: string): BitbucketDetailFrontierV1 | null {
-  if (new TextEncoder().encode(token).length
-    > MAX_BITBUCKET_DETAIL_CONTINUATION_UTF8_BYTES_V1) {
-    return null;
-  }
   let decoded: unknown;
   try {
     decoded = JSON.parse(token);

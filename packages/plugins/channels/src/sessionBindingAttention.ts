@@ -6,12 +6,11 @@ import type {
 /**
  * Why one Session-bound conversation currently needs its owner.
  *
- * Every member is a persisted Account fact the canonical binding and
- * connection owners already publish. Nothing here is a new status store, a
- * second health model, or a speculative reason with no producer: an entry
- * exists only where a reader can read the state that produces it, and the
- * remediation for all of them lives in the Settings page these reasons route
- * to.
+ * Every member is a persisted Account fact the canonical binding, connection,
+ * and transcript-frontier owners already publish. Nothing here is a new status
+ * store, a second health model, or a speculative reason with no producer: an
+ * entry exists only where a reader can read the state that produces it, and
+ * remediation delegates to an incumbent owner.
  */
 export type ConversationSessionBindingAttentionReasonV1 =
   | 'connectionUnavailable'
@@ -20,15 +19,18 @@ export type ConversationSessionBindingAttentionReasonV1 =
   | 'providerConfigurationInvalid'
   | 'connectionDeleting'
   | 'connectionDisabled'
-  | 'bindingDisabled';
+  | 'bindingDisabled'
+  | 'transcriptHistoryGap';
 
 export type ConversationSessionBindingAttentionV1 = Readonly<{
   bindingId: string;
   reason: ConversationSessionBindingAttentionReasonV1;
+  bindingRevision?: number;
+  frontierRevision?: number;
 }>;
 
 /** The widest `{"bindingId":…,"reason":…}` entry this projection can serialize. */
-export const MAX_CONVERSATION_SESSION_BINDING_ATTENTION_ENTRY_BYTES = 160;
+export const MAX_CONVERSATION_SESSION_BINDING_ATTENTION_ENTRY_BYTES = 240;
 
 const ATTENTION_REASONS: ReadonlySet<string> = new Set<ConversationSessionBindingAttentionReasonV1>([
   'connectionUnavailable',
@@ -38,6 +40,7 @@ const ATTENTION_REASONS: ReadonlySet<string> = new Set<ConversationSessionBindin
   'connectionDeleting',
   'connectionDisabled',
   'bindingDisabled',
+  'transcriptHistoryGap',
 ]);
 
 export function isConversationSessionBindingAttentionReason(
@@ -68,6 +71,7 @@ export function projectConversationSessionBindingAttention(input: Readonly<{
     ConversationConnectionManagementRow,
     'enabled' | 'deletionState' | 'attention'
   > | undefined;
+  transcriptHistoryGap?: boolean;
 }>): ConversationSessionBindingAttentionV1 | null {
   const { binding, connection } = input;
   if (binding.deletionState !== 'none') return null;
@@ -83,6 +87,7 @@ export function projectConversationSessionBindingAttention(input: Readonly<{
   if (connection.deletionState !== 'none') return attention('connectionDeleting');
   if (!connection.enabled) return attention('connectionDisabled');
   if (!binding.enabled) return attention('bindingDisabled');
+  if (input.transcriptHistoryGap === true) return attention('transcriptHistoryGap');
   return null;
 }
 
@@ -90,18 +95,28 @@ export function projectConversationSessionBindingAttention(input: Readonly<{
 export function projectConversationSessionBindingAttentions(input: Readonly<{
   bindings: readonly Pick<
     ConversationBindingManagementRow,
-    'bindingId' | 'connectionId' | 'enabled' | 'deletionState'
+    'bindingId' | 'connectionId' | 'enabled' | 'deletionState' | 'revision'
   >[];
   connectionsById: ReadonlyMap<string, Pick<
     ConversationConnectionManagementRow,
     'enabled' | 'deletionState' | 'attention'
   >>;
+  transcriptHistoryGapBindingIds?: ReadonlySet<string>;
+  transcriptHistoryGapFrontierRevisions?: ReadonlyMap<string, number>;
 }>): readonly ConversationSessionBindingAttentionV1[] {
   return Object.freeze(input.bindings.flatMap((binding) => {
     const projected = projectConversationSessionBindingAttention({
       binding,
       connection: input.connectionsById.get(binding.connectionId),
+      transcriptHistoryGap: input.transcriptHistoryGapBindingIds?.has(binding.bindingId),
     });
-    return projected === null ? [] : [projected];
+    if (projected === null) return [];
+    return projected.reason === 'transcriptHistoryGap'
+      ? [{
+        ...projected,
+        bindingRevision: binding.revision,
+        frontierRevision: input.transcriptHistoryGapFrontierRevisions?.get(binding.bindingId),
+      }]
+      : [projected];
   }));
 }

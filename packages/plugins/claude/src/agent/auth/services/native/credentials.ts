@@ -1,6 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import type {
     OauthCredentialRecord,
@@ -71,10 +69,6 @@ function readNumber(value: unknown): number | null {
 function readStringArray(value: unknown): readonly string[] {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
-}
-
-export function resolveClaudeCodeCredentialsFilePath(claudeConfigDir: string): string {
-    return join(claudeConfigDir, '.credentials.json');
 }
 
 function canonicalizeJsonValue(value: unknown): unknown {
@@ -219,62 +213,4 @@ export function buildClaudeCodeCredentialPayload(
             },
         },
     };
-}
-
-async function readCredentialFileFingerprint(credentialPath: string): Promise<string | null> {
-    try {
-        return computeClaudeCodeCredentialFingerprint(
-            JSON.parse(await readFile(credentialPath, 'utf8')) as unknown,
-        );
-    } catch {
-        return null;
-    }
-}
-
-async function repairClaudeCodeCredentialsFileMode(credentialPath: string): Promise<void> {
-    if (process.platform === 'win32') return;
-    try {
-        const stats = await stat(credentialPath);
-        if ((stats.mode & 0o777) === 0o600) return;
-        await chmod(credentialPath, 0o600);
-    } catch {
-        // The file may have vanished under a concurrent writer; the next materialization repairs it.
-    }
-}
-
-export async function writeClaudeCodeCredentialsFile(params: Readonly<{
-    claudeConfigDir: string;
-    payload: ClaudeCodeNativeCredentialPayload;
-}>): Promise<string> {
-    await mkdir(params.claudeConfigDir, { recursive: true });
-    const credentialPath = resolveClaudeCodeCredentialsFilePath(params.claudeConfigDir);
-    // Idempotence guard at the actual write owner. The materializer already short-circuits via
-    // provenance, but that high-level check can miss (missing/mismatched provenance with identical
-    // content); this low-level guard makes idempotence unavoidable. A running Claude process may be
-    // mid-read of `.credentials.json`; a redundant truncate+rename to a fresh inode risks tearing
-    // that read for no benefit. Still repair perms cheaply (stat-first) so an externally-relaxed
-    // 0644/0664 file never lingers world/group-readable on the skip path.
-    const currentFingerprint = await readCredentialFileFingerprint(credentialPath);
-    if (
-        currentFingerprint !== null
-        && currentFingerprint === computeClaudeCodeCredentialFingerprint(params.payload)
-    ) {
-        await repairClaudeCodeCredentialsFileMode(credentialPath);
-        return credentialPath;
-    }
-    const tempPath = join(params.claudeConfigDir, `.credentials.${randomUUID()}.tmp`);
-    try {
-        await writeFile(tempPath, `${JSON.stringify(params.payload)}\n`, { mode: 0o600 });
-        if (process.platform !== 'win32') {
-            await chmod(tempPath, 0o600);
-        }
-        await rename(tempPath, credentialPath);
-        if (process.platform !== 'win32') {
-            await chmod(credentialPath, 0o600);
-        }
-        return credentialPath;
-    } catch (error) {
-        await rm(tempPath, { force: true }).catch(() => {});
-        throw error;
-    }
 }

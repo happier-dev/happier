@@ -6,7 +6,12 @@ import type {
   ConnectedAccountMaterialization,
   ConnectedAccountMetadataList,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { ActionsService, PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
+import type {
+  ActionsService,
+  PluginActionInputById,
+  PluginActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
   type TriageGetInputV1,
   type TriageGetResultV1,
@@ -21,6 +26,8 @@ import {
   type TriageSourceInstanceDraftV1,
   type TriageSourceScanEvidenceV1,
   type TriageSourceScanObservationV1,
+  type TriageVerifyReviewWorkspaceInputV1,
+  type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
@@ -69,16 +76,6 @@ import {
   type AzureRepositoryRow,
   type AzureScanFrontier,
 } from './types.js';
-
-/**
- * One native provider page for a `(repository, lane)` walk.
- *
- * It is deliberately smaller than the contract's 64-entry page ceiling so a lane that has more
- * than one page can actually take a second one inside the caller's projection budget — the
- * condition that makes Azure's offset walk report `moving` instead of silently claiming a
- * finished walk.
- */
-export const AZURE_NATIVE_PAGE_SIZE = 30;
 
 /** The bounded account slice of the host Connected Accounts service this source consumes. */
 export type AzureTriageAccountService = Readonly<{
@@ -305,7 +302,6 @@ export async function runAzureTriageScan(input: Readonly<{
   const frontier = request.page.kind === 'initial'
     ? createAzureScanFrontier({
       scanLimit: request.page.limit,
-      nativePageSize: Math.min(request.page.limit, AZURE_NATIVE_PAGE_SIZE),
     })
     : decodeAzureScanContinuation(request.page.continuation);
   if (frontier === null) {
@@ -335,6 +331,7 @@ async function walkAzureScan(input: Readonly<{
   const { client, origin, viewerId, frontier, signal } = input;
   const state: ScanWalkState = { observations: [], perCallReasons: [], omitted: 0 };
   let repository: AzureRepositoryRow | null = null;
+  const requestedProjectTokens = new Set<string | null>();
 
   while (true) {
     if (signal.aborted) {
@@ -347,14 +344,31 @@ async function walkAzureScan(input: Readonly<{
 
     if (repository === null) {
       if (frontier.projectId === null) {
+        const requestedProjectToken = frontier.projectNextToken;
+        if (requestedProjectTokens.has(requestedProjectToken)) {
+          recordAzureWalkHealth(frontier, 'lane-unresolved');
+          frontier.projectNextToken = null;
+          return settle(state, frontier, 'finished', null);
+        }
+        requestedProjectTokens.add(requestedProjectToken);
         const projects = await readAzureProjectPage({
           client,
-          continuationToken: frontier.projectNextToken,
+          continuationToken: requestedProjectToken,
           signal,
         });
         if (!projects.ok) return settle(state, frontier, 'failed', projectAzureSourceFailure(projects.failure));
         recordScopeOmission(frontier, projects.undecodable);
-        frontier.projectNextToken = projects.continuationToken;
+        if (
+          requestedProjectToken !== null
+          && projects.continuationToken === requestedProjectToken
+        ) {
+          // The provider repeated the exact position just consumed. Process this
+          // response once, then settle partial instead of re-entering it forever.
+          recordAzureWalkHealth(frontier, 'lane-unresolved');
+          frontier.projectNextToken = null;
+        } else {
+          frontier.projectNextToken = projects.continuationToken;
+        }
         const next = projects.projects[0];
         if (next === undefined) {
           if (frontier.projectNextToken === null) return settle(state, frontier, 'finished', null);
@@ -379,11 +393,19 @@ async function walkAzureScan(input: Readonly<{
       // to sort first in a freshly enumerated repository array. A repository inserted before the
       // active one must wait for the next walk; adopting it here would reset the active offsets
       // and replay that repository from lane zero.
-      const next = frontier.currentRepositoryId === null
+      const activeRepositoryId = frontier.currentRepositoryId;
+      const next = activeRepositoryId === null
         ? repositories.repositories[0]
-        : repositories.repositories.find((candidate) => (
-          candidate.id === frontier.currentRepositoryId
-        )) ?? repositories.repositories[0];
+        : repositories.repositories.find((candidate) => candidate.id === activeRepositoryId);
+      if (activeRepositoryId !== null && next === undefined) {
+        // The offsets in this continuation address only the missing GUID. Advancing from that
+        // immutable boundary keeps repositories inserted before it for the next fresh walk and
+        // avoids replaying one of them from lane zero under somebody else's continuation.
+        recordAzureWalkHealth(frontier, 'lane-unresolved');
+        frontier.lastCompletedRepositoryId = activeRepositoryId;
+        enterAzureRepository(frontier, null);
+        continue;
+      }
       if (next === undefined) {
         frontier.projectId = null;
         frontier.currentRepositoryId = null;
@@ -397,13 +419,6 @@ async function walkAzureScan(input: Readonly<{
         recordAzureWalkHealth(frontier, 'lane-unavailable');
         frontier.lastCompletedRepositoryId = next.id;
         continue;
-      }
-      if (frontier.currentRepositoryId !== null && frontier.currentRepositoryId !== next.id) {
-        // The pinned GUID is no longer the frontier head: repositories moved underneath the
-        // walk. The new head is adopted with fresh lane offsets rather than continuing offsets
-        // that belong to a different repository.
-        recordAzureWalkHealth(frontier, 'lane-unresolved');
-        frontier.currentRepositoryId = null;
       }
       if (frontier.currentRepositoryId !== next.id) {
         enterAzureRepository(frontier, next.id);
@@ -432,7 +447,7 @@ async function walkAzureScan(input: Readonly<{
       repositoryId: repository.id,
       lane: lane.laneId,
       viewerId,
-      top: frontier.nativePageSize,
+      top: frontier.scanLimit - frontier.observed,
       skip: lane.skip,
       signal,
     });
@@ -660,7 +675,7 @@ export type AzureEntryObservation = Readonly<{
 }>;
 
 /** One exact provider reread, shared by observation and review-workspace preparation. */
-type AzurePullRequestReread =
+export type AzurePullRequestReread =
   | Readonly<{
     kind: 'resolved';
     row: AzurePullRequestRow;
@@ -670,7 +685,7 @@ type AzurePullRequestReread =
   | Readonly<{ kind: 'malformed' }>;
 
 /** The source-private locator route used to address one Azure pull request. */
-type AzurePullRequestLocatorRoute = Readonly<{
+export type AzurePullRequestLocatorRoute = Readonly<{
   kind: 'locator';
   project: string;
   repositoryId: string;
@@ -691,7 +706,7 @@ type AzurePullRequestRoute = AzurePullRequestLocatorRoute | Readonly<{
  * A collision scope stays identity-only: its repository GUID is never substituted into this
  * route. It is checked after the provider returns its own immutable repository id below.
  */
-function readAzurePullRequestLocatorRoute(input: Readonly<{
+export function readAzurePullRequestLocatorRoute(input: Readonly<{
   origin: AzureDevOpsOrigin;
   locator: TriageGetInputV1['lastKnownLocator'];
   pullRequestId: number;
@@ -709,7 +724,7 @@ function readAzurePullRequestLocatorRoute(input: Readonly<{
   };
 }
 
-async function rereadAzurePullRequest(input: Readonly<{
+export async function rereadAzurePullRequest(input: Readonly<{
   client: AzureDevOpsApiClient;
   origin: AzureDevOpsOrigin;
   localRef: TriageSourceEntryLocalRefV1;
@@ -819,7 +834,80 @@ export async function runAzureTriagePrepareReviewWorkspace(input: Readonly<{
   const { request } = input;
   // There is no inferred/default root. This return happens before either provider authorization or
   // the generic materializer, so a missing selection cannot become a filesystem probe.
-  if (request.workspace === null) return { kind: 'workspaceRequired' };
+  if (request.workspace === undefined) return { kind: 'workspaceRequired' };
+
+  const proof = await readCurrentAzureReviewWorkspaceProviderProof({
+    services: input.services,
+    request,
+    signal: input.signal,
+  });
+  if (proof.kind !== 'current') return proof;
+
+  const materialized = await executeAzureReviewWorkspaceScmAction({
+    actions: input.services.actions,
+    request: {
+      cwd: request.workspace.rootPath,
+      displayName: proof.sourceTip.branch,
+      sourceTip: proof.sourceTip,
+    },
+    signal: input.signal,
+  });
+  if (materialized === null) return { kind: 'unavailable', reason: 'scmResolver' };
+  if (!materialized.success) {
+    // These codes mean the selected root was not a usable repository or lacks the matched remote.
+    // Other generic SCM failures have no source-specific interpretation and remain an SCM resolver
+    // unavailability rather than a provider-level retry or a local fallback.
+    if (
+      materialized.errorCode === 'NOT_REPOSITORY'
+      || materialized.errorCode === 'INVALID_PATH'
+      || materialized.errorCode === 'REMOTE_NOT_FOUND'
+    ) {
+      return { kind: 'workspaceMismatch' };
+    }
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  if ('verification' in materialized) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  return {
+    kind: 'prepared',
+    repositoryPath: materialized.targetPath,
+    branch: materialized.branchName,
+    created: materialized.created,
+    currentness: materialized.currentness,
+    // Transport only the canonical SCM reference from the authoritative reread;
+    // Triage remains opaque to its grammar.
+    pullRequest: { number: proof.row.pullRequestId },
+  };
+}
+
+type AzureReviewWorkspaceProviderProof =
+  | Readonly<{
+    kind: 'current';
+    row: AzurePullRequestRow;
+    sourceTip: AzurePreparedSourceTip;
+  }>
+  | Extract<
+    TriagePrepareReviewWorkspaceResultV1,
+    Readonly<{ kind: 'unavailable' | 'refused' }>
+  >;
+
+/**
+ * The sole provider-currentness proof shared by preparation and final review start.
+ *
+ * Both callers reauthorize the same configured account, decode the same source-local identity and
+ * locator, and require the same base/head/native revision. Keeping that sequence here prevents the
+ * final verifier from becoming a weaker, similar-but-different reread of the provider.
+ */
+async function readCurrentAzureReviewWorkspaceProviderProof(input: Readonly<{
+  services: AzureTriageReadServices;
+  request: Pick<
+    TriagePrepareReviewWorkspaceInputV1,
+    'instance' | 'entryRef' | 'lastKnownLocator' | 'observed'
+  >;
+  signal: AbortSignal;
+}>): Promise<AzureReviewWorkspaceProviderProof> {
+  const { request } = input;
 
   const origin = resolveAzureConfiguredOrigin(request.instance.configuration);
   if (origin === null) return { kind: 'refused', reason: 'instanceMoved' };
@@ -870,38 +958,64 @@ export async function runAzureTriagePrepareReviewWorkspace(input: Readonly<{
   const sourceTip = readAzurePreparedSourceTip(row);
   if (sourceTip === null) return { kind: 'refused', reason: 'pullRequestMoved' };
 
-  const materialized = await input.services.actions.execute(
-    'scm.reviewWorkspace.materializePrepared',
-    {
+  return { kind: 'current', row, sourceTip };
+}
+
+/**
+ * Final provider and local-workspace verification immediately before `review.start`.
+ *
+ * The provider reread is authoritative for the PR and its base/head/native revision. The existing
+ * generic SCM materialization Action owns repository matching and local HEAD inspection; its
+ * verification arm is read-only and must return the exact target and source head it resolved.
+ */
+export async function runAzureTriageVerifyReviewWorkspace(input: Readonly<{
+  services: AzureTriageReviewWorkspaceServices;
+  request: TriageVerifyReviewWorkspaceInputV1;
+  signal: AbortSignal;
+}>): Promise<TriageVerifyReviewWorkspaceResultV1> {
+  const { request } = input;
+  const proof = await readCurrentAzureReviewWorkspaceProviderProof({
+    services: input.services,
+    request,
+    signal: input.signal,
+  });
+  if (proof.kind !== 'current') return proof;
+  const pullRequest = { number: proof.row.pullRequestId };
+  if (!pluginJsonValuesEqual(request.prepared.pullRequest, pullRequest)) {
+    return { kind: 'refused', reason: 'pullRequestMoved' };
+  }
+
+  const verified = await executeAzureReviewWorkspaceScmAction({
+    actions: input.services.actions,
+    request: {
       cwd: request.workspace.rootPath,
-      displayName: sourceTip.branch,
-      sourceTip,
+      displayName: proof.sourceTip.branch,
+      sourceTip: proof.sourceTip,
+      verification: { targetPath: request.prepared.repositoryPath },
     },
-    { signal: input.signal },
-  );
-  if (!materialized.success) {
-    // These codes mean the selected root was not a usable repository or lacks the matched remote.
-    // Other generic SCM failures have no source-specific interpretation and remain an SCM resolver
-    // unavailability rather than a provider-level retry or a local fallback.
+    signal: input.signal,
+  });
+  if (verified === null) return { kind: 'unavailable', reason: 'scmResolver' };
+  if (!verified.success) {
     if (
-      materialized.errorCode === 'NOT_REPOSITORY'
-      || materialized.errorCode === 'INVALID_PATH'
-      || materialized.errorCode === 'REMOTE_NOT_FOUND'
+      verified.errorCode === 'NOT_REPOSITORY'
+      || verified.errorCode === 'INVALID_PATH'
+      || verified.errorCode === 'REMOTE_NOT_FOUND'
     ) {
       return { kind: 'workspaceMismatch' };
     }
     return { kind: 'unavailable', reason: 'scmResolver' };
   }
-  return {
-    kind: 'prepared',
-    repositoryPath: materialized.targetPath,
-    branch: materialized.branchName,
-    created: materialized.created,
-    currentness: materialized.currentness,
-    // Transport only the canonical SCM reference from the authoritative reread;
-    // Triage remains opaque to its grammar.
-    pullRequest: { number: row.pullRequestId },
-  };
+  if (!('verification' in verified)) {
+    return { kind: 'unavailable', reason: 'scmResolver' };
+  }
+  if (verified.verification.targetPath !== request.prepared.repositoryPath) {
+    return { kind: 'workspaceMismatch' };
+  }
+  if (!sameAzureRevision(verified.verification.sourceHeadSha, proof.sourceTip.sourceHeadSha)) {
+    return { kind: 'refused', reason: 'observedHeadMoved' };
+  }
+  return { kind: 'verified', pullRequest };
 }
 
 /** Azure commit identifiers are case-insensitive hexadecimal values. */
@@ -919,6 +1033,31 @@ function sameAzureRevision(current: string | null, observed: string): boolean {
 type AzurePreparedSourceTip = PluginActionInputById[
   'scm.reviewWorkspace.materializePrepared'
 ]['sourceTip'];
+
+/**
+ * The one failure/cancellation boundary for the generic SCM Action used by both preparation and
+ * final verification. A transport rejection is typed source unavailability; cancellation keeps
+ * the caller's abort reason and is never converted into a retryable provider result.
+ */
+async function executeAzureReviewWorkspaceScmAction(input: Readonly<{
+  actions: Pick<ActionsService, 'execute'>;
+  request: PluginActionInputById['scm.reviewWorkspace.materializePrepared'];
+  signal: AbortSignal;
+}>): Promise<PluginActionResultById['scm.reviewWorkspace.materializePrepared'] | null> {
+  try {
+    const result = await input.actions.execute(
+      'scm.reviewWorkspace.materializePrepared',
+      input.request,
+      { signal: input.signal },
+    );
+    input.signal.throwIfAborted();
+    return result;
+  } catch (error) {
+    input.signal.throwIfAborted();
+    if (error instanceof Error && error.name === 'AbortError') throw error;
+    return null;
+  }
+}
 
 function readAzurePreparedSourceTip(row: AzurePullRequestRow): AzurePreparedSourceTip | null {
   const cloneUrl = row.sourceRepositoryCloneUrl;
@@ -1169,6 +1308,19 @@ export async function authorizeClient(input: Readonly<{
   if (!authorization.ok) {
     return { ok: false, failure: projectAzureSourceFailure(authorization.failure) };
   }
+
+  // Credential materialization is an awaited authority boundary. Azure
+  // Services accounts share one bare origin while their configured base owns
+  // the organization path, so the host's origin reauthorization cannot detect
+  // an account retarget from org A to org B during that await. Reconfirm the
+  // exact base before the newly minted credential can reach any provider path.
+  const retargeted = await confirmAzureConfiguredBaseIsCurrent({
+    connectedAccounts: input.services.connectedAccounts,
+    binding: input.instance.binding,
+    origin: input.origin,
+    signal: input.signal,
+  });
+  if (retargeted !== null) return { ok: false, failure: retargeted };
 
   return {
     ok: true,

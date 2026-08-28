@@ -6,7 +6,6 @@ import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime
 import { activate } from './activate.js';
 import { antigravityExternalSessionsContribution } from './agent/cliPrint/externalSessions.js';
 import { antigravityExternalSessionObservationContribution } from './agent/cliPrint/observation.js';
-import { ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION } from './agent/contributions/catalog.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Antigravity plugin activation', () => {
@@ -73,7 +72,6 @@ describe('Antigravity plugin activation', () => {
           ],
         },
       });
-      expect(ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION).not.toHaveProperty('connectedServices');
     } finally {
       await fixture.dispose();
     }
@@ -147,7 +145,7 @@ describe('Antigravity plugin activation', () => {
     });
 
     expect(runtime.sessions).toEqual({ open: expect.any(Function) });
-    expect(runtime.executionRuns).toEqual({ open: expect.any(Function) });
+    expect(runtime.executionRuns).toBeUndefined();
     await fixture.dispose();
   });
 

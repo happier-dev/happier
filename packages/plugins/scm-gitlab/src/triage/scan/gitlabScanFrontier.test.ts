@@ -314,6 +314,98 @@ describe('runGitlabScan', () => {
     expect(hasOpenGitlabLane(frontier)).toBe(false);
   });
 
+  it('settles a provider next-link cycle instead of spinning on empty pages', async () => {
+    const frontier = createGitlabScanFrontier({
+      scanLimit: 100,
+      origin: GITLAB_COM,
+      lanes: [{
+        laneId: 'authored',
+        kindId: 'merge-request',
+        path: '/merge_requests',
+        query: [['scope', 'created_by_me']],
+        involvement: 'author',
+      }],
+    });
+    const [first] = frontier.lanes.map((lane) => lane.nextUrl);
+    if (!first) throw new Error('expected one lane');
+    const second = 'https://gitlab.com/api/v4/merge_requests?scope=created_by_me&per_page=100&page=2';
+    const fetcher = vi.fn<GitlabHttpFetcher>(async (url) => {
+      if (fetcher.mock.calls.length > 2) throw new Error('the repeated frontier must settle');
+      const nextUrl = url === first ? second : first;
+      return {
+        status: 200,
+        statusText: '',
+        headers: createGitlabResponseHeaders({ Link: `<${nextUrl}>; rel="next"` }),
+        text: async () => '[]',
+      };
+    });
+
+    const result = await runGitlabScan({
+      invocation: AUTHORIZED,
+      frontier,
+      unavailableLanes: [],
+      fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      kind: 'settled',
+      health: { kind: 'partial', reason: 'lane-unresolved' },
+    });
+    expect(hasOpenGitlabLane(frontier)).toBe(false);
+  });
+
+  it('settles a wider provider next-link cycle with constant-space evidence', async () => {
+    const frontier = createGitlabScanFrontier({
+      scanLimit: 100,
+      origin: GITLAB_COM,
+      lanes: [{
+        laneId: 'authored',
+        kindId: 'merge-request',
+        path: '/merge_requests',
+        query: [['scope', 'created_by_me']],
+        involvement: 'author',
+      }],
+    });
+    const first = frontier.lanes[0]!.nextUrl;
+    const second = 'https://gitlab.com/api/v4/merge_requests?page=2';
+    const third = 'https://gitlab.com/api/v4/merge_requests?page=3';
+    const nextByUrl = new Map([
+      [first, second],
+      [second, third],
+      [third, first],
+    ]);
+    const fetcher = vi.fn<GitlabHttpFetcher>(async (url) => {
+      if (fetcher.mock.calls.length > 5) throw new Error('the wider cycle must settle');
+      const nextUrl = nextByUrl.get(url);
+      if (nextUrl === undefined) throw new Error(`unexpected URL: ${url}`);
+      return {
+        status: 200,
+        statusText: '',
+        headers: createGitlabResponseHeaders({ Link: `<${nextUrl}>; rel="next"` }),
+        text: async () => '[]',
+      };
+    });
+
+    const result = await runGitlabScan({
+      invocation: AUTHORIZED,
+      frontier,
+      unavailableLanes: [],
+      fetcher,
+      signal: new AbortController().signal,
+      nowMs: NOW_MS,
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(result).toMatchObject({
+      kind: 'settled',
+      health: { kind: 'partial', reason: 'lane-unresolved' },
+    });
+    expect(hasOpenGitlabLane(frontier)).toBe(false);
+  });
+
   it('keeps a walk whose only lane ran out reporting a finished walk', async () => {
     // The discriminating half of the pair above: absence of a `Link` is the lane's own
     // end and must NOT acquire the refused caveat, or every clean walk reports partial.

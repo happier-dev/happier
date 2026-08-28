@@ -74,4 +74,16 @@ describe('GitLab detail UI build configuration', () => {
     expect(PLUGIN_MANIFEST.contributes.ui.settingsGroups)
       .toEqual([expect.objectContaining({ id: GITLAB_TRIAGE_SETTINGS_GROUP_ID })]);
   });
+
+  it('keeps the virtualized Reviews collection under the host document scroller', async () => {
+    const source = await readFile(new URL('./ui/renderSurface.tsx', import.meta.url), 'utf8');
+    const reviewsStart = source.indexOf('function ReviewsPanel(');
+    const reviewsEnd = source.indexOf('/* ----------------------------------------------------------------- Work Sessions */', reviewsStart);
+    const reviewsSource = source.slice(reviewsStart, reviewsEnd);
+
+    expect(reviewsStart).toBeGreaterThanOrEqual(0);
+    expect(reviewsEnd).toBeGreaterThan(reviewsStart);
+    expect(reviewsSource).toContain('<DiscussionsSection input={input} />');
+    expect(reviewsSource).not.toContain('<ScrollArea>');
+  });
 });

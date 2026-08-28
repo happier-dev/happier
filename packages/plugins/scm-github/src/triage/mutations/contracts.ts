@@ -2,11 +2,18 @@ import {
   defineProtocolArray,
   defineProtocolLiteral,
   defineProtocolObject,
+  defineProtocolString,
   defineProtocolUnion,
   defineProtocolUniqueArray,
   defineProtocolUtf8String,
   type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
+import {
+  ReviewCommentPublicationResultV1ProtocolSchema,
+  ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema,
+  defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema,
+} from '@happier-dev/plugin-sdk/reviews';
 import {
   MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
   TriageConfiguredSourceInstanceV1Schema,
@@ -64,9 +71,9 @@ export const GithubMergeMethodV1Schema = defineProtocolUnion([
 ]);
 export type GithubMergeMethodV1 = ReturnType<typeof GithubMergeMethodV1Schema.parse>;
 
-/** GitHub's documented merge-commit fields. Bounded, and never defaulted. */
-const CommitTitleSchema = defineProtocolUtf8String({ maxUtf8Bytes: 1_024, minLength: 1 });
-const CommitMessageSchema = defineProtocolUtf8String({ maxUtf8Bytes: 16_384, minLength: 1 });
+/** GitHub's merge-commit fields, never defaulted or source-locally truncated. */
+const CommitTitleSchema = defineProtocolString({ minLength: 1 });
+const CommitMessageSchema = defineProtocolString({ minLength: 1 });
 
 /**
  * What every write names: the exact configured instance whose account is
@@ -123,23 +130,44 @@ export type GithubPullRequestReviewVerdictV1 =
   ReturnType<typeof GithubPullRequestReviewVerdictV1Schema.parse>;
 
 /**
- * Publishes one review summary and verdict against the exact observed head.
- *
- * Inline comments are deliberately absent. The source's current changed-file
- * projection publishes whether a patch exists but not trustworthy diff-position
- * data, so accepting comment anchors here would invite the adapter to guess. The
- * closed schema makes that limitation loud until the source projects positions.
+ * Publishes one frozen canonical Reviews plan against the exact observed base
+ * and head. The provider leaf preflights every anchor and snapshot before the
+ * generic owner allocates durable dispatch correlations.
  */
 export const GithubPullRequestReviewPublicationInputV1Schema = defineProtocolObject({
   ...mutationTargetShape,
-  headRevision: RevisionSchema,
-  verdict: GithubPullRequestReviewVerdictV1Schema,
-  // The canonical review proposal contract already admits bodies up to this
-  // boundary; this source does not invent a smaller provider-specific ceiling.
-  summary: defineProtocolUtf8String({ maxUtf8Bytes: 65_536, minLength: 1 }),
+  /** Canonical Reviews owns the frozen entries, anchors, revisions and verdict. */
+  publicationPlan: defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(RevisionSchema),
 }, { policy: 'closed' });
 export type GithubPullRequestReviewPublicationInputV1 =
   ReturnType<typeof GithubPullRequestReviewPublicationInputV1Schema.parse>;
+
+/** Publishes one pinned canonical proposal as a standalone PR review comment. */
+export const GithubPullRequestReviewCommentCreateInputV1Schema =
+  defineProtocolObject({
+    ...mutationTargetShape,
+    publicationPlan: defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(
+      RevisionSchema,
+    ),
+  }, { policy: 'closed' });
+export type GithubPullRequestReviewCommentCreateInputV1 =
+  ReturnType<typeof GithubPullRequestReviewCommentCreateInputV1Schema.parse>;
+
+/** Publishes one canonical proposal as a reply to one provider-native comment. */
+export const GithubPullRequestThreadReplyInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+  threadId: defineProtocolString({ minLength: 1 }),
+}, { policy: 'closed' });
+export type GithubPullRequestThreadReplyInputV1 =
+  ReturnType<typeof GithubPullRequestThreadReplyInputV1Schema.parse>;
+
+/** Publishes one canonical proposal into an issue conversation. */
+export const GithubIssueCommentInputV1Schema = defineProtocolObject({
+  ...mutationTargetShape,
+  publicationPlan: ReviewCommentUnversionedSingleEntryPublicationPlanV1ProtocolSchema,
+}, { policy: 'closed' });
+export type GithubIssueCommentInputV1 = ReturnType<typeof GithubIssueCommentInputV1Schema.parse>;
 
 /**
  * Update this pull request's branch from its base.
@@ -163,12 +191,19 @@ export type GithubPullRequestUpdateBranchInputV1 =
  * parsed with the looser schema below, because refusing to report a name GitHub
  * actually returned would turn a successful write into an unreadable result.
  */
-const ReviewerNameInputSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: 100,
+const GithubLoginInputSchema = defineProtocolUtf8String({
+  maxUtf8Bytes: 39,
+  minLength: 1,
+  pattern: '^[A-Za-z0-9][A-Za-z0-9-]*$',
+});
+const ReviewerTeamSlugInputSchema = defineProtocolString({
   minLength: 1,
   pattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$',
 });
-const ReviewerNamesInputSchema = defineProtocolUniqueArray(ReviewerNameInputSchema, {
+const ReviewerUserNamesInputSchema = defineProtocolUniqueArray(GithubLoginInputSchema, {
+  minItems: 1,
+});
+const ReviewerTeamSlugsInputSchema = defineProtocolUniqueArray(ReviewerTeamSlugInputSchema, {
   minItems: 1,
 });
 
@@ -189,8 +224,8 @@ const ReviewerNamesInputSchema = defineProtocolUniqueArray(ReviewerNameInputSche
  */
 const reviewerDeltaShape = {
   ...mutationTargetShape,
-  users: ReviewerNamesInputSchema.optional(),
-  teams: ReviewerNamesInputSchema.optional(),
+  users: ReviewerUserNamesInputSchema.optional(),
+  teams: ReviewerTeamSlugsInputSchema.optional(),
 } as const;
 
 /** Requests review from exactly the named users and/or teams. */
@@ -344,33 +379,42 @@ export type GithubPullRequestMarkReadyResultV1 =
   ReturnType<typeof GithubPullRequestMarkReadyResultV1Schema.parse>;
 
 /**
- * Review publication has exactly three truthful terminal classes.
- *
- * `rejected` means no effect was accepted (including a local stale-head refusal);
- * `uncertain` means the one POST may have landed but authoritative re-observation
- * could not settle the source detail. Neither arm can be mistaken for success.
+ * A pre-dispatch refusal is separate from a claimed publication. Once the
+ * generic Reviews owner has allocated correlations, the provider returns its
+ * exact-cardinality canonical result and the freshest target observation it
+ * could read. This preserves partial marker evidence instead of flattening a
+ * many-comment publication into one coarse success flag.
  */
 export const GithubPullRequestReviewPublicationResultV1Schema = defineProtocolUnion([
   defineProtocolObject({
-    kind: defineProtocolLiteral('applied'),
-    observation: TriageSourceObservationV1Schema,
+    kind: defineProtocolLiteral('settled'),
+    publication: ReviewCommentPublicationResultV1ProtocolSchema,
+    observation: TriageSourceObservationV1Schema.optional(),
+    failure: TriageSourceFailureV1Schema.optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('rejected'),
     reason: defineProtocolUnion([
       defineProtocolLiteral('invalid_input'),
       defineProtocolLiteral('admission_failed'),
+      defineProtocolLiteral('base_advanced'),
       defineProtocolLiteral('head_advanced'),
+      defineProtocolLiteral('dispatch_claim_failed'),
+      defineProtocolLiteral('unsupported_anchor'),
       defineProtocolLiteral('state_changed'),
       defineProtocolLiteral('provider_rejected'),
     ]),
     observation: TriageSourceObservationV1Schema.optional(),
     failure: TriageSourceFailureV1Schema.optional(),
   }, { policy: 'closed' }),
-  UncertainArmSchema,
 ]);
 export type GithubPullRequestReviewPublicationResultV1 =
   ReturnType<typeof GithubPullRequestReviewPublicationResultV1Schema.parse>;
+export const GithubPullRequestReviewCommentCreateResultV1Schema =
+  GithubPullRequestReviewPublicationResultV1Schema;
+export const GithubPullRequestThreadReplyResultV1Schema =
+  GithubPullRequestReviewPublicationResultV1Schema;
+export const GithubIssueCommentResultV1Schema = GithubPullRequestReviewPublicationResultV1Schema;
 
 /**
  * `pending` exists for exactly one provider fact: GitHub answers a branch update
@@ -406,14 +450,11 @@ export type GithubPullRequestUpdateBranchResultV1 =
  * The reviewer set as GITHUB currently reports it, which is what this write's
  * re-observation is: a pull-request snapshot would not say who is now requested.
  *
- * Observed names are bounded but unpatterned. GitHub owns its own login and slug
+ * Observed names are unpatterned. GitHub owns its own login and slug
  * vocabulary, and refusing to report a name it actually returned would turn a
  * successful write into an unreadable result.
  */
-const ObservedReviewerNameSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: 255,
-  minLength: 1,
-});
+const ObservedReviewerNameSchema = defineProtocolString({ minLength: 1 });
 const RequestedReviewersSchema = defineProtocolObject({
   users: defineProtocolArray(ObservedReviewerNameSchema),
   teams: defineProtocolArray(ObservedReviewerNameSchema),
@@ -493,24 +534,19 @@ export type GithubIssueReopenInputV1 = ReturnType<typeof GithubIssueReopenInputV
  * assignee request is ten, and it is stated here rather than discovered as a
  * provider rejection after the request left.
  */
-const AssigneeNameInputSchema = defineProtocolUtf8String({
-  maxUtf8Bytes: 39,
-  minLength: 1,
-  pattern: '^[A-Za-z0-9][A-Za-z0-9-]*$',
-});
-const AssigneeNamesInputSchema = defineProtocolUniqueArray(AssigneeNameInputSchema, {
+const AssigneeNamesInputSchema = defineProtocolUniqueArray(GithubLoginInputSchema, {
   minItems: 1,
   maxItems: 10,
 });
 
 /**
- * A label NAME as GitHub stores it: free text, not a slug. It is bounded and
- * unpatterned on purpose — a repository's labels legitimately carry spaces,
- * punctuation and emoji, and refusing one because it is not slug-shaped would
- * make a real label unremovable. It reaches GitHub as one encoded path segment
- * or as a JSON body value, never as raw path text.
+ * A label NAME as GitHub stores it: free text, not a slug. GitHub's 50-character
+ * provider limit is measured in Unicode code points by the shared Protocol
+ * string owner, so multi-byte emoji are not rejected as if characters were
+ * bytes. It reaches GitHub as one encoded path segment or as a JSON body value,
+ * never as raw path text.
  */
-const LabelNameInputSchema = defineProtocolUtf8String({ maxUtf8Bytes: 255, minLength: 1 });
+const LabelNameInputSchema = defineProtocolString({ minLength: 1, maxLength: 50 });
 const LabelNamesInputSchema = defineProtocolUniqueArray(LabelNameInputSchema, { minItems: 1 });
 
 /**
@@ -578,12 +614,12 @@ export type GithubIssueDeltaResultV1 =
 /**
  * A GitHub GraphQL node id, exactly as the read that produced it published it.
  *
- * It is OPAQUE: bounded, never parsed, never composed from a number, and never
- * re-cased. GitHub's own ids are URL-safe base64 today, but the vocabulary is
- * the provider's to change, so the only rule this source enforces is that the
- * value is a bounded non-empty string it received rather than invented.
+ * It is OPAQUE: never parsed, never composed from a number, and never re-cased.
+ * GitHub has already changed its global-id format and explicitly requires
+ * consumers to treat it as opaque, so this source enforces only the semantic
+ * fact it owns: a non-empty string received rather than invented.
  */
-const NodeIdSchema = defineProtocolUtf8String({ maxUtf8Bytes: 255, minLength: 1 });
+const NodeIdSchema = defineProtocolString({ minLength: 1 });
 
 const GithubBooleanSchema = defineProtocolUnion([
   defineProtocolLiteral(true),

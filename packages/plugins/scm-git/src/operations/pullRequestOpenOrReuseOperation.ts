@@ -3,12 +3,11 @@ import {
   type ScmOperationErrorCode,
   type ScmPullRequestOpenOrReuseRequest,
   type ScmPullRequestOpenOrReuseResponse,
-  type ScmPullRequestReference,
-  type ScmPullRequestState,
   type ScmPullRequestSummary,
   type ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import {
+  type HostingProviderPullRequestsCapability,
   type ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import {
     readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
@@ -33,31 +32,7 @@ import {
     readDuplicatePullRequestHint,
 } from './pullRequestAuthChain.js';
 
-type PullRequestWriteRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter' | 'buildCompareUrl'>;
-
-type PullRequestWriteAdapter = Readonly<{
-    getPullRequestAuthProfileKey?: (input: Readonly<{ provider: ScmHostingProviderRef }>) => string | null;
-    listPullRequests?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-        base?: string;
-        head: string;
-        state?: ScmPullRequestState;
-        runtimeServices?: ScmHostingProviderRuntimeServices;
-    }>) => Promise<readonly ScmPullRequestSummary[]>;
-    getPullRequest?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-        reference: ScmPullRequestReference;
-        runtimeServices?: ScmHostingProviderRuntimeServices;
-    }>) => Promise<ScmPullRequestSummary | null>;
-    createPullRequest?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-        base: string;
-        head: string;
-        title: string;
-        body?: string;
-        runtimeServices?: ScmHostingProviderRuntimeServices;
-    }>) => Promise<ScmPullRequestSummary>;
-}>;
+type PullRequestWriteRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequests' | 'buildCompareUrl'>;
 
 export type GitPullRequestOpenOrReuseOperation = Readonly<{
     openOrReuse(input: Readonly<{
@@ -99,16 +74,8 @@ function resolveProvider(snapshot: ScmWorkingSnapshot, providerId?: string): Scm
     };
 }
 
-function isPullRequestWriteAdapter(adapter: unknown): adapter is PullRequestWriteAdapter {
-    if (!adapter || typeof adapter !== 'object') return false;
-    const candidate = adapter as Partial<Record<keyof PullRequestWriteAdapter, unknown>>;
-    return typeof candidate.listPullRequests === 'function'
-        || typeof candidate.getPullRequest === 'function'
-        || typeof candidate.createPullRequest === 'function';
-}
-
-function readAuthProfileKey(adapter: PullRequestWriteAdapter | null, provider: ScmHostingProviderRef): string | undefined {
-    const key = adapter?.getPullRequestAuthProfileKey?.({ provider })?.trim();
+function readAuthProfileKey(adapter: HostingProviderPullRequestsCapability | null, provider: ScmHostingProviderRef): string | undefined {
+    const key = adapter?.getPullRequestAuthProfileKey({ provider })?.trim();
     return key ? key : undefined;
 }
 
@@ -230,7 +197,7 @@ export function createGitPullRequestOpenOrReuseOperation(
     }
 
     async function readValidatedDuplicateHint(input: Readonly<{
-        adapter: PullRequestWriteAdapter;
+        adapter: HostingProviderPullRequestsCapability;
         provider: ScmHostingProviderRef;
         baseBranch: string;
         headBranch: string;
@@ -243,13 +210,11 @@ export function createGitPullRequestOpenOrReuseOperation(
         try {
             hintedPullRequest = hint.kind === 'pullRequest'
                 ? hint.pullRequest
-                : input.adapter.getPullRequest
-                    ? await input.adapter.getPullRequest({
-                        provider: input.provider,
-                        reference: hint.reference,
-                        runtimeServices: readRuntimeServices(),
-                    })
-                    : null;
+                : await input.adapter.getPullRequest({
+                    provider: input.provider,
+                    reference: hint.reference,
+                    runtimeServices: readRuntimeServices(),
+                });
         } catch {
             return null;
         }
@@ -309,8 +274,7 @@ export function createGitPullRequestOpenOrReuseOperation(
             }
 
             const registry = await readRegistry();
-            const adapter = registry.getAdapter(resolvedProvider.id);
-            const writeAdapter = isPullRequestWriteAdapter(adapter) ? adapter : null;
+            const writeAdapter = registry.getPullRequests(resolvedProvider.id) ?? null;
             const authProfileKey = readAuthProfileKey(writeAdapter, resolvedProvider);
             const buildResolvedCacheKey = (profileKey?: string): PrStatusCacheKey =>
                 buildCacheKey({

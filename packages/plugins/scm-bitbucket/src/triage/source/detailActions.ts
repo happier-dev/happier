@@ -4,6 +4,8 @@ import type {
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
+import { fitActionResultPageV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
+import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 
 import {
   readBitbucketActivityPage,
@@ -29,10 +31,10 @@ import {
   BitbucketActivityInputV1Schema,
   BitbucketBuildsInputV1Schema,
   BitbucketCommentsInputV1Schema,
-  BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1,
   BitbucketDiffInputV1Schema,
   BitbucketOverviewInputV1Schema,
   type BitbucketDiffResultV1,
+  type BitbucketDetailIncompleteReasonV1,
   type BitbucketOverviewResultV1,
   type BitbucketActivityResultV1,
   type BitbucketBuildsResultV1,
@@ -157,12 +159,25 @@ function resolvePosition(
   };
 }
 
-/** Shapes one settled walk position into the one member every paged plane shares. */
-function shapeWalkPosition(page: BitbucketWalkPositionV1): Readonly<{ continuation?: string }> {
-  const continuation = page.nextUrl === null
-    ? null
-    : encodeBitbucketDetailContinuation(page.nextUrl);
-  return continuation === null ? Object.freeze({}) : Object.freeze({ continuation });
+/** Mints the provider position once so the canonical Action-envelope fitter can admit it. */
+function mintWalkContinuation(page: BitbucketWalkPositionV1): string | undefined {
+  return page.nextUrl === null
+    ? undefined
+    : encodeBitbucketDetailContinuation(page.nextUrl) ?? undefined;
+}
+
+/** Shapes one settled walk position into the members every paged plane shares. */
+function shapeWalkPosition(
+  page: BitbucketWalkPositionV1,
+  continuation: string | undefined,
+  continuationOmitted: boolean,
+): Readonly<{ continuation?: string; incomplete?: BitbucketDetailIncompleteReasonV1 }> {
+  const incomplete = page.nextUrl !== null
+    && (continuation === undefined || continuationOmitted);
+  return Object.freeze({
+    ...(continuation === undefined ? {} : { continuation }),
+    ...(incomplete ? { incomplete: 'continuationUnavailable' as const } : {}),
+  });
 }
 
 /* ------------------------------------------------------------------ overview */
@@ -197,64 +212,17 @@ export async function readBitbucketOverview(
 
 /* ---------------------------------------------------------------------- diff */
 
-function jsonBytes(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).length;
-}
-
-/** JSON.stringify's exact UTF-8 contribution for one code point in a string value. */
-function jsonStringCodePointBytes(codePoint: number, codeUnit: number): number {
-  if (codeUnit === 0x22 || codeUnit === 0x5c) return 2;
-  if (codeUnit <= 0x1f) {
-    return codeUnit === 0x08
-      || codeUnit === 0x09
-      || codeUnit === 0x0a
-      || codeUnit === 0x0c
-      || codeUnit === 0x0d
-      ? 2
-      : 6;
-  }
-  if (codeUnit >= 0xd800 && codeUnit <= 0xdfff && codePoint === codeUnit) return 6;
-  if (codePoint <= 0x7f) return 1;
-  if (codePoint <= 0x7ff) return 2;
-  if (codePoint <= 0xffff) return 3;
-  return 4;
-}
-
 /** Fits the actual serialized result against the Action gate, with no picked reserve. */
 function fitRawDiff(
   text: string,
-  base: Omit<Extract<BitbucketDiffResultV1, { kind: 'diff' }>, 'raw' | 'projectionTruncated'>
-    & Readonly<{ projectionTruncated: boolean }>,
+  framed: Extract<BitbucketDiffResultV1, { kind: 'diff' }>,
 ): Extract<BitbucketDiffResultV1, { kind: 'diff' }> {
-  const complete = { ...base, raw: { kind: 'available' as const, text, truncated: false } };
-  if (jsonBytes(complete) <= BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1) return complete;
-
-  const empty = { ...base, projectionTruncated: true, raw: {
-    kind: 'available' as const,
-    text: '',
-    truncated: true,
-  } };
-  const availableTextBytes = BITBUCKET_ACTION_RESULT_JSON_BYTE_LIMIT_V1 - jsonBytes(empty);
-  let escapedBytes = 0;
-  let end = 0;
-  while (end < text.length) {
-    const codePoint = text.codePointAt(end) ?? 0;
-    const contribution = jsonStringCodePointBytes(codePoint, text.charCodeAt(end));
-    if (escapedBytes + contribution > availableTextBytes) break;
-    escapedBytes += contribution;
-    end += codePoint > 0xffff ? 2 : 1;
-  }
-  // `false` is one byte longer than `true`. If changing the flags alone made the complete text
-  // fit, remove one actual code point so `truncated: true` remains a truthful statement.
-  if (end === text.length && end > 0) {
-    const last = text.charCodeAt(end - 1);
-    end -= last >= 0xdc00 && last <= 0xdfff ? 2 : 1;
-  }
-  return { ...base, projectionTruncated: true, raw: {
-    kind: 'available' as const,
-    text: text.slice(0, end),
-    truncated: true,
-  } };
+  const { raw: _framing, ...base } = framed;
+  return fitActionResultTextV1(text, (fitted, truncated) => ({
+    ...base,
+    projectionTruncated: base.projectionTruncated || truncated,
+    raw: { kind: 'available' as const, text: fitted, truncated },
+  }));
 }
 
 export async function readBitbucketDiff(
@@ -280,23 +248,36 @@ export async function readBitbucketDiff(
   const rawPromise = request.continuation === undefined
     ? readBitbucketRawDiff(admitted.route, admitted.dependencies)
     : null;
-  const diffstat = await diffstatPromise;
+  const [diffstat, raw] = await Promise.all([diffstatPromise, rawPromise]);
   if (!diffstat.ok) return unavailable(toTriageSourceFailure(diffstat.failure));
+  if (raw !== null && !raw.ok) return unavailable(toTriageSourceFailure(raw.failure));
 
-  const base = Object.freeze({
-    kind: 'diff' as const,
-    files: diffstat.value.rows,
-    omittedRowCount: diffstat.value.omittedRowCount,
-    projectionTruncated: diffstat.value.projectionTruncated,
-    ...shapeWalkPosition(diffstat.value),
-  });
-  if (rawPromise === null) return base;
-  const raw = await rawPromise;
-  if (!raw.ok) return unavailable(toTriageSourceFailure(raw.failure));
-  if (raw.value.kind === 'tooLarge') {
-    return Object.freeze({ ...base, raw: Object.freeze({ kind: 'tooLarge' as const }) });
-  }
-  return Object.freeze(fitRawDiff(raw.value.text, base));
+  const rawValue = raw === null ? null : raw.value;
+
+  const continuation = mintWalkContinuation(diffstat.value);
+  const base = fitActionResultPageV1(
+    diffstat.value.rows,
+    continuation,
+    (files, omittedByEnvelope, fittedContinuation, continuationOmitted) => Object.freeze({
+      kind: 'diff' as const,
+      files,
+      omittedRowCount: diffstat.value.omittedRowCount + omittedByEnvelope,
+      projectionTruncated: diffstat.value.projectionTruncated || omittedByEnvelope > 0,
+      ...shapeWalkPosition(diffstat.value, fittedContinuation, continuationOmitted),
+      ...(rawValue === null
+        ? {}
+        : rawValue.kind === 'tooLarge'
+          ? { raw: Object.freeze({ kind: 'tooLarge' as const }) }
+          : {
+            // This framing is part of the admitted final result. `false` is the
+            // larger JSON boolean spelling, so admitting it also admits `true`;
+            // the canonical text fitter replaces only text and that evidence.
+            raw: Object.freeze({ kind: 'available' as const, text: '', truncated: false }),
+          }),
+    }),
+  ).result;
+  if (rawValue === null || rawValue.kind === 'tooLarge') return base;
+  return Object.freeze(fitRawDiff(rawValue.text, base));
   } finally {
     admitted.dispose();
   }
@@ -336,13 +317,19 @@ export async function listBitbucketActivity(
   );
   if (!page.ok) return unavailable(toTriageSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'activity' as const,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value),
-  });
+    rows,
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
   } finally {
     admitted.dispose();
   }
@@ -383,20 +370,26 @@ export async function listBitbucketBuilds(
   if (!page.ok) return unavailable(toTriageSourceFailure(page.failure));
 
   const { rollup } = page.value;
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'builds' as const,
-    rows: page.value.rows,
-    ...(rollup === null
+    rows,
+    ...(rollup === null || omittedByEnvelope > 0
       ? {}
       : {
         failingCount: rollup.failingCount,
         runningCount: rollup.runningCount,
         passingCount: rollup.passingCount,
       }),
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value),
-  });
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
   } finally {
     admitted.dispose();
   }
@@ -429,13 +422,19 @@ export async function listBitbucketComments(
   );
   if (!page.ok) return unavailable(toTriageSourceFailure(page.failure));
 
-  return Object.freeze({
+  const continuation = mintWalkContinuation(page.value);
+  return fitActionResultPageV1(page.value.rows, continuation, (
+    rows,
+    omittedByEnvelope,
+    fittedContinuation,
+    continuationOmitted,
+  ) => Object.freeze({
     kind: 'comments' as const,
-    rows: page.value.rows,
-    omittedRowCount: page.value.omittedRowCount,
-    projectionTruncated: page.value.projectionTruncated,
-    ...shapeWalkPosition(page.value),
-  });
+    rows,
+    omittedRowCount: page.value.omittedRowCount + omittedByEnvelope,
+    projectionTruncated: page.value.projectionTruncated || omittedByEnvelope > 0,
+    ...shapeWalkPosition(page.value, fittedContinuation, continuationOmitted),
+  })).result;
   } finally {
     admitted.dispose();
   }

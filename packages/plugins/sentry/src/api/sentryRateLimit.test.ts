@@ -68,10 +68,10 @@ describe('readSentryRateLimitSnapshot', () => {
     )).toBeNull();
   });
 
-  it('bounds an implausibly distant Reset rather than propagating it', () => {
+  it('preserves a future safe-integer Reset exactly without inventing a local horizon', () => {
     const nowMs = 1_786_000_000_000;
     const snapshot = readSentryRateLimitSnapshot({ 'x-sentry-rate-limit-reset': '99999999999' });
 
-    expect(resolveSentryRetryNotBeforeMs(snapshot, nowMs)).toBeNull();
+    expect(resolveSentryRetryNotBeforeMs(snapshot, nowMs)).toBe(99_999_999_999_000);
   });
 });

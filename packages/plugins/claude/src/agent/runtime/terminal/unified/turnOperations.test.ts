@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
+import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ClaudeProviderEvent } from '../../providerEvents.js';
 
 import {
@@ -298,7 +299,14 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       cwd: '/tmp/claude-project',
       configuration: baseConfiguration,
       providerBinding: currentBinding,
-    });
+    }, {
+      session: {
+        services: {
+          activeInput: { bind: () => ({ dispose() {} }) },
+          models: { bind: () => ({ dispose() {} }) },
+        },
+      },
+    } as unknown as AgentSessionRuntimeContext);
 
     try {
       await expect(session.updateConfiguration?.({

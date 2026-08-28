@@ -54,6 +54,7 @@ import {
 import { TRIAGE_SHELL_FILL_TEST_ID_V1 } from './shell/root.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { renderSurface as renderShellSurface } from './surface.js';
+import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 
 /**
  * Opening a row all the way into the source's own detail body.
@@ -76,6 +77,7 @@ import { renderSurface as renderShellSurface } from './surface.js';
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
 const INSTANCE = '11111111-1111-4111-8111-111111111111';
+
 /**
  * A SECOND configured connection to the same source, sorted after the first.
  *
@@ -319,7 +321,10 @@ function instanceRow(sourceInstanceId: string = INSTANCE): CorpusSourceInstanceR
     };
 }
 
-function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
+function createHarness(options: Readonly<{
+    secondInstance?: boolean;
+    secondInstanceObservesEntry?: boolean;
+}> = {}) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
     if (options.secondInstance === true) {
@@ -333,6 +338,7 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
     const observationRevision = { current: 3_000 };
     let blockedDetailRead: Readonly<{ promise: Promise<void>; release: () => void }> | null = null;
     let failNextLinkedSessionPage = false;
+    let repeatNextLinkedSessionCursor = false;
     let finalLinkedSessionId: string | null = null;
 
     const admitted = [{
@@ -343,9 +349,11 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
         surfaces: { detail: {} },
     } as unknown as TriageAdmittedSourceV1];
 
-    const executeScan: TriageAdmittedOperationExecutorV1 = async () => ({
+    const executeScan: TriageAdmittedOperationExecutorV1 = async (_operation, input) => ({
         kind: 'complete',
-        observations: observes.current ? [{
+        observations: observes.current
+            && (options.secondInstanceObservesEntry !== false
+                || input.instance.instance.sourceInstanceId !== SECOND_INSTANCE) ? [{
             kind: 'present',
             localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
             locator: testkitLocator(),
@@ -393,7 +401,7 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
             const blocked = blockedDetailRead;
             blockedDetailRead = null;
             if (blocked !== null) await blocked.promise;
-            return await readTriageEntryDetail(
+            const result = await readTriageEntryDetail(
                 detailInput,
                 {
                     sourceInstances: collections.sourceInstances,
@@ -403,9 +411,15 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
                             ? 'Linked Session 201'
                             : `Linked ${sessionId}`,
                     }),
-                    readAdmittedSources: async () => admitted,
                 },
             );
+            if (detailInput.linkedSessionsCursor !== undefined && repeatNextLinkedSessionCursor) {
+                repeatNextLinkedSessionCursor = false;
+                return result.kind === 'read'
+                    ? { ...result, linkedSessionsNextCursor: detailInput.linkedSessionsCursor }
+                    : result;
+            }
+            return result;
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
@@ -420,6 +434,7 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
         executeAction,
         observes,
         readDetailInstanceIds,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture(),
         async seedLinkedSessions(count: number): Promise<void> {
             const entryRef = TriageEntryRefV1Schema.parse({
                 source: SOURCE,
@@ -463,6 +478,9 @@ function createHarness(options: Readonly<{ secondInstance?: boolean }> = {}) {
         failNextLinkedSessionPage(): void {
             failNextLinkedSessionPage = true;
         },
+        repeatNextLinkedSessionCursor(): void {
+            repeatNextLinkedSessionCursor = true;
+        },
         publishNewerObservation(): void {
             observationRevision.current += 1;
         },
@@ -493,12 +511,16 @@ async function mountShell(
         subPath?: string;
         launchInput?: JsonValue;
         secondInstance?: boolean;
+        secondInstanceObservesEntry?: boolean;
         linkedSessionCount?: number;
     }> = {},
 ): Promise<PluginUiTestkit> {
-    const harness = createHarness(
-        options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance },
-    );
+    const harness = createHarness({
+        ...(options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance }),
+        ...(options.secondInstanceObservesEntry === undefined
+            ? {}
+            : { secondInstanceObservesEntry: options.secondInstanceObservesEntry }),
+    });
     currentHarness = harness;
     if (options.linkedSessionCount !== undefined) {
         await harness.seedLinkedSessions(options.linkedSessionCount);
@@ -518,6 +540,7 @@ async function mountShell(
             surface: renderShellSurface,
             surfaceContext: surfaceContext(options),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
+                ephemeralSharedScope: harness.ephemeralSharedScope,
                 targetedSurfaces: {
                     readCurrentMounts: () => [ADMITTED_MOUNT, OTHER_ADMITTED_MOUNT],
                     readContributorManifest: (pluginId: string) => (
@@ -538,7 +561,9 @@ async function mountShell(
         });
     });
     mounted.push(fixture);
-    await act(async () => { await refreshTriageListWindow('view', fixture.context.hostApi); });
+    await act(async () => {
+        await refreshTriageListWindow('view', fixture.context.hostApi, harness.ephemeralSharedScope);
+    });
     return fixture;
 }
 
@@ -633,6 +658,30 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
     });
 
+    it('settles a non-advancing linked-Session cursor while retaining the admitted page', async () => {
+        const shell = await mountShell({ linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1 });
+        await openTheRow(shell);
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        harness.repeatNextLinkedSessionCursor();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Load more' }));
+        });
+
+        // The page itself was admitted; only its non-advancing continuation is
+        // refused. Rows from both pages remain while Retry can ask the same
+        // Account boundary again after it recovers.
+        await expect(shell.getByRole('button', { name: 'Linked Session 201' })).resolves.toBeDefined();
+        await expect(shell.getByText('More linked Sessions could not be loaded.')).resolves.toBeDefined();
+
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'Retry' }));
+        });
+        await expect(shell.queryByText('More linked Sessions could not be loaded.')).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: 'Load more' })).resolves.toBeUndefined();
+    });
+
     it('mounts the admitted source detail contribution', async () => {
         const shell = await mountShell();
 
@@ -656,7 +705,9 @@ describe('opening a row into the source detail', () => {
         const releaseDetailRead = harness.blockNextDetailRead();
         harness.publishNewerObservation();
 
-        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
+        await act(async () => {
+            await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+        });
         await act(async () => { await Promise.resolve(); });
 
         // A background reread may update the mounted input when it settles, but
@@ -780,8 +831,12 @@ describe('opening a row into the source detail', () => {
         // The next pass observes nothing, so the selected row leaves the window
         // while the selection — which is the reader's, not the window's —
         // stays. `core/SURFACE.md` §3.1 keeps it for exactly this.
-        if (currentHarness !== null) currentHarness.observes.current = false;
-        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        harness.observes.current = false;
+        await act(async () => {
+            await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+        });
         await act(async () => { await Promise.resolve(); });
 
         await expect(shell.getByText('This entry is no longer in the list')).resolves.toBeDefined();
@@ -919,21 +974,26 @@ describe('opening a row into the source detail', () => {
         } as const;
         const shell = await mountShell({
             secondInstance: true,
+            // The second connection is configured and therefore nameable, but
+            // this pass did not observe the entry through it. Only the first
+            // connection has a full observation the detail contract may admit.
+            secondInstanceObservesEntry: false,
             launchInput: buildTriageEntryDetailLaunchInput({
                 entryRef: entry,
                 sourceInstance: { source: SOURCE, sourceInstanceId: SECOND_INSTANCE },
             }) as unknown as JsonValue,
         });
-        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi); });
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        await act(async () => {
+            await refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+        });
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
 
-        const harness = currentHarness;
-        if (harness === null) throw new Error('the shell was not mounted');
-        // The mixed-list wire carries the rendered connection's full
-        // observation and only compact facts for its peers. This page can name
-        // the launched connection, but it must not hand the first connection's
-        // observation to the second connection's detail renderer.
+        // This page can name the launched connection from configured-source
+        // facts, but it must not hand the first connection's observation to
+        // the second connection's detail renderer.
         await expect(shell.getByText('Second account')).resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         expect(harness.readDetailInstanceIds).toEqual([]);

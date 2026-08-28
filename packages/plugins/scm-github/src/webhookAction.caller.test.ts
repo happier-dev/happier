@@ -36,11 +36,12 @@ const webhookInput = {
 function sourceDefinition(automationId: string) {
   return {
     automationId,
-    templateVersion: 1,
+    triggerId: `trigger-${automationId}`,
+    triggerRevision: 1,
     sourceSelectorId: `00000000-0000-4000-8000-${automationId.replace(/[^0-9]/gu, '').padStart(12, '0').slice(-12)}`,
     eventRef: {
       pluginId: 'happier.scm.forge.github',
-      localId: 'automation/repository-event-v1',
+      localId: 'automation/repository-pushed-v1',
     },
     sourceInstanceId: 'github:repository:77',
     sourceContractVersion: 1,

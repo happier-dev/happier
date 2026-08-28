@@ -8,15 +8,6 @@ function admittedWebUrl(raw: string | undefined): URL | null {
   }
 }
 
-export function gitlabRawDiffEvidenceUrlV1(webUrl: string | undefined): string | null {
-  const admitted = admittedWebUrl(webUrl);
-  if (admitted === null) return null;
-  admitted.pathname = `${admitted.pathname.replace(/\/$/, '')}.diff`;
-  admitted.search = '';
-  admitted.hash = '';
-  return admitted.toString();
-}
-
 export function gitlabChangesEvidenceUrlV1(webUrl: string | undefined): string | null {
   const admitted = admittedWebUrl(webUrl);
   if (admitted === null) return null;

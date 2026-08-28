@@ -14,6 +14,7 @@ import {
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BRAND_RESOURCE_ID,
   DISCORD_CHANNEL_ACTION_IDS,
+  DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
   DISCORD_PLUGIN_ID,
 } from './discordPluginConstants.js';
@@ -379,7 +380,7 @@ function createDiscordPlugin() {
   },
   backgroundServices: [{
     declaration: {
-      id: 'gateway-supervisor',
+      id: DISCORD_GATEWAY_BACKGROUND_SERVICE_ID,
       title: 'Discord Gateway supervisor',
     },
     runner: gatewayActivationBindings.run,

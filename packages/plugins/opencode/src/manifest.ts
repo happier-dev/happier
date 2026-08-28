@@ -17,6 +17,7 @@ import {
 import {
   OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV,
 } from './agent/auth/services/requestAuth/env.js';
+import { OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR } from './agent/auth/services/stateSharing.js';
 import {
   OPENCODE_PROVIDER_BINDING_ADAPTER_V1,
   OPENCODE_PROVIDER_OWNED_ENV_KEYS,
@@ -169,10 +170,6 @@ export const OPENCODE_PLUGIN = definePlugin({
             configuration: true,
             compaction: { events: true, manual: true },
             catalog: { active: ['skills'] },
-            usageLimitRecovery: {
-              active: ['checkNow'],
-              inactive: ['checkNow'],
-            },
           },
           executionRuns: { open: ['create'], checkpoint: true, stop: true },
         }),
@@ -239,6 +236,28 @@ export const OPENCODE_PLUGIN = definePlugin({
         } },
       },
       factory: createOpenCodeAgentRuntime,
+      connectedAccountLaunch: {
+        switchContinuity: {
+          continuityMode: 'restart_same_home',
+          supportedTransitions: ['native_to_connected', 'connected_to_native', 'connected_to_connected'],
+        },
+        requestAuthUses: [{
+          purpose: OPEN_CODE_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }, {
+          purpose: OPEN_CODE_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://chatgpt.com',
+            headerNames: ['authorization', 'chatgpt-account-id'],
+          },
+        }],
+        stateSharingDescriptor: OPEN_CODE_AUTH_SERVICE_SHARING_DESCRIPTOR,
+      },
       preflightSessionControls: OPENCODE_PREFLIGHT_SESSION_CONTROLS,
       cliAuth: {
         detectAuthStatus: async ({ runDeclaredSystemToolCommand }) =>

@@ -67,11 +67,8 @@ describe('OpenCode plugin manifest', () => {
       configuration: true,
       compaction: { events: true, manual: true },
       catalog: { active: ['skills'] },
-      usageLimitRecovery: {
-        active: ['checkNow'],
-        inactive: ['checkNow'],
-      },
     });
+    expect(agent?.capabilities.sessions).not.toHaveProperty('usageLimitRecovery');
   });
 
   it('declares the exact qualified purposes consumed by request-time and direct OpenCode auth', () => {

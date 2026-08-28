@@ -48,7 +48,7 @@ describe('Triage plugin manifest', () => {
     ]);
   });
 
-  it('declares Protocol where its production review scope import can resolve it', () => {
+  it('keeps Protocol test-only because production uses public SDK and feature protocol owners', () => {
     const packageJson = JSON.parse(
       readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
     ) as Readonly<{
@@ -56,8 +56,8 @@ describe('Triage plugin manifest', () => {
       devDependencies?: Readonly<Record<string, string>>;
     }>;
 
-    expect(packageJson.dependencies?.['@happier-dev/protocol']).toBe('0.0.0');
-    expect(packageJson.devDependencies?.['@happier-dev/protocol']).toBeUndefined();
+    expect(packageJson.dependencies?.['@happier-dev/protocol']).toBeUndefined();
+    expect(packageJson.devDependencies?.['@happier-dev/protocol']).toBe('0.0.0');
   });
 
   it('is admitted by the canonical public manifest parser', () => {

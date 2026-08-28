@@ -44,6 +44,7 @@
               "CURSOR_API_KEY"
             ],
             "loginLaunches": [],
+            "nonInteractiveStatusProbe": true,
             "support": "status_only"
           },
           "displayName": "Cursor Agent CLI",

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES,
     PosthogIssueActivityResultV1Schema,
     decodePosthogIssueActivityContinuation,
     encodePosthogIssueActivityContinuation,
@@ -12,9 +11,13 @@ describe('PostHog activity continuation', () => {
         const token = encodePosthogIssueActivityContinuation({ v: 1, page: 4, limit: 50 });
 
         expect(token).not.toBeNull();
-        expect(new TextEncoder().encode(token ?? '').length)
-            .toBeLessThanOrEqual(MAX_POSTHOG_ISSUE_ACTIVITY_CONTINUATION_UTF8_BYTES);
         expect(decodePosthogIssueActivityContinuation(token ?? ''))
+            .toEqual({ v: 1, page: 4, limit: 50 });
+    });
+
+    it('accepts an otherwise-valid wide token without a local byte ceiling', () => {
+        const token = `${JSON.stringify({ v: 1, page: 4, limit: 50 })}${' '.repeat(32 * 1024)}`;
+        expect(decodePosthogIssueActivityContinuation(token))
             .toEqual({ v: 1, page: 4, limit: 50 });
     });
 
@@ -68,5 +71,28 @@ describe('PosthogIssueActivityResultV1Schema', () => {
             // A raw provider bag may never cross this boundary.
             detail: { before: 'active' },
         })).toThrow();
+    });
+
+    it('publishes the same single-line grammar the activity projector emits', () => {
+        expect(PosthogIssueActivityResultV1Schema.safeParse({
+            kind: 'activity',
+            records: [{
+                id: 'r1',
+                activity: 'line one\nline two',
+                isSystem: false,
+                changedFields: [],
+            }],
+            omittedRowCount: 0,
+        }).success).toBe(false);
+        expect(PosthogIssueActivityResultV1Schema.safeParse({
+            kind: 'activity',
+            records: [{
+                id: 'r1',
+                activity: 'updated',
+                isSystem: false,
+                changedFields: ['status\u007fowner'],
+            }],
+            omittedRowCount: 0,
+        }).success).toBe(false);
     });
 });

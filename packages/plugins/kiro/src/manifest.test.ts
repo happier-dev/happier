@@ -59,6 +59,6 @@ describe('Kiro plugin manifest', () => {
       detectAuthStatus: expect.any(Function),
     }));
     expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth).not.toHaveProperty('probe');
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBeUndefined();
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.cli.auth.nonInteractiveStatusProbe).toBe(true);
   });
 });

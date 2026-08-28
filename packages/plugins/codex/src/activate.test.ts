@@ -195,7 +195,7 @@ describe('activate', () => {
     await activation.dispose();
   });
 
-  it('registers a native AgentRuntime with session and execution-run factories', async () => {
+  it('registers its provider-native Session factory and leaves finite Run derivation to the host', async () => {
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
 
     const factory = activation.registration('agents', 'codex')?.factory;
@@ -207,7 +207,7 @@ describe('activate', () => {
     });
 
     expect(runtime.sessions?.open).toBeTypeOf('function');
-    expect(runtime.executionRuns?.open).toBeTypeOf('function');
+    expect(runtime.executionRuns).toBeUndefined();
     await activation.dispose();
   });
 
@@ -237,8 +237,12 @@ describe('activate', () => {
 
     const launch = registrationOptions?.connectedAccountLaunch;
 
-    expect(launch).toEqual({
+    expect(launch).toMatchObject({
       stateSharingDescriptor: {
+        nativeHome: {
+          environmentKey: 'CODEX_HOME',
+          defaultRelativePath: '.codex',
+        },
         providerSupportStatus: 'supported',
         config: {
           supported: true,
@@ -281,6 +285,16 @@ describe('activate', () => {
           },
         }],
       },
+    });
+    expect(launch?.continuity).toEqual({
+      runtimeAuthAdapter: expect.objectContaining({
+        classifyRuntimeAuthFailure: expect.any(Function),
+        materializeActiveProfile: expect.any(Function),
+        canHotApply: expect.any(Function),
+        hotApply: expect.any(Function),
+        probeQuota: expect.any(Function),
+      }),
+      verifyResumeReachable: expect.any(Function),
     });
     expect(launch).not.toHaveProperty('serviceIds');
     expect(launch).not.toHaveProperty('requestAuthUses');

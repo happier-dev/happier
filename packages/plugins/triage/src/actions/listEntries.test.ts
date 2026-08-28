@@ -1,7 +1,6 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
-    MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageConfiguredSourceInstanceV1Schema,
@@ -600,12 +599,11 @@ describe('the aggregate list continuation set', () => {
         const ids = seedInstances(control, MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
         const tail = ids[ids.length - 1] ?? '';
         const pages = new Map<string, number>();
-        // Every lane spends its whole published frontier on every page — the
-        // pathological set, at the maximum admitted source count. `"` doubles
-        // under JSON escaping, so this is the costliest admitted fill.
+        // Every lane spends a frontier wider than the retired 4 KiB feature
+        // cap. The Action envelope remains the single byte boundary.
         const maximalToken = (page: number): string => {
             const marker = `p${page}:`;
-            return `${marker}${'"'.repeat(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 - marker.length)}`;
+            return `${marker}${'"'.repeat((32 * 1024) - marker.length)}`;
         };
         // The page geometry a source is told once, on the initial ask, and keeps
         // inside its own frontier: the continuation arm carries no limit, so a

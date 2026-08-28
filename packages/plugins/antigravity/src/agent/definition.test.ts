@@ -45,13 +45,8 @@ describe('Antigravity agent definition', () => {
           description: expect.any(String),
         }],
       },
-      runtimeContributions: {
-        agentCatalogEntry: {
-          importName: 'ANTIGRAVITY_AGENT_RUNTIME_CONTRIBUTION',
-          source: './agent/contributions/catalog',
-        },
-      },
     });
+    expect(AGENT_DEFINITION).not.toHaveProperty('runtimeContributions');
     expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).toEqual(['token']);
     expect(AGENT_DEFINITION.core.connectedServices?.supportedKindsByServiceId?.gemini).not.toContain('oauth');
     expect(AGENT_DEFINITION).not.toHaveProperty('agentCliRuntime');

@@ -106,20 +106,24 @@ export async function runGitlabStateTransition<TRow extends GitlabIdentifiedRow>
     };
   }
 
+  let dispatched: Awaited<ReturnType<typeof requestGitlabJson>> | null = null;
   const settled = await settleAtMostOnceProviderWrite({
-    dispatch: async () => await requestGitlabJson({
-      invocation: preflight.dependencies.invocation,
-      url: buildGitlabItemUrl(preflight.route),
-      method: 'PUT',
-      // Exactly the transition, and nothing else. GitLab's update also accepts
-      // `title`, `description`, `labels`, `assignee_ids` and (on a merge request)
-      // `should_remove_source_branch`, and every one of them would REPLACE state
-      // this control never asked to touch.
-      body: { state_event: input.transition.stateEvent },
-      fetcher: preflight.dependencies.fetcher,
-      signal: preflight.dependencies.signal,
-      nowMs: preflight.dependencies.nowMs,
-    }),
+    dispatch: async () => {
+      dispatched = await requestGitlabJson({
+        invocation: preflight.dependencies.invocation,
+        url: buildGitlabItemUrl(preflight.route),
+        method: 'PUT',
+        // Exactly the transition, and nothing else. GitLab's update also accepts
+        // `title`, `description`, `labels`, `assignee_ids` and (on a merge request)
+        // `should_remove_source_branch`, and every one of them would REPLACE state
+        // this control never asked to touch.
+        body: { state_event: input.transition.stateEvent },
+        fetcher: preflight.dependencies.fetcher,
+        signal: preflight.dependencies.signal,
+        nowMs: preflight.dependencies.nowMs,
+      });
+      return dispatched;
+    },
     // A provider response or an answer-lost transport/deadline may both have changed state. The
     // only no-effect arm is a source-classified failure that proves the request was never sent.
     mayHaveChanged: (write) => write.kind !== 'failed' || gitlabWriteAnswerLost(write),
@@ -140,7 +144,16 @@ export async function runGitlabStateTransition<TRow extends GitlabIdentifiedRow>
       : { kind: 'unconfirmed' };
   }
   if (settled.kind === 'applied') return { kind: 'applied', item: settled.observation };
-  if (settled.kind === 'unchanged') return { kind: 'unconfirmed', observed: settled.observation };
+  if (settled.kind === 'unchanged') {
+    const dispatchedOutcome = dispatched as Awaited<ReturnType<typeof requestGitlabJson>> | null;
+    return {
+      kind: 'unconfirmed',
+      observed: settled.observation,
+      ...(dispatchedOutcome?.kind === 'failed' && gitlabWriteAnswerLost(dispatchedOutcome)
+        ? { failure: projectGitlabSourceFailure(dispatchedOutcome.failure) }
+        : {}),
+    };
+  }
   return {
     kind: 'unconfirmed',
     ...(settled.observation === undefined ? {} : { observed: settled.observation }),

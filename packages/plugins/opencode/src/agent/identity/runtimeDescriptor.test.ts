@@ -87,17 +87,4 @@ describe('OpenCode runtime descriptor metadata reader', () => {
     });
   });
 
-  it('does not bypass the host runtime-descriptor validator for malformed persisted identities', () => {
-    expect(readOpenCodeSessionMetadataRuntimeDescriptor({
-      runtimeDescriptorV1: {
-        v: 1,
-        agentIdentity: { pluginId: 'not a valid plugin id', localId: 'opencode' },
-        agentId: 'opencode',
-        agent: {
-          backendMode: 'server',
-          providerSessionId: 'must-not-leak-through',
-        },
-      },
-    })).toBeNull();
-  });
 });

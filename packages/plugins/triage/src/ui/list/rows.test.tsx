@@ -262,17 +262,6 @@ describe('what a continuation row is told to say', () => {
     expect(copy.actionLabel).toBe('Try again');
   });
 
-  it('names OUR bound at the ceiling rather than implying the sources finished', () => {
-    const copy = planTriageListContinuationV1({
-      section: 'entries',
-      state: { kind: 'atCeiling' },
-      text,
-    });
-
-    expect(copy.title).toBe('This page holds as many entries as it can');
-    expect(copy.actionLabel).toBeUndefined();
-  });
-
   it('states the list is incomplete, and offers no press, when nothing can be resumed', () => {
     // Not `exhausted` — the walk did not finish — and not `available` either:
     // no connection left a frontier, so a press would re-read page one and

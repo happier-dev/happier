@@ -53,9 +53,6 @@ import {
   createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/runtimeAuth/createDaemonQualifiedConnectedAccountAuthGroupSwitchCoordinator.js';
 import {
-  createConnectedServiceRuntimeAuthDispatcher,
-} from '../../../../../../../../apps/cli/src/daemon/connectedServices/runtimeAuth/createConnectedServiceRuntimeAuthDispatcher.js';
-import {
   createRuntimeAuthRecoverySchedulerForDaemon,
 } from '../../../../../../../../apps/cli/src/daemon/connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon.js';
 import {
@@ -1111,9 +1108,7 @@ async function runRealOwnerScenario(
       recover: recoverBoundary as never,
     });
   const genericRuntimeAdapterInputs: unknown[] = [];
-  const runtimeAuthDispatcher = createConnectedServiceRuntimeAuthDispatcher({
-    resolveAdapter: () => createPiConnectedServiceRuntimeAuthAdapter(),
-  });
+  const runtimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
 
   const requestAuthBinding = {
     purpose,
@@ -1728,7 +1723,7 @@ async function runRealOwnerScenario(
         && message.role === 'assistant'
       ),
     );
-    expect(runtimeAuthDispatcher.classifyRuntimeAuthFailure({
+    expect(runtimeAuthAdapter.classifyRuntimeAuthFailure({
       target: { agentId: 'pi' },
       error: lastAssistantMessage,
       selection: {

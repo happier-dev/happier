@@ -1,4 +1,9 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  parseReviewCommentPublicationPlanV1,
+  reviewCommentPublicationTargetMatchesV1,
+  validateReviewCommentPublicationClaimAgainstPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import type {
   TriageSourceEntryLocalRefV1,
   TriageSourceFailureV1,
@@ -18,11 +23,17 @@ import { isBitbucketCommentId } from '../identity.js';
 import {
   declineBitbucketPullRequest,
   mergeBitbucketPullRequest,
+  readBitbucketMergeTaskStatus,
   readBitbucketCommentResolutionState,
   resolveBitbucketComment,
   unresolveBitbucketComment,
   type BitbucketWriteOutcomeV1,
+  type BitbucketMergeTaskStatusOutcomeV1,
 } from '../mutations/pullRequestWrites.js';
+import {
+  publishBitbucketReview,
+  publishBitbucketReviewComment,
+} from '../mutations/reviewPublication.js';
 import { toTriageSourceFailure } from './failures.js';
 import {
   admitBitbucketEntryInvocation,
@@ -33,20 +44,24 @@ import {
   BitbucketCommentResolutionInputV1Schema,
   BitbucketDeclineInputV1Schema,
   BitbucketMergeInputV1Schema,
+  BitbucketReviewPublicationInputV1Schema,
+  BitbucketReviewCommentCreateInputV1Schema,
+  BitbucketReviewCommentReplyInputV1Schema,
   type BitbucketCommentResolutionResultV1,
   type BitbucketMutationResultV1,
+  type BitbucketReviewPublicationResultV1,
 } from './mutationContracts.js';
 import { observeBitbucketEntryWithFacts } from './observeEntry.js';
 import type { BitbucketTriageApiClient } from '../apiClient.js';
 
 /**
- * The four enabled Bitbucket Cloud pull-request mutation Actions.
+ * The enabled Bitbucket Cloud pull-request mutation Actions.
  *
  * Each is one exact externally visible write with its own closed input and its own confirming
  * read; there is no generic `mutate({ operation, payload })` and there will not be one
  * (`sources/SCM.md` §3.8).
  *
- * All four are declared `surfaces: ['ui', 'plugin']`, and that is the human gate. The gate is
+ * All are declared `surfaces: ['ui', 'plugin']`, and that is the human gate. The gate is
  * **reachability, not a prompt**: omitting `agent` and `mcp` means not one of them is
  * agent-reachable at all — no prompt to approve, no tool to call, no exposure. A danger level
  * alone would only floor an agent invocation to an approval prompt, which is a weaker guarantee
@@ -69,6 +84,9 @@ export const BITBUCKET_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
   decline: 'pull-request-decline',
   resolveComment: 'pull-request-comment-resolve',
   unresolveComment: 'pull-request-comment-unresolve',
+  submitReview: 'pull-request-submit-review',
+  createReviewComment: 'pull-request-review-comment-create',
+  replyToReviewComment: 'pull-request-thread-reply',
 });
 
 /**
@@ -76,17 +94,16 @@ export const BITBUCKET_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
  *
  * `CONTRACT.md` §5.2 leaves the deadline for an independently invoked source Action to the source:
  * Triage supplies none, and there is no public override. It covers the currentness read, the write,
- * the confirming read and the bounded merge poll together, because what it protects is one person
- * waiting on one button — not each request separately.
+ * the one merge-task status read and the confirming pull-request read together, because what it
+ * protects is one person waiting on one button — not each request separately.
  */
 export const BITBUCKET_MUTATION_DEADLINE_MS = 45_000;
 
 /**
- * How long this source will wait on a merge Bitbucket queued rather than completed.
- *
- * Bitbucket's merge "may complete asynchronously, and not at our option". The poll is bounded and
- * cancellable, and when it ends without observing `MERGED` the answer is `pending` — the UI is
- * never told a queued merge merged.
+ * Bitbucket's merge "may complete asynchronously, and not at our option". This Action follows the
+ * admitted same-origin task location once, then performs its exact pull-request reread. It does not
+ * hot-loop or invent a polling cadence; when neither read proves `MERGED`, the answer is `pending`
+ * and the UI is never told a queued merge merged.
  */
 const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'mutation-input-invalid');
 const INVOCATION_CANCELLED = createBitbucketFailure('cancelled', 'invocation-cancelled');
@@ -202,6 +219,180 @@ function isBitbucketAmbiguousWriteFailure(failure: BitbucketTriageFailure): bool
   return failure.class === 'transient' || failure.class === 'cancelled';
 }
 
+/* ---------------------------------------------------------- review publication */
+
+/** Publishes one frozen canonical Reviews plan through Bitbucket's ordered write sequence. */
+export async function publishBitbucketPullRequestReviewAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<BitbucketReviewPublicationResultV1> {
+  const parsed = BitbucketReviewPublicationInputV1Schema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      kind: 'rejected',
+      reason: 'invalid_input',
+      failure: toTriageSourceFailure(INVALID_INPUT),
+    };
+  }
+  const request = parsed.data;
+  let publicationPlan;
+  try {
+    publicationPlan = parseReviewCommentPublicationPlanV1(request.publicationPlan);
+  } catch {
+    return {
+      kind: 'rejected',
+      reason: 'invalid_input',
+      failure: toTriageSourceFailure(INVALID_INPUT),
+    };
+  }
+  if (!publicationTargetsBitbucketRequest(request, publicationPlan)) {
+    return {
+      kind: 'rejected',
+      reason: 'invalid_input',
+      failure: toTriageSourceFailure(INVALID_INPUT),
+    };
+  }
+
+  const admitted = await admitMutation(
+    { instance: request.instance, localRef: request.localRef },
+    context,
+  );
+  if (!admitted.ok) {
+    return {
+      kind: 'rejected',
+      reason: 'admission_failed',
+      ...('failure' in admitted.result ? { failure: admitted.result.failure } : {}),
+    };
+  }
+  const mutation = admitted.context;
+  try {
+    return await publishBitbucketReview({
+      plan: publicationPlan,
+      claim: async () => await context.services.actions.execute(
+        'reviews.comments.claimPublicationDispatch',
+        publicationPlan,
+        { signal: mutation.signal },
+      ).then((claim) => validateReviewCommentPublicationClaimAgainstPlanV1(
+        publicationPlan,
+        claim,
+      )),
+    }, {
+      client: mutation.client,
+      route: mutation.route,
+      signal: mutation.signal,
+      observe: async () => await observeBitbucketEntryWithFacts(mutation),
+      toTriageFailure: toTriageSourceFailure,
+    });
+  } finally {
+    admitted.dispose();
+  }
+}
+
+function publicationTargetsBitbucketRequest(
+  request: Readonly<{
+    instance: { binding: { account: { accountId: string } } };
+    localRef: TriageSourceEntryLocalRefV1;
+  }>,
+  publicationPlan: ReturnType<typeof parseReviewCommentPublicationPlanV1>,
+  expectedSubtarget: ReturnType<typeof parseReviewCommentPublicationPlanV1>['target']['subtarget'] = null,
+): boolean {
+  return reviewCommentPublicationTargetMatchesV1(publicationPlan.target, {
+    providerId: 'bitbucket',
+    configuredAccountId: request.instance.binding.account.accountId,
+    sourceId: 'happier.scm.forge.bitbucket/bitbucket-forge',
+    localRef: request.localRef,
+    subtarget: expectedSubtarget,
+  });
+}
+
+async function publishBitbucketSingleReviewComment(
+  request: Readonly<{
+    instance: Parameters<typeof admitMutation>[0]['instance'];
+    localRef: TriageSourceEntryLocalRefV1;
+  }>,
+  publicationPlan: ReturnType<typeof parseReviewCommentPublicationPlanV1>,
+  mode: Readonly<{ kind: 'create' } | { kind: 'reply'; parentCommentId: string }>,
+  context: PluginInvocationContext,
+): Promise<BitbucketReviewPublicationResultV1> {
+  const admitted = await admitMutation(
+    { instance: request.instance, localRef: request.localRef },
+    context,
+  );
+  if (!admitted.ok) return {
+    kind: 'rejected',
+    reason: 'admission_failed',
+    ...('failure' in admitted.result ? { failure: admitted.result.failure } : {}),
+  };
+  const mutation = admitted.context;
+  try {
+    return await publishBitbucketReviewComment({
+      plan: publicationPlan,
+      mode,
+      claim: async () => await context.services.actions.execute(
+        'reviews.comments.claimPublicationDispatch', publicationPlan, { signal: mutation.signal },
+      ).then((claim) => validateReviewCommentPublicationClaimAgainstPlanV1(publicationPlan, claim)),
+    }, {
+      client: mutation.client,
+      route: mutation.route,
+      signal: mutation.signal,
+      observe: async () => await observeBitbucketEntryWithFacts(mutation),
+      toTriageFailure: toTriageSourceFailure,
+    });
+  } finally { admitted.dispose(); }
+}
+
+/** Publishes one canonical proposal at one exact pinned Bitbucket diff anchor. */
+export async function createBitbucketPullRequestReviewCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<BitbucketReviewPublicationResultV1> {
+  const parsed = BitbucketReviewCommentCreateInputV1Schema.safeParse(input);
+  if (!parsed.success) return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  const request = parsed.data;
+  let publicationPlan;
+  try { publicationPlan = parseReviewCommentPublicationPlanV1(request.publicationPlan); } catch {
+    return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  }
+  if (!publicationTargetsBitbucketRequest(request, publicationPlan)) {
+    return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  }
+  return await publishBitbucketSingleReviewComment(
+    request,
+    publicationPlan,
+    { kind: 'create' },
+    context,
+  );
+}
+
+/** Publishes one canonical proposal beneath one exact existing Bitbucket comment. */
+export async function replyToBitbucketPullRequestReviewCommentAction(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<BitbucketReviewPublicationResultV1> {
+  const parsed = BitbucketReviewCommentReplyInputV1Schema.safeParse(input);
+  if (!parsed.success) return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  const request = parsed.data;
+  if (!isBitbucketCommentId(request.parentCommentId)) {
+    return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  }
+  let publicationPlan;
+  try { publicationPlan = parseReviewCommentPublicationPlanV1(request.publicationPlan); } catch {
+    return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  }
+  if (!publicationTargetsBitbucketRequest(request, publicationPlan, {
+    kindId: 'review-comment',
+    targetId: request.parentCommentId,
+  })) {
+    return { kind: 'rejected', reason: 'invalid_input', failure: toTriageSourceFailure(INVALID_INPUT) };
+  }
+  return await publishBitbucketSingleReviewComment(
+    request,
+    publicationPlan,
+    { kind: 'reply', parentCommentId: request.parentCommentId },
+    context,
+  );
+}
+
 /* --------------------------------------------------------------------- merge */
 
 /**
@@ -259,6 +450,7 @@ export async function mergeBitbucketPullRequestAction(
   }
 
   let dispatched: BitbucketWriteOutcomeV1 | null = null;
+  let queuedTask: BitbucketMergeTaskStatusOutcomeV1 | null = null;
   const write = await settleAtMostOnceProviderWrite({
     dispatch: async () => {
       dispatched = await mergeBitbucketPullRequest({
@@ -277,6 +469,14 @@ export async function mergeBitbucketPullRequestAction(
       || result.kind === 'queued'
       || (result.kind === 'failed' && isBitbucketAmbiguousWriteFailure(result.failure)),
     confirm: async () => {
+      const queued = dispatched?.kind === 'queued' ? dispatched : null;
+      if (queued !== null) {
+        queuedTask = await readBitbucketMergeTaskStatus({
+          client: mutation.client,
+          statusUrl: queued.statusUrl,
+          signal: mutation.signal,
+        });
+      }
       const confirmed = await observeBitbucketEntryWithFacts(mutation);
       if (confirmed.state === 'MERGED') {
         return { kind: 'applied' as const, observation: confirmed.observation };
@@ -284,11 +484,29 @@ export async function mergeBitbucketPullRequestAction(
       if (confirmed.observation.kind === 'unresolved') {
         return { kind: 'uncertain' as const, failure: confirmed.observation.failure };
       }
+      if (queuedTask?.kind === 'failed') {
+        return {
+          kind: 'uncertain' as const,
+          observation: confirmed.observation,
+          failure: queuedTask.failure,
+        };
+      }
       return dispatched?.kind === 'queued' && confirmed.state === 'OPEN'
         ? { kind: 'uncertain' as const, observation: confirmed.observation }
         : { kind: 'unchanged' as const, observation: confirmed.observation };
     },
   });
+  // TypeScript does not model assignments made inside the confirmation callback when it
+  // narrows a local after the awaited higher-order call. Keep the exact callback-owned outcome,
+  // but restore its declared union at this boundary before shaping the public result.
+  const queuedTaskOutcome = queuedTask as BitbucketMergeTaskStatusOutcomeV1 | null;
+  if (queuedTaskOutcome?.kind === 'rejected') {
+    return Object.freeze({
+      kind: 'rejected' as const,
+      reason: 'provider-rejected' as const,
+      failure: toTriageSourceFailure(queuedTaskOutcome.failure),
+    });
+  }
   if (write.kind === 'settled') {
     return write.result.kind === 'rejected' || write.result.kind === 'failed'
       ? shapeUnsettledWrite(write.result)
@@ -298,6 +516,17 @@ export async function mergeBitbucketPullRequestAction(
     return Object.freeze({ kind: 'applied' as const, observation: write.observation });
   }
   if (write.kind === 'unchanged') {
+    const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
+    if (
+      dispatchedOutcome?.kind === 'failed'
+      && isBitbucketAmbiguousWriteFailure(dispatchedOutcome.failure)
+    ) {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        observation: write.observation,
+        failure: toTriageSourceFailure(dispatchedOutcome.failure),
+      });
+    }
     return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
   }
   const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
@@ -362,12 +591,16 @@ export async function declineBitbucketPullRequestAction(
     });
   }
 
+  let dispatched: BitbucketWriteOutcomeV1 | null = null;
   const write = await settleAtMostOnceProviderWrite({
-    dispatch: async () => await declineBitbucketPullRequest({
-      client: mutation.client,
-      route: mutation.route,
-      signal: mutation.signal,
-    }),
+    dispatch: async () => {
+      dispatched = await declineBitbucketPullRequest({
+        client: mutation.client,
+        route: mutation.route,
+        signal: mutation.signal,
+      });
+      return dispatched;
+    },
     mayHaveChanged: (result) => result.kind === 'succeeded'
       || (result.kind === 'failed' && isBitbucketAmbiguousWriteFailure(result.failure)),
     confirm: async () => {
@@ -387,7 +620,20 @@ export async function declineBitbucketPullRequestAction(
       : unavailable(toTriageSourceFailure(INVOCATION_CANCELLED));
   }
   if (write.kind === 'applied') return Object.freeze({ kind: 'applied' as const, observation: write.observation });
-  if (write.kind === 'unchanged') return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
+  if (write.kind === 'unchanged') {
+    const dispatchedOutcome = dispatched as BitbucketWriteOutcomeV1 | null;
+    if (
+      dispatchedOutcome?.kind === 'failed'
+      && isBitbucketAmbiguousWriteFailure(dispatchedOutcome.failure)
+    ) {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        observation: write.observation,
+        failure: toTriageSourceFailure(dispatchedOutcome.failure),
+      });
+    }
+    return Object.freeze({ kind: 'unchanged' as const, observation: write.observation });
+  }
   return Object.freeze({
     kind: 'uncertain' as const,
     ...(write.observation === undefined ? {} : { observation: write.observation }),
@@ -519,6 +765,16 @@ async function runBitbucketCommentResolution(
         kind: 'rejected' as const,
         reason: 'resolution-unconfirmed' as const,
         resolution: write.observation,
+      });
+    }
+    if (
+      dispatchedOutcome?.kind === 'failed'
+      && isBitbucketAmbiguousWriteFailure(dispatchedOutcome.failure)
+    ) {
+      return Object.freeze({
+        kind: 'uncertain' as const,
+        resolution: write.observation,
+        failure: toTriageSourceFailure(dispatchedOutcome.failure),
       });
     }
     return Object.freeze({ kind: 'unchanged' as const, resolution: write.observation });

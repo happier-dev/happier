@@ -43,16 +43,17 @@ describe('Copilot plugin manifest', () => {
     });
   });
 
-  it('registers the Copilot GitHub CLI auth probe through the declared-system-tool boundary', async () => {
+  it('registers the Copilot GitHub CLI auth probe in the canonical Agent transaction', async () => {
     const register = vi.fn();
-    const registerCliAuth = vi.fn();
-    await COPILOT_PLUGIN.activate({ agents: { register, registerCliAuth } } as never);
+    await COPILOT_PLUGIN.activate({ agents: { register } } as never);
 
-    expect(registerCliAuth).toHaveBeenCalledWith('copilot', expect.objectContaining({
-      detectAuthStatus: expect.any(Function),
-    }));
+    expect(register).toHaveBeenCalledWith(
+      'copilot',
+      expect.any(Function),
+      expect.objectContaining({ cliAuth: expect.objectContaining({ detectAuthStatus: expect.any(Function) }) }),
+    );
 
-    const contribution = registerCliAuth.mock.calls[0]?.[1] as {
+    const contribution = register.mock.calls[0]?.[2]?.cliAuth as {
       detectAuthStatus(input: {
         runDeclaredSystemToolCommand: ReturnType<typeof vi.fn>;
       }): Promise<unknown>;

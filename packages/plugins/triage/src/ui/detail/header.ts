@@ -23,10 +23,10 @@ import { readTriageLaneFailure } from '../../projection/sourceHealth.js';
  * showing an internal UUID.
  *
  * The source's own name and its own name for this entry kind come from the
- * contributor's declared descriptor, and this shell decodes none of it: the
- * host parses that descriptor with the target's own schema during cold
- * admission, and `entries/read-detail-v1` carries the already-typed value out
- * of the admitted snapshot. What is left here is the naming — which of the
+ * contributor's declared descriptor, read from this physical mount's exact
+ * host-stamped targeted snapshot. The shell uses the target-owned admission
+ * helper and never takes a second daemon-side descriptor read. What is left
+ * here is the naming — which of the
  * declared kinds this entry is, and what the source calls it — and that is the
  * §2.2 decision this projection exists to make in one place.
  */
@@ -108,8 +108,8 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   connectionLabel: string | null;
   /**
    * The entry's source's declared descriptor, as the target parsed it from the
-   * admitted snapshot. `null` while the detail read has not answered, and for a
-   * source with no currently admitted V1 contribution.
+   * mounted snapshot. `null` for a source with no currently admitted V1
+   * contribution.
    */
   sourceDescriptor: TriageSourceDescriptorV1 | null;
   linkedSessions: readonly TriageLinkedSessionProjectionV1[];

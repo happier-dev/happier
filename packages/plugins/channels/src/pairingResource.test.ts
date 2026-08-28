@@ -1,5 +1,5 @@
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
-import type { ConversationBindingTargetMutationV1 } from '@happier-dev/channels-protocol/v1';
+import type { ConversationBindingTargetV1 } from '@happier-dev/channels-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { classifyConversationCommand } from './commands.js';
@@ -35,7 +35,7 @@ const target = {
     approvals: { kind: 'off' },
     newSession: { kind: 'off' },
   },
-} satisfies ConversationBindingTargetMutationV1;
+} satisfies ConversationBindingTargetV1;
 
 const authority = {
   providerPluginId: materialization.pluginId,

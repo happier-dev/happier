@@ -342,6 +342,15 @@ describe('Channels collection declarations', () => {
     expect(CHANNEL_STATE_COLLECTION.quota?.maxRowEncodedBytes).toBe(256 * 1024);
   });
 
+  it('admits body-free not-delivered custody through the canonical delivery schema', () => {
+    const payload = CHANNEL_DELIVERIES_COLLECTION.schema.properties?.payload;
+    const bodyFreeArm = payload?.allOf
+      ?.flatMap((schema) => schema.oneOf ?? [])
+      .find((schema) => schema.properties?.content?.type === 'null');
+
+    expect(bodyFreeArm?.properties?.state?.enum).toContain('notDelivered');
+  });
+
   it('persists the exact three-arm input policy without persisting reconciliation demand', () => {
     expect(findSchemaProperty(CHANNEL_STATE_COLLECTION.schema, 'inputMode')).toMatchObject({
       type: 'string',
@@ -475,11 +484,10 @@ describe('Channels collection declarations', () => {
         properties: [
           'kind',
           'automationId',
-          'templateVersion',
           'occurrenceKey',
           'resultDelivery',
         ],
-        required: ['kind', 'automationId', 'templateVersion', 'occurrenceKey', 'resultDelivery'],
+        required: ['kind', 'automationId', 'occurrenceKey', 'resultDelivery'],
         additionalProperties: false,
       },
       {

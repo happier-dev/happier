@@ -41,6 +41,7 @@
                 "kind": "primary"
               }
             ],
+            "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
           "displayName": "GitHub Copilot CLI",

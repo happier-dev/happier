@@ -3,6 +3,10 @@ import type {
   ConversationResolvedEndpointV1,
 } from '@happier-dev/channels-protocol/v1';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import {
+  compilePluginJsonSchema,
+  isValidPluginJsonSchemaValue,
+} from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/plugin-sdk/host/registration';
 import type {
   TargetedContributionPointRef,
@@ -21,7 +25,6 @@ import {
   createConversationOutwardDeliveryCollectionStore,
   deliverConversationSessionProjectionOutwardDelivery,
   deliverConversationOutwardDelivery,
-  deliverConversationControlResponse,
   readConversationOutwardDeliveryConnectionAttention,
   readConversationOutwardDeliveryResolutionPage,
   redriveConversationOutwardDeliveryThroughProviderAction,
@@ -31,7 +34,6 @@ import {
   prepareConversationOutwardDeliveryReady,
   resolveConversationOutwardDeliveryCustodyInAccountCollection,
   type ConversationOutwardDeliveryObligation,
-  type ConversationControlResponseObligation,
   type ConversationOutwardDeliveryRecord,
   type ConversationOutwardDeliveryStore,
 } from './outwardDelivery.js';
@@ -326,7 +328,7 @@ class BindingIndexedAccountCollection extends MemoryAccountCollection {
   }
 }
 
-function obligation(): ConversationControlResponseObligation {
+function obligation(): ConversationOutwardDeliveryObligation {
   return {
     connectionId: 'connection-1',
     bindingId: 'binding-1',
@@ -1201,7 +1203,6 @@ describe('Channels control-response outward custody', () => {
         bindingAuthorityEpoch: 7,
         automationTarget: {
           automationId: 'automation-1',
-          templateVersion: 3,
           resultDelivery: 'finalResult',
         },
       },
@@ -1210,7 +1211,6 @@ describe('Channels control-response outward custody', () => {
         automationRunId: 'run-1',
         resultId: 'result-1',
         automationId: 'automation-1',
-        templateVersion: 3,
         resultDelivery: 'finalResult',
       },
       endpoint,
@@ -1384,6 +1384,8 @@ describe('Channels control-response outward custody', () => {
       },
     });
     expect(JSON.stringify(stored?.value)).not.toContain(projected.content);
+    const validateDeliveryRow = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    expect(isValidPluginJsonSchemaValue(validateDeliveryRow, stored?.value)).toBe(true);
 
     await expect(deliverConversationOutwardDelivery({
       store,
@@ -1801,6 +1803,27 @@ describe('Channels control-response outward custody', () => {
       throw new Error('Expected canonical custody lifecycle updates.');
     }
 
+    const validateDeliveryRow = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    const archivedStored = deliveries.rows.get(recoverable.record.custodyId)?.value;
+    const plainStored = deliveries.rows.get(refused.record.custodyId)?.value;
+    expect(archivedStored).toMatchObject({
+      payload: {
+        state: 'notDelivered',
+        archiveRecovery: 'unarchiveAndRetry',
+        content: 'Archived destination delivery body.',
+      },
+    });
+    expect(plainStored).toMatchObject({
+      payload: {
+        state: 'notDelivered',
+        archiveRecovery: null,
+        content: null,
+        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      },
+    });
+    expect(isValidPluginJsonSchemaValue(validateDeliveryRow, archivedStored)).toBe(true);
+    expect(isValidPluginJsonSchemaValue(validateDeliveryRow, plainStored)).toBe(true);
+
     await expect(readConversationOutwardDeliveryConnectionAttention({
       deliveriesCollection: deliveries as never,
       signal,
@@ -1865,6 +1888,65 @@ describe('Channels control-response outward custody', () => {
     })).rejects.toMatchObject({ code: 'channels_delivery_resolve_not_resolvable' });
   });
 
+  it('compacts a terminal owner-must-rebind archive refusal through the real declared schema', async () => {
+    const state = new MemoryAccountCollection();
+    const deliveries = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    const signal = new AbortController().signal;
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never,
+      deliveriesCollection: deliveries as never,
+      signal,
+      now: () => 100,
+    });
+    const blocked = await store.ensure({
+      ...obligation(),
+      source: { kind: 'controlResponse', controlId: 'unmanageable-archived-thread', controlKind: 'recovery' },
+      content: 'A delivery body only rebinding can replace.',
+      deliveryKey: 'delivery-unmanageable-archived-thread',
+    });
+    if (blocked.kind !== 'created') throw new Error('Expected a canonical retained custody row.');
+    // Exactly the arm Discord reports for code 50083 when the bot cannot
+    // manage threads: terminal, never retryable in place, still attention.
+    const settled = await store.compareAndSwap({
+      custodyId: blocked.record.custodyId,
+      expectedRevision: blocked.record.revision,
+      custody: {
+        state: 'notDelivered',
+        attemptCount: 1,
+        providerMessageIds: [],
+        archiveRecovery: 'ownerMustUnarchiveOrRebind',
+      },
+    });
+    expect(settled).toMatchObject({ kind: 'updated' });
+
+    const stored = deliveries.rows.get(blocked.record.custodyId)?.value;
+    expect(stored).toMatchObject({
+      terminal: true,
+      attention: true,
+      payload: {
+        state: 'notDelivered',
+        archiveRecovery: 'ownerMustUnarchiveOrRebind',
+        content: null,
+        contentFingerprint: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+      },
+    });
+    expect(JSON.stringify(stored)).not.toContain('A delivery body only rebinding can replace.');
+    // The real compiled Collection schema is the production CAS gate: a row
+    // the runtime compactor writes must be persistable, or the terminal
+    // settlement can never commit.
+    const validateDeliveryRow = compilePluginJsonSchema(CHANNEL_DELIVERIES_COLLECTION.schema);
+    expect(isValidPluginJsonSchemaValue(validateDeliveryRow, stored)).toBe(true);
+    // The recoverable arm still requires its body: the same compiled schema
+    // refuses a body-free row an owner could still unarchive and resend, so
+    // the body-free predicate cannot silently drop retry input.
+    if (stored === undefined) throw new Error('Expected the settled custody row.');
+    expect(isValidPluginJsonSchemaValue(validateDeliveryRow, {
+      ...stored,
+      payload: { ...stored.payload, archiveRecovery: 'unarchiveAndRetry' },
+    })).toBe(false);
+  });
+
   it('preserves exact opaque custody IDs across connection, binding, and closed source arms', async () => {
     const cases: readonly Readonly<{
       name: string;
@@ -1903,12 +1985,11 @@ describe('Channels control-response outward custody', () => {
             automationRunId: 'run-1',
             resultId: 'result-1',
             automationId: 'automation-1',
-            templateVersion: 3,
             resultDelivery: 'finalResult',
           },
           deliveryKey: 'automation:result-1',
         },
-        expectedCustodyId: 'KiBQ7S8EE3XpfPLvdUhkDdbLNZw7uUr5lWRxZqBf_yk',
+        expectedCustodyId: 'Jklw4tPMNbOBzRe8a70FlCJuOansKJffLWAGGLHmA_Y',
       },
       {
         name: 'binding permission wait',
@@ -2305,7 +2386,6 @@ describe('Channels control-response outward custody', () => {
     const automationTarget = {
       kind: 'automation',
       automationId: 'automation-1',
-      templateVersion: 3,
       policy: { resultDelivery: 'finalResult' },
     } as const;
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
@@ -2336,7 +2416,6 @@ describe('Channels control-response outward custody', () => {
         automationRunId: 'run-1',
         resultId,
         automationId: 'automation-1',
-        templateVersion: 3,
         resultDelivery: 'finalResult',
       },
       endpoint,
@@ -2352,21 +2431,6 @@ describe('Channels control-response outward custody', () => {
       signal,
       now: () => 100,
     });
-    const sameResultAtTemplateThree = obligationFor('handoff-template-identity');
-    const sameResultAtTemplateFour: ConversationOutwardDeliveryObligation = {
-      ...sameResultAtTemplateThree,
-      source: {
-        kind: 'automationResult',
-        automationRunId: 'run-1',
-        resultId: 'handoff-template-identity',
-        automationId: 'automation-1',
-        templateVersion: 4,
-        resultDelivery: 'finalResult',
-      },
-    };
-    await expect(firstStore.ensure(sameResultAtTemplateThree)).resolves.toMatchObject({ kind: 'created' });
-    await expect(firstStore.ensure(sameResultAtTemplateFour)).resolves.toMatchObject({ kind: 'created' });
-
     const first = await firstStore.ensure(obligationFor('handoff-display'));
     if (first.kind !== 'created') throw new Error('expected durable ready custody');
 
@@ -2428,7 +2492,7 @@ describe('Channels control-response outward custody', () => {
         enabled: true,
         deletionState: 'none',
         endpoint: { ...endpoint, label: 'Operations' },
-        target: { ...automationTarget, templateVersion: 4 },
+        target: { ...automationTarget, automationId: 'automation-2' },
         linkPreviewPolicy: 'suppress',
       },
     }, { expectedRevision: 2 });
@@ -2507,7 +2571,7 @@ describe('Channels control-response outward custody', () => {
     const store = new MemoryDeliveryStore();
     let providerCalls = 0;
 
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: {
         ...obligation(),
@@ -2538,7 +2602,7 @@ describe('Channels control-response outward custody', () => {
     const store = new MemoryDeliveryStore();
     let providerCalls = 0;
 
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: {
         ...obligation(),
@@ -2565,7 +2629,7 @@ describe('Channels control-response outward custody', () => {
     const store = new MemoryDeliveryStore();
     let providerCalls = 0;
 
-    expect(await deliverConversationControlResponse({
+    expect(await deliverConversationOutwardDelivery({
       store,
       obligation: { ...obligation(), content: 'x'.repeat(65) },
       attemptId: 'attempt-1',
@@ -2593,7 +2657,7 @@ describe('Channels control-response outward custody', () => {
     const abort = new AbortController();
     let providerCalls = 0;
 
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2636,7 +2700,7 @@ describe('Channels control-response outward custody', () => {
     const abort = new AbortController();
     let providerCalls = 0;
 
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2672,7 +2736,7 @@ describe('Channels control-response outward custody', () => {
 
   it('durably creates the canonical obligation and wins CAS before provider I/O', async () => {
     const store = new MemoryDeliveryStore();
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2702,7 +2766,7 @@ describe('Channels control-response outward custody', () => {
       await new Promise<void>((resolve) => { release = resolve; });
       return { kind: 'delivered', providerMessageIds: ['provider-message-1'] };
     };
-    const first = deliverConversationControlResponse({
+    const first = deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2711,7 +2775,7 @@ describe('Channels control-response outward custody', () => {
       deliver,
     });
     await Promise.resolve();
-    const second = await deliverConversationControlResponse({
+    const second = await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-2',
@@ -2727,7 +2791,7 @@ describe('Channels control-response outward custody', () => {
 
   it('settles a thrown provider boundary as outcome-unknown instead of retrying blindly', async () => {
     const store = new MemoryDeliveryStore();
-    const result = await deliverConversationControlResponse({
+    const result = await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2755,7 +2819,7 @@ describe('Channels control-response outward custody', () => {
       return casCalls === 1 ? compareAndSwap(input) : { kind: 'conflict' };
     };
     const providerResult = { kind: 'delivered', providerMessageIds: ['provider-message-1'] } as const;
-    expect(await deliverConversationControlResponse({
+    expect(await deliverConversationOutwardDelivery({
       store,
       obligation: obligation(),
       attemptId: 'attempt-1',
@@ -2781,7 +2845,7 @@ describe('Channels control-response outward custody', () => {
       ...obligation(),
       deliveryKey: 'different-control',
     };
-    expect(await deliverConversationControlResponse({
+    expect(await deliverConversationOutwardDelivery({
       store,
       obligation: conflicting,
       attemptId: 'attempt-1',

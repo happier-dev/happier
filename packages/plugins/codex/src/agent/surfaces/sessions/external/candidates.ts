@@ -16,9 +16,10 @@ export type CodexExternalSessionNativeCandidateCursorState = Readonly<{
 }>;
 
 export type CodexExternalSessionIndexCursor = Readonly<{
-  v: 5;
+  v: 6;
   kind: 'codexMergedCandidatePage';
   rolloutOffset: number;
+  suppressedRolloutIds: readonly string[];
   active: CodexExternalSessionNativeCandidateCursorState;
   archived: CodexExternalSessionNativeCandidateCursorState;
 }>;
@@ -32,9 +33,10 @@ const INITIAL_NATIVE_CANDIDATE_CURSOR_STATE: CodexExternalSessionNativeCandidate
 
 export function createInitialCodexExternalSessionIndexCursor(): CodexExternalSessionIndexCursor {
   return Object.freeze({
-    v: 5,
+    v: 6,
     kind: 'codexMergedCandidatePage',
     rolloutOffset: 0,
+    suppressedRolloutIds: Object.freeze([]),
     active: INITIAL_NATIVE_CANDIDATE_CURSOR_STATE,
     archived: INITIAL_NATIVE_CANDIDATE_CURSOR_STATE,
   });
@@ -80,10 +82,11 @@ function decodeNativeCandidateCursorState(
 }
 
 /**
- * Full/search candidate browsing has its own strict v5 cursor because one
+ * Full/search candidate browsing has its own strict v6 cursor because one
  * page now owns three independent continuations: the rollout ordering and the
- * active/archived native app-server lists. Older numeric cursors are rejected
- * so a prior owner cannot silently skip or repeat a native page.
+ * active/archived native app-server lists. It also carries unresolved rollout
+ * twins already emitted from a newer native page. Older cursors are rejected
+ * so a prior owner cannot silently skip or repeat a row.
  */
 export function decodeCodexExternalSessionIndexCursor(
   raw: string | undefined,
@@ -93,9 +96,9 @@ export function decodeCodexExternalSessionIndexCursor(
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    if (!hasOnlyKeys(record, ['v', 'kind', 'rolloutOffset', 'active', 'archived'])) return null;
+    if (!hasOnlyKeys(record, ['v', 'kind', 'rolloutOffset', 'suppressedRolloutIds', 'active', 'archived'])) return null;
     if (
-      record.v !== 5
+      record.v !== 6
       || record.kind !== 'codexMergedCandidatePage'
       || typeof record.rolloutOffset !== 'number'
       || !Number.isSafeInteger(record.rolloutOffset)
@@ -103,13 +106,21 @@ export function decodeCodexExternalSessionIndexCursor(
     ) {
       return null;
     }
+    if (
+      !Array.isArray(record.suppressedRolloutIds)
+      || record.suppressedRolloutIds.some((id) => typeof id !== 'string' || id.trim().length === 0)
+      || new Set(record.suppressedRolloutIds).size !== record.suppressedRolloutIds.length
+    ) {
+      return null;
+    }
     const active = decodeNativeCandidateCursorState(record.active);
     const archived = decodeNativeCandidateCursorState(record.archived);
     return active && archived
       ? Object.freeze({
-        v: 5,
+        v: 6,
         kind: 'codexMergedCandidatePage',
         rolloutOffset: record.rolloutOffset,
+        suppressedRolloutIds: Object.freeze([...record.suppressedRolloutIds]),
         active,
         archived,
       })

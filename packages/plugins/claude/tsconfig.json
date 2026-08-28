@@ -26,6 +26,7 @@
     "dist",
     "src/**/*.spec.ts",
     "src/**/*.test.ts",
-    "src/**/*.test-support.ts"
+    "src/**/*.test-support.ts",
+    "src/**/*.testkit.ts"
   ]
 }

@@ -29,6 +29,9 @@ import type { GitlabFailure } from '../types.js';
 import type { GitlabResponseHeaders } from './gitlabHeaders.js';
 import { readGitlabRetryEvidence } from './gitlabRateLimit.js';
 
+/** GitLab REST collections accept at most 100 rows through `per_page`. */
+export const GITLAB_REST_MAX_PAGE_SIZE = 100;
+
 export type GitlabHttpResponse = Readonly<{
   status: number;
   statusText: string;
@@ -198,6 +201,13 @@ export type GitlabRequestResult =
    */
   | Readonly<{ kind: 'failed'; failure: GitlabFailure; status?: number }>;
 
+export type GitlabTextRequestResult =
+  | Readonly<{
+    kind: 'ok';
+    response: Readonly<{ bodyText: string; headers: GitlabResponseHeaders }>;
+  }>
+  | Readonly<{ kind: 'failed'; failure: GitlabFailure; status?: number }>;
+
 export type GitlabRequestInput = Readonly<{
   invocation: GitlabAuthorizedInvocation;
   /** Absolute URL. A next-page URL is passed through byte-for-byte. */
@@ -209,6 +219,8 @@ export type GitlabRequestInput = Readonly<{
    * body or a content type. Absent on every read.
    */
   body?: unknown;
+  /** Overrides the invocation's JSON default for a declared raw-text resource. */
+  accept?: 'application/json' | 'text/plain';
   fetcher: GitlabHttpFetcher;
   signal: AbortSignal;
   /** Injected clock. Reading the ambient clock here makes every deadline untestable. */
@@ -264,7 +276,9 @@ export function classifyGitlabFailure(
   return { class: 'unknown', code: `http-${status}` };
 }
 
-export async function requestGitlabJson(input: GitlabRequestInput): Promise<GitlabRequestResult> {
+export async function requestGitlabText(
+  input: GitlabRequestInput,
+): Promise<GitlabTextRequestResult> {
   if (!isSameConfiguredOrigin(input.url, input.invocation.origin)) {
     return {
       kind: 'failed',
@@ -294,8 +308,12 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
     response = await input.fetcher(input.url, {
       method,
       headers: input.body === undefined
-        ? input.invocation.headers
-        : { ...input.invocation.headers, 'Content-Type': 'application/json' },
+        ? { ...input.invocation.headers, ...(input.accept ? { Accept: input.accept } : {}) }
+        : {
+          ...input.invocation.headers,
+          ...(input.accept ? { Accept: input.accept } : {}),
+          'Content-Type': 'application/json',
+        },
       ...(input.body === undefined
         ? {}
         : { body: new TextEncoder().encode(JSON.stringify(input.body)) }),
@@ -327,10 +345,32 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
     };
   }
 
+  let bodyText: string;
+  try {
+    bodyText = await response.text();
+  } catch {
+    return {
+      kind: 'failed',
+      failure: { class: 'unsupportedContract', code: 'undecodable-body' },
+    };
+  }
+
+  return {
+    kind: 'ok',
+    response: {
+      bodyText,
+      headers: response.headers,
+    },
+  };
+}
+
+export async function requestGitlabJson(input: GitlabRequestInput): Promise<GitlabRequestResult> {
+  const result = await requestGitlabText(input);
+  if (result.kind === 'failed') return result;
+
   let body: unknown;
   try {
-    const text = await response.text();
-    body = text === '' ? null : JSON.parse(text);
+    body = result.response.bodyText === '' ? null : JSON.parse(result.response.bodyText);
   } catch {
     return {
       kind: 'failed',
@@ -342,7 +382,7 @@ export async function requestGitlabJson(input: GitlabRequestInput): Promise<Gitl
     kind: 'ok',
     response: {
       body,
-      headers: response.headers,
+      headers: result.response.headers,
       rawItemCount: Array.isArray(body) ? body.length : null,
     },
   };

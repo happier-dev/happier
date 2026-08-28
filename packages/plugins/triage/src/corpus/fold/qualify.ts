@@ -162,6 +162,9 @@ export function qualifySourceObservation(input: Readonly<{
                 ...(input.observation.sourceUpdatedAtMs === undefined
                     ? {}
                     : { sourceUpdatedAtMs: input.observation.sourceUpdatedAtMs }),
+                ...(input.observation.nativeRevision === undefined
+                    ? {}
+                    : { nativeRevision: input.observation.nativeRevision }),
                 // Carried exactly as the source declared it. The aggregate
                 // never derives, normalizes or repairs a repository identity:
                 // the whole point of the declared form is that both sides of

@@ -3,7 +3,6 @@ export { PLUGIN_MANIFEST as manifest } from './manifest.js';
 export * from './activate.js';
 export * from './agent/index.js';
 export * from './agent/runtime/engine.js';
-export * from './agent/contributions/runtime.js';
 export * from './agent/cli/executable.js';
 export * from './agent/cli/models.js';
 export * from './agent/preflight/models.js';

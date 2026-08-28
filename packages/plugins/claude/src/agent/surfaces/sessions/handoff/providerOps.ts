@@ -9,8 +9,34 @@ import {
     importClaudeSessionBundle,
 } from './bundle.js';
 import { ClaudeSessionBundleSchema } from './types.js';
+import { resolveClaudeProjectId } from './path.js';
+
+function readNonEmptyString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
 
 export const claudeHandoffSurface = {
+    evaluateAvailability: ({ sessionId }) => readNonEmptyString(sessionId)
+        ? { available: true as const }
+        : { available: false as const, reasonCode: 'missing_metadata' as const },
+    buildRuntimeLocalMetadata: ({ identity, runtimeDescriptorV1 }) => {
+        if (
+            identity.transcriptStorage !== 'direct'
+            || runtimeDescriptorV1.agentId !== 'claude'
+        ) return null;
+        const configDir = readNonEmptyString(runtimeDescriptorV1.agent.configDir);
+        const workingDirectory = readNonEmptyString(identity.workingDirectory);
+        if (!configDir && !workingDirectory) return null;
+        return {
+            externalSessionSource: {
+                kind: 'claudeConfig',
+                ...(configDir ? { configDir } : {}),
+                ...(workingDirectory
+                    ? { projectId: resolveClaudeProjectId(workingDirectory) }
+                    : {}),
+            },
+        };
+    },
     exportBundle: async (params, context) => {
         const remoteSessionId = params.sessionId.trim() || null;
         if (!remoteSessionId) {

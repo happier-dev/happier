@@ -94,7 +94,7 @@ describe('the Triage action record', () => {
         }).kind).toBe('unreadable');
     });
 
-    it('refuses an action that applies to nothing, and one that names a subject twice', async () => {
+    it('refuses incoherent subjects and formal-review materialization at the one writer', async () => {
         const testkit = createTestkitAccountSettings();
 
         const empty = await mutateTriageAction({ settings: testkit.settings, mintActionId: () => 'a' }, {
@@ -120,6 +120,36 @@ describe('the Triage action record', () => {
             target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
         });
         expect(duplicate).toEqual({ status: 'rejected', reason: 'duplicateSubject' });
+
+        const wrongReviewMode = await mutateTriageAction({
+            settings: testkit.settings,
+            mintActionId: () => 'formal-review',
+        }, {
+            kind: 'create',
+            expectedRevision: testkit.revision(),
+            label: 'Formal review',
+            enabled: true,
+            appliesTo: ['pullRequest'],
+            profileId: null,
+            workspaceMode: 'repository',
+            target: { kind: 'reviewStart', promptInvocationId: '/review' },
+        });
+        expect(wrongReviewMode).toEqual({ status: 'rejected', reason: 'workspaceMode' });
+
+        const wrongReviewSubject = await mutateTriageAction({
+            settings: testkit.settings,
+            mintActionId: () => 'formal-review',
+        }, {
+            kind: 'create',
+            expectedRevision: testkit.revision(),
+            label: 'Formal review',
+            enabled: true,
+            appliesTo: ['issue'],
+            profileId: null,
+            workspaceMode: 'pull_request',
+            target: { kind: 'reviewStart', promptInvocationId: '/review' },
+        });
+        expect(wrongReviewSubject).toEqual({ status: 'rejected', reason: 'workspaceMode' });
     });
 
     it('creates against the seed so the first user action does not delete Ask, Fix and Review', async () => {
@@ -156,6 +186,29 @@ describe('the Triage action record', () => {
             workspaceMode: 'reference_only',
             target: { kind: 'agent', promptInvocationId: '/explain', delivery: 'send' },
         });
+    });
+
+    it('admits a long single-line label while the canonical Settings field still fits', async () => {
+        const testkit = createTestkitAccountSettings();
+        const label = 'Explain '.repeat(512).trim();
+        const created = await mutateTriageAction({
+            settings: testkit.settings,
+            mintActionId: () => 'long-label',
+        }, {
+            kind: 'create',
+            expectedRevision: testkit.revision(),
+            label,
+            enabled: true,
+            appliesTo: ['issue'],
+            profileId: null,
+            workspaceMode: 'reference_only',
+            target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
+        });
+
+        expect(created).toMatchObject({ status: 'applied' });
+        if (created.status === 'applied') {
+            expect(created.value.actions.at(-1)?.label).toBe(label);
+        }
     });
 
     it('renames, disables, deletes and reorders through the one writer', async () => {

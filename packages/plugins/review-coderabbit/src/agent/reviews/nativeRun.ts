@@ -1,10 +1,10 @@
 import type {
-  AgentExecutionRunEvent,
   AgentExecutionRunOpenRequest,
   AgentExecutionRunRuntime,
   AgentExecutionRunRuntimeFactory,
   AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { createFiniteExecutionRunHostRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
@@ -29,12 +29,6 @@ type AttemptResult = Readonly<{
   exitCode: number | null;
   signal: string | null;
 }>;
-
-type EventInput = AgentExecutionRunEvent extends infer Event
-  ? Event extends AgentExecutionRunEvent
-    ? Omit<Event, 'sequence' | 'runId' | 'emittedAtMs'>
-    : never
-  : never;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -93,30 +87,20 @@ function createRuntime(
   request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }>,
   context: AgentRuntimeContext,
 ): AgentExecutionRunRuntime {
-  const abortController = new AbortController();
-  const signal = AbortSignal.any([context.signal, abortController.signal]);
-  const listeners = new Set<(event: AgentExecutionRunEvent) => void>();
-  const history: AgentExecutionRunEvent[] = [];
-  let sequence = 0;
-  let terminal = false;
-  let disposed = false;
-
-  function emit(event: EventInput): void {
-    if (terminal) return;
-    const published = Object.freeze({
-      ...event,
-      sequence: ++sequence,
-      runId: request.runId,
-      emittedAtMs: Date.now(),
-    }) as AgentExecutionRunEvent;
-    history.push(published);
-    for (const listener of listeners) listener(published);
-    terminal = event.kind === 'run-complete' || event.kind === 'run-failed' || event.kind === 'run-cancelled';
-  }
-
-  async function execute(): Promise<void> {
-    emit({ kind: 'run-start' });
-    try {
+  return createFiniteExecutionRunHostRuntime({
+    request,
+    signal: context.signal,
+    unsupportedSendDiagnostic: {
+      code: 'coderabbit_follow_up_unsupported',
+      severity: 'error',
+      message: 'CodeRabbit execution runs are single-shot',
+    },
+    mapFailure: (error) => ({
+      code: 'coderabbit_execution_failed',
+      severity: 'error',
+      message: error instanceof Error ? error.message : 'CodeRabbit execution failed',
+    }),
+    async execute({ signal, emit }) {
       if (context.services.availability('exec').status !== 'available') {
         throw new Error('CodeRabbit execution requires the host process service');
       }
@@ -170,8 +154,7 @@ function createRuntime(
         sleepMs: async (ms) => await createSleep(ms, signal),
       });
       if (signal.aborted) {
-        emit({ kind: 'run-cancelled' });
-        return;
+        return { status: 'cancelled' };
       }
       if (!result.ok) {
         const stderr = redactReviewCommentSensitiveText(result.stderr.trim());
@@ -181,56 +164,7 @@ function createRuntime(
         ? buildCodeRabbitReviewJsonOutput(result.stdout)
         : result.stdout;
       emit({ kind: 'output-delta', channel: 'assistant', text: output });
-      emit({ kind: 'run-complete' });
-    } catch (error) {
-      if (signal.aborted) {
-        emit({ kind: 'run-cancelled' });
-        return;
-      }
-      emit({
-        kind: 'run-failed',
-        diagnostic: {
-          code: 'coderabbit_execution_failed',
-          severity: 'error',
-          message: error instanceof Error ? error.message : 'CodeRabbit execution failed',
-        },
-      });
-    }
-  }
-
-  const execution = execute();
-  void execution.catch(() => undefined);
-  return Object.freeze({
-    async send() {
-      return {
-        status: 'unsupported' as const,
-        diagnostic: {
-          code: 'coderabbit_follow_up_unsupported',
-          severity: 'error' as const,
-          message: 'CodeRabbit execution runs are single-shot',
-        },
-      };
-    },
-    async stop() {
-      if (terminal) return { status: 'notRunning' as const };
-      abortController.abort(new Error('CodeRabbit execution run stopped'));
-      return { status: 'requested' as const };
-    },
-    watch(listener: (event: AgentExecutionRunEvent) => void) {
-      for (const event of history) listener(event);
-      if (!terminal) listeners.add(listener);
-      return {
-        dispose() {
-          listeners.delete(listener);
-        },
-      };
-    },
-    async dispose() {
-      if (disposed) return;
-      disposed = true;
-      abortController.abort(new Error('CodeRabbit execution run disposed'));
-      listeners.clear();
-      await execution;
+      return { status: 'complete' };
     },
   });
 }

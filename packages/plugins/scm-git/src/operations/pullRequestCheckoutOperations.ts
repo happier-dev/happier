@@ -1,4 +1,6 @@
 import type {
+  HostingProviderPullRequestCheckoutCapability,
+  HostingProviderPullRequestCheckoutReferenceMetadata as PullRequestCheckoutMetadata,
   ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 import type {
   ScmOperationErrorCode,
@@ -7,7 +9,6 @@ import type {
   ScmPullRequestPrepareWorktreeRequest,
   ScmPullRequestPrepareWorktreeResponse,
   ScmPullRequestReference,
-  ScmPullRequestSummary,
   ScmWorkingSnapshot,
 } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
@@ -40,23 +41,7 @@ export type GitPullRequestCheckoutOperations = Readonly<{
     }>): Promise<ScmPullRequestPrepareWorktreeResponse>;
 }>;
 
-type PullRequestCheckoutRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter'>;
-
-type PullRequestCheckoutMetadata = Readonly<{
-    pullRequest: ScmPullRequestSummary | null;
-    branch?: string;
-    remoteRef?: string;
-    headSha?: string | null;
-    baseSha?: string | null;
-}>;
-
-type PullRequestCheckoutAdapter = Readonly<{
-    resolvePullRequestCheckoutReference?: (input: Readonly<{
-        provider: ScmHostingProviderRef;
-        reference: ScmPullRequestReference;
-        runtimeServices?: ScmHostingProviderRuntimeServices;
-    }>) => Promise<PullRequestCheckoutMetadata>;
-}>;
+type PullRequestCheckoutRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequestCheckout'>;
 
 type GitPullRequestCheckoutOperationDeps = Readonly<{
     registry?: PullRequestCheckoutRegistry;
@@ -78,14 +63,6 @@ function resolveProvider(snapshot: ScmWorkingSnapshot): ScmHostingProviderRef | 
         ...provider,
         urlSafety: provider.urlSafety ?? { allowedSchemes: ['https:'] },
     };
-}
-
-function isPullRequestCheckoutAdapter(adapter: unknown): adapter is PullRequestCheckoutAdapter {
-    return Boolean(
-        adapter
-        && typeof adapter === 'object'
-        && typeof (adapter as PullRequestCheckoutAdapter).resolvePullRequestCheckoutReference === 'function',
-    );
 }
 
 function validateBranchName(branch: string): { ok: true } | { ok: false; error: string } {
@@ -199,14 +176,12 @@ export function createGitPullRequestCheckoutOperations(
         if (!provider) {
             return { error: errorResponse('No supported SCM hosting provider detected for this repository', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
         }
-        const adapter = (await readRegistry()).getAdapter(provider.id);
-        if (!isPullRequestCheckoutAdapter(adapter)) {
+        const adapter: HostingProviderPullRequestCheckoutCapability | undefined =
+            (await readRegistry()).getPullRequestCheckout(provider.id);
+        if (!adapter) {
             return { error: errorResponse('SCM hosting provider does not support pull request checkout', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
         }
         const resolveCheckoutReference = adapter.resolvePullRequestCheckoutReference;
-        if (!resolveCheckoutReference) {
-            return { error: errorResponse('SCM hosting provider does not support pull request checkout', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
-        }
         const metadata = await resolveCheckoutReference({
             provider,
             reference: input.reference,

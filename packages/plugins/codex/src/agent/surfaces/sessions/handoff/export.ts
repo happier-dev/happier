@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import {
@@ -142,11 +142,16 @@ export async function exportCodexSessionBundle(params: Readonly<{
   const files = await Promise.all(
     rollouts.map(async (rollout) => {
       throwIfAborted(params.signal);
-      const content = await readFile(rollout.filePath);
+      const sourceStats = await stat(rollout.filePath);
       throwIfAborted(params.signal);
       return {
         relativePath: normalizeCodexHandoffBundleRelativePath(rollout.fileRelPath),
-        contentBase64: content.toString('base64'),
+        contentFile: {
+          t: 'happier.handoff.file.v1' as const,
+          filePath: rollout.filePath,
+          offsetBytes: 0,
+          sizeBytes: sourceStats.size,
+        },
       };
     }),
   );

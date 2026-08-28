@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveTriageBulkSeedPlacementV1 } from './useBulkEntrySessions.js';
+import {
+    isTriageBulkSessionOutcomeRetryableV1,
+    resolveTriageBulkSeedPlacementV1,
+} from './useBulkEntrySessions.js';
 
 const REPOSITORY = Object.freeze({
     kind: 'github' as const,
@@ -76,5 +79,61 @@ describe('bulk New Session placement seeding', () => {
         });
 
         expect(result).toEqual({ kind: 'none' });
+    });
+});
+
+describe('bulk retry custody', () => {
+    it('retries an uncertain creation under its retained key but not a terminal creation failure', () => {
+        const entryOutcome = {
+            entryRef: {
+                source: { pluginId: 'happier.test', localId: 'entries' },
+                kindId: 'issue',
+                collisionScope: 'example',
+                entryId: '17',
+            },
+            session: 'notCreated',
+            attachment: 'notRequested',
+            link: 'notAttempted',
+            newSessionSeed: 'notRequested',
+            directSend: 'notRequested',
+        } as const;
+        const base = {
+            unit: { creationKey: 'creation-17', entries: [] },
+            status: 'settled',
+        } as const;
+
+        expect(isTriageBulkSessionOutcomeRetryableV1({
+            ...base,
+            outcome: {
+                start: { v: 1, type: 'creationPending', outcome: 'unknown' },
+                entries: [entryOutcome],
+            },
+        })).toBe(true);
+        expect(isTriageBulkSessionOutcomeRetryableV1({
+            ...base,
+            outcome: {
+                start: {
+                    v: 1,
+                    type: 'openPending',
+                    sessionId: 'session-17',
+                    disposition: 'created',
+                    delivery: 'accepted',
+                },
+                entries: [{
+                    ...entryOutcome,
+                    session: 'created',
+                    attachment: 'carried',
+                    link: 'created',
+                    directSend: 'applied',
+                }],
+            },
+        })).toBe(true);
+        expect(isTriageBulkSessionOutcomeRetryableV1({
+            ...base,
+            outcome: {
+                start: { v: 1, type: 'creationFailed' },
+                entries: [entryOutcome],
+            },
+        })).toBe(false);
     });
 });

@@ -83,7 +83,7 @@ async function readPackedGitHubBrandAsset(): Promise<Buffer> {
 
 describe('GitHub SCM manifest', () => {
   it('declares one conforming Triage source contribution with GitHub vocabulary', () => {
-    // Declaring the three Actions without their contribution is the loud
+    // Declaring the role Actions without their contribution is the loud
     // "registered but never declared" failure this assertion exists to catch.
     expect(() => assertTriageSourceContributionV1(PLUGIN_MANIFEST)).not.toThrow();
 
@@ -112,8 +112,8 @@ describe('GitHub SCM manifest', () => {
       expect(actions.get(id)?.hostAccess)
         .toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
     }
-    // Both reads receive the configured instance, so both name the exact account
-    // leaf the host binds and revalidates — `scan` through every arm of its
+    // Every operation after discovery receives the configured instance, so each
+    // names the exact account leaf the host binds and revalidates — `scan` through every arm of its
     // published two-arm input union. `listInstances` carries no account at all,
     // because producing account references is what it performs.
     const expectedAccountBindings = [
@@ -133,9 +133,12 @@ describe('GitHub SCM manifest', () => {
     expect(prepare?.hostAccess).toEqual(['github-api', GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
     expect(prepare?.connectedAccountPurposeBindings).toEqual(expectedAccountBindings);
     expect(prepare?.dangerLevel).toBe('writesLocal');
+    const verify = actions.get('triage/verify-github-review-workspace');
+    expect(verify?.connectedAccountPurposeBindings).toEqual(expectedAccountBindings);
+    expect(verify?.dangerLevel).toBe('safe');
   });
 
-  it('declares the five source-native detail reads with the same account authority', () => {
+  it('declares every source-native detail read with the same account authority', () => {
     const actions = new Map(
       (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
@@ -224,11 +227,7 @@ describe('GitHub SCM manifest', () => {
     const actions = new Map(
       (PLUGIN_MANIFEST.contributes.actions ?? []).map((action) => [action.id, action]),
     );
-    const blockedUntilReviewsOwnsDispatch = new Set<string>([
-      GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview,
-    ]);
-    const declared = Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
-      .filter((id) => !blockedUntilReviewsOwnsDispatch.has(id));
+    const declared = Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1);
     expect(new Set(Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)).size)
       .toBe(Object.values(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1).length);
 
@@ -277,11 +276,8 @@ describe('GitHub SCM manifest', () => {
       .toBe('externalSideEffect');
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers)?.dangerLevel)
       .toBe('externalSideEffect');
-    // Review publication remains unavailable until the canonical Reviews owner
-    // serializes the first provider dispatch. A provider-local confirmation and
-    // reconciliation read cannot replace that barrier.
-    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview))
-      .toBeUndefined();
+    expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview)?.dangerLevel)
+      .toBe('externalSideEffect');
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch)?.dangerLevel)
       .toBe('writesRemote');
     expect(actions.get(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers)?.dangerLevel)

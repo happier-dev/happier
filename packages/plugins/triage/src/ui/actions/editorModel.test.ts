@@ -38,16 +38,17 @@ describe('which actions an entry is offered', () => {
             .map((action) => action.actionId)).toEqual(['ask', 'fix']);
     });
 
-    it('never offers the declared reviewStart arm while its required producers are absent', () => {
+    it('offers the mounted reviewStart arm in entries and the action editor', () => {
         const reviewStart: TriageActionV1 = {
             ...REVIEW,
             actionId: 'configured-review-start',
+            workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: null },
         };
 
         expect(planTriageOfferedActionsV1([ASK, reviewStart, FIX], 'pullRequest')
-            .map((action) => action.actionId)).toEqual(['ask', 'fix']);
-        expect(TRIAGE_EDITOR_TARGET_KINDS_V1).toEqual(['agent']);
+            .map((action) => action.actionId)).toEqual(['ask', 'configured-review-start', 'fix']);
+        expect(TRIAGE_EDITOR_TARGET_KINDS_V1).toEqual(['agent', 'reviewStart']);
     });
 
     it('offers a disabled action nowhere while keeping it configured', () => {
@@ -180,6 +181,8 @@ describe('the draft a person is editing', () => {
         // simplification.
         const review = withTriageActionTargetKindV1(configured, 'reviewStart');
         expect(review.target).toEqual({ kind: 'reviewStart', promptInvocationId: '/explain' });
+        expect(review.workspaceMode).toBe('pull_request');
+        expect(review.appliesTo).toEqual(['pullRequest']);
 
         // Switching back restores the agent default delivery and keeps the
         // prompt, so a round trip through the arm control loses nothing.

@@ -16,7 +16,7 @@ const input = JSON.parse(
 const require = createRequire(import.meta.url);
 const mutableFs = require('node:fs/promises') as typeof import('node:fs/promises');
 const originalWriteFile = mutableFs.writeFile.bind(mutableFs);
-const originalReadFile = mutableFs.readFile.bind(mutableFs);
+const originalOpen = mutableFs.open.bind(mutableFs);
 const bundle = JSON.parse(await readFile(input.bundlePath, 'utf8')) as unknown;
 const targetPathSuffixes = (
   (bundle as { files?: readonly { relativePath?: unknown }[] }).files
@@ -30,31 +30,6 @@ function isBundleTargetPath(path: unknown): boolean {
   return targetPathSuffixes.some((suffix) => normalizedPath.endsWith(`/${suffix}`));
 }
 
-if (
-  (input.mode === 'barrier-before-first-write' || input.mode === 'retarget-before-first-write')
-  && input.readyPath
-  && input.releasePath
-) {
-  let waiting = false;
-  mutableFs.writeFile = (async (...args: Parameters<typeof mutableFs.writeFile>) => {
-    const [path, , options] = args;
-    const isExclusiveTargetWrite = isBundleTargetPath(path)
-      && typeof options === 'object'
-      && options !== null
-      && 'flag' in options
-      && options.flag === 'wx';
-    if (isExclusiveTargetWrite && !waiting) {
-      waiting = true;
-      await originalWriteFile(input.readyPath!, String(process.pid), 'utf8');
-      while (!(await stat(input.releasePath!).then(() => true, () => false))) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
-      }
-    }
-    return await originalWriteFile(...args);
-  }) as typeof mutableFs.writeFile;
-  syncBuiltinESMExports();
-}
-
 if (input.mode === 'barrier-before-import' && input.readyPath && input.releasePath) {
   await originalWriteFile(input.readyPath, String(process.pid), 'utf8');
   while (!(await stat(input.releasePath).then(() => true, () => false))) {
@@ -62,36 +37,43 @@ if (input.mode === 'barrier-before-import' && input.readyPath && input.releasePa
   }
 }
 
-if (input.mode === 'pause-after-first-write' && input.readyPath) {
-  let waiting = false;
-  mutableFs.writeFile = (async (...args: Parameters<typeof mutableFs.writeFile>) => {
-    const [path, , options] = args;
-    const isExclusiveTargetWrite = isBundleTargetPath(path)
-      && typeof options === 'object'
-      && options !== null
-      && 'flag' in options
-      && options.flag === 'wx';
-    const result = await originalWriteFile(...args);
-    if (isExclusiveTargetWrite && !waiting) {
-      waiting = true;
-      await originalWriteFile(input.readyPath!, String(process.pid), 'utf8');
+if (input.mode !== undefined && input.mode !== 'barrier-before-import') {
+  let exclusiveTargetOpenCount = 0;
+  let mutated = false;
+  mutableFs.open = (async (...args: Parameters<typeof mutableFs.open>) => {
+    const [path, flags] = args;
+    const isTarget = isBundleTargetPath(path);
+    const isExclusiveTargetOpen = isTarget && flags === 'wx';
+    if (isExclusiveTargetOpen) {
+      exclusiveTargetOpenCount += 1;
+    }
+    if (
+      isExclusiveTargetOpen
+      && exclusiveTargetOpenCount === 1
+      && (input.mode === 'barrier-before-first-write' || input.mode === 'retarget-before-first-write')
+      && input.readyPath
+      && input.releasePath
+    ) {
+      await originalWriteFile(input.readyPath, String(process.pid), 'utf8');
+      while (!(await stat(input.releasePath).then(() => true, () => false))) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    if (
+      isExclusiveTargetOpen
+      && exclusiveTargetOpenCount === 2
+      && input.mode === 'pause-after-first-write'
+      && input.readyPath
+    ) {
+      await originalWriteFile(input.readyPath, String(process.pid), 'utf8');
       await new Promise<void>(() => {});
     }
-    return result;
-  }) as typeof mutableFs.writeFile;
-  syncBuiltinESMExports();
-}
-
-if (input.mode === 'mutate-before-postverify') {
-  let mutated = false;
-  mutableFs.readFile = (async (...args: Parameters<typeof mutableFs.readFile>) => {
-    const [path] = args;
-    if (!mutated && isBundleTargetPath(path)) {
+    if (isTarget && flags === 'r' && input.mode === 'mutate-before-postverify' && !mutated) {
       mutated = true;
       await originalWriteFile(path, 'noncooperating-mutation\n');
     }
-    return await originalReadFile(...args);
-  }) as typeof mutableFs.readFile;
+    return await originalOpen(...args);
+  }) as typeof mutableFs.open;
   syncBuiltinESMExports();
 }
 

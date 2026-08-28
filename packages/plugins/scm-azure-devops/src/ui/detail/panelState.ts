@@ -28,22 +28,38 @@ import type {
 /** A read that settles once for the lifetime that owns it. */
 export type AzureReadStateV1<T> =
   | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'ready'; value: T }>
+  | Readonly<{
+      kind: 'ready';
+      value: T;
+      /** A warm refresh is in flight while the last-known-good value stays mounted. */
+      pending: boolean;
+      /** The warm refresh failed; the retained value remains authoritative only as stale data. */
+      failure: TriageSourceFailureV1 | null;
+    }>
   | Readonly<{ kind: 'unavailable'; failure: TriageSourceFailureV1 }>;
 
-export type AzurePagedStateV1<TRow> = TriagePagedPanelStateV1<TRow, TriageSourceFailureV1>;
-export type AzurePagedPageV1<TRow> = TriagePagedPanelPageV1<TRow>;
-export type AzurePagedEventV1<TRow> = TriagePagedPanelEventV1<TRow, TriageSourceFailureV1>;
+export type AzurePagedIncompleteV1 = 'continuationUnavailable';
+export type AzurePagedStateV1<TRow> = TriagePagedPanelStateV1<
+  TRow,
+  TriageSourceFailureV1,
+  AzurePagedIncompleteV1
+>;
+export type AzurePagedPageV1<TRow> = TriagePagedPanelPageV1<TRow, AzurePagedIncompleteV1>;
+export type AzurePagedEventV1<TRow> = TriagePagedPanelEventV1<
+  TRow,
+  TriageSourceFailureV1,
+  AzurePagedIncompleteV1
+>;
 
 export function azurePagedInitialState<TRow>(): AzurePagedStateV1<TRow> {
-  return triagePagedPanelInitialState<TRow, TriageSourceFailureV1>();
+  return triagePagedPanelInitialState<TRow, TriageSourceFailureV1, AzurePagedIncompleteV1>();
 }
 
 export function azurePagedReducer<TRow>(
   state: AzurePagedStateV1<TRow>,
   event: AzurePagedEventV1<TRow>,
 ): AzurePagedStateV1<TRow> {
-  return triagePagedPanelReducer<TRow, TriageSourceFailureV1>(state, event);
+  return triagePagedPanelReducer<TRow, TriageSourceFailureV1, AzurePagedIncompleteV1>(state, event);
 }
 
 /**

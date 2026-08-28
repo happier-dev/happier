@@ -1,6 +1,8 @@
 export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   en: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Launch teammate',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Create a team or spawn a teammate with structured Claude team commands.',
     'subAgentGuidance.settings.agents.claude.title': 'Claude team agents',
     'subAgentGuidance.settings.agents.claude.footer': 'Agent-specific subagent behavior stays owned by the agent settings screen.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Claude subagent options',
@@ -8,6 +10,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   ru: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Запустить участника',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Создайте команду или запустите участника с помощью структурированных команд Claude для команд.',
     'subAgentGuidance.settings.agents.claude.title': 'Командные агенты Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'Поведение субагентов для конкретного агента настраивается на экране настроек агента.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Параметры субагентов Claude',
@@ -15,6 +19,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   pl: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Uruchom członka zespołu',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Utwórz zespół lub uruchom członka zespołu za pomocą uporządkowanych poleceń zespołów Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agenci zespołowi Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'Ustawienia agenta nadal odpowiadają za zachowanie jego podagentów.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Opcje podagentów Claude',
@@ -22,6 +28,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   es: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Lanzar compañero',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Crea un equipo o lanza un compañero con comandos estructurados de equipos Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agentes de equipo de Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'La pantalla de ajustes del agente sigue controlando el comportamiento específico de sus subagentes.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Opciones de subagentes de Claude',
@@ -29,6 +37,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   fr: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Lancer l’équipier',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Crée une équipe ou lance un équipier avec les commandes structurées d’équipe Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agents d’équipe Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'L’écran des réglages de l’agent reste responsable du comportement de ses sous-agents.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Options des sous-agents Claude',
@@ -36,6 +46,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   it: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Avvia compagno',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Crea un team o avvia un compagno con comandi strutturati dei team Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agenti del team Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'La schermata delle impostazioni dell’agente continua a gestire il comportamento specifico dei suoi sottoagenti.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Opzioni dei sottoagenti Claude',
@@ -43,6 +55,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   pt: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Iniciar colega',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Crie uma equipe ou inicie um colega com comandos estruturados de equipes Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agentes de equipa Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'O ecrã de definições do agente continua responsável pelo comportamento específico dos respetivos subagentes.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Opções dos subagentes Claude',
@@ -50,6 +64,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   ca: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Inicia company',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Crea un equip o inicia un company amb ordres estructurades d’equips Claude.',
     'subAgentGuidance.settings.agents.claude.title': 'Agents d’equip de Claude',
     'subAgentGuidance.settings.agents.claude.footer': 'La pantalla de configuració de l’agent continua gestionant el comportament específic dels seus subagents.',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Opcions dels subagents de Claude',
@@ -57,6 +73,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   'zh-Hans': Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': '启动队友',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': '使用结构化的 Claude 团队命令创建团队或启动队友。',
     'subAgentGuidance.settings.agents.claude.title': 'Claude 团队代理',
     'subAgentGuidance.settings.agents.claude.footer': '代理专属的子代理行为仍由代理设置页面管理。',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Claude 子代理选项',
@@ -64,6 +82,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   'zh-Hant': Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': '啟動隊友',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': '使用結構化的 Claude 團隊指令建立團隊或啟動隊友。',
     'subAgentGuidance.settings.agents.claude.title': 'Claude 團隊代理',
     'subAgentGuidance.settings.agents.claude.footer': '代理專屬的子代理行為仍由代理設定畫面管理。',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Claude 子代理選項',
@@ -71,6 +91,8 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
   }),
   ja: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'チームメイトを起動',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': '構造化された Claude チームコマンドでチームを作成するか、チームメイトを起動します。',
     'subAgentGuidance.settings.agents.claude.title': 'Claude チームエージェント',
     'subAgentGuidance.settings.agents.claude.footer': 'エージェント固有のサブエージェント動作は、引き続きエージェント設定画面で管理されます。',
     'subAgentGuidance.settings.agents.claude.openTitle': 'Claude サブエージェントのオプション',

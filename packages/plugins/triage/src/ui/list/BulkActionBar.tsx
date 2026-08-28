@@ -18,7 +18,7 @@ import {
   type TriageActionV1,
 } from '../../settings/actions.js';
 import type { TriageBulkSessionDestinationV1 } from './bulkSessionPlan.js';
-import { isTriageBulkEntryOutcomeIncompleteV1 } from './bulkSessionOutcome.js';
+import { summarizeTriageBulkSettlementV1 } from './bulkSessionOutcome.js';
 import type {
   TriageBulkSessionsPhaseV1,
   TriageBulkUnavailableReasonV1,
@@ -68,6 +68,8 @@ export type TriageBulkActionBarPropsV1 = Readonly<{
     destination: TriageBulkSessionDestinationV1;
     keys: readonly string[];
   }>) => void;
+  retryable: boolean;
+  onRetry: () => void;
   onCancel: () => void;
 }>;
 
@@ -96,6 +98,13 @@ const DESTINATIONS: readonly Readonly<{
 function destinationOf(actionId: string): TriageBulkSessionDestinationV1 | null {
   const found = DESTINATIONS.find((candidate) => candidate.destination === actionId);
   return found?.destination ?? null;
+}
+
+function isSameSelection(
+  selected: ReadonlySet<string>,
+  resultKeys: readonly string[],
+): boolean {
+  return selected.size === resultKeys.length && resultKeys.every((key) => selected.has(key));
 }
 
 /** No control exists to press, so no press can arrive. */
@@ -195,6 +204,16 @@ export function TriageBulkActionBar(props: TriageBulkActionBarPropsV1): React.Re
       />
       <Row gap="small" align="center">
         <TriageBulkPhaseStatus phase={props.phase} />
+        {props.phase.kind !== 'settled'
+          || !props.retryable
+          || !isSameSelection(snapshot.selectedKeys, props.phase.selectionKeys) ? null : (
+          <Button
+            titleKey="plugins.triage.surface.bulk.retry"
+            title="Try again"
+            variant="secondary"
+            onPress={props.onRetry}
+          />
+        )}
         {!busy ? null : (
           <Button
             titleKey="plugins.triage.surface.bulk.cancel"
@@ -271,15 +290,11 @@ function TriageBulkPhaseStatus(props: Readonly<{
     );
   }
   if (phase.kind === 'settled') {
-    const opened = phase.results.filter((result) => result.status === 'settled').length;
-    const unknown = phase.results.filter((result) => result.status === 'unknownOutcome').length;
-    const notStarted = phase.results.filter((result) => result.status === 'notStarted').length;
-    const incompleteEntries = phase.results.flatMap((result) => (
-      result.status === 'settled'
-        ? result.outcome.entries.filter(isTriageBulkEntryOutcomeIncompleteV1)
-        : []
-    )).length;
-    const left = phase.unavailableKeys.length + phase.refusals.length + incompleteEntries;
+    const { opened, unknown, notStarted, left } = summarizeTriageBulkSettlementV1({
+      results: phase.results,
+      unavailableCount: phase.unavailableKeys.length,
+      refusalCount: phase.refusals.length,
+    });
     return (
       <Status
         tone={unknown > 0 || left > 0 || notStarted > 0 ? 'warning' : 'success'}
@@ -319,6 +334,14 @@ const UNAVAILABLE_COPY: Readonly<Record<
   newSessionUnavailable: {
     key: 'plugins.triage.surface.bulk.newSessionUnavailable',
     fallback: 'The New Session surface did not settle on something a session can be started from.',
+  },
+  checkoutRequiresNewSessionAuthoring: {
+    key: 'plugins.triage.surface.bulk.checkoutRequiresNewSessionAuthoring',
+    fallback: 'This action needs a new checkout. Use Attach to New Session so you can choose where to create it.',
+  },
+  composeRequiresNewSessionAuthoring: {
+    key: 'plugins.triage.surface.bulk.composeRequiresNewSessionAuthoring',
+    fallback: 'This action needs review before sending. Use Attach to New Session so its prompt and entries are ready before anything starts.',
   },
   preparedWorkspaceUnsupported: {
     key: 'plugins.triage.surface.bulk.preparedWorkspaceUnsupported',

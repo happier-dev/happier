@@ -35,6 +35,18 @@ export const GOOGLE_CLOUD_TTS_MAX_OUTPUT_BYTES =
 const GOOGLE_API_KEY_HEADER = 'x-goog-api-key';
 const GEMINI_ORIGIN = 'https://generativelanguage.googleapis.com';
 const GOOGLE_CLOUD_TTS_ORIGIN = 'https://texttospeech.googleapis.com';
+const GEMINI_MODELS_PAGE_SIZE = 1_000;
+
+// The Models API advertises generateContent support, but does not expose input
+// modalities. Keep the picker to models whose public contract explicitly
+// includes audio input. The declaration still allows a custom model id, so a
+// newly released model is usable without pretending the generic model catalog
+// has proved that model can accept audio.
+const GEMINI_AUDIO_INPUT_MODEL_IDS = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-pro',
+]);
 
 function providerError(
   code: 'invalid_parameters' | 'credential_unavailable' | 'provider_response_invalid',
@@ -141,16 +153,26 @@ function readCatalogEntries(value: unknown, field: 'models' | 'voices'): readonl
   return entries;
 }
 
+function readNextPageToken(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw providerError('provider_response_invalid');
+  }
+  const raw = (value as Readonly<Record<string, unknown>>).nextPageToken;
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string' || !raw.trim()) throw providerError('provider_response_invalid');
+  return raw.trim();
+}
+
 function parseGeminiModels(value: unknown): readonly VoiceProviderCatalogItem[] {
   const models = readCatalogEntries(value, 'models');
-  const rows = models.slice(0, 500).flatMap((raw) => {
+  const rows = models.flatMap((raw) => {
     if (!raw || typeof raw !== 'object') return [];
     const record = raw as Record<string, unknown>;
     const name = clean(record.name, 256);
     const supported = Array.isArray(record.supportedGenerationMethods) ? record.supportedGenerationMethods : [];
     if (!name || !supported.includes('generateContent')) return [];
     const id = clean(name.startsWith('models/') ? name.slice('models/'.length) : name, 256);
-    if (!id) return [];
+    if (!id || !GEMINI_AUDIO_INPUT_MODEL_IDS.has(id)) return [];
     return [{ id, name: clean(record.displayName, 256) ?? id, metadata: { description: clean(record.description) ?? '' } }];
   });
   const unique = new Map<string, VoiceProviderCatalogItem>();
@@ -266,12 +288,29 @@ export function createGoogleGeminiSttRuntime(): SpeechProviderRuntime {
       ) {
         if (request.catalog !== 'models') throw providerError('invalid_parameters');
         const secret = await materializeApiKey(context.credentials, GEMINI_ORIGIN, context.signal);
-        return parseGeminiModels(readJson(await context.http.request({
-          url: `${GEMINI_ORIGIN}/v1beta/models`,
-          method: 'GET',
-          headers: { [GOOGLE_API_KEY_HEADER]: secret },
-          redirect: 'error',
-        }, { signal: context.signal }), [secret]));
+        const models: unknown[] = [];
+        const seenPageTokens = new Set<string>();
+        let pageToken: string | null = null;
+        do {
+          const query = new URLSearchParams({ pageSize: String(GEMINI_MODELS_PAGE_SIZE) });
+          if (pageToken) query.set('pageToken', pageToken);
+          const page = readJson(await context.http.request({
+            url: `${GEMINI_ORIGIN}/v1beta/models?${query.toString()}`,
+            method: 'GET',
+            headers: { [GOOGLE_API_KEY_HEADER]: secret },
+            redirect: 'error',
+          }, { signal: context.signal }), [secret]);
+          models.push(...readCatalogEntries(page, 'models'));
+          const nextPageToken = readNextPageToken(page);
+          if (!nextPageToken) {
+            pageToken = null;
+          } else {
+            if (seenPageTokens.has(nextPageToken)) throw providerError('provider_response_invalid');
+            seenPageTokens.add(nextPageToken);
+            pageToken = nextPageToken;
+          }
+        } while (pageToken);
+        return parseGeminiModels({ models });
       },
     }),
     async transcribe(request: VoiceSpeechTranscribeRequest, context: VoiceSpeechOperationContext) {

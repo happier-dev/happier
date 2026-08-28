@@ -11,7 +11,8 @@ import {
   type ScmCloneProtocol as SourceControlCloneProtocol,
 } from '@happier-dev/plugin-sdk/scm';
 import {
-  ScmHostingProviderKindSchema } from '@happier-dev/plugin-sdk/scm/hosting';
+  ScmHostingProviderKindSchema,
+  type HostingProviderRepositoryCloneCapability } from '@happier-dev/plugin-sdk/scm/hosting';
 import {
     readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices,
     type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices,
@@ -40,17 +41,9 @@ const GIT_REPOSITORY_CLONE_TIMEOUT_MS = 120_000;
 type CloneProviderRef = ScmRepositoryCloneInput['provider'];
 type CloneProviderUrlSafety = CloneProviderRef['urlSafety'];
 
-type CloneTargetAdapter = Readonly<{
-    describeCloneTargets: (input: Readonly<{
-        provider: ScmRepositoryCloneInput['provider'];
-        repository: ScmRepositoryCloneInput['repository'];
-        runtimeServices?: ScmHostingProviderRuntimeServices;
-    }>) => Promise<ScmRepositoryCloneTargetDescription>;
-}>;
-
 type CloneProviderDescriptor = ScmHostingProviderRuntimeDescriptor & Readonly<{ kind: CloneProviderRef['kind'] }>;
 
-type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getAdapter'> & Readonly<{
+type HostingRepositoryRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryClone'> & Readonly<{
     getProvider?: (id: string) => unknown;
     providers?: readonly unknown[];
 }>;
@@ -89,12 +82,6 @@ function errorResponse(
         errorCode,
         ...extra,
     };
-}
-
-function isCloneTargetAdapter(adapter: unknown): adapter is CloneTargetAdapter {
-    return Boolean(adapter)
-        && typeof adapter === 'object'
-        && typeof (adapter as Partial<CloneTargetAdapter>).describeCloneTargets === 'function';
 }
 
 function sanitizeRepositorySelector(
@@ -260,7 +247,8 @@ async function describeCloneTargets(input: Readonly<{
     deps?: GitRepositoryCloneOperationDeps;
 }>): Promise<CloneTargetSelectionResult> {
     const registry = await readRegistry(input.deps);
-    const adapter = registry?.getAdapter(input.request.provider.id);
+    const adapter: HostingProviderRepositoryCloneCapability | undefined =
+        registry?.getRepositoryClone(input.request.provider.id);
     const registeredProvider = resolveRegisteredProvider({
         registry,
         requestedProvider: input.request.provider,
@@ -275,7 +263,7 @@ async function describeCloneTargets(input: Readonly<{
             ),
         };
     }
-    if (!isCloneTargetAdapter(adapter)) {
+    if (!adapter) {
         return {
             ok: false,
             response: errorResponse(

@@ -1,8 +1,8 @@
 /**
  * `@happier-dev/plugins-posthog` — the PostHog Triage source vertical.
  *
- * This package owns the PostHog manifest and registration spine, the three bound source
- * operations, the Connected Account runtime, the canonical API client with its typed
+ * This package owns the PostHog manifest and registration spine, its bound source and
+ * detail operations, the Connected Account runtime, the canonical API client with its typed
  * failures and DTO parsers, origin and authentication-route validation, source identity
  * and the configured-instance codec, the bounded scan page, the CRUD-first read, and the
  * snapshot projection.
@@ -57,7 +57,6 @@ export {
     createPosthogSampledEventsReader,
     getPosthogSourceEntry,
     listPosthogInstances,
-    probePosthogCapability,
     readPosthogSampledEvents,
     scanPosthogSource,
     toTriageSourceFailure,
@@ -65,7 +64,6 @@ export {
 export type { PosthogSampledEventsReader } from './source/operations.js';
 
 export {
-    MAX_POSTHOG_SAMPLED_EVENTS_CONTINUATION_UTF8_BYTES,
     POSTHOG_SAMPLE_WALK_STOPPED_SHORT_V1,
     PosthogSampledEventsInputV1Schema,
     PosthogSampledEventsResultV1Schema,
@@ -244,14 +242,12 @@ export type {
 } from './source/scan/scan.js';
 
 export {
-    POSTHOG_SAMPLED_EVENT_BOUNDS_V1,
     projectPosthogIssueEvents,
 } from './ui/detail/issueEventProjection.js';
 export type {
     PosthogProjectedException,
     PosthogProjectedFrame,
     PosthogProjectedIssueEvent,
-    PosthogSampledEventBounds,
 } from './ui/detail/issueEventProjection.js';
 
 export {

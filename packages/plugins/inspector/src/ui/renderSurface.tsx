@@ -19,7 +19,6 @@ import {
   LoadingState,
   Markdown,
   Menu,
-  Popover,
   Progress,
   Row,
   ScrollArea,
@@ -161,7 +160,7 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
   const [reloadingPluginId, setReloadingPluginId] = React.useState<string | null>(null);
   const [lastReload, setLastReload] = React.useState<InspectorReloadSummary | null>(null);
   const [quickActionsMenuOpen, setQuickActionsMenuOpen] = React.useState(false);
-  const [selfCheckPopoverOpen, setSelfCheckPopoverOpen] = React.useState(false);
+  const [selfCheckSettlement, setSelfCheckSettlement] = React.useState<'not-run' | 'success' | 'failed'>('not-run');
   const [quickActionsContextMenuOpen, setQuickActionsContextMenuOpen] = React.useState(false);
   const surfaceContext = useSurfaceContext();
   const theme = usePluginTheme();
@@ -297,27 +296,27 @@ export function InspectorSurface({ hostApi, surface, subPath }: InspectorRenderS
             items={quickActionItems}
             onSelect={selectQuickAction}
           />
-          <Popover
-            testID="inspector-self-check-popover"
-            open={selfCheckPopoverOpen}
-            onOpenChange={setSelfCheckPopoverOpen}
-            trigger={text('plugins.inspector.surface.selfCheck', 'Run Inspector self-check')}
-            triggerTextVariant="caption"
-            triggerTextTone="muted"
-            triggerAccessibilityLabel={text('plugins.inspector.surface.selfCheck', 'Run Inspector self-check')}
-            contentAccessibilityLabel={text('plugins.inspector.surface.selfCheck', 'Run Inspector self-check')}
-          >
-            <Text
-              value={text('plugins.inspector.surface.selfCheckDescription', 'Verify the Inspector action bridge.')}
-              variant="caption"
-              tone="secondary"
-            />
-            <Action.Execute
-              testID="inspector-self-check-action"
-              action={INSPECTOR_SELF_CHECK_ACTION_ID}
-              title={text('plugins.inspector.surface.selfCheck', 'Run Inspector self-check')}
-            />
-          </Popover>
+          <Action.Execute
+            testID="inspector-self-check-action"
+            action={INSPECTOR_SELF_CHECK_ACTION_ID}
+            title={text('plugins.inspector.surface.selfCheck', 'Run Inspector self-check')}
+            accessibilityLabel={text(
+              'plugins.inspector.surface.executeSelfCheck',
+              'Execute Inspector self-check',
+            )}
+            onSettled={(settled) => {
+              const result = settled.status === 'success' && settled.result && typeof settled.result === 'object'
+                ? settled.result as { ok?: unknown }
+                : null;
+              setSelfCheckSettlement(result?.ok === true ? 'success' : 'failed');
+            }}
+          />
+          <Text
+            testID="inspector-self-check-settled"
+            value={`Inspector self-check: ${selfCheckSettlement}`}
+            variant="caption"
+            tone={selfCheckSettlement === 'failed' ? 'danger' : 'secondary'}
+          />
           <ContextMenu
             testID="inspector-quick-actions-context-menu"
             open={quickActionsContextMenuOpen}

@@ -975,19 +975,23 @@ describe('Oh My Pi public External Sessions contribution', () => {
         items: [],
         nextCursor: expect.any(String),
         boundary: expect.any(String),
+        hasMore: false,
         diagnostics: [
           {
             code: 'malformed_record_skipped',
+            severity: 'required',
             count: 1,
             positions: [priorSize],
           },
           {
             code: 'non_transcript_record_skipped',
+            severity: 'benign',
             count: 1,
             positions: [priorSize + Buffer.byteLength(malformed, 'utf8')],
           },
           {
             code: 'unsupported_record_skipped',
+            severity: 'required',
             count: 4,
             positions: [
               priorSize + Buffer.byteLength(`${malformed}${nonTranscript}`, 'utf8'),
@@ -1167,8 +1171,10 @@ describe('Oh My Pi public External Sessions contribution', () => {
         items: [],
         nextCursor: expect.any(String),
         boundary: expect.any(String),
+        hasMore: false,
         diagnostics: [{
           code: 'unsupported_record_skipped',
+          severity: 'required',
           count: 1,
           positions: [position],
         }],
@@ -1235,8 +1241,10 @@ describe('Oh My Pi public External Sessions contribution', () => {
         items: [],
         nextCursor: expect.any(String),
         boundary: expect.any(String),
+        hasMore: false,
         diagnostics: [{
           code: 'unsupported_record_skipped',
+          severity: 'required',
           count: 1,
           positions: [position],
         }],
@@ -1298,8 +1306,10 @@ describe('Oh My Pi public External Sessions contribution', () => {
         items: [],
         nextCursor: expect.any(String),
         boundary: expect.any(String),
+        hasMore: false,
         diagnostics: [{
           code: 'malformed_source_utf8',
+          severity: 'required',
           count: 1,
           positions: [before + prefix.byteLength],
         }],

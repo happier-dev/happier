@@ -24,6 +24,7 @@ import {
 } from './descriptor.js';
 
 const PREPARE_REVIEW_WORKSPACE_ACTION_ID = 'triage-prepare-review-workspace';
+const VERIFY_REVIEW_WORKSPACE_ACTION_ID = 'triage-verify-review-workspace';
 
 /**
  * The manifest as the host actually receives it.
@@ -75,6 +76,29 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     });
   });
 
+  it('binds final review-workspace verification to its safe exact-account Action', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
+    const action = PLUGIN_MANIFEST.contributes.actions.find(
+      (candidate) => candidate.id === VERIFY_REVIEW_WORKSPACE_ACTION_ID,
+    );
+
+    expect(contribution?.operations?.verifyReviewWorkspace).toBe(VERIFY_REVIEW_WORKSPACE_ACTION_ID);
+    expect(action).toMatchObject({
+      id: VERIFY_REVIEW_WORKSPACE_ACTION_ID,
+      surfaces: ['plugin'],
+      dangerLevel: 'safe',
+      hostAccess: [
+        AZURE_DEVOPS_NETWORK_HOST_ACCESS_ID,
+        AZURE_DEVOPS_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+        AZURE_DEVOPS_TRIAGE_PURPOSE,
+      ],
+      connectedAccountPurposeBindings: [{
+        path: 'instance.binding.account',
+        purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
+      }],
+    });
+  });
+
   it('is admitted by the canonical manifest parser with its account descriptor and system tool', () => {
     // The Triage contribution's `connectedAccounts` grant is resolved against
     // `contributes.connectedAccountDescriptors`, so a purpose declared without its descriptor is a
@@ -113,11 +137,11 @@ describe('Azure DevOps Triage source contribution conformance', () => {
         purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
       }]);
     }
-    // They are NOT source-protocol roles. The contribution also binds the one optional
-    // source-owned materialization role, but no detail plane becomes a provider operation.
+    // They are NOT source-protocol roles. The contribution also binds the optional source-owned
+    // preparation and final-verification roles, but no detail plane becomes a provider operation.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
   });
 
   it('declares the deployment field as a configured service base, not a bare origin', () => {
@@ -175,7 +199,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
           AZURE_DEVOPS_TRIAGE_PURPOSE,
         ]);
     }
-    // §3.1: both account-reaching roles carry the exact account path, so both declare the purpose
+    // §3.1: every account-reaching role carries the exact account path and declares the purpose
     // binding the host cross-checks at declaration time. `listInstances` produces account refs
     // rather than consuming one, so it has no account input leaf to bind.
     const expectedAccountBindings = [{
@@ -187,6 +211,9 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan)?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace)
+      ?.connectedAccountPurposeBindings)
+      .toEqual(expectedAccountBindings);
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.verifyReviewWorkspace)
       ?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances))

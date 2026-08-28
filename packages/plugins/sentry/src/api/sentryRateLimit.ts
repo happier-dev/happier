@@ -39,19 +39,6 @@ const RATE_LIMIT_HEADERS = Object.freeze({
   concurrentRemaining: 'x-sentry-rate-limit-concurrentremaining',
 } as const);
 
-/**
- * The horizon past which a `Reset` value is treated as unusable rather than
- * propagated as a retry deadline.
- *
- * Sentry's API limiter is a fixed-window/concurrency limiter whose documented
- * windows are seconds long (`[SOURCE]` `ratelimit.py` messages such as
- * "Limit is 40 requests in 1 seconds"). A reset an hour away is therefore not a
- * window this endpoint family produces; it is a clock-skewed, mis-scaled or
- * rewritten header. When it fires, the hint is dropped and the failure carries
- * no `retryNotBeforeMs`, leaving the retry decision to the shared backoff owner.
- */
-export const SENTRY_MAX_RETRY_HINT_HORIZON_MS = 60 * 60 * 1000;
-
 const INTEGER_PATTERN = /^-?\d+$/u;
 
 function readInteger(
@@ -93,6 +80,5 @@ export function resolveSentryRetryNotBeforeMs(
   const { resetAtMs } = snapshot;
   if (resetAtMs === null) return null;
   if (!Number.isSafeInteger(resetAtMs) || resetAtMs <= nowMs) return null;
-  if (resetAtMs - nowMs > SENTRY_MAX_RETRY_HINT_HORIZON_MS) return null;
   return resetAtMs;
 }

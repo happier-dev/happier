@@ -8,10 +8,8 @@ import {
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageConfiguredSourceInstanceV1Schema,
     TriageDetailSurfaceInputV1Schema,
-    TriageSourceDescriptorV1Schema,
     type TriageConfiguredSourceInstanceV1,
     type TriageEntryRefV1,
-    type TriageSourceDescriptorV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -98,49 +96,6 @@ function instanceRow(input: Readonly<{
     };
 }
 
-/**
- * One admitted V1 source contribution, as the host publishes it: the descriptor
- * is already parsed with this target's own schema, so the fixture parses it the
- * same way rather than hand-writing a shape the host could never emit.
- */
-function admittedSource(input: Readonly<{
-    source: Readonly<{ pluginId: string; localId: string }>;
-    displayName: string;
-    kinds: readonly Readonly<{ id: string; workflowSubject: string; displayName: string }>[];
-}>) {
-    return {
-        contributor: {
-            pluginId: input.source.pluginId,
-            contributionId: input.source.localId,
-            immutableGenerationId: 'generation-1',
-        },
-        protocol: { id: 'happier.triage/sources', version: 1 },
-        descriptor: TriageSourceDescriptorV1Schema.parse({
-            v: 1,
-            purpose: 'triage-source',
-            displayName: input.displayName,
-            kinds: input.kinds,
-        }) as TriageSourceDescriptorV1,
-        operations: {},
-        surfaces: {},
-    };
-}
-
-const FORGE_CONTRIBUTION = admittedSource({
-    source: SOURCE,
-    displayName: 'Example forge',
-    kinds: [
-        { id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' },
-        { id: 'issue', workflowSubject: 'issue', displayName: 'Issue' },
-    ],
-});
-
-const TRACKER_CONTRIBUTION = admittedSource({
-    source: OTHER_SOURCE,
-    displayName: 'Example tracker',
-    kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Ticket' }],
-});
-
 function caller(pluginId: string): PluginInvocationCaller {
     return {
         kind: 'plugin',
@@ -154,7 +109,6 @@ function createContext(input: Readonly<{
     collections: CorpusCollectionsV1;
     callerPluginId?: string;
     sessionSummary?: Readonly<{ title?: string; updatedAtMs?: number }> | null;
-    admitted?: readonly ReturnType<typeof admittedSource>[];
 }>): PluginInvocationContext {
     return {
         signal: new AbortController().signal,
@@ -175,15 +129,6 @@ function createContext(input: Readonly<{
                 get: async () => (input.sessionSummary === undefined || input.sessionSummary === null
                     ? null
                     : { summary: async () => input.sessionSummary }),
-            },
-            targetedContributions: {
-                observeForSelf: () => ({
-                    readCurrent: async () => ({
-                        generation: 'target-generation-1',
-                        contributions: input.admitted ?? [FORGE_CONTRIBUTION],
-                    }),
-                    dispose: () => {},
-                }),
             },
         },
     } as unknown as PluginInvocationContext;
@@ -378,44 +323,24 @@ describe('the entry detail read', () => {
         expect(result).toEqual({ kind: 'unavailable' });
     });
 
-    it('carries the entry source\'s own declared descriptor out of the admitted snapshot', async () => {
+    it('keeps the durable detail read independent of daemon contribution state', async () => {
         const { collections } = await seedTwoConnections();
 
         const result = TriageReadEntryDetailResultV1Schema.parse(
             await createTriageReadEntryDetailActionHandler()(
                 detailInput(INSTANCE_A),
-                // A second admitted source is sorted ahead of the entry's own, and
-                // declares its own name for the very same `kindId`. Taking "the
-                // first admitted contribution" would name this pull request a
-                // "Ticket" from the "Example tracker".
-                createContext({ collections, admitted: [TRACKER_CONTRIBUTION, FORGE_CONTRIBUTION] }),
+                // No targeted-contribution service exists in this context. The
+                // exact mounted snapshot owns descriptor facts; this Action
+                // reads only Account state and must remain usable without a
+                // daemon.
+                createContext({ collections }),
             ),
         );
 
         expect(result.kind).toBe('read');
         if (result.kind !== 'read') return;
-        expect(result.sourceDescriptor?.displayName).toBe('Example forge');
-        expect(result.sourceDescriptor?.kinds.map((kind) => kind.id))
-            .toEqual(['pull-request', 'issue']);
-    });
-
-    it('omits the descriptor when the entry\'s source has no admitted contribution', async () => {
-        const { collections } = await seedTwoConnections();
-
-        const result = TriageReadEntryDetailResultV1Schema.parse(
-            await createTriageReadEntryDetailActionHandler()(
-                detailInput(INSTANCE_A),
-                createContext({ collections, admitted: [TRACKER_CONTRIBUTION] }),
-            ),
-        );
-
-        expect(result.kind).toBe('read');
-        if (result.kind !== 'read') return;
-        // Absent, never another source's descriptor and never a placeholder: the
-        // configured connection is still readable, and naming it after whoever
-        // else happens to be admitted is the failure this case exists for.
-        expect(result.sourceDescriptor).toBeUndefined();
         expect(result.instance.instance.sourceInstanceId).toBe(INSTANCE_A);
+        expect(Object.hasOwn(result, 'sourceDescriptor')).toBe(false);
     });
 
     it('refuses a caller that is not this target', async () => {

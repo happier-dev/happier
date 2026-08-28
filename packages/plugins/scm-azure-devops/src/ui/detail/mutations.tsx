@@ -26,7 +26,6 @@ import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
 import { AZURE_ABANDONED_NATIVE_STATE_LABEL } from '../../triage/mapping.js';
 import { AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/mutationActions.js';
 import {
-  AZURE_MAX_REQUESTED_REVIEWERS_V1,
   AZURE_REQUESTABLE_THREAD_STATUSES_V1,
   AzureMutationResultV1Schema,
   AzureThreadStatusResultV1Schema,
@@ -269,6 +268,7 @@ export function azureEntryWriteMayHaveChangedProviderStateV1(
     parsed.data.kind === 'applied'
     || parsed.data.kind === 'pending'
     || parsed.data.kind === 'uncertain'
+    || (parsed.data.kind === 'rejected' && parsed.data.reason === 'fields-ignored')
   );
 }
 
@@ -409,6 +409,7 @@ export function AzureMutationControls({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
+  const routingToken = input.observation.locator.routingToken ?? '';
   const complete = useExecutePluginAction(COMPLETE_ACTION);
   const abandon = useExecutePluginAction(ABANDON_ACTION);
   const reactivate = useExecutePluginAction(REACTIVATE_ACTION);
@@ -418,7 +419,6 @@ export function AzureMutationControls({
 
   const observedSourceCommitId = overview.nativeRevision;
   const reviewerIds = React.useMemo(() => readReviewerIds(reviewerIdsValue), [reviewerIdsValue]);
-  const tooManyReviewers = reviewerIds.length > AZURE_MAX_REQUESTED_REVIEWERS_V1;
 
   const runComplete = React.useCallback(() => {
     if (observedSourceCommitId === null) return;
@@ -426,6 +426,7 @@ export function AzureMutationControls({
       v: 1,
       instance: input.instance,
       localRef,
+      routingToken,
       observedSourceCommitId,
       deleteSourceBranch,
     }).then((execution) => completeTriagePostMutationIfNeeded(
@@ -433,34 +434,35 @@ export function AzureMutationControls({
       execution,
       azureEntryWriteMayHaveChangedProviderStateV1,
     ));
-  }, [complete, completeMutation, deleteSourceBranch, input.instance, localRef, observedSourceCommitId]);
+  }, [complete, completeMutation, deleteSourceBranch, input.instance, localRef, observedSourceCommitId, routingToken]);
 
   const runAbandon = React.useCallback(() => {
-    void abandon.execute({ v: 1, instance: input.instance, localRef })
+    void abandon.execute({ v: 1, instance: input.instance, localRef, routingToken })
       .then((execution) => completeTriagePostMutationIfNeeded(
         completeMutation,
         execution,
         azureEntryWriteMayHaveChangedProviderStateV1,
       ));
-  }, [abandon, completeMutation, input.instance, localRef]);
+  }, [abandon, completeMutation, input.instance, localRef, routingToken]);
 
   const runReactivate = React.useCallback(() => {
-    void reactivate.execute({ v: 1, instance: input.instance, localRef })
+    void reactivate.execute({ v: 1, instance: input.instance, localRef, routingToken })
       .then((execution) => completeTriagePostMutationIfNeeded(
         completeMutation,
         execution,
         azureEntryWriteMayHaveChangedProviderStateV1,
       ));
-  }, [completeMutation, input.instance, localRef, reactivate]);
+  }, [completeMutation, input.instance, localRef, reactivate, routingToken]);
 
   const runRequestReview = React.useCallback(() => {
     const ids = readReviewerIds(reviewerIdsValue);
     if (observedSourceCommitId === null) return;
-    if (ids.length === 0 || ids.length > AZURE_MAX_REQUESTED_REVIEWERS_V1) return;
+    if (ids.length === 0) return;
     void requestReview.execute({
       v: 1,
       instance: input.instance,
       localRef,
+      routingToken,
       observedSourceCommitId,
       reviewerIds: ids,
     }).then((execution) => completeTriagePostMutationIfNeeded(
@@ -468,7 +470,7 @@ export function AzureMutationControls({
       execution,
       azureEntryWriteMayHaveChangedProviderStateV1,
     ));
-  }, [completeMutation, input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue]);
+  }, [completeMutation, input.instance, localRef, observedSourceCommitId, requestReview, reviewerIdsValue, routingToken]);
 
   if (overview.state.presentation !== 'active') {
     // Azure's reopen, and the only transition a non-active pull request has. `closed` covers
@@ -580,22 +582,13 @@ export function AzureMutationControls({
           valueKey="plugins.azureDevops.ui.mutations.requestReview.description"
           fallback="Everyone you name is added as a reviewer. Nobody currently reviewing is removed, and no existing vote is changed."
         />
-        {!tooManyReviewers ? null : (
-          <Text
-            variant="caption"
-            tone="warning"
-            valueKey="plugins.azureDevops.ui.mutations.requestReview.tooMany"
-            fallback="One request carries at most {max} reviewers."
-            values={{ max: AZURE_MAX_REQUESTED_REVIEWERS_V1 }}
-          />
-        )}
         <Row gap="small">
           <Button
             title={text('plugins.azureDevops.ui.mutations.requestReview.button', 'Request review')}
             titleKey="plugins.azureDevops.ui.mutations.requestReview.button"
             variant="secondary"
             disabled={
-              reviewerIds.length === 0 || tooManyReviewers || observedSourceCommitId === null
+              reviewerIds.length === 0 || observedSourceCommitId === null
             }
             busy={requestReview.execution.status === 'pending'}
             onPress={runRequestReview}
@@ -743,6 +736,7 @@ export function AzureThreadStatusControl({
   const text = usePluginTranslation();
   const completeMutation = useTriagePostMutationCompletion();
   const localRef = useAzureEntryLocalRef(input);
+  const routingToken = input.observation.locator.routingToken ?? '';
   const threadStatus = useExecutePluginAction(THREAD_STATUS_ACTION);
   const [status, setStatus] = React.useState<AzureRequestableThreadStatusV1 | null>(null);
 
@@ -752,6 +746,7 @@ export function AzureThreadStatusControl({
       v: 1,
       instance: input.instance,
       localRef,
+      routingToken,
       threadId: thread.id,
       status,
     }).then((execution) => completeTriagePostMutationIfNeeded(
@@ -759,7 +754,7 @@ export function AzureThreadStatusControl({
       execution,
       azureThreadWriteMayHaveChangedProviderStateV1,
     ));
-  }, [completeMutation, input.instance, localRef, status, thread.id, threadStatus]);
+  }, [completeMutation, input.instance, localRef, routingToken, status, thread.id, threadStatus]);
 
   return (
     <Stack gap="small">

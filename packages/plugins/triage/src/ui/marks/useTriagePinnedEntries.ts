@@ -47,9 +47,8 @@ export type TriageMountedPinsV1 = Readonly<{
    * What pressing the Pinned section's continuation row would do, in the same
    * vocabulary the mounted window publishes for its own sections.
    *
-   * `atCeiling` is unreachable here and that is a product decision, not an
-   * omission: every pin is the reader's own durable intent, so there is no
-   * depth past which this mount may stop offering to reach one.
+   * Every pin is the reader's own durable intent, so there is no depth past
+   * which this mount may stop offering to reach one.
    */
   loadMore: TriageListLoadMoreV1;
   /** Explicit user demand for the pins after the pages already loaded. */
@@ -158,6 +157,8 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     const superseded = (): boolean => signal.aborted || current !== generation.current;
     setReading(true);
     const collected: TriagePinnedEntryV1[] = [];
+    /** Every provider position this bounded walk has already been handed. */
+    const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < request.pages; page += 1) {
       try {
@@ -165,6 +166,20 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
         if (superseded()) return;
         collected.push(...answered.pins);
         cursor = answered.nextCursor;
+        if (cursor !== undefined && seenCursors.has(cursor)) {
+          // The page itself is valid Account state and stays admitted. Its
+          // promise of a page after itself returned to a position this walk
+          // already held, so settle this append through the ordinary retry
+          // state instead of offering an endless Load More that can only replay
+          // the same cursor cycle.
+          setPins(Object.freeze(collected));
+          setMore(true);
+          setUnavailableReason(null);
+          setAppendFailed(request.appending);
+          setReading(false);
+          return;
+        }
+        if (cursor !== undefined) seenCursors.add(cursor);
       } catch {
         if (superseded()) return;
         if (page === 0) {
