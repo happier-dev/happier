@@ -202,6 +202,8 @@ config.transformer.getTransformOptions = async () => ({
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+// Generated directory swaps briefly expose these paths before they are removed. Metro must not crawl them.
+const transientGeneratedDirectoriesBlockList = /[\\/](?:\.tmp\.[^\\/]+|dist\.__finalize_backup__\.[^\\/]+)(?:[\\/]|$)/;
 // CLI runtime snapshots are generated deployment artifacts, not application inputs. In stack runs,
 // Expo watches the CLI workspace and otherwise crawls every retained snapshot on each platform.
 const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:[\\/]|$)/;
@@ -211,10 +213,10 @@ const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
+  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, transientGeneratedDirectoriesBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList];
+    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, transientGeneratedDirectoriesBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList]
+    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, transientGeneratedDirectoriesBlockList, cliRunnerSnapshotsBlockList, workspaceNodeModulesBlockList];
 
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(
