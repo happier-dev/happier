@@ -46,6 +46,25 @@ class TermuxBackedRemoteSessionTest {
   }
 
   @Test
+  fun qaCrashInjectionUsesTheRealSessionRendererCrashCallback() {
+    val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "target-surface",
+      callbacks = TermuxRemoteSessionCallbacks(
+        "target-surface",
+        TermuxEventSink { eventName, payload -> events += eventName to payload },
+      ),
+    )
+
+    session.qaInjectRendererCrash()
+
+    val crash = events.single { (eventName) -> eventName == "rendererCrash" }.second
+    assertEquals("target-surface", crash["surfaceId"])
+    assertEquals("qa-injected-renderer-crash", crash["reason"])
+    assertEquals(true, crash["fatal"])
+  }
+
+  @Test
   fun osc52ClipboardWriteDoesNotReachJsButExplicitTouchRangeCopyDoes() {
     val events = mutableListOf<Pair<String, Map<String, Any?>>>()
     val session = TermuxBackedRemoteSession(
@@ -85,6 +104,71 @@ class TermuxBackedRemoteSessionTest {
       listOf("started", "changed", "ended", "copied", "cleared"),
       events.filter { (eventName) -> eventName == "selection" }.map { (_, payload) -> payload["state"] },
     )
+  }
+
+  @Test
+  fun accessibilitySelectAllAndOpenLinkUseCurrentTerminalContentAndHostEvents() {
+    val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "surface",
+      callbacks = TermuxRemoteSessionCallbacks(
+        "surface",
+        TermuxEventSink { eventName, payload -> events += eventName to payload },
+      ),
+    )
+
+    assertTrue(session.writeBytes("alpha https://example.test/path omega".toByteArray(), 0).accepted)
+    assertTrue(session.selectAll())
+    session.copySelection()
+    assertTrue(session.openAccessibleLink())
+
+    val copied = events.single { (eventName) -> eventName == "copy" }.second["text"] as String
+    assertTrue(copied.contains("alpha"))
+    assertTrue(copied.contains("https://example.test/path"))
+    assertEquals(
+      "https://example.test/path",
+      events.single { (eventName) -> eventName == "link" }.second["url"],
+    )
+  }
+
+  @Test
+  fun accessibilityOpenLinkRetainsBoundedOsc8MetadataThatTermuxOmitsFromRenderedText() {
+    val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "surface",
+      callbacks = TermuxRemoteSessionCallbacks(
+        "surface",
+        TermuxEventSink { eventName, payload -> events += eventName to payload },
+      ),
+    )
+
+    val first = "\u001b]8;;https://example.test/osc8"
+    val second = "\u0007linked label\u001b]8;;\u0007"
+    assertTrue(session.writeBytes(first.toByteArray(), 0).accepted)
+    assertTrue(session.writeBytes(second.toByteArray(), first.toByteArray().size.toLong()).accepted)
+    assertFalse(session.accessibilitySummary().orEmpty().contains("https://example.test/osc8"))
+    assertTrue(session.openAccessibleLink())
+
+    assertEquals(
+      "https://example.test/osc8",
+      events.single { (eventName) -> eventName == "link" }.second["url"],
+    )
+  }
+
+  @Test
+  fun accessibilityOpenLinkRejectsUnsafeOsc8Schemes() {
+    val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+    val session = TermuxBackedRemoteSession(
+      surfaceId = "surface",
+      callbacks = TermuxRemoteSessionCallbacks(
+        "surface",
+        TermuxEventSink { eventName, payload -> events += eventName to payload },
+      ),
+    )
+
+    assertTrue(session.writeBytes("\u001b]8;;javascript:alert(1)\u0007unsafe\u001b]8;;\u0007".toByteArray(), 0).accepted)
+    assertFalse(session.openAccessibleLink())
+    assertFalse(events.any { (eventName) -> eventName == "link" })
   }
 }
 

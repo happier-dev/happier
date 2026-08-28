@@ -194,6 +194,21 @@ describe('XtermWebViewSurface (native)', () => {
         expect(onInput).not.toHaveBeenCalled();
     });
 
+    it('forwards canonical selection-copy envelopes to the host', async () => {
+        const onCopySelection = vi.fn();
+        await renderScreen(React.createElement(XtermWebViewSurface, {
+            fontSize: 12,
+            lineHeightPx: 18,
+            onInput: vi.fn(),
+            onCopySelection,
+            onResize: vi.fn(),
+            onReady: vi.fn(),
+        }));
+
+        emitEnvelope({ v: 1, type: 'copySelection', payload: { text: 'selected output' } });
+        expect(onCopySelection).toHaveBeenCalledWith('selected output');
+    });
+
     it('opts into native keyboard focus and requests WebView focus for ready and focus transitions', async () => {
         postMessageSpy.mockClear();
         requestFocusSpy.mockClear();

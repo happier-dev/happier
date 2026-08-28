@@ -1,4 +1,8 @@
 import { XTERM_WEBVIEW_BUNDLE_JS, XTERM_WEBVIEW_CSS } from './xtermWebViewAssets.generated';
+import {
+    buildTerminalRendererInteractionContract,
+    type TerminalRendererInteractionContract,
+} from '@/components/terminal/interaction/rendererContract';
 
 export type XtermWebViewTheme = Readonly<{
     backgroundColor: string;
@@ -19,6 +23,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
     lineHeightPx: number;
     maxChunkBytes: number;
     allowCdnFallback: boolean;
+    interactionContract?: TerminalRendererInteractionContract;
 }>): string {
     const maxChunkBytes = clampNumber(params.maxChunkBytes, 64_000, 8_000, 256_000);
     const fontSizePx = clampNumber(params.fontSizePx, 13, 8, 40);
@@ -26,6 +31,9 @@ export function buildXtermWebViewHtml(params: Readonly<{
     const lineHeight = clampNumber(lineHeightPx / Math.max(1, fontSizePx), 1.35, 1, 2.5);
 
     const themeJson = JSON.stringify(params.theme);
+    const interactionContractJson = JSON.stringify(
+        params.interactionContract ?? buildTerminalRendererInteractionContract('xterm-webview'),
+    );
 
     const embeddedBundle = typeof XTERM_WEBVIEW_BUNDLE_JS === 'string' ? XTERM_WEBVIEW_BUNDLE_JS.trim() : '';
     const embeddedCss = typeof XTERM_WEBVIEW_CSS === 'string' ? XTERM_WEBVIEW_CSS.trim() : '';
@@ -71,6 +79,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
         fontSizePx: ${Math.round(fontSizePx)},
         lineHeight: ${lineHeight},
       };
+      const INTERACTION_POLICY = ${interactionContractJson};
       const INITIAL_READY_FIT_DELAY_MS = 20;
       const READY_FIT_RETRY_INTERVAL_MS = 50;
       const READY_FIT_RETRY_LIMIT = 30;
@@ -494,7 +503,7 @@ export function buildXtermWebViewHtml(params: Readonly<{
           fontSize: DEFAULT_CONFIG.fontSizePx,
           lineHeight: DEFAULT_CONFIG.lineHeight,
           scrollback: 5000,
-          screenReaderMode: true,
+          screenReaderMode: INTERACTION_POLICY.screenReaderMode === true,
           theme: {
             background: DEFAULT_CONFIG.theme.backgroundColor,
             foreground: DEFAULT_CONFIG.theme.textColor,
@@ -505,6 +514,13 @@ export function buildXtermWebViewHtml(params: Readonly<{
 
         fitAddon = new mod.FitAddon();
         term.loadAddon(fitAddon);
+        if (term.parser && typeof term.parser.registerOscHandler === 'function') {
+          term.parser.registerOscHandler(52, () => INTERACTION_POLICY.osc52Clipboard !== 'allow-session');
+          term.parser.registerOscHandler(1337, () => INTERACTION_POLICY.unsupportedRichProtocols.includes('iterm2-images'));
+        }
+        if (term.parser && typeof term.parser.registerDcsHandler === 'function') {
+          term.parser.registerDcsHandler({ final: 'q' }, () => INTERACTION_POLICY.unsupportedRichProtocols.includes('sixel'));
+        }
         try {
           if (mod.WebLinksAddon) {
             term.loadAddon(new mod.WebLinksAddon((event, uri) => {
@@ -520,9 +536,12 @@ export function buildXtermWebViewHtml(params: Readonly<{
         } catch {}
 
         term.open(root);
-        root.addEventListener('pointerdown', focusTerminal, { capture: true, passive: true });
-        root.addEventListener('touchstart', focusTerminal, { capture: true, passive: true });
-        root.addEventListener('mousedown', focusTerminal, { capture: true, passive: true });
+        const focusTerminalWhenAllowed = () => {
+          if (INTERACTION_POLICY.mouseCaptureEnabled === true) focusTerminal();
+        };
+        root.addEventListener('pointerdown', focusTerminalWhenAllowed, { capture: true, passive: true });
+        root.addEventListener('touchstart', focusTerminalWhenAllowed, { capture: true, passive: true });
+        root.addEventListener('mousedown', focusTerminalWhenAllowed, { capture: true, passive: true });
         root.addEventListener('paste', (event) => {
           const data = event && event.clipboardData ? event.clipboardData.getData('text/plain') : '';
           if (!data) return;
@@ -530,8 +549,19 @@ export function buildXtermWebViewHtml(params: Readonly<{
           event.stopPropagation();
           sendEnvelope({ v: 1, type: 'paste', payload: { text: data } });
         }, true);
+        term.attachCustomKeyEventHandler((event) => {
+          if (!event || event.type !== 'keydown') return true;
+          const key = String(event.key || '').toLowerCase();
+          const isCopy = (event.ctrlKey || event.metaKey) && key === 'c';
+          if (INTERACTION_POLICY.hostCopyShortcuts !== true || !isCopy || !term.hasSelection()) return true;
+          event.preventDefault();
+          event.stopPropagation();
+          const text = term.getSelection();
+          if (text) sendEnvelope({ v: 1, type: 'copySelection', payload: { text } });
+          return false;
+        });
         term.onData((data) => {
-          if (typeof data === 'string' && data) {
+          if (INTERACTION_POLICY.committedImeOnly === true && typeof data === 'string' && data) {
             sendEnvelope({ v: 1, type: 'input', payload: { data } });
           }
         });

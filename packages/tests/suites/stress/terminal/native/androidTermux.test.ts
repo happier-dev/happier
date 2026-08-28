@@ -22,6 +22,7 @@ describe('stress: Android Termux device recipe contract', () => {
       'selection-copy',
       'renderer-crash-fallback',
       'background-resume',
+      'resize-orientation',
     ]));
     expect(() => assertTerminalNativeDeviceRecipeCoverage(recipe)).not.toThrow();
   });

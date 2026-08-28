@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ import {
   buildTerminalBenchReportCliOutput,
   buildTerminalBenchRun,
   parseTerminalBenchArgs,
+  readTerminalBenchReport,
   writeTerminalBenchReport,
 } from './benchCli';
 import { buildTerminalBenchmarkReport, summarizeTerminalSample } from './report';
@@ -53,6 +54,7 @@ describe('terminal bench CLI helpers', () => {
 
     expect(first.samples).toHaveLength(2);
     expect(first.suite).toBe('terminal-canonical-base64-framing');
+    expect(first.measurementScope).toBe('transport-codec');
     expect(first.samples.every((sample) => sample.renderer === 'canonical-base64-codec')).toBe(true);
     expect(first.totals.decodedBytes).toBe(second.totals.decodedBytes);
     expect(first.samples.map((sample) => sample.loss)).toEqual(second.samples.map((sample) => sample.loss));
@@ -70,6 +72,7 @@ describe('terminal bench CLI helpers', () => {
     const baselinePath = join(dir, 'baseline.json');
     const candidatePath = join(dir, 'candidate.json');
     const baseline = buildTerminalBenchmarkReport({
+      measurementScope: 'transport-codec',
       suite: 'terminal-foundation',
       startedAt: '2026-06-13T10:00:00.000Z',
       endedAt: '2026-06-13T10:00:01.000Z',
@@ -84,6 +87,7 @@ describe('terminal bench CLI helpers', () => {
       ],
     });
     const candidate = buildTerminalBenchmarkReport({
+      measurementScope: 'transport-codec',
       suite: 'terminal-foundation',
       startedAt: '2026-06-13T10:00:00.000Z',
       endedAt: '2026-06-13T10:00:01.000Z',
@@ -109,5 +113,15 @@ describe('terminal bench CLI helpers', () => {
         '0.5',
       ]),
     ).toContain('terminal benchmark comparison: passed');
+  });
+
+  it('classifies legacy codec-only reports without claiming renderer measurements', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'terminal-bench-legacy-'));
+    const reportPath = join(dir, 'legacy.json');
+    const report = buildTerminalBenchRun({ workloads: ['ansi-burst'], now: () => 1_000 });
+    const { measurementScope: _measurementScope, ...legacy } = report;
+    writeFileSync(reportPath, `${JSON.stringify(legacy)}\n`, 'utf8');
+
+    expect(readTerminalBenchReport(reportPath).measurementScope).toBe('transport-codec');
   });
 });

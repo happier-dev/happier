@@ -177,6 +177,7 @@ export function buildTerminalBenchRun(params: Readonly<{
 
   const endedAtMs = now();
   return buildTerminalBenchmarkReport({
+    measurementScope: 'transport-codec',
     suite: 'terminal-canonical-base64-framing',
     startedAt: new Date(startedAtMs).toISOString(),
     endedAt: new Date(endedAtMs).toISOString(),
@@ -192,7 +193,19 @@ export function writeTerminalBenchReport(report: TerminalBenchmarkReport, outPat
 }
 
 export function readTerminalBenchReport(path: string): TerminalBenchmarkReport {
-  return JSON.parse(readFileSync(path, 'utf8')) as TerminalBenchmarkReport;
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as TerminalBenchmarkReport;
+  const samples = parsed.samples.map((sample) => ({
+    ...sample,
+    timingBoundary: sample.timingBoundary ?? 'parser-write-complete',
+    observationSource: sample.observationSource ?? 'transport-process',
+  }));
+  if (parsed.measurementScope === 'transport-codec' || parsed.measurementScope === 'renderer') {
+    return { ...parsed, samples };
+  }
+  const inferredScope = samples.every((sample) => sample.renderer === 'canonical-base64-codec')
+    ? 'transport-codec'
+    : 'renderer';
+  return { ...parsed, samples, measurementScope: inferredScope };
 }
 
 function parseCompareArgs(args: readonly string[]): Readonly<{

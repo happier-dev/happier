@@ -14,6 +14,12 @@ class HappierTerminalNativeModule : Module() {
       return@Function TermuxBridge.availability()
     }
 
+    Function("getQaCapabilities") {
+      return@Function mapOf(
+        "rendererCrashInjection" to BuildConfig.HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION,
+      )
+    }
+
     Function("getAndroidTermuxDiagnostics") {
       val diagnostic = TermuxBridge.diagnostic()
       return@Function mapOf(
@@ -23,6 +29,7 @@ class HappierTerminalNativeModule : Module() {
         "detail" to diagnostic.detail,
         "fallbackRenderer" to diagnostic.fallbackRenderer,
         "fallbackRequired" to diagnostic.fallbackRequired,
+        "engineeringQaOverride" to diagnostic.engineeringQaOverride,
         "requiredModules" to diagnostic.requiredModules,
         "forbiddenModules" to diagnostic.forbiddenModules,
         "remoteSessionAdapterRequired" to diagnostic.remoteSessionAdapterRequired,
@@ -34,6 +41,10 @@ class HappierTerminalNativeModule : Module() {
       return@AsyncFunction TermuxBridge.createSurface(surfaceId) { eventName, payload ->
         sendEvent(eventName, payload)
       }
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("qaInjectRendererCrash") { surfaceId: String ->
+      return@AsyncFunction TermuxBridge.qaInjectRendererCrash(surfaceId)
     }.runOnQueue(Queues.MAIN)
 
     AsyncFunction("writeBytes") { surfaceId: String, base64Bytes: String, byteOffset: Double ->
@@ -101,6 +112,14 @@ class HappierTerminalNativeModule : Module() {
 
       Prop("accessibilityCopySelectionActionLabel") { view: TermuxView, label: String ->
         view.setAccessibilityCopySelectionActionLabel(label)
+      }
+
+      Prop("accessibilitySelectAllActionLabel") { view: TermuxView, label: String ->
+        view.setAccessibilitySelectAllActionLabel(label)
+      }
+
+      Prop("accessibilityOpenLinkActionLabel") { view: TermuxView, label: String ->
+        view.setAccessibilityOpenLinkActionLabel(label)
       }
     }
 

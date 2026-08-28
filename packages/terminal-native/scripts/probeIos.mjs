@@ -294,7 +294,7 @@ async function main() {
     gates,
     requiredGates: rendererPolicy.iosGhostty.gates,
     remediation: [
-      'Provide a pinned/checksummed libghostty-spm GhosttyKit.xcframework or trigger the direct Ghostty build escape hatch.',
+      'Provide the pinned/checksummed libghostty-spm GhosttyKit.xcframework. If that supply path is unusable, stop and open the unimplemented direct-source-build contingency packet.',
       'Keep xterm WebView selected until package, crash fallback, and accessibility gates pass.',
     ],
     referenceImplementations: rendererPolicy.iosGhostty.referenceImplementations,

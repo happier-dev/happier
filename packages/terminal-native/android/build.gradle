@@ -6,7 +6,8 @@ plugins {
 group = 'dev.happier.terminal'
 version = '0.0.0'
 
-def termuxPolicy = new groovy.json.JsonSlurper().parse(file("../native-renderers.json")).androidTermux
+def rendererPolicy = new groovy.json.JsonSlurper().parse(file("../native-renderers.json"))
+def termuxPolicy = rendererPolicy.androidTermux
 def termuxVendorDir = file("termux/vendor")
 def termuxSourceMetadataFile = file("termux/vendor/TERMUX-SOURCE.json")
 def termuxSourceMetadata = termuxSourceMetadataFile.exists()
@@ -41,10 +42,19 @@ def readBooleanGate = { String name ->
 
 def dependencyClosureApproved = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED")
 def legalAccepted = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED")
+def appEnvironment = (System.getenv("APP_ENV") ?: "").trim().toLowerCase(java.util.Locale.ROOT)
+def engineeringQaAllowedAppEnvironments = (rendererPolicy.engineeringQa.allowedAppEnvironments ?: [])
+  .collect { it.toString().trim().toLowerCase(java.util.Locale.ROOT) }
+  .toSet()
+def internalEngineeringBuild = engineeringQaAllowedAppEnvironments.contains(appEnvironment)
+def engineeringQaOverride = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA") &&
+  internalEngineeringBuild
 def gradleBuildProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN")
 def abiSmokePassed = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED")
 def crashFallbackProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN")
 def accessibilityNative = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE")
+def qaCrashInjectionEnabled = readBooleanGate("HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION") &&
+  internalEngineeringBuild
 
 if (termuxVendorDir.exists()) {
   ["app", "termux-shared"].each { moduleName ->
@@ -66,10 +76,12 @@ android {
     buildConfigField "String", "HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_STATUS", hasTermuxSource ? "\"present\"" : "\"missing\""
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED", dependencyClosureApproved ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED", legalAccepted ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA", engineeringQaOverride ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN", gradleBuildProven ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED", abiSmokePassed ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN", crashFallbackProven ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE", accessibilityNative ? "true" : "false"
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION", qaCrashInjectionEnabled ? "true" : "false"
   }
 
   buildFeatures {

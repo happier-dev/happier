@@ -59,6 +59,7 @@ process.stdout.write(`${JSON.stringify({
   },
   requiredGates: termuxPolicy.gates,
   license: termuxPolicy.license,
+  approvalBoundary: termuxPolicy.approvalBoundary,
   remediation: available
     ? [
       accessibility === 'native'

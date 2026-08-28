@@ -58,6 +58,10 @@ export {
   normalizeTerminalNativeSurfaceMetrics,
   normalizeTerminalNativeWriteResult,
 } from './surface';
+export {
+  getTerminalNativeQaCapabilities,
+  injectTerminalNativeRendererCrashForQa,
+} from './qa';
 export type { TerminalNativeAvailabilityDiagnostic } from './availability';
 export type {
   AndroidTermuxDiagnosticBlocker,
@@ -67,3 +71,7 @@ export type {
   AndroidTermuxRendererDiagnostic,
   AndroidTermuxSourceStrategy,
 } from './androidTermux';
+export type {
+  TerminalNativeQaCapabilities,
+  TerminalNativeQaRendererCrashInjectionResult,
+} from './HappierTerminalNative.types';

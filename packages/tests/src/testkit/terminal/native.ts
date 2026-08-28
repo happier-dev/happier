@@ -11,6 +11,7 @@ export const TERMINAL_NATIVE_DEVICE_ACTION_IDS = [
   'selection-copy',
   'renderer-crash-fallback',
   'background-resume',
+  'resize-orientation',
 ] as const;
 
 export type TerminalNativeDeviceActionId = typeof TERMINAL_NATIVE_DEVICE_ACTION_IDS[number];

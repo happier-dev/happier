@@ -26,6 +26,8 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private var accessibilityFallbackValue = ""
   private var accessibilityFocusActionLabel = ""
   private var accessibilityCopySelectionActionLabel = ""
+  private var accessibilitySelectAllActionLabel = ""
+  private var accessibilityOpenLinkActionLabel = ""
   private var accessibilityRefreshPosted = false
   private val surfaceInvalidator: () -> Unit = {
     postInvalidateOnAnimation()
@@ -104,6 +106,16 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   fun setAccessibilityCopySelectionActionLabel(label: String) {
     accessibilityCopySelectionActionLabel = label.trim()
+    notifyAccessibilityActionsChanged()
+  }
+
+  fun setAccessibilitySelectAllActionLabel(label: String) {
+    accessibilitySelectAllActionLabel = label.trim()
+    notifyAccessibilityActionsChanged()
+  }
+
+  fun setAccessibilityOpenLinkActionLabel(label: String) {
+    accessibilityOpenLinkActionLabel = label.trim()
     notifyAccessibilityActionsChanged()
   }
 
@@ -224,23 +236,38 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
 
   override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
     super.onInitializeAccessibilityNodeInfo(info)
-    if (surfaceId.isBlank()) return
+    if (!accessibilityAccepted || surfaceId.isBlank()) return
     if (accessibilityFocusActionLabel.isNotBlank()) {
       info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_FOCUS_TERMINAL, accessibilityFocusActionLabel))
     }
     if (accessibilityCopySelectionActionLabel.isNotBlank()) {
       info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_COPY_SELECTION, accessibilityCopySelectionActionLabel))
     }
+    if (accessibilitySelectAllActionLabel.isNotBlank()) {
+      info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_SELECT_ALL, accessibilitySelectAllActionLabel))
+    }
+    if (accessibilityOpenLinkActionLabel.isNotBlank()) {
+      info.addAction(AccessibilityNodeInfo.AccessibilityAction(ACTION_OPEN_LINK, accessibilityOpenLinkActionLabel))
+    }
   }
 
   override fun performAccessibilityAction(action: Int, arguments: Bundle?): Boolean {
-    if (surfaceId.isNotBlank() && action == ACTION_FOCUS_TERMINAL) {
+    if (!accessibilityAccepted || surfaceId.isBlank()) {
+      return super.performAccessibilityAction(action, arguments)
+    }
+    if (action == ACTION_FOCUS_TERMINAL) {
       requestTerminalFocus(showKeyboard = true)
       return true
     }
-    if (surfaceId.isNotBlank() && action == ACTION_COPY_SELECTION) {
+    if (action == ACTION_COPY_SELECTION) {
       TermuxBridge.copySelection(surfaceId)
       return true
+    }
+    if (action == ACTION_SELECT_ALL) {
+      return TermuxBridge.selectAll(surfaceId)
+    }
+    if (action == ACTION_OPEN_LINK) {
+      return TermuxBridge.openAccessibleLink(surfaceId)
     }
     return super.performAccessibilityAction(action, arguments)
   }
@@ -253,6 +280,13 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   }
 
   private fun refreshAccessibility() {
+    if (!accessibilityAccepted) {
+      importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+      contentDescription = null
+      notifyAccessibilityActionsChanged()
+      return
+    }
+    importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     val value = if (accessibilitySummary.isNotBlank()) {
       accessibilitySummary
     } else if (surfaceId.isNotBlank()) {
@@ -302,5 +336,7 @@ class TermuxView(context: Context, appContext: AppContext) : ExpoView(context, a
   private companion object {
     const val ACTION_FOCUS_TERMINAL = 0x01020001
     const val ACTION_COPY_SELECTION = 0x01020002
+    const val ACTION_SELECT_ALL = 0x01020003
+    const val ACTION_OPEN_LINK = 0x01020004
   }
 }

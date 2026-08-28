@@ -41,3 +41,11 @@ export {
   terminalInputEventToPtyAction,
   type TerminalInputPtyAction,
 } from './inputEncoding.js';
+
+export {
+  TERMINAL_LEGACY_STREAM_COMPATIBILITY,
+  isTerminalLegacyCompatibilitySunsetReached,
+  isTerminalLegacyClientFallbackAllowed,
+  isWindowsTerminalProviderLegacyFallbackAllowed,
+  type TerminalPeerByteStreamCapability,
+} from './compatibility.js';

@@ -119,6 +119,7 @@ export const TerminalStreamReadRequestSchema = z
   .object({
     terminalId: TerminalIdSchema,
     byteOffset: ByteOffsetSchema,
+    controlCursor: ByteOffsetSchema.optional(),
     ackedByteOffset: ByteOffsetSchema.optional(),
     creditBytes: z.number().int().min(0).max(TERMINAL_STREAM_MAX_READ_BYTES).optional(),
     maxBytes: z.number().int().min(1).max(TERMINAL_STREAM_MAX_READ_BYTES).optional(),
@@ -146,6 +147,7 @@ export const TerminalStreamReadOkResponseSchema = z
     nextByteOffset: ByteOffsetSchema,
     availableByteOffset: ByteOffsetSchema,
     droppedBeforeByteOffset: ByteOffsetSchema,
+    nextControlCursor: ByteOffsetSchema.optional(),
     done: z.boolean(),
   })
   .strict()

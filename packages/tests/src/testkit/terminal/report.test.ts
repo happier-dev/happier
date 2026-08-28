@@ -54,6 +54,7 @@ describe('terminal benchmark reports', () => {
     });
 
     expect(report.totals.decodedBytes).toBe(3072);
+    expect(report.measurementScope).toBe('renderer');
     expect(report.totals.samples).toBe(2);
     expect(report.totals.loss).toEqual({ gaps: 0, truncations: 0, droppedFrames: 0 });
     expect(report.durationMs).toBe(2000);
@@ -96,6 +97,7 @@ describe('terminal benchmark reports', () => {
     });
 
     expect(formatTerminalBenchmarkReportSummary(report)).toContain('terminal-foundation: 1 sample');
+    expect(formatTerminalBenchmarkReportSummary(report)).toContain('scope=renderer');
     expect(formatTerminalBenchmarkReportSummary(report)).toContain('decoded=1024');
   });
 
@@ -141,5 +143,24 @@ describe('terminal benchmark reports', () => {
       'lossEvents',
     ]);
     expect(formatTerminalBenchmarkComparisonSummary(comparison)).toContain('failed');
+  });
+
+  it('refuses to compare transport-codec throughput with renderer throughput', () => {
+    const transport = buildTerminalBenchmarkReport({
+      measurementScope: 'transport-codec',
+      suite: 'transport',
+      startedAt: '2026-06-13T10:00:00.000Z',
+      endedAt: '2026-06-13T10:00:01.000Z',
+      samples: [],
+    });
+    const renderer = buildTerminalBenchmarkReport({
+      measurementScope: 'renderer',
+      suite: 'renderer',
+      startedAt: '2026-06-13T10:00:00.000Z',
+      endedAt: '2026-06-13T10:00:01.000Z',
+      samples: [],
+    });
+
+    expect(() => compareTerminalBenchmarkReports(transport, renderer)).toThrow(/scope mismatch/i);
   });
 });

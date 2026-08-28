@@ -16,6 +16,8 @@ export type TermuxTerminalSurfaceProps = Omit<TerminalNativeSurfaceProps, 'onUna
     | 'accessibilityFallbackValue'
     | 'accessibilityFocusActionLabel'
     | 'accessibilityCopySelectionActionLabel'
+    | 'accessibilitySelectAllActionLabel'
+    | 'accessibilityOpenLinkActionLabel'
     | 'onWriteComplete'
     | 'testID'
 >;

@@ -79,6 +79,14 @@ function deriveServerIdFromUrl(url: string): string {
   return `env_${(h >>> 0).toString(16)}`;
 }
 
+export function sanitizeCliTerminalConnectEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized = { ...env };
+  delete sanitized.HAPPIER_ACTIVE_SERVER_ID;
+  delete sanitized.HAPPIER_DAEMON_SERVICE_INSTANCE_ID;
+  delete sanitized.HAPPIER_DAEMON_SERVICE_SERVER_URL;
+  return sanitized;
+}
+
 async function ensureActiveServerSelection(params: Readonly<{
   cliHomeDir: string;
   serverUrl: string;
@@ -244,6 +252,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   env: NodeJS.ProcessEnv;
   cliLaunchSpec?: CliTestLaunchSpec;
 }>): Promise<StartedCliTerminalConnect> {
+  const sanitizedEnv = sanitizeCliTerminalConnectEnv(params.env);
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
     await sweepProcessOwnershipLeases({
@@ -258,7 +267,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   const cliLaunchSpec = await resolveCliTestLaunchSpecOrOverride(
     params.cliLaunchSpec,
     () => resolveCliTestLaunchSpec(
-      { testDir: params.testDir, env: params.env },
+      { testDir: params.testDir, env: sanitizedEnv },
       { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
     ),
   );
@@ -269,6 +278,11 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     webappUrl: params.webappUrl,
   });
 
+  const processEnv = sanitizeCliTerminalConnectEnv({
+    ...sanitizedEnv,
+    ...(cliLaunchSpec.env ?? {}),
+  });
+
   const stdoutPath = resolvePath(params.testDir, 'cli.auth.login.stdout.log');
   const stderrPath = resolvePath(params.testDir, 'cli.auth.login.stderr.log');
 
@@ -277,8 +291,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     args: [...cliLaunchSpec.args, 'auth', 'login', '--force', '--no-open', '--method', 'web'],
     cwd: cliLaunchSpec.cwd ?? repoRootDir(),
     env: {
-      ...params.env,
-      ...(cliLaunchSpec.env ?? {}),
+      ...processEnv,
       CI: '1',
       HAPPIER_SESSION_AUTOSTART_DAEMON: '0',
       HAPPIER_HOME_DIR: params.cliHomeDir,
@@ -318,7 +331,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     });
     await redactTerminalConnectKeysInFile(stdoutPath);
     if (params.waitForConnectUrlReady !== false) {
-      connectUrl = await waitForTerminalConnectUrlReady(connectUrl, params.env);
+      connectUrl = await waitForTerminalConnectUrlReady(connectUrl, sanitizedEnv);
     }
   } catch (e) {
     await proc.stop().catch(() => {});

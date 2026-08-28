@@ -20,6 +20,7 @@ import dev.happier.terminal.makeTermuxBridgeDiagnostic
 import dev.happier.terminal.makeTermuxTextInputBytes
 import dev.happier.terminal.requireTermuxMainThread
 import java.net.URI
+import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.CancellationException
 
@@ -47,6 +48,8 @@ class TermuxBackedRemoteSession(
   private var selectionStartRow = -1
   private var selectionEndColumn = -1
   private var selectionEndRow = -1
+  private val accessibleLinkCandidates = ArrayDeque<String>()
+  private var linkScanCarry = ""
 
   private val output: TerminalOutput = object : TerminalOutput() {
     override fun write(data: ByteArray, offset: Int, count: Int) {
@@ -160,6 +163,7 @@ class TermuxBackedRemoteSession(
     if (byteOffset < 0) return rejected("invalid-ack", "byteOffset must be non-negative.")
 
     return try {
+      trackAccessibleLinks(bytes)
       emulator.append(bytes, bytes.size)
       val nextOffset = byteOffset + bytes.size
       callbacks.emitWriteAck(nextOffset)
@@ -364,6 +368,8 @@ class TermuxBackedRemoteSession(
     requireTermuxMainThread()
     emulator.reset()
     topRow = 0
+    accessibleLinkCandidates.clear()
+    linkScanCarry = ""
     emitSurfaceReady()
   }
 
@@ -376,13 +382,45 @@ class TermuxBackedRemoteSession(
     clearSelection()
   }
 
+  override fun selectAll(): Boolean {
+    requireTermuxMainThread()
+    if (disposed) return false
+    val lastVisibleRow = minOf(emulator.mRows - 1, topRow + rows - 1)
+    val selected = currentViewportText()
+    if (selected.isEmpty()) return false
+
+    selectionStartColumn = 0
+    selectionStartRow = topRow
+    selectionEndColumn = maxOf(0, emulator.mColumns - 1)
+    selectionEndRow = lastVisibleRow
+    callbacks.emitSelectionState("started")
+    callbacks.emitSelectionState("changed", selected)
+    callbacks.emitSelectionState("ended", selected)
+    emitSurfaceReady()
+    return true
+  }
+
+  override fun openAccessibleLink(): Boolean {
+    requireTermuxMainThread()
+    if (disposed) return false
+    val candidate = currentViewportText()
+      .splitToSequence(Regex("\\s+"))
+      .mapNotNull(::extractHttpUrlCandidate)
+      .firstOrNull()
+      ?: accessibleLinkCandidates.lastOrNull()
+      ?: return false
+    callbacks.emitLink(candidate, text = candidate)
+    return true
+  }
+
+  override fun qaInjectRendererCrash() {
+    requireTermuxMainThread()
+    callbacks.emitRendererCrash("qa-injected-renderer-crash")
+  }
+
   override fun accessibilitySummary(): String? {
     requireTermuxMainThread()
-    return try {
-      emulator.getScreen().getSelectedText(0, 0, emulator.mColumns, emulator.mRows).toString().trim()
-    } catch (_: Throwable) {
-      null
-    }
+    return currentViewportText()
   }
 
   override fun draw(canvas: Canvas, width: Int, height: Int, fontSize: Float) {
@@ -414,6 +452,21 @@ class TermuxBackedRemoteSession(
   override fun dispose() {
     requireTermuxMainThread()
     disposed = true
+    accessibleLinkCandidates.clear()
+    linkScanCarry = ""
+  }
+
+  private fun trackAccessibleLinks(bytes: ByteArray) {
+    val combined = linkScanCarry + bytes.toString(Charsets.ISO_8859_1)
+    OSC8_LINK_PATTERN.findAll(combined).forEach { match ->
+      val candidate = extractHttpUrlCandidate(match.groupValues[1]) ?: return@forEach
+      accessibleLinkCandidates.remove(candidate)
+      accessibleLinkCandidates.addLast(candidate)
+      while (accessibleLinkCandidates.size > MAX_ACCESSIBLE_LINK_CANDIDATES) {
+        accessibleLinkCandidates.removeFirst()
+      }
+    }
+    linkScanCarry = combined.takeLast(OSC8_LINK_SCAN_CARRY_LENGTH)
   }
 
   private fun selectedText(): String {
@@ -429,6 +482,20 @@ class TermuxBackedRemoteSession(
         if (startRow == endRow) maxOf(startColumn, endColumn) else endColumn,
         endRow,
       ).toString()
+    } catch (_: Throwable) {
+      ""
+    }
+  }
+
+  private fun currentViewportText(): String {
+    val lastVisibleRow = minOf(emulator.mRows - 1, topRow + rows - 1)
+    return try {
+      emulator.getScreen().getSelectedText(
+        0,
+        topRow,
+        maxOf(0, emulator.mColumns - 1),
+        lastVisibleRow,
+      ).toString().trim()
     } catch (_: Throwable) {
       ""
     }
@@ -623,5 +690,8 @@ private fun TerminalRenderer.fontLineSpacingCompat(): Int = getFontLineSpacing()
 
 private const val KEY_EVENT_SOURCE_SOFT_KEYBOARD = 0
 private const val MAX_LINK_CANDIDATE_LENGTH = 2048
+private const val MAX_ACCESSIBLE_LINK_CANDIDATES = 32
+private const val OSC8_LINK_SCAN_CARRY_LENGTH = MAX_LINK_CANDIDATE_LENGTH + 128
+private val OSC8_LINK_PATTERN = Regex("\\u001B]8;[^;\\u0007\\u001B]*;([^\\u0007\\u001B]*)(?:\\u0007|\\u001B\\\\)")
 private val LEADING_LINK_PUNCTUATION = setOf('<', '(', '[', '{', '"', '\'')
 private val TRAILING_LINK_PUNCTUATION = setOf('.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'')

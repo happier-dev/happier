@@ -19,6 +19,8 @@ const openSpy = vi.fn();
 const attachCustomKeyEventHandlerSpy = vi.fn();
 const onDataSpy = vi.fn();
 const disposeSpy = vi.fn();
+const registerOscHandlerSpy = vi.fn(() => ({ dispose: vi.fn() }));
+const registerDcsHandlerSpy = vi.fn(() => ({ dispose: vi.fn() }));
 let webLinksHandler: ((event: MouseEvent, uri: string) => void) | null = null;
 let renderServiceRendererValue: unknown = {};
 const terminalConstructorOptions: Record<string, unknown>[] = [];
@@ -57,6 +59,10 @@ class MockTerminal {
     element: HTMLElement | null = null;
     textarea: HTMLTextAreaElement | null = null;
     disposed = false;
+    parser = {
+        registerOscHandler: registerOscHandlerSpy,
+        registerDcsHandler: registerDcsHandlerSpy,
+    };
     _core = {
         viewport: {
             syncScrollArea: () => {
@@ -174,6 +180,8 @@ describe('XtermTerminalView.web', () => {
         attachCustomKeyEventHandlerSpy.mockReset();
         onDataSpy.mockReset();
         disposeSpy.mockReset();
+        registerOscHandlerSpy.mockClear();
+        registerDcsHandlerSpy.mockClear();
         webLinksHandler = null;
         renderServiceRendererValue = {};
         terminalConstructorOptions.length = 0;
@@ -337,6 +345,8 @@ describe('XtermTerminalView.web', () => {
         expect(fitSpy).toHaveBeenCalled();
         expect(onResize).toHaveBeenCalledWith(80, 24);
         expect(onReady).toHaveBeenCalledWith(80, 24);
+        expect(container.querySelector('[data-testid="terminal"]')?.getAttribute('data-happier-terminal-cols')).toBe('80');
+        expect(container.querySelector('[data-testid="terminal"]')?.getAttribute('data-happier-terminal-rows')).toBe('24');
     });
 
     it('enables xterm screen reader DOM mode in the web surface', async () => {
@@ -357,6 +367,28 @@ describe('XtermTerminalView.web', () => {
         expect(terminalConstructorOptions[0]).toEqual(
             expect.objectContaining({ screenReaderMode: true }),
         );
+        expect(registerOscHandlerSpy).toHaveBeenCalledWith(52, expect.any(Function));
+        expect(registerOscHandlerSpy).toHaveBeenCalledWith(1337, expect.any(Function));
+        expect(registerDcsHandlerSpy).toHaveBeenCalledWith({ final: 'q' }, expect.any(Function));
+        expect(registerOscHandlerSpy.mock.calls.find(([id]) => id === 52)?.[1]('clipboard')).toBe(true);
+    });
+
+    it('routes xterm committed input through the canonical IME boundary', async () => {
+        const { XtermTerminalView } = await import('./XtermTerminalView.web');
+        const onInput = vi.fn();
+        await act(async () => {
+            root.render(
+                <XtermTerminalView
+                    testID="terminal"
+                    fontSize={14}
+                    onInput={onInput}
+                    onResize={() => {}}
+                    onReady={() => {}}
+                />,
+            );
+        });
+        onDataSpy('文');
+        expect(onInput).toHaveBeenCalledWith('文');
     });
 
     it('writes byte chunks to xterm as Uint8Array without decoding high-bit bytes', async () => {

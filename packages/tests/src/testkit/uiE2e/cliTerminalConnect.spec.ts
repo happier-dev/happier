@@ -79,6 +79,7 @@ vi.mock('../waitForRegexInFile', async () => {
 
 import {
     resolveCliTerminalConnectOwnershipLeasesDir,
+    sanitizeCliTerminalConnectEnv,
     startCliAuthLoginForTerminalConnect,
 } from './cliTerminalConnect';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
@@ -103,6 +104,17 @@ function readProcessStartTime(pid: number): string {
     }
     return String(res.stdout ?? '').trim();
 }
+
+describe('sanitizeCliTerminalConnectEnv', () => {
+    it('strips ambient server-selection overrides while preserving unrelated harness env', () => {
+        expect(sanitizeCliTerminalConnectEnv({
+            PATH: '/usr/bin',
+            HAPPIER_ACTIVE_SERVER_ID: 'ambient-server',
+            HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'ambient-instance',
+            HAPPIER_DAEMON_SERVICE_SERVER_URL: 'https://ambient.invalid',
+        })).toEqual({ PATH: '/usr/bin' });
+    });
+});
 
 describe('startCliAuthLoginForTerminalConnect', () => {
     it('launches the CLI from the resolved snapshot cwd', async () => {

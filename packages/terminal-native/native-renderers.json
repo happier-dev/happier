@@ -1,4 +1,29 @@
 {
+  "engineeringQa": {
+    "allowedAppEnvironments": [
+      "internaldev",
+      "internalpreview"
+    ],
+    "semantics": "Engineering QA and native crash injection are build-only capabilities allowed exclusively for the explicit internal APP_ENV allowlist. Missing, unknown, publicdev, preview, and production environments fail closed, and engineering QA never constitutes legal/product release approval."
+  },
+  "deviceEvidence": {
+    "schemaVersion": 2,
+    "allowedApplicationIds": {
+      "ios": [
+        "dev.happier.app.dev.internal",
+        "dev.happier.app.dev.internal.devclient",
+        "dev.happier.app.internalpreview"
+      ],
+      "android": [
+        "dev.happier.app.internaldev",
+        "dev.happier.app.internaldev.devclient",
+        "dev.happier.app.internalpreview"
+      ]
+    },
+    "approvalAuthoritiesPath": "release-approval-authorities.json",
+    "captureAuthoritiesPath": "device-evidence-capture-authorities.json",
+    "semantics": "Schema v2 accepts only run-scoped semantic reports bound to an authority-signed capture inventory and a signed build identity extracted from the retained IPA/APK, plus the loaded-app nonce/build evidence id, canonical source/dependency closure, and gate-specific technical packaging attestations. The repository registers only QA public keys; private capture keys remain outside source with restricted permissions. Android release readiness additionally requires a separate independently signed approval record."
+  },
   "iosGhostty": {
     "renderer": "ios-ghosttykit",
     "integration": "expo-module-libghostty-spm-vendored-xcframework",
@@ -13,8 +38,17 @@
       "upstreamDownloadUrl": "https://github.com/Lakr233/libghostty-spm/releases/download/storage.1.2.4/GhosttyKit.xcframework.zip",
       "upstreamZipSha256": "f1484a5411559bf4a5b665b82a5bb91cb8a3ca2065467dc15202fb191d7a5c9d",
       "expandedSha256": "f59c864108a9ef3002f6dcaaa00f87e5b56ce4966fb6c90d5ad744cc7aef37c7",
+      "linkCompatibility": {
+        "reactNativeSkiaWuffsIsolation": "required",
+        "buildPhase": "ios/namespaceGhosttyWuffs.sh",
+        "reason": "Ghostty Wuffs 0.4 and React Native Skia Wuffs 0.3 export overlapping unversioned symbols; isolate Ghostty's private copy before the final app link."
+      },
       "vendoredBinaryAllowedAfterApproval": true,
-      "directGhosttyBuildEscapeHatch": true
+      "directGhosttyBuild": {
+        "implemented": false,
+        "status": "future-contingency",
+        "requiredAction": "Open and complete a separate pinned direct-source build packet before using this path."
+      }
     },
     "upstream": {
       "name": "libghostty-spm",
@@ -33,7 +67,7 @@
     "fallbackUpstream": {
       "name": "ghostty",
       "url": "https://github.com/ghostty-org/ghostty",
-      "useWhen": "libghostty-spm becomes stale, divergent, unavailable, or release-blocking"
+      "useWhen": "Candidate upstream for a separate future direct-source-build packet if libghostty-spm becomes stale, divergent, unavailable, or release-blocking"
     },
     "referenceImplementations": {
       "libghosttySpm": {
@@ -65,6 +99,7 @@
       "app-store-export-review",
       "binary-size-budget",
       "abi-smoke-test",
+      "react-native-skia-wuffs-isolation",
       "crash-to-webview-fallback",
       "custom-accessibility-model-or-webview-accessible-fallback"
     ]
@@ -126,15 +161,18 @@
       "output-driven-accessibility-summary-refresh",
       "remote-osc52-clipboard-default-deny"
     ],
+      "completedDeviceQa": [
+        "loaded-native-styled-render",
+        "ime-input-echo",
+        "layout-resize-and-rotation",
+        "localized-accessibility-summary-and-actions",
+        "renderer-crash-event"
+      ],
       "remainingGaps": [
-        "custom-accessibility",
-        "crash-fallback-device-proof",
-        "interaction-device-qa"
+        "complete-term-7b-loaded-workload-matrix"
       ],
       "requiresDeviceQa": [
-        "ime-keyboard-and-mouse-smoke",
-        "selection-render-and-copy-smoke",
-        "fallback-crash-smoke"
+        "complete-term-7b-loaded-workload-matrix"
       ]
     },
     "sourceStrategy": {
@@ -150,6 +188,12 @@
       "fullTermuxAppLicense": "GPL-3.0-only",
       "bundleFullTermuxApp": false,
       "noticeRequired": true
+    },
+    "approvalBoundary": {
+      "engineeringPolicyVerification": "The extractor and Gradle checks verify the exact pinned revision, terminal-only module closure, copied upstream license, and forbidden-module absence.",
+      "environmentGateSemantics": "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED is a release-owner assertion only; setting it does not create or replace legal advice or product approval evidence.",
+      "releaseApprovalEvidence": "Must be recorded outside this machine-readable source-closure policy by the authorized product/legal release owners against the exact pinned revision.",
+      "currentStatus": "not-recorded-in-repository"
     },
     "gates": [
       "pinned-upstream-revision",

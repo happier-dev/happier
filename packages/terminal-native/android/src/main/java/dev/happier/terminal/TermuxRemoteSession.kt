@@ -24,6 +24,9 @@ interface TermuxRemoteSession {
   fun focus()
   fun clear()
   fun copySelection()
+  fun selectAll(): Boolean
+  fun openAccessibleLink(): Boolean
+  fun qaInjectRendererCrash()
   fun accessibilitySummary(): String?
   fun draw(canvas: Canvas, width: Int, height: Int, fontSize: Float)
   fun dispose()
@@ -222,6 +225,14 @@ private class UnavailableTermuxRemoteSession(
   }
 
   override fun copySelection() {
+  }
+
+  override fun selectAll(): Boolean = false
+
+  override fun openAccessibleLink(): Boolean = false
+
+  override fun qaInjectRendererCrash() {
+    callbacks.emitRendererCrash("qa-injected-renderer-crash")
   }
 
   override fun accessibilitySummary(): String? = null

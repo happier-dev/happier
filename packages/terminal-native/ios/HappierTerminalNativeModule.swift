@@ -11,14 +11,43 @@ public final class HappierTerminalNativeModule: Module {
       makeGhosttyRuntimeDiagnostic().availabilityPayload()
     }
 
+    Function("getQaCapabilities") { () -> [String: Any] in
+#if HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION
+      return ["rendererCrashInjection": true]
+#else
+      return ["rendererCrashInjection": false]
+#endif
+    }
+
+    AsyncFunction("qaInjectRendererCrash") { (surfaceId: String) async -> [String: Any] in
+#if HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION
+      return await MainActor.run {
+        guard !surfaceId.isEmpty,
+              let view = GhosttySurfaceRegistry.shared.surface(id: surfaceId) else {
+          return ["injected": false, "reason": "surface-not-ready"]
+        }
+        view.injectRendererCrashForQa()
+        return ["injected": true, "surfaceId": surfaceId]
+      }
+#else
+      return ["injected": false, "reason": "qa-disabled"]
+#endif
+    }
+
     AsyncFunction("createSurface") { (surfaceId: String) async -> [String: Any] in
       await MainActor.run {
         let diagnostic = makeGhosttyRuntimeDiagnostic()
         guard diagnostic.isAvailable else {
           return diagnostic.availabilityPayload()
         }
-        guard let view = GhosttySurfaceRegistry.shared.surface(id: surfaceId),
-              view.prepareSurface() else {
+        guard let view = GhosttySurfaceRegistry.shared.surface(id: surfaceId) else {
+          return [
+            "available": false,
+            "reason": "surface-not-ready",
+            "detail": "Native terminal surface is not mounted or has no drawable size.",
+          ]
+        }
+        guard view.prepareSurface() else {
           return [
             "available": false,
             "reason": "surface-not-ready",
@@ -122,6 +151,14 @@ public final class HappierTerminalNativeModule: Module {
 
       Prop("accessibilityCopySelectionActionLabel") { (view: GhosttySurfaceView, value: String) in
         view.accessibilityCopySelectionActionLabel = value
+      }
+
+      Prop("accessibilitySelectAllActionLabel") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilitySelectAllActionLabel = value
+      }
+
+      Prop("accessibilityOpenLinkActionLabel") { (view: GhosttySurfaceView, value: String) in
+        view.accessibilityOpenLinkActionLabel = value
       }
     }
   }

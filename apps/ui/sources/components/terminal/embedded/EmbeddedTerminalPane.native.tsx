@@ -2,7 +2,9 @@ import * as React from 'react';
 import { PixelRatio, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
+    getTerminalNativeQaCapabilities,
     getTerminalNativeAvailability,
+    injectTerminalNativeRendererCrashForQa,
     normalizeTerminalNativeAvailability,
     type TerminalNativeCopyEvent,
     type TerminalNativeRendererCrashEvent,
@@ -47,6 +49,7 @@ export type EmbeddedTerminalPaneProps = Readonly<{
     testIdPrefix?: string | null;
     nativeSurfaceKey?: string | null;
     showQuickKeys?: boolean;
+    enableNativeRendererQaCrashControl?: boolean;
 }>;
 
 export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNative(props: EmbeddedTerminalPaneProps) {
@@ -124,6 +127,18 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     const nativeAccessibilityAccepted = terminalRendererPreference === 'native'
         || hasAcceptedNativeAccessibility(resolvedNativeRendererOptions);
     const nativeSurfaceKey = props.nativeSurfaceKey?.trim() || props.testIdPrefix || 'embedded-terminal';
+    const activeNativeSurfaceId = effectiveRenderer === 'ios-ghosttykit' || effectiveRenderer === 'android-termux'
+        ? createNativeSurfaceId(effectiveRenderer, nativeSurfaceKey)
+        : null;
+    const qaCrashInjectionAvailable = React.useMemo(
+        () => props.enableNativeRendererQaCrashControl === true
+            && getTerminalNativeQaCapabilities().rendererCrashInjection,
+        [props.enableNativeRendererQaCrashControl],
+    );
+    const injectRendererCrashForQa = React.useCallback(() => {
+        if (!qaCrashInjectionAvailable || !activeNativeSurfaceId) return;
+        void injectTerminalNativeRendererCrashForQa(activeNativeSurfaceId);
+    }, [activeNativeSurfaceId, qaCrashInjectionAvailable]);
 
     const onPaste = React.useCallback(async () => {
         const text = await getClipboardStringTrimmedSafe();
@@ -186,6 +201,8 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             accessibilityFallbackValue={t('terminalEmbedded.nativeAccessibility.fallbackValue')}
                             accessibilityFocusActionLabel={t('terminalEmbedded.nativeAccessibility.focusAction')}
                             accessibilityCopySelectionActionLabel={t('terminalEmbedded.nativeAccessibility.copySelectionAction')}
+                            accessibilitySelectAllActionLabel={t('terminalEmbedded.nativeAccessibility.selectAllAction')}
+                            accessibilityOpenLinkActionLabel={t('terminalEmbedded.nativeAccessibility.openLinkAction')}
                             onInput={props.controller.onInput}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
@@ -209,6 +226,8 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             accessibilityFallbackValue={t('terminalEmbedded.nativeAccessibility.fallbackValue')}
                             accessibilityFocusActionLabel={t('terminalEmbedded.nativeAccessibility.focusAction')}
                             accessibilityCopySelectionActionLabel={t('terminalEmbedded.nativeAccessibility.copySelectionAction')}
+                            accessibilitySelectAllActionLabel={t('terminalEmbedded.nativeAccessibility.selectAllAction')}
+                            accessibilityOpenLinkActionLabel={t('terminalEmbedded.nativeAccessibility.openLinkAction')}
                             onInput={props.controller.onInput}
                             onLink={(event) => props.controller.onLink?.(event.url)}
                             onTitle={(event) => props.controller.onTitle?.(event.title)}
@@ -229,6 +248,7 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             lineHeightPx={fontMetrics.lineHeight}
                             onInput={props.controller.onInput}
                             onPaste={props.controller.onPaste}
+                            onCopySelection={(text) => props.controller.copySelection?.({ source: 'user-selection', text })}
                             onLink={props.controller.onLink}
                             onResize={props.controller.onResize}
                             onReady={props.controller.onReady}
@@ -236,6 +256,24 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
                             onRendererFailure={onWebViewRendererFailure}
                         />
                     )}
+                    {qaCrashInjectionAvailable && activeNativeSurfaceId ? (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="QA: inject native terminal renderer crash"
+                            testID={props.testIdPrefix ? `${props.testIdPrefix}-native-qa-inject-renderer-crash` : 'embedded-terminal-native-qa-inject-renderer-crash'}
+                            onPress={injectRendererCrashForQa}
+                            style={{
+                                position: 'absolute',
+                                top: 4,
+                                right: 4,
+                                width: 24,
+                                height: 24,
+                                borderRadius: 12,
+                                backgroundColor: '#c62828',
+                                opacity: 0.9,
+                            }}
+                        />
+                    ) : null}
                 </View>
             )}
         />

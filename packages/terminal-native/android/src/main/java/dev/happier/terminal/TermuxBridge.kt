@@ -19,6 +19,7 @@ data class TermuxBridgeDiagnostic(
   val detail: String,
   val fallbackRenderer: String,
   val fallbackRequired: Boolean,
+  val engineeringQaOverride: Boolean,
   val requiredModules: List<Map<String, String>>,
   val forbiddenModules: List<Map<String, String>>,
   val remoteSessionAdapterRequired: Boolean,
@@ -78,6 +79,7 @@ object TermuxBridge {
       detail = firstBlocker?.detail ?: "Android Termux native renderer gates passed.",
       fallbackRenderer = "xterm-webview",
       fallbackRequired = blockers.isNotEmpty() || !BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE,
+      engineeringQaOverride = BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA,
       requiredModules = requiredModules,
       forbiddenModules = forbiddenModules,
       remoteSessionAdapterRequired = true,
@@ -248,6 +250,29 @@ object TermuxBridge {
     surfaces[surfaceId]?.copySelection()
   }
 
+  fun selectAll(surfaceId: String): Boolean {
+    requireTermuxMainThread()
+    return surfaces[surfaceId]?.selectAll() == true
+  }
+
+  fun openAccessibleLink(surfaceId: String): Boolean {
+    requireTermuxMainThread()
+    return surfaces[surfaceId]?.openAccessibleLink() == true
+  }
+
+  fun qaInjectRendererCrash(surfaceId: String): Map<String, Any> {
+    requireTermuxMainThread()
+    if (!BuildConfig.HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION) {
+      return mapOf("injected" to false, "reason" to "qa-disabled")
+    }
+    val surface = surfaces[surfaceId]
+    if (surfaceId.isBlank() || surface == null) {
+      return mapOf("injected" to false, "reason" to "surface-not-ready")
+    }
+    surface.qaInjectRendererCrash()
+    return mapOf("injected" to true, "surfaceId" to surfaceId)
+  }
+
   fun accessibilitySummary(surfaceId: String): String? {
     requireTermuxMainThread()
     return surfaces[surfaceId]?.accessibilitySummary()
@@ -351,7 +376,8 @@ object TermuxBridge {
         "The selected Termux dependency closure has not been approved.",
       )
     }
-    if (!BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED) {
+    if (!BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED &&
+      !BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA) {
       addBlocker(
         blockers,
         "legal-not-approved",

@@ -33,6 +33,11 @@ const nativeAvailabilityState = vi.hoisted(() => ({
     } as unknown,
 }));
 
+const nativeQaState = vi.hoisted(() => ({
+    enabled: false,
+    injectRendererCrash: vi.fn(async (_surfaceId: string) => ({ injected: false, reason: 'qa-disabled' })),
+}));
+
 const localSettingState = vi.hoisted(() => ({
     terminalRendererPreference: 'auto',
     terminalNativeRendererQuarantine: null as unknown,
@@ -102,6 +107,8 @@ vi.mock('@happier-dev/terminal-native', async (importOriginal) => {
     return {
         ...actual,
         getTerminalNativeAvailability: () => nativeAvailabilityState.availability,
+        getTerminalNativeQaCapabilities: () => ({ rendererCrashInjection: nativeQaState.enabled }),
+        injectTerminalNativeRendererCrashForQa: nativeQaState.injectRendererCrash,
     };
 });
 
@@ -191,6 +198,9 @@ function resetSurfaceState() {
         available: false,
         reason: 'native-module-missing',
     };
+    nativeQaState.enabled = false;
+    nativeQaState.injectRendererCrash.mockReset();
+    nativeQaState.injectRendererCrash.mockResolvedValue({ injected: false, reason: 'qa-disabled' });
 }
 
 describe('EmbeddedTerminalPane native renderer selection', () => {
@@ -227,6 +237,8 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             accessibilityFallbackValue: 'terminalEmbedded.nativeAccessibility.fallbackValue',
             accessibilityFocusActionLabel: 'terminalEmbedded.nativeAccessibility.focusAction',
             accessibilityCopySelectionActionLabel: 'terminalEmbedded.nativeAccessibility.copySelectionAction',
+            accessibilitySelectAllActionLabel: 'terminalEmbedded.nativeAccessibility.selectAllAction',
+            accessibilityOpenLinkActionLabel: 'terminalEmbedded.nativeAccessibility.openLinkAction',
         });
         expect(surfaceState.xtermProps).toBeNull();
         expect(surfaceState.termuxProps).toBeNull();
@@ -582,6 +594,8 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
             accessibilityFallbackValue: 'terminalEmbedded.nativeAccessibility.fallbackValue',
             accessibilityFocusActionLabel: 'terminalEmbedded.nativeAccessibility.focusAction',
             accessibilityCopySelectionActionLabel: 'terminalEmbedded.nativeAccessibility.copySelectionAction',
+            accessibilitySelectAllActionLabel: 'terminalEmbedded.nativeAccessibility.selectAllAction',
+            accessibilityOpenLinkActionLabel: 'terminalEmbedded.nativeAccessibility.openLinkAction',
         });
         expect(surfaceState.xtermProps).toBeNull();
 
@@ -643,6 +657,93 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
                 expiresAtMs: 1_700_086_400_000,
             });
             expect(surfaceState.xtermProps).not.toBeNull();
+        } finally {
+            now.mockRestore();
+        }
+    });
+
+    it('exposes no renderer crash injection control without an explicit QA-surface opt-in', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        nativeQaState.enabled = true;
+        localSettingState.terminalRendererPreference = 'native';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.iosGhostty': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'ios',
+            renderer: 'ios-ghosttykit',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+
+        const screen = await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+                testIdPrefix="terminal"
+            />,
+        );
+
+        expect(() => screen.tree?.root.findByProps({ testID: 'terminal-native-qa-inject-renderer-crash' })).toThrow();
+        expect(nativeQaState.injectRendererCrash).not.toHaveBeenCalled();
+    });
+
+    it('targets the active native surface and falls back with persisted quarantine after a QA-injected native fatal event', async () => {
+        platformState.os = 'android';
+        resetSurfaceState();
+        nativeQaState.enabled = true;
+        localSettingState.terminalRendererPreference = 'native';
+        featureState.enabled = {
+            'terminal.transport.byteStream': true,
+            'terminal.renderer.native': true,
+            'terminal.renderer.androidTermux': true,
+        };
+        nativeAvailabilityState.availability = {
+            available: true,
+            platform: 'android',
+            renderer: 'android-termux',
+            moduleVersion: '0.0.0',
+            accessibility: 'fallback-required',
+        };
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+        nativeQaState.injectRendererCrash.mockImplementation(async (surfaceId: string) => {
+            (surfaceState.termuxProps as {
+                onRendererCrash?: (event: Readonly<{ surfaceId: string; reason: string; fatal: true }>) => void;
+            }).onRendererCrash?.({
+                surfaceId,
+                reason: 'qa-injected-renderer-crash',
+                fatal: true,
+            });
+            return { injected: true, surfaceId };
+        });
+
+        try {
+            const screen = await renderScreen(
+                <EmbeddedTerminalPane
+                    title="Terminal"
+                    controller={makeController()}
+                    terminalRef={{ current: null }}
+                    testIdPrefix="terminal"
+                    enableNativeRendererQaCrashControl={true}
+                />,
+            );
+
+            await act(async () => {
+                screen.tree?.root.findByProps({ testID: 'terminal-native-qa-inject-renderer-crash' }).props.onPress();
+            });
+
+            expect(nativeQaState.injectRendererCrash).toHaveBeenCalledWith('embedded-terminal:android-termux:terminal');
+            expect(localSettingMutations.setTerminalNativeRendererQuarantine).toHaveBeenCalledWith({
+                renderer: 'android-termux',
+                expiresAtMs: 1_700_086_400_000,
+            });
+            expect(surfaceState.xtermProps).not.toBeNull();
+            expect(surfaceState.termuxProps).toBeNull();
         } finally {
             now.mockRestore();
         }

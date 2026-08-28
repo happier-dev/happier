@@ -6,6 +6,13 @@ import { Terminal } from '@xterm/xterm';
 
 import '@xterm/xterm/css/xterm.css';
 import {
+    buildTerminalRendererInteractionContract,
+    readRendererSelection,
+    resolveRendererCommittedInput,
+    shouldConsumeTerminalControlSequence,
+    shouldRendererCaptureKeyboard,
+} from '@/components/terminal/interaction/rendererContract';
+import {
     createXtermFitAddon,
     loadXtermWebLinksAddon,
     tryLoadXtermWebglAddon,
@@ -55,6 +62,7 @@ const OUTPUT_PREVIEW_MAX_CHARS = 4096;
 const READY_FIT_RETRY_DELAY_MS = 25;
 const READY_FIT_MAX_RETRIES = 40;
 const DISPOSE_AFTER_UNMOUNT_DELAY_MS = 50;
+const XTERM_INTERACTION_CONTRACT = buildTerminalRendererInteractionContract('xterm-web');
 
 type TerminalWithInternalRenderer = Terminal & Readonly<{
     _core?: Readonly<{
@@ -234,6 +242,8 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
     }, [appendOutputPreview, ensureWriteQueue]);
 
     const reportSize = React.useCallback((cols: number, rows: number, _kind: 'ready' | 'resize') => {
+        containerRef.current?.setAttribute('data-happier-terminal-cols', String(cols));
+        containerRef.current?.setAttribute('data-happier-terminal-rows', String(rows));
         const previous = lastReportedSizeRef.current;
         if (!previous || previous.cols !== cols || previous.rows !== rows) {
             lastReportedSizeRef.current = { cols, rows };
@@ -302,7 +312,7 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             fontFamily: DEFAULT_FONT_FAMILY,
             fontSize: Math.max(8, Math.round(props.fontSize)),
             scrollback: 5000,
-            screenReaderMode: true,
+            screenReaderMode: XTERM_INTERACTION_CONTRACT.screenReaderMode,
             theme: {
                 background: theme.colors.surface.base,
                 foreground: theme.colors.text.primary,
@@ -321,6 +331,23 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         term.open(container);
 
+        const osc52Disposable = term.parser.registerOscHandler(52, () => (
+            shouldConsumeTerminalControlSequence(XTERM_INTERACTION_CONTRACT, 'osc52')
+        ));
+        const itermImageDisposable = term.parser.registerOscHandler(1337, () => (
+            shouldConsumeTerminalControlSequence(XTERM_INTERACTION_CONTRACT, 'iterm2-images')
+        ));
+        const sixelDisposable = term.parser.registerDcsHandler({ final: 'q' }, () => (
+            shouldConsumeTerminalControlSequence(XTERM_INTERACTION_CONTRACT, 'sixel')
+        ));
+
+        const focusFromPointer = () => {
+            if (XTERM_INTERACTION_CONTRACT.mouseCaptureEnabled) {
+                term.focus();
+            }
+        };
+        container.addEventListener('pointerdown', focusFromPointer, true);
+
         const handlePaste = (event: ClipboardEvent) => {
             const text = event.clipboardData?.getData('text/plain') ?? '';
             if (!text) return;
@@ -338,16 +365,25 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
             const key = String((event as KeyboardEvent).key ?? '').toLowerCase();
             const isCopy = (event.ctrlKey || event.metaKey) && key === 'c';
             const isPaste = (event.ctrlKey || event.metaKey) && key === 'v';
+            const modifiers = [
+                ...(event.shiftKey ? ['shift' as const] : []),
+                ...(event.ctrlKey ? ['ctrl' as const] : []),
+                ...(event.altKey ? ['alt' as const] : []),
+                ...(event.metaKey ? ['meta' as const] : []),
+            ];
 
-            if (isCopy && term.hasSelection()) {
+            const selection = readRendererSelection({
+                hasSelection: () => term.hasSelection(),
+                getSelectionText: () => term.getSelection(),
+            });
+            if (!shouldRendererCaptureKeyboard({ key, modifiers }) && isCopy && selection.hasSelection) {
                 event.preventDefault();
                 event.stopPropagation();
 
-                const selection = term.getSelection();
-                if (selection && onCopySelectionRef.current) {
-                    onCopySelectionRef.current(selection);
-                } else if (selection && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-                    void navigator.clipboard.writeText(selection).catch(() => {});
+                if (selection.text && onCopySelectionRef.current) {
+                    onCopySelectionRef.current(selection.text);
+                } else if (selection.text && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+                    void navigator.clipboard.writeText(selection.text).catch(() => {});
                 } else if (typeof document !== 'undefined') {
                     try {
                         document.execCommand('copy');
@@ -382,7 +418,10 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
         });
 
         const dataDisposable = term.onData((data) => {
-            onInputRef.current(data);
+            const committed = resolveRendererCommittedInput(data);
+            if (committed) {
+                onInputRef.current(committed);
+            }
         });
 
         const scheduleReadyFitRetry = () => {
@@ -429,7 +468,11 @@ export const XtermTerminalView = React.forwardRef<XtermTerminalHandle, XtermTerm
 
         return () => {
             dataDisposable.dispose();
+            osc52Disposable.dispose();
+            itermImageDisposable.dispose();
+            sixelDisposable.dispose();
             container.removeEventListener('paste', handlePaste, true);
+            container.removeEventListener('pointerdown', focusFromPointer, true);
 
             if (initTimer !== null && typeof window !== 'undefined') {
                 window.clearTimeout(initTimer);

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -13,6 +13,14 @@ import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFrom
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
+import {
+    expectEmbeddedTerminalConnected,
+    expectEmbeddedTerminalExited,
+    expectEmbeddedTerminalTranscript,
+    expectEmbeddedTerminalUrlBanner,
+    getEmbeddedTerminalInput,
+    readEmbeddedTerminalShellSize,
+} from '../../src/testkit/uiE2e/embeddedTerminalSmoke';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -48,18 +56,8 @@ async function expectEmbeddedTerminalEnabledInSettings(page: Page, baseUrl: stri
     await expect(terminalToggle).toBeChecked();
 }
 
-async function expectTerminalTranscriptToContain(page: Page, testId: string, needle: string) {
-    const terminal = page.getByTestId(testId);
-    await expect(terminal).toHaveCount(1, { timeout: 180_000 });
-    await expect.poll(async () => await terminal.getAttribute('data-happier-terminal-text'), { timeout: 60_000 }).toContain(needle);
-}
-
 function getVisibleSessionComposer(page: Page) {
     return page.locator('[data-testid="session-composer-input"]:visible');
-}
-
-function getTerminalInput(page: Page, testId: string) {
-    return page.getByTestId(testId).locator('textarea').first();
 }
 
 async function pasteIntoTerminal(page: Page, params: Readonly<{ testId: string; baseUrl: string; text: string }>) {
@@ -76,6 +74,36 @@ async function pasteIntoTerminal(page: Page, params: Readonly<{ testId: string; 
     const terminal = page.getByTestId(params.testId);
     await terminal.click();
     await page.keyboard.press('ControlOrMeta+V');
+}
+
+async function submitTerminalCommand(page: Page, params: Readonly<{
+    testIdPrefix: string;
+    baseUrl: string;
+    command: string;
+}>): Promise<void> {
+    const terminalInput = getEmbeddedTerminalInput(page, params.testIdPrefix);
+    await expect(terminalInput).toHaveCount(1, { timeout: 60_000 });
+    await terminalInput.focus();
+    await pasteIntoTerminal(page, {
+        testId: `${params.testIdPrefix}-terminal-xterm`,
+        baseUrl: params.baseUrl,
+        text: params.command,
+    });
+    await page.keyboard.press('Enter');
+}
+
+async function runTerminalCommand(page: Page, params: Readonly<{
+    testIdPrefix: string;
+    baseUrl: string;
+    command: string;
+    expectedText: string;
+}>): Promise<void> {
+    await submitTerminalCommand(page, params);
+    await expectEmbeddedTerminalTranscript(page, params.testIdPrefix, params.expectedText);
+}
+
+function shellQuote(value: string): string {
+    return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 test.describe('ui e2e: embedded terminal (PTY)', () => {
@@ -171,26 +199,29 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
 
             const fakeClaudeLogPath = resolve(join(testDir, 'fake-claude.jsonl'));
             const fakeClaudePath = fakeClaudeFixturePath();
+            const daemonEnv = {
+                ...process.env,
+                HOME: cliHomeDir,
+                CI: '1',
+                HAPPIER_HOME_DIR: cliHomeDir,
+                HAPPIER_SERVER_URL: server.baseUrl,
+                HAPPIER_WEBAPP_URL: uiBaseUrl,
+                HAPPIER_DISABLE_CAFFEINATE: '1',
+                HAPPIER_VARIANT: 'dev',
+                // Machine-scoped RPC must be allowed to operate inside the e2e fixture directory.
+                HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
+                HAPPIER_CLAUDE_PATH: fakeClaudePath,
+                HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
+                HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
+                HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
+                HAPPIER_DAEMON_TERMINAL_BUFFER_MAX_BYTES: '64000',
+                HAPPIER_DAEMON_TERMINAL_BUFFER_RETENTION_MS: '1000',
+            };
 
             daemon = await startTestDaemon({
                 testDir,
                 happyHomeDir: cliHomeDir,
-                env: {
-                    ...process.env,
-                    HOME: cliHomeDir,
-                    CI: '1',
-                    HAPPIER_HOME_DIR: cliHomeDir,
-                    HAPPIER_SERVER_URL: server.baseUrl,
-                    HAPPIER_WEBAPP_URL: uiBaseUrl,
-                    HAPPIER_DISABLE_CAFFEINATE: '1',
-                    HAPPIER_VARIANT: 'dev',
-                    // Machine-scoped RPC must be allowed to operate inside the e2e fixture directory.
-                    HAPPIER_MACHINE_RPC_WORKING_DIRECTORY: testDir,
-                    HAPPIER_CLAUDE_PATH: fakeClaudePath,
-                    HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeClaudeLogPath,
-                    HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: `fake-claude-session-${run.runId}`,
-                    HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: `fake-claude-invocation-${run.runId}`,
-                },
+                env: daemonEnv,
             });
 
             await expectEmbeddedTerminalEnabledInSettings(page, uiBaseUrl);
@@ -207,23 +238,103 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             const xterm = page.getByTestId('session-bottompanel-terminal-xterm');
             await expect(xterm).toHaveCount(1, { timeout: 180_000 });
 
-            const terminalInput = getTerminalInput(page, 'session-bottompanel-terminal-xterm');
-            await expect(terminalInput).toHaveCount(1, { timeout: 60_000 });
-            await terminalInput.focus();
-            await pasteIntoTerminal(page, {
-                testId: 'session-bottompanel-terminal-xterm',
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
                 baseUrl: uiBaseUrl,
-                text: 'echo happier-terminal-e2e',
+                command: 'echo happier-terminal-e2e',
+                expectedText: 'happier-terminal-e2e',
             });
-            await page.keyboard.press('Enter');
-
-            await expectTerminalTranscriptToContain(page, 'session-bottompanel-terminal-xterm', 'happier-terminal-e2e');
             await expect(page).toHaveURL(new RegExp(`/session/${sessionId}.*(?:\\?|&)bottom=terminal(?:&|$)`), { timeout: 60_000 });
+
+            const initialSize = await readEmbeddedTerminalShellSize(page, 'session-bottompanel');
+            await page.setViewportSize({ width: 1180, height: 760 });
+            await expect.poll(async () => await readEmbeddedTerminalShellSize(page, 'session-bottompanel'), { timeout: 60_000 })
+                .not.toEqual(initialSize);
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: 'printf "terminal-size:%sx%s\\n" "$(tput cols)" "$(tput lines)"',
+                expectedText: 'terminal-size:',
+            });
+
+            const detectedUrl = 'https://example.com/happier-terminal-e2e';
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: `echo ${detectedUrl}`,
+                expectedText: detectedUrl,
+            });
+            await expectEmbeddedTerminalUrlBanner(page, 'session-bottompanel', detectedUrl);
+            await page.getByTestId('session-bottompanel-url-dismiss').click();
+            await expect(page.getByTestId('session-bottompanel-url-banner')).toHaveCount(0);
 
             await page.reload({ waitUntil: 'domcontentloaded' });
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(1, { timeout: 180_000 });
-            await expectTerminalTranscriptToContain(page, 'session-bottompanel-terminal-xterm', 'happier-terminal-e2e');
+            await expectEmbeddedTerminalTranscript(page, 'session-bottompanel', 'happier-terminal-e2e');
+
+            const overflowCompletePath = resolve(join(testDir, 'terminal-overflow.complete'));
+            await submitTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: `(sleep 1; yes 0123456789 | head -c 96000; sleep 2; printf '\\n%s%s\\n' 'happier-terminal-overflow-' 'tail'; : > ${shellQuote(overflowCompletePath)}) &`,
+            });
+            await page.goto(`${uiBaseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
+            await expect.poll(
+                async () => await readFile(overflowCompletePath, 'utf8').then(() => true, () => false),
+                { timeout: 30_000 },
+            ).toBe(true);
+            await page.goto(`${uiBaseUrl}/session/${sessionId}?bottom=terminal`, { waitUntil: 'domcontentloaded' });
+            await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(1, { timeout: 180_000 });
+            await expectEmbeddedTerminalTranscript(page, 'session-bottompanel', '[Output truncated]');
+            await expectEmbeddedTerminalTranscript(page, 'session-bottompanel', 'happier-terminal-overflow-tail');
+
+            await page.getByTestId('session-bottompanel-restart').click();
+            await expectEmbeddedTerminalConnected(page, 'session-bottompanel');
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: 'echo happier-terminal-after-restart',
+                expectedText: 'happier-terminal-after-restart',
+            });
+
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: 'exit 17',
+                expectedText: 'exit 17',
+            });
+            await expectEmbeddedTerminalExited(page, 'session-bottompanel');
+            await page.getByTestId('session-bottompanel-restart').click();
+            await expectEmbeddedTerminalConnected(page, 'session-bottompanel');
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: 'echo happier-terminal-after-exit',
+                expectedText: 'happier-terminal-after-exit',
+            });
+
+            const originalDaemon = daemon;
+            const originalDaemonPid = originalDaemon.state.pid;
+            daemon = null;
+            await originalDaemon.stop();
+            await expectEmbeddedTerminalExited(page, 'session-bottompanel', 120_000);
+
+            const restartedDaemonTestDir = resolve(join(suiteDir, 't1-terminal-daemon-restart'));
+            daemon = await startTestDaemon({
+                testDir: restartedDaemonTestDir,
+                happyHomeDir: cliHomeDir,
+                startupTimeoutMs: 120_000,
+                env: daemonEnv,
+            });
+            expect(daemon.state.pid).not.toBe(originalDaemonPid);
+            await expectEmbeddedTerminalConnected(page, 'session-bottompanel', 180_000);
+            await runTerminalCommand(page, {
+                testIdPrefix: 'session-bottompanel',
+                baseUrl: uiBaseUrl,
+                command: 'echo happier-terminal-after-daemon-restart',
+                expectedText: 'happier-terminal-after-daemon-restart',
+            });
 
             const secondSessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
 
@@ -231,7 +342,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             await expect(secondSessionItem).toHaveCount(1, { timeout: 120_000 });
             await secondSessionItem.click();
 
-            await expect(page).toHaveURL(`${uiBaseUrl}/session/${secondSessionId}`, { timeout: 60_000 });
+            await expect(page).toHaveURL(new RegExp(`/session/${secondSessionId}(?:\\?.*)?$`), { timeout: 60_000 });
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(0, { timeout: 60_000 });
 
@@ -242,7 +353,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
             await expect(page).toHaveURL(new RegExp(`/session/${sessionId}.*(?:\\?|&)bottom=terminal(?:&|$)`), { timeout: 60_000 });
             await expect(getVisibleSessionComposer(page)).toHaveCount(1, { timeout: 180_000 });
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(1, { timeout: 180_000 });
-            await expectTerminalTranscriptToContain(page, 'session-bottompanel-terminal-xterm', 'happier-terminal-e2e');
+            await expectEmbeddedTerminalTranscript(page, 'session-bottompanel', 'happier-terminal-after-daemon-restart');
 
             // Switch dock location to sidebar and verify we keep the same underlying PTY session.
             await page.getByTestId('session-bottompanel-terminal-dock').click();
@@ -250,7 +361,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
 
             await expect(page.getByTestId('session-bottompanel-surface-terminal')).toHaveCount(0, { timeout: 180_000 });
             await expect(page.getByTestId('session-rightpanel-surface-terminal')).toHaveCount(1, { timeout: 180_000 });
-            await expectTerminalTranscriptToContain(page, 'session-rightpanel-terminal-xterm', 'happier-terminal-e2e');
+            await expectEmbeddedTerminalTranscript(page, 'session-rightpanel', 'happier-terminal-after-daemon-restart');
         } catch (err) {
             await test.info().attach('browser-diagnostics', {
                 body: browserDiagnostics(),

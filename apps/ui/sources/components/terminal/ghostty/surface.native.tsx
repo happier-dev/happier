@@ -11,6 +11,8 @@ export type GhosttyTerminalSurfaceProps = TerminalNativeSurfaceProps & Pick<
     | 'accessibilityFallbackValue'
     | 'accessibilityFocusActionLabel'
     | 'accessibilityCopySelectionActionLabel'
+    | 'accessibilitySelectAllActionLabel'
+    | 'accessibilityOpenLinkActionLabel'
     | 'onWriteComplete'
     | 'testID'
 >;

@@ -36,6 +36,7 @@ final class GhosttySurfaceBridge {
   private var isVisible = true
   private var tickScheduled = false
   private var appTickPending = false
+  private var surfaceReadyEmitted = false
   private var isDisposed = false
 #endif
 
@@ -179,7 +180,8 @@ final class GhosttySurfaceBridge {
     refreshAccessibilitySummary()
     let size = ghostty_surface_size(surface)
     if isInitialSize {
-      emitSurfaceReady()
+      appTickPending = true
+      scheduleAppTick()
     } else {
       emitResize(cols: Int(size.columns), rows: Int(size.rows))
     }
@@ -342,16 +344,16 @@ final class GhosttySurfaceBridge {
       ]
     }
 
-    var output = ghostty_text_s()
-    guard ghostty_surface_read_selection(surface, &output) else {
+    guard let text = readSelectionText(surface) else {
       return [
         "copied": false,
         "reason": "selection-read-failed",
       ]
     }
-    defer { ghostty_surface_free_text(surface, &output) }
-
-    let text = decodeGhosttyText(output)
+    emitEvent("selection", [
+      "surfaceId": surfaceId(),
+      "state": "copied",
+    ])
     emitEvent("copy", [
       "surfaceId": surfaceId(),
       "text": text,
@@ -368,6 +370,79 @@ final class GhosttySurfaceBridge {
 #endif
   }
 
+  func selectAll() -> [String: Any] {
+#if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
+    guard !isDisposed, let surface else {
+      return [
+        "selected": false,
+        "reason": "surface-not-ready",
+      ]
+    }
+
+    let action = "select_all"
+    let handled = action.withCString { pointer in
+      ghostty_surface_binding_action(surface, pointer, UInt(action.utf8.count))
+    }
+    guard handled, let text = readSelectionText(surface), !text.isEmpty else {
+      return [
+        "selected": false,
+        "reason": handled ? "selection-empty" : "selection-action-unhandled",
+      ]
+    }
+
+    drawIfVisible(surface)
+    refreshAccessibilitySummary()
+    emitEvent("selection", [
+      "surfaceId": surfaceId(),
+      "state": "ended",
+    ])
+    return [
+      "selected": true,
+    ]
+#else
+    return [
+      "selected": false,
+      "reason": "renderer-unavailable",
+    ]
+#endif
+  }
+
+  func openAccessibleLink() -> [String: Any] {
+#if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
+    guard !isDisposed, let surface else {
+      return [
+        "routed": false,
+        "reason": "surface-not-ready",
+      ]
+    }
+
+    let text = readSelectionText(surface).map {
+      makeGhosttyAccessibilitySummary($0, maxCharacters: 16 * 1024)
+    } ?? readViewportText(surface) ?? ""
+    guard let event = firstGhosttySafeLinkEvent(surfaceId: surfaceId(), text: text) else {
+      return [
+        "routed": false,
+        "reason": "safe-link-not-found",
+      ]
+    }
+
+    emitEvent("link", [
+      "surfaceId": event.surfaceId,
+      "url": event.url,
+      "text": event.text ?? event.url,
+    ])
+    return [
+      "routed": true,
+      "url": event.url,
+    ]
+#else
+    return [
+      "routed": false,
+      "reason": "renderer-unavailable",
+    ]
+#endif
+  }
+
   func dispose() {
 #if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
     guard !isDisposed else { return }
@@ -379,6 +454,7 @@ final class GhosttySurfaceBridge {
     surface = nil
     app = nil
     lastPixelSize = .zero
+    surfaceReadyEmitted = false
     if let surfaceToFree {
       ghostty_surface_free(surfaceToFree)
     }
@@ -456,12 +532,32 @@ final class GhosttySurfaceBridge {
         return
       }
       ghostty_app_tick(app)
+      if let surface = self.surface {
+        self.drawIfVisible(surface)
+        self.refreshAccessibilitySummary()
+      }
     }
   }
 
   private func drawIfVisible(_ surface: ghostty_surface_t) {
-    guard isVisible else { return }
+    guard isVisible, let hostView else { return }
+    ghostty_surface_refresh(surface)
     ghostty_surface_draw(surface)
+
+    // Ghostty presents through IOSurface-backed sublayers attached to the host
+    // view. Keep their point-space geometry stable after every render because
+    // resize/present may replace the backing layer or alter its contents scale.
+    let scale = hostView.contentScaleFactor
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    hostView.layer.contentsScale = scale
+    hostView.layer.sublayers?.forEach { layer in
+      layer.frame = hostView.bounds
+      layer.contentsScale = scale
+      layer.setNeedsDisplay()
+    }
+    hostView.layer.setNeedsDisplay()
+    CATransaction.commit()
   }
 
   private static func pendingAction(from action: ghostty_action_s) -> PendingAction? {
@@ -505,8 +601,10 @@ final class GhosttySurfaceBridge {
   @discardableResult
   private func emitSurfaceReady() -> Bool {
     guard !isDisposed, let surface else { return false }
+    if surfaceReadyEmitted { return true }
     let size = ghostty_surface_size(surface)
     guard size.columns > 0, size.rows > 0 else { return false }
+    surfaceReadyEmitted = true
     emitEvent("surfaceReady", [
       "surfaceId": surfaceId(),
       "cols": Int(size.columns),
@@ -559,7 +657,12 @@ final class GhosttySurfaceBridge {
     guard !isDisposed, let surface, let surfaceView = hostView as? GhosttySurfaceView, surfaceView.accessibilityAccepted else {
       return
     }
-    let selection = ghostty_selection_s(
+    guard let text = readViewportText(surface) else { return }
+    surfaceView.updateNativeAccessibilitySummary(makeGhosttyAccessibilitySummary(text))
+  }
+
+  private func readViewportText(_ surface: ghostty_surface_t) -> String? {
+    let viewport = ghostty_selection_s(
       top_left: ghostty_point_s(
         tag: GHOSTTY_POINT_VIEWPORT,
         coord: GHOSTTY_POINT_COORD_TOP_LEFT,
@@ -575,9 +678,17 @@ final class GhosttySurfaceBridge {
       rectangle: false
     )
     var output = ghostty_text_s()
-    guard ghostty_surface_read_text(surface, selection, &output) else { return }
+    guard ghostty_surface_read_text(surface, viewport, &output) else { return nil }
     defer { ghostty_surface_free_text(surface, &output) }
-    surfaceView.updateNativeAccessibilitySummary(makeGhosttyAccessibilitySummary(decodeGhosttyText(output)))
+    return decodeGhosttyText(output)
+  }
+
+  private func readSelectionText(_ surface: ghostty_surface_t) -> String? {
+    guard ghostty_surface_has_selection(surface) else { return nil }
+    var output = ghostty_text_s()
+    guard ghostty_surface_read_selection(surface, &output) else { return nil }
+    defer { ghostty_surface_free_text(surface, &output) }
+    return decodeGhosttyText(output)
   }
 
   private func decodeGhosttyText(_ text: ghostty_text_s) -> String {

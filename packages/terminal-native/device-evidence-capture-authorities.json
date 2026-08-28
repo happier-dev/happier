@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "authorities": [
+    {
+      "id": "internal-term-device-qa-20260828",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA7JZJEjjvoppVHW56WRjm2ijp5QsHrwqnJmrCt7T43Rg=\n-----END PUBLIC KEY-----\n",
+      "validFrom": "2026-08-28T11:30:00Z",
+      "validUntil": "2026-08-30T23:59:59Z",
+      "scopes": [
+        {
+          "rendererId": "ios-ghosttykit",
+          "allowedBuildIds": [
+            "term-build-7cb8c64aca34fdab2bea0a578dc93371"
+          ]
+        },
+        {
+          "rendererId": "android-termux",
+          "allowedBuildIds": [
+            "term-build-ecffc9a49b0c94353ec83ba1ea982357"
+          ]
+        }
+      ]
+    }
+  ]
+}

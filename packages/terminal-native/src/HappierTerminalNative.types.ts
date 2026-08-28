@@ -134,6 +134,17 @@ export type TerminalNativeEventSubscription = Readonly<{
   remove: () => void;
 }>;
 
+export type TerminalNativeQaCapabilities = Readonly<{
+  rendererCrashInjection: boolean;
+}>;
+
+export type TerminalNativeQaRendererCrashInjectionResult =
+  | Readonly<{ injected: true; surfaceId: string }>
+  | Readonly<{
+    injected: false;
+    reason: 'qa-disabled' | 'surface-not-ready' | 'native-module-missing' | 'invalid-response';
+  }>;
+
 export type TerminalNativeModule = Readonly<{
   getAvailability: () => TerminalNativeAvailability;
   createSurface?: (surfaceId: string) => Promise<unknown> | unknown;
@@ -143,6 +154,8 @@ export type TerminalNativeModule = Readonly<{
   clearSurface?: (surfaceId: string) => Promise<void> | void;
   disposeSurface?: (surfaceId: string) => Promise<void> | void;
   copySelection?: (surfaceId: string) => Promise<unknown> | unknown;
+  getQaCapabilities?: () => unknown;
+  qaInjectRendererCrash?: (surfaceId: string) => Promise<unknown> | unknown;
   addListener?: <TName extends TerminalNativeEventName>(
     eventName: TName,
     listener: (event: TerminalNativeEventPayload<TName>) => void,

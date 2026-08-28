@@ -1,10 +1,11 @@
 import UIKit
+import ExpoModulesCore
 
 #if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
 import libghostty
 #endif
 
-final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
+final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits {
   typealias EventEmitter = (_ eventName: String, _ payload: [String: Any]) -> Void
 
   private(set) var diagnostic = makeGhosttyRuntimeDiagnostic()
@@ -14,6 +15,8 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
   private var applicationLifecycleObservers: [NSObjectProtocol] = []
   private var applicationIsActive = UIApplication.shared.applicationState == .active
   private var hardwareKeyHandled = false
+  private var focusCandidateTouch: UITouch?
+  private var focusCandidateOrigin: CGPoint?
   private var markedTextValue: String?
   private var markedTextSelectedRange = NSRange(location: 0, length: 0)
   private var markedTextAttributes: [NSAttributedString.Key: Any]?
@@ -32,6 +35,7 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
         cancelMarkedText()
         bridge?.dispose()
         bridge = nil
+        accessibilitySummary = ""
       }
       GhosttySurfaceRegistry.shared.update(view: self, oldSurfaceId: oldValue, newSurfaceId: surfaceId)
       initializeSurfaceIfPossible()
@@ -71,18 +75,16 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     didSet { refreshAccessibility() }
   }
 
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    backgroundColor = .black
-    isOpaque = true
-    isMultipleTouchEnabled = true
-    addGestureRecognizer(scrollGesture)
-    observeApplicationLifecycle()
-    refreshAccessibility()
+  var accessibilitySelectAllActionLabel: String = "" {
+    didSet { refreshAccessibility() }
   }
 
-  required init?(coder: NSCoder) {
-    super.init(coder: coder)
+  var accessibilityOpenLinkActionLabel: String = "" {
+    didSet { refreshAccessibility() }
+  }
+
+  required init(appContext: AppContext? = nil) {
+    super.init(appContext: appContext)
     backgroundColor = .black
     isOpaque = true
     isMultipleTouchEnabled = true
@@ -106,6 +108,16 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
   func setEventEmitter(_ eventEmitter: EventEmitter?) {
     self.eventEmitter = eventEmitter
   }
+
+#if HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION
+  func injectRendererCrashForQa() {
+    eventEmitter?("rendererCrash", [
+      "surfaceId": surfaceId,
+      "reason": "qa-injected-renderer-crash",
+      "fatal": true,
+    ])
+  }
+#endif
 
   func prepareSurface() -> Bool {
     initializeSurfaceIfPossible()
@@ -169,10 +181,31 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     ]
   }
 
+  func selectAll() -> [String: Any] {
+    guard diagnostic.isAvailable else {
+      return [
+        "selected": false,
+        "reason": diagnostic.reason,
+      ]
+    }
+    return ensureBridge().selectAll()
+  }
+
+  func openAccessibleLink() -> [String: Any] {
+    guard diagnostic.isAvailable else {
+      return [
+        "routed": false,
+        "reason": diagnostic.reason,
+      ]
+    }
+    return ensureBridge().openAccessibleLink()
+  }
+
   func disposeSurface() {
     cancelMarkedText()
     bridge?.dispose()
     bridge = nil
+    accessibilitySummary = ""
   }
 
   func updateNativeAccessibilitySummary(_ summary: String) {
@@ -188,6 +221,16 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
   @objc func accessibilityCopySelectionAction() -> Bool {
     let result = copySelection()
     return result["copied"] as? Bool == true
+  }
+
+  @objc func accessibilitySelectAllAction() -> Bool {
+    let result = selectAll()
+    return result["selected"] as? Bool == true
+  }
+
+  @objc func accessibilityOpenLinkAction() -> Bool {
+    let result = openAccessibleLink()
+    return result["routed"] as? Bool == true
   }
 
   override var canBecomeFirstResponder: Bool {
@@ -257,22 +300,36 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     if diagnostic.isAvailable, !surfaceId.isEmpty {
       _ = ensureBridge()
     }
-    _ = becomeFirstResponder()
+    if touches.count == 1, let touch = touches.first {
+      focusCandidateTouch = touch
+      focusCandidateOrigin = touch.location(in: self)
+    } else {
+      clearFocusCandidate()
+    }
     handleTouches(touches)
     super.touchesBegan(touches, with: event)
   }
 
   override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+    cancelFocusCandidateAfterDrag(touches)
     handleTouches(touches)
     super.touchesMoved(touches, with: event)
   }
 
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+    let shouldFocus = focusCandidateTouch.map { candidate in
+      touches.contains { $0 === candidate }
+    } ?? false
     handleTouches(touches)
     super.touchesEnded(touches, with: event)
+    if shouldFocus {
+      clearFocusCandidate()
+      _ = becomeFirstResponder()
+    }
   }
 
   override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+    clearFocusCandidate()
     handleTouches(touches)
     super.touchesCancelled(touches, with: event)
   }
@@ -344,6 +401,21 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
     }
   }
 
+  private func cancelFocusCandidateAfterDrag(_ touches: Set<UITouch>) {
+    guard let candidate = focusCandidateTouch,
+          let origin = focusCandidateOrigin,
+          touches.contains(where: { $0 === candidate }) else { return }
+    let location = candidate.location(in: self)
+    if hypot(location.x - origin.x, location.y - origin.y) > 8 {
+      clearFocusCandidate()
+    }
+  }
+
+  private func clearFocusCandidate() {
+    focusCandidateTouch = nil
+    focusCandidateOrigin = nil
+  }
+
 #if HAPPIER_TERMINAL_NATIVE_HAS_GHOSTTY
   private func handlePresses(_ presses: Set<UIPress>, action: ghostty_input_action_e) -> Bool {
     guard diagnostic.isAvailable, !surfaceId.isEmpty else { return false }
@@ -389,7 +461,9 @@ final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits {
       terminalLabel: accessibilityTerminalLabel,
       fallbackValue: accessibilityFallbackValue,
       focusActionLabel: accessibilityFocusActionLabel,
-      copySelectionActionLabel: accessibilityCopySelectionActionLabel
+      copySelectionActionLabel: accessibilityCopySelectionActionLabel,
+      selectAllActionLabel: accessibilitySelectAllActionLabel,
+      openLinkActionLabel: accessibilityOpenLinkActionLabel
     )
     accessibilityModel.apply(to: self)
   }

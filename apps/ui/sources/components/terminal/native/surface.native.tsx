@@ -32,6 +32,8 @@ type NativeTerminalViewProps = Readonly<{
     accessibilityFallbackValue?: string;
     accessibilityFocusActionLabel?: string;
     accessibilityCopySelectionActionLabel?: string;
+    accessibilitySelectAllActionLabel?: string;
+    accessibilityOpenLinkActionLabel?: string;
     style?: StyleProp<ViewStyle>;
     testID?: string;
     onLayout?: (event: LayoutChangeEvent) => void;
@@ -46,6 +48,8 @@ export type NativeTerminalSurfaceProps = TerminalNativeSurfaceProps & Readonly<{
     accessibilityFallbackValue?: string;
     accessibilityFocusActionLabel?: string;
     accessibilityCopySelectionActionLabel?: string;
+    accessibilitySelectAllActionLabel?: string;
+    accessibilityOpenLinkActionLabel?: string;
     onWriteComplete?: (event: EmbeddedTerminalWriteCompleteEvent) => void;
     testID?: string;
 }>;
@@ -208,6 +212,12 @@ export const NativeTerminalSurface = React.forwardRef<EmbeddedTerminalRendererHa
             accessibilityFallbackValue: props.accessibilityFallbackValue,
             accessibilityFocusActionLabel: props.accessibilityFocusActionLabel,
             accessibilityCopySelectionActionLabel: props.accessibilityCopySelectionActionLabel,
+            ...(props.accessibilitySelectAllActionLabel && props.accessibilityOpenLinkActionLabel
+                ? {
+                    accessibilitySelectAllActionLabel: props.accessibilitySelectAllActionLabel,
+                    accessibilityOpenLinkActionLabel: props.accessibilityOpenLinkActionLabel,
+                }
+                : {}),
         }
         : {};
 

@@ -106,7 +106,11 @@ describe('buildXtermWebViewHtml', () => {
             allowCdnFallback: false,
         });
 
-        expect(html).toContain('screenReaderMode: true');
+        expect(html).toContain('screenReaderMode: INTERACTION_POLICY.screenReaderMode === true');
+        expect(html).toContain('"rendererKind":"xterm-webview"');
+        expect(html).toContain("registerOscHandler(52");
+        expect(html).toContain("registerDcsHandler({ final: 'q' }");
+        expect(html).toContain("type: 'copySelection'");
     });
 
     it('focuses the xterm input from native WebView user gestures', async () => {

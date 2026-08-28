@@ -148,9 +148,44 @@ describe('terminal byte stream protocol', () => {
       byteOffset: 10,
       ackedByteOffset: 11,
     }).success).toBe(false);
+    expect(api.TerminalStreamReadRequestSchema.safeParse({
+      terminalId: 'term-1',
+      byteOffset: 10,
+      controlCursor: -1,
+    }).success).toBe(false);
     expect(api.TerminalStreamAckRequestSchema.safeParse({
       terminalId: 'term-1',
       ackedByteOffset: -1,
+    }).success).toBe(false);
+  });
+
+  it('accepts the independent control-frame cursor without requiring it from compatibility peers', () => {
+    const api = requireTerminalStreamApi();
+    const request = {
+      terminalId: 'term-1',
+      byteOffset: 10,
+      controlCursor: 4,
+    };
+    const response = {
+      ok: true,
+      terminalId: 'term-1',
+      frames: [],
+      nextByteOffset: 10,
+      availableByteOffset: 10,
+      droppedBeforeByteOffset: 0,
+      nextControlCursor: 5,
+      done: false,
+    };
+
+    expect(api.TerminalStreamReadRequestSchema.safeParse(request).success).toBe(true);
+    expect(api.TerminalStreamReadResponseSchema.safeParse(response).success).toBe(true);
+    expect(api.TerminalStreamReadResponseSchema.safeParse({
+      ...response,
+      nextControlCursor: undefined,
+    }).success).toBe(true);
+    expect(api.TerminalStreamReadResponseSchema.safeParse({
+      ...response,
+      nextControlCursor: -1,
     }).success).toBe(false);
   });
 

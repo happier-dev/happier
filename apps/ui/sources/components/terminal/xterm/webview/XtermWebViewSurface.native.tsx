@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { encodeChunkedEnvelope, decodeChunkedEnvelope } from '@/components/ui/webview/bridge/chunkedBridge';
+import { buildTerminalRendererInteractionContract } from '@/components/terminal/interaction/rendererContract';
 import {
     buildXtermWriteCompleteEvent,
     copyTerminalBytes,
@@ -49,6 +50,7 @@ export type XtermWebViewRendererFailure = Readonly<{
 export type XtermWebViewSurfaceProps = Readonly<{
     onInput: (data: string) => void;
     onPaste?: (data: string) => void | Promise<unknown>;
+    onCopySelection?: (text: string) => void;
     onLink?: (url: string) => void;
     onResize: (cols: number, rows: number) => void;
     onReady: (cols: number, rows: number) => void;
@@ -136,6 +138,7 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                     lineHeightPx: Math.max(10, Math.round(props.lineHeightPx)),
                     maxChunkBytes,
                     allowCdnFallback,
+                    interactionContract: buildTerminalRendererInteractionContract('xterm-webview'),
                 }),
             [
                 allowCdnFallback,
@@ -415,6 +418,13 @@ export const XtermWebViewSurface = React.forwardRef<XtermWebViewSurfaceHandle, X
                             const data = readStringPayloadField(decoded.payload, 'text');
                             if (!data) return;
                             void props.onPaste?.(data);
+                            return;
+                        }
+
+                        if (decoded.type === 'copySelection') {
+                            const text = readStringPayloadField(decoded.payload, 'text');
+                            if (!text) return;
+                            props.onCopySelection?.(text);
                             return;
                         }
 

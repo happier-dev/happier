@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
+import { chmod, copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -27,6 +28,70 @@ test('iOS GhosttyKit policy records distinct zip and expanded artifact checksums
     'f59c864108a9ef3002f6dcaaa00f87e5b56ce4966fb6c90d5ad744cc7aef37c7',
   );
   assert.notEqual(artifact.upstreamZipSha256, artifact.expandedSha256);
+  assert.equal(artifact.directGhosttyBuild.implemented, false);
+  assert.equal(artifact.directGhosttyBuild.status, 'future-contingency');
+});
+
+test('iOS Ghostty build copy isolates the complete Wuffs namespace on every Apple slice', { skip: process.platform !== 'darwin' }, async () => {
+  const fixtureRoot = await mkdtempPath();
+  const isolationScript = join(packageRoot, 'ios', 'namespaceGhosttyWuffs.sh');
+  const cases = [
+    {
+      source: join(packageRoot, 'ios', 'Vendor', 'GhosttyKit.xcframework', 'ios-arm64', 'libghostty.a'),
+      platform: 'iphoneos',
+      effectivePlatform: '-iphoneos',
+      sdk: 'iphoneos',
+    },
+    {
+      source: join(packageRoot, 'ios', 'Vendor', 'GhosttyKit.xcframework', 'ios-arm64_x86_64-simulator', 'libghostty.a'),
+      platform: 'iphonesimulator',
+      effectivePlatform: '-iphonesimulator',
+      sdk: 'iphonesimulator',
+    },
+  ];
+
+  try {
+    for (const [index, input] of cases.entries()) {
+      const archive = join(fixtureRoot, `libghostty-${index}.a`);
+      await copyFile(input.source, archive);
+      const { stdout: sdkVersion } = await execFileAsync('xcrun', [
+        '--sdk',
+        input.sdk,
+        '--show-sdk-version',
+      ]);
+      const env = {
+        ...process.env,
+        PLATFORM_NAME: input.platform,
+        EFFECTIVE_PLATFORM_NAME: input.effectivePlatform,
+        IPHONEOS_DEPLOYMENT_TARGET: '15.1',
+        SDK_VERSION: sdkVersion.trim(),
+      };
+
+      await execFileAsync('/bin/bash', [isolationScript, archive], { env });
+      await execFileAsync('/bin/bash', [isolationScript, archive], { env });
+      const { stdout: symbols } = await execFileAsync('nm', ['-g', archive], {
+        maxBuffer: 32 * 1024 * 1024,
+      });
+
+      assert.doesNotMatch(symbols, / [TDSB] _(?:(?:sizeof__)?wuffs_|WUFFS_)/);
+      assert.match(symbols, / [TDSB] _ghostty_surface_new$/m);
+
+      const { stdout: architectureList } = await execFileAsync('lipo', ['-archs', archive]);
+      const architectures = architectureList.trim().split(/\s+/);
+      for (const architecture of architectures) {
+        const thinArchive = join(fixtureRoot, `libghostty-${index}-${architecture}.a`);
+        if (architectures.length === 1) {
+          await copyFile(archive, thinArchive);
+        } else {
+          await execFileAsync('lipo', [archive, '-thin', architecture, '-output', thinArchive]);
+        }
+        const { stdout: members } = await execFileAsync('ar', ['-t', thinArchive]);
+        assert.match(members, /^libghostty_zcu_wuffs_private\.o$/m);
+      }
+    }
+  } finally {
+    await rm(fixtureRoot, { force: true, recursive: true });
+  }
 });
 
 test('pinned native build-input archive cache verifies a downloaded archive before reusing it', async () => {
@@ -282,6 +347,9 @@ test('iOS Ghostty clear routes through the bridge instead of no-oping', async ()
 test('iOS Ghostty initializes after Expo assigns surfaceId to an already-laid-out view', async () => {
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
 
+  assert.match(surfaceViewSource, /import ExpoModulesCore/);
+  assert.match(surfaceViewSource, /final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits/);
+  assert.match(surfaceViewSource, /required init\(appContext: AppContext\? = nil\)/);
   assert.match(
     surfaceViewSource,
     /var surfaceId: String = ""[\s\S]*didSet[\s\S]*initializeSurfaceIfPossible\(\)[\s\S]*setNeedsLayout\(\)/,
@@ -296,7 +364,7 @@ test('iOS Ghostty initializes after Expo assigns surfaceId to an already-laid-ou
   );
 });
 
-test('iOS Ghostty re-announces readiness after JavaScript installs native event listeners', async () => {
+test('iOS Ghostty announces readiness exactly once through the post-listener createSurface handshake', async () => {
   const moduleSource = await readFile(join(packageRoot, 'ios/HappierTerminalNativeModule.swift'), 'utf-8');
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
@@ -313,6 +381,16 @@ test('iOS Ghostty re-announces readiness after JavaScript installs native event 
     surfaceBridgeSource,
     /func announceSurfaceReady\(\) -> Bool[\s\S]*emitSurfaceReady\(\)/,
   );
+  assert.match(
+    surfaceViewSource,
+    /func prepareSurface\(\) -> Bool[\s\S]*initializeSurfaceIfPossible\(\)[\s\S]*bridge\?\.announceSurfaceReady\(\) == true/,
+  );
+  assert.match(surfaceBridgeSource, /private var surfaceReadyEmitted = false/);
+  assert.match(surfaceBridgeSource, /private func emitSurfaceReady\(\) -> Bool[\s\S]*if surfaceReadyEmitted \{ return true \}/);
+  assert.match(
+    surfaceBridgeSource,
+    /if isInitialSize \{\s*appTickPending = true\s*scheduleAppTick\(\)\s*\} else \{\s*emitResize/,
+  );
 });
 
 test('iOS Ghostty host actions route title bell and safe URL events through the bridge', async () => {
@@ -328,6 +406,9 @@ test('iOS Ghostty host actions route title bell and safe URL events through the 
   assert.match(surfaceBridgeSource, /GHOSTTY_ACTION_OPEN_URL[\s\S]*makeGhosttyLinkEvent/);
   assert.match(surfaceBridgeSource, /emitEvent\("link"/);
   assert.match(linksSource, /scheme == "http" \|\| scheme == "https"/);
+  assert.match(linksSource, /func firstGhosttySafeLinkEvent/);
+  assert.match(linksSource, /NSDataDetector/);
+  assert.match(linksSource, /hasPrefix\("http:\/\/"\) \|\| lowercasedText\.hasPrefix\("https:\/\/"\)/);
 });
 
 test('iOS Ghostty copies borrowed action payloads before dispatching onto the main actor', async () => {
@@ -449,13 +530,30 @@ test('iOS Ghostty two-finger scroll routes through ghostty_surface_mouse_scroll'
   assert.match(surfaceBridgeSource, /ghostty_surface_mouse_scroll\(surface, dx, dy,/);
 });
 
-test('iOS Ghostty distinguishes initial surface readiness from later terminal resize events', async () => {
+test('iOS Ghostty preserves one-finger selection drags without opening the keyboard mid-gesture', async () => {
+  const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
+  const touchesBegan = surfaceViewSource.slice(
+    surfaceViewSource.indexOf('override func touchesBegan'),
+    surfaceViewSource.indexOf('override func touchesMoved'),
+  );
+  const touchesEnded = surfaceViewSource.slice(
+    surfaceViewSource.indexOf('override func touchesEnded'),
+    surfaceViewSource.indexOf('override func touchesCancelled'),
+  );
+
+  assert.doesNotMatch(touchesBegan, /becomeFirstResponder/);
+  assert.match(touchesEnded, /handleTouches\(touches\)[\s\S]*becomeFirstResponder/);
+  assert.match(surfaceViewSource, /cancelFocusCandidateAfterDrag\(touches\)/);
+  assert.match(surfaceViewSource, /hypot\(location\.x - origin\.x, location\.y - origin\.y\) > 8/);
+});
+
+test('iOS Ghostty distinguishes initial surface setup from later terminal resize events', async () => {
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
 
   assert.match(surfaceBridgeSource, /let isInitialSize = lastPixelSize == \.zero/);
   assert.match(
     surfaceBridgeSource,
-    /if isInitialSize \{\s*emitSurfaceReady\(\)\s*\} else \{\s*emitResize\(cols: Int\(size\.columns\), rows: Int\(size\.rows\)\)\s*\}/,
+    /if isInitialSize \{\s*appTickPending = true\s*scheduleAppTick\(\)\s*\} else \{\s*emitResize\(cols: Int\(size\.columns\), rows: Int\(size\.rows\)\)\s*\}/,
   );
 });
 
@@ -483,7 +581,7 @@ test('iOS Ghostty synchronizes responder focus and app foreground lifecycle with
   assert.match(surfaceBridgeSource, /ghostty_surface_refresh\(surface\)/);
   assert.match(
     surfaceBridgeSource,
-    /private func drawIfVisible\(_ surface: ghostty_surface_t\)\s*\{\s*guard isVisible else \{ return \}\s*ghostty_surface_draw\(surface\)/,
+    /private func drawIfVisible\(_ surface: ghostty_surface_t\)\s*\{\s*guard isVisible, let hostView else \{ return \}[\s\S]*ghostty_surface_refresh\(surface\)[\s\S]*ghostty_surface_draw\(surface\)/,
   );
   assert.equal(
     surfaceBridgeSource.match(/ghostty_surface_draw\(surface\)/g)?.length,
@@ -510,6 +608,37 @@ test('iOS Ghostty coalesces runtime wakeups onto the main actor and drops them a
   assert.match(surfaceBridgeSource, /func dispose\(\)\s*\{[\s\S]*?isDisposed = true[\s\S]*?tickScheduled = false[\s\S]*?appTickPending = false/);
 });
 
+test('iOS Ghostty processes initial size through an app tick before the explicit readiness handshake', async () => {
+  const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
+
+  assert.match(surfaceBridgeSource, /private var surfaceReadyEmitted = false/);
+  assert.match(
+    surfaceBridgeSource,
+    /if isInitialSize\s*\{[\s\S]*?appTickPending = true[\s\S]*?scheduleAppTick\(\)/,
+  );
+  assert.match(
+    surfaceBridgeSource,
+    /ghostty_app_tick\(app\)[\s\S]*?self\.drawIfVisible\(surface\)[\s\S]*?self\.refreshAccessibilitySummary\(\)/,
+  );
+  assert.match(
+    surfaceBridgeSource,
+    /private func emitSurfaceReady\(\) -> Bool\s*\{[\s\S]*?if surfaceReadyEmitted \{ return true \}[\s\S]*?size\.columns > 0, size\.rows > 0[\s\S]*?surfaceReadyEmitted = true/,
+  );
+  assert.match(surfaceBridgeSource, /func dispose\(\)\s*\{[\s\S]*?surfaceReadyEmitted = false/);
+});
+
+test('iOS Ghostty refreshes, draws, and normalizes IOSurface sublayers for every visible frame', async () => {
+  const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
+
+  assert.match(
+    surfaceBridgeSource,
+    /private func drawIfVisible[\s\S]*ghostty_surface_refresh\(surface\)[\s\S]*ghostty_surface_draw\(surface\)/,
+  );
+  assert.match(surfaceBridgeSource, /hostView\.layer\.sublayers\?\.forEach[\s\S]*layer\.frame = hostView\.bounds/);
+  assert.match(surfaceBridgeSource, /layer\.contentsScale = scale[\s\S]*layer\.setNeedsDisplay\(\)/);
+  assert.match(surfaceBridgeSource, /hostView\.layer\.setNeedsDisplay\(\)/);
+});
+
 test('iOS Ghostty view tears down the callback owner before releasing its bridge', async () => {
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
 
@@ -523,7 +652,7 @@ test('iOS Ghostty uses UITextInput composition to preedit, commit, and cancel ma
   const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
 
-  assert.match(surfaceViewSource, /final class GhosttySurfaceView: UIView, UITextInput, UITextInputTraits/);
+  assert.match(surfaceViewSource, /final class GhosttySurfaceView: ExpoView, UITextInput, UITextInputTraits/);
   assert.match(surfaceViewSource, /func setMarkedText\(_ markedText: String\?, selectedRange: NSRange\)/);
   assert.match(surfaceViewSource, /func unmarkText\(\)/);
   assert.match(surfaceViewSource, /var markedTextRange: UITextRange\?/);
@@ -553,33 +682,77 @@ test('iOS Ghostty accessibility summary reads visible viewport text when native 
   assert.match(surfaceViewSource, /func updateNativeAccessibilitySummary\(_ summary: String\)/);
   assert.match(surfaceViewSource, /@objc func accessibilityFocusTerminalAction\(\) -> Bool/);
   assert.match(surfaceViewSource, /@objc func accessibilityCopySelectionAction\(\) -> Bool/);
+  assert.match(surfaceViewSource, /@objc func accessibilitySelectAllAction\(\) -> Bool/);
+  assert.match(surfaceViewSource, /@objc func accessibilityOpenLinkAction\(\) -> Bool/);
   assert.match(surfaceBridgeSource, /private func refreshAccessibilitySummary\(\)/);
-  assert.match(surfaceBridgeSource, /ghostty_surface_read_text\(surface, selection, &output\)/);
+  assert.match(surfaceBridgeSource, /ghostty_surface_read_text\(surface, viewport, &output\)/);
   assert.match(surfaceBridgeSource, /GHOSTTY_POINT_VIEWPORT/);
   assert.match(surfaceBridgeSource, /updateNativeAccessibilitySummary\(makeGhosttyAccessibilitySummary/);
   assert.match(accessibilitySource, /func makeGhosttyAccessibilitySummary\(_ value: String/);
-  assert.match(accessibilitySource, /element\.accessibilityLabel = terminalLabel/);
+  assert.match(accessibilitySource, /guard isAccepted,[\s\S]*!terminalLabel\.isEmpty/);
+  assert.match(accessibilitySource, /let exposedSummary = summary\.isEmpty \? fallbackValue : summary/);
+  assert.match(accessibilitySource, /surfaceView\.isAccessibilityElement = true/);
+  assert.match(accessibilitySource, /surfaceView\.accessibilityLabel = "\\\(terminalLabel\)\. \\\(exposedSummary\)"/);
+  assert.match(accessibilitySource, /surfaceView\.accessibilityValue = exposedSummary/);
   assert.match(accessibilitySource, /summary\.isEmpty\s*\? fallbackValue/);
   assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: focusActionLabel/);
   assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: copySelectionActionLabel/);
+  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: selectAllActionLabel/);
+  assert.match(accessibilitySource, /UIAccessibilityCustomAction\([\s\S]*name: openLinkActionLabel/);
   assert.doesNotMatch(accessibilitySource, /"Terminal"|"Focus terminal"|"Copy selection"|"Native terminal renderer unavailable/);
   for (const propName of [
     'accessibilityTerminalLabel',
     'accessibilityFallbackValue',
     'accessibilityFocusActionLabel',
     'accessibilityCopySelectionActionLabel',
+    'accessibilitySelectAllActionLabel',
+    'accessibilityOpenLinkActionLabel',
   ]) {
     assert.match(moduleSource, new RegExp(`Prop\\("${propName}"`));
     assert.match(surfaceViewSource, new RegExp(`var ${propName}: String`));
   }
 });
 
-test('iOS Ghostty exposes only observed copy state and has no synthetic selection lifecycle scaffold', async () => {
+test('Android Termux accessibility surface fails closed until native accessibility is accepted', async () => {
+  const source = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxView.kt'), 'utf-8');
+
+  assert.match(source, /if \(!accessibilityAccepted \|\| surfaceId\.isBlank\(\)\) return/);
+  assert.match(source, /override fun performAccessibilityAction[\s\S]*if \(!accessibilityAccepted \|\| surfaceId\.isBlank\(\)\) \{[\s\S]*return super\.performAccessibilityAction/);
+  assert.match(source, /if \(!accessibilityAccepted\) \{[\s\S]*IMPORTANT_FOR_ACCESSIBILITY_NO[\s\S]*contentDescription = null/);
+  assert.match(source, /importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES[\s\S]*TermuxBridge\.accessibilitySummary/);
+});
+
+test('iOS Ghostty accessibility summary never crosses surface identities', async () => {
+  const surfaceViewSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceView.swift'), 'utf-8');
+  const surfaceIdentityChange = surfaceViewSource.match(
+    /if oldValue != surfaceId \{([\s\S]*?)\n\s*\}/,
+  )?.[1] ?? '';
+  const disposeSurface = surfaceViewSource.match(
+    /func disposeSurface\(\) \{([\s\S]*?)\n\s*\}/,
+  )?.[1] ?? '';
+
+  assert.match(surfaceIdentityChange, /bridge\?\.dispose\(\)/);
+  assert.match(surfaceIdentityChange, /accessibilitySummary = ""/);
+  assert.match(disposeSurface, /bridge\?\.dispose\(\)/);
+  assert.match(disposeSurface, /accessibilitySummary = ""/);
+});
+
+test('iOS Ghostty accessibility selection is Ghostty-owned and link routing remains host-policy-owned', async () => {
   const surfaceBridgeSource = await readFile(join(packageRoot, 'ios/GhosttySurfaceBridge.swift'), 'utf-8');
+  const linksSource = await readFile(join(packageRoot, 'ios/GhosttyLinks.swift'), 'utf-8');
 
   assert.equal(await pathExists(join(packageRoot, 'ios/GhosttySelection.swift')), false);
+  assert.match(surfaceBridgeSource, /func selectAll\(\) -> \[String: Any\]/);
+  assert.match(surfaceBridgeSource, /ghostty_surface_binding_action\(surface, pointer, UInt\(action\.utf8\.count\)\)/);
+  assert.match(surfaceBridgeSource, /let action = "select_all"/);
+  assert.match(surfaceBridgeSource, /readSelectionText\(surface\)/);
+  assert.match(surfaceBridgeSource, /emitEvent\("selection"/);
   assert.match(surfaceBridgeSource, /emitEvent\("copy"/);
-  assert.doesNotMatch(surfaceBridgeSource, /emitEvent\("selection"/);
+  assert.match(surfaceBridgeSource, /func openAccessibleLink\(\) -> \[String: Any\]/);
+  assert.match(surfaceBridgeSource, /firstGhosttySafeLinkEvent/);
+  assert.match(surfaceBridgeSource, /emitEvent\("link"/);
+  assert.doesNotMatch(surfaceBridgeSource, /UIApplication\.shared\.open|openURL:/);
+  assert.match(linksSource, /explicit HTTP\(S\) candidates/);
 });
 
 test('Android Termux bridge enforces hard gates before creating or driving sessions', async () => {
@@ -597,7 +770,25 @@ test('Android Termux bridge enforces hard gates before creating or driving sessi
   assert.match(remoteSessionSource, /val diagnostic = makeTermuxBridgeDiagnostic\(\)[\s\S]*if \(!diagnostic\.available\)/);
 });
 
-test('Android Termux accessibility uses host-localized labels and exposes focus and copy actions', async () => {
+test('Android Termux engineering QA override cannot replace the public legal gate', async () => {
+  const buildGradle = await readFile(join(packageRoot, 'android/build.gradle'), 'utf-8');
+  const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
+  const rendererPolicy = JSON.parse(await readFile(join(packageRoot, 'native-renderers.json'), 'utf-8'));
+
+  assert.match(buildGradle, /HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
+  assert.deepEqual(
+    rendererPolicy.engineeringQa.allowedAppEnvironments,
+    ['internaldev', 'internalpreview'],
+  );
+  assert.match(buildGradle, /engineeringQaAllowedAppEnvironments\.contains\(appEnvironment\)/);
+  assert.match(buildGradle, /engineeringQaOverride[\s\S]*internalEngineeringBuild/);
+  assert.match(buildGradle, /qaCrashInjectionEnabled[\s\S]*internalEngineeringBuild/);
+  assert.doesNotMatch(buildGradle, /APP_ENV"\)\s*!=/);
+  assert.match(bridgeSource, /!BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED &&\s*!BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
+  assert.match(bridgeSource, /engineeringQaOverride = BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
+});
+
+test('Android Termux accessibility uses host-localized labels and exposes focus, copy, select, and link actions', async () => {
   const moduleSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/HappierTerminalNativeModule.kt'), 'utf-8');
   const viewSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxView.kt'), 'utf-8');
   const remoteSessionSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxRemoteSession.kt'), 'utf-8');
@@ -608,6 +799,8 @@ test('Android Termux accessibility uses host-localized labels and exposes focus 
     'accessibilityFallbackValue',
     'accessibilityFocusActionLabel',
     'accessibilityCopySelectionActionLabel',
+    'accessibilitySelectAllActionLabel',
+    'accessibilityOpenLinkActionLabel',
   ]) {
     assert.match(moduleSource, new RegExp(`Prop\\("${propName}"`));
   }
@@ -615,6 +808,11 @@ test('Android Termux accessibility uses host-localized labels and exposes focus 
   assert.match(viewSource, /AccessibilityNodeInfo\.AccessibilityAction\(/);
   assert.match(viewSource, /override fun performAccessibilityAction/);
   assert.match(viewSource, /TermuxBridge\.copySelection\(surfaceId\)/);
+  assert.match(viewSource, /TermuxBridge\.selectAll\(surfaceId\)/);
+  assert.match(viewSource, /TermuxBridge\.openAccessibleLink\(surfaceId\)/);
+  assert.match(adapterSource, /override fun selectAll\(\): Boolean/);
+  assert.match(adapterSource, /override fun openAccessibleLink\(\): Boolean/);
+  assert.match(adapterSource, /mapNotNull\(::extractHttpUrlCandidate\)/);
   assert.match(viewSource, /takeUnless \{ it\.isNullOrBlank\(\) \}/);
   assert.doesNotMatch(viewSource, /"Terminal"|"Focus terminal"|"Copy selection"|"Native terminal renderer unavailable/);
   assert.doesNotMatch(remoteSessionSource, /Android native terminal unavailable/);
@@ -747,7 +945,7 @@ test('iOS probe reports structured fail-closed fallback diagnostics', async () =
   assert.equal(payload.fallbackRenderer, 'xterm-webview');
   assert.equal(payload.fallbackRequired, true);
   assert.ok(payload.requiredGates.includes('checksum-pinned-artifact'));
-  assert.ok(payload.remediation.includes('Provide a pinned/checksummed libghostty-spm GhosttyKit.xcframework or trigger the direct Ghostty build escape hatch.'));
+  assert.ok(payload.remediation.includes('Provide the pinned/checksummed libghostty-spm GhosttyKit.xcframework. If that supply path is unusable, stop and open the unimplemented direct-source-build contingency packet.'));
 });
 
 test('iOS probe blocks a linked GhosttyKit artifact until package and crash proof gates pass', async () => {
@@ -857,8 +1055,10 @@ test('Android probe reports structured fail-closed license and fallback diagnost
   assert.ok(payload.interaction.implementedInAdapter.includes('long-press-drag-range-selection'));
   assert.ok(payload.interaction.implementedInAdapter.includes('selected-range-rendering-and-copy'));
   assert.equal(payload.interaction.remainingGaps.includes('selection-handles'), false);
-  assert.ok(payload.interaction.remainingGaps.includes('custom-accessibility'));
-  assert.ok(payload.interaction.requiresDeviceQa.includes('ime-keyboard-and-mouse-smoke'));
+  assert.ok(payload.interaction.completedDeviceQa.includes('localized-accessibility-summary-and-actions'));
+  assert.ok(payload.interaction.completedDeviceQa.includes('renderer-crash-event'));
+  assert.deepEqual(payload.interaction.remainingGaps, ['complete-term-7b-loaded-workload-matrix']);
+  assert.deepEqual(payload.interaction.requiresDeviceQa, ['complete-term-7b-loaded-workload-matrix']);
   assert.equal(payload.gradle.status, 'source-missing');
   assert.equal(payload.abi.status, 'unverified');
   assert.ok(payload.requiredGates.includes('dependency-closure-review'));
@@ -996,6 +1196,10 @@ test('license notice retains Android Termux module scope without approving the f
     assert.equal(payload.androidTermux.sourceStrategy.kind, 'ignored-source-extract');
     assert.equal(payload.androidTermux.notice.path, 'android/termux/NOTICE.md');
     assert.equal(payload.androidTermux.notice.status, 'present');
+    assert.equal(payload.androidTermux.engineeringEvidenceStatus, 'ok');
+    assert.equal(payload.androidTermux.releaseApprovalStatus, 'not-recorded-in-repository');
+    assert.equal(payload.androidTermux.approvalBoundary.currentStatus, 'not-recorded-in-repository');
+    assert.match(payload.androidTermux.approvalBoundary.environmentGateSemantics, /assertion only/);
   } finally {
     await rm(fixtureRoot, { force: true, recursive: true });
   }
@@ -1003,16 +1207,25 @@ test('license notice retains Android Termux module scope without approving the f
 
 test('iOS GhosttyKit XCFramework is ignored and not package-included before proof-gated acceptance', async () => {
   const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf-8'));
+  const packageIgnore = await readFile(join(packageRoot, '.gitignore'), 'utf-8');
 
   assert.equal(packageJson.files.includes('ios/Vendor'), false);
   assert.ok(packageJson.files.includes('ios/Vendor/README.md'));
+  assert.match(packageIgnore, /^ios\/Vendor\/GhosttyKit\.xcframework\/$/m);
+  assert.match(packageIgnore, /^ios\/Vendor\/GhosttyKit\.xcframework\.zip$/m);
 
-  const { stdout } = await execFileAsync('git', [
-    'check-ignore',
-    '-v',
-    join(packageRoot, 'ios/Vendor/GhosttyKit.xcframework'),
-  ]);
-  assert.match(stdout, /ios\/Vendor\/GhosttyKit\.xcframework/);
+  try {
+    const { stdout } = await execFileAsync('git', [
+      'check-ignore',
+      '-v',
+      join(packageRoot, 'ios/Vendor/GhosttyKit.xcframework'),
+    ]);
+    assert.match(stdout, /ios\/Vendor\/GhosttyKit\.xcframework/);
+  } catch (error) {
+    // Preferred execution mirrors intentionally omit repository metadata. The
+    // checked-in package ignore policy remains the canonical portable proof.
+    if (error?.code !== 128) throw error;
+  }
 });
 
 test('iOS podspec links GhosttyKit only when package proof gates are explicitly accepted', async () => {
@@ -1057,6 +1270,48 @@ test('size budget script measures recursive directory bytes for XCFramework arti
     assert.equal(payload.maxBytes, 14);
   } finally {
     await rm(root, { force: true, recursive: true });
+  }
+});
+
+test('Android artifact evidence reports size delta and packaged ABI closure without claiming device smoke', async () => {
+  const outputRoot = await mkdtempPath();
+  const fakeBin = await mkdtempPath();
+  const baselinePath = join(outputRoot, 'baseline.apk');
+  const candidatePath = join(outputRoot, 'candidate.apk');
+  const fakeUnzip = join(fakeBin, 'unzip');
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(baselinePath, 'baseline-apk');
+    await writeFile(candidatePath, 'candidate-apk-with-native-renderer');
+    await writeFile(fakeUnzip, [
+      '#!/bin/sh',
+      'case "$2" in',
+      '  *candidate.apk) printf "lib/arm64-v8a/libapp.so\\nlib/x86_64/libapp.so\\n" ;;',
+      '  *) printf "lib/arm64-v8a/libapp.so\\n" ;;',
+      'esac',
+    ].join('\n'));
+    await chmod(fakeUnzip, 0o755);
+    process.env.PATH = `${fakeBin}:${originalPath ?? ''}`;
+
+    const { createAndroidArtifactEvidence } = await import('./androidArtifactEvidence.mjs');
+    const report = await createAndroidArtifactEvidence({
+      candidatePath,
+      baselinePath,
+      requiredAbis: ['arm64-v8a', 'x86_64'],
+    });
+
+    assert.equal(report.status, 'ok');
+    assert.deepEqual(report.candidate.packagedAbis, ['arm64-v8a', 'x86_64']);
+    assert.deepEqual(report.missingAbis, []);
+    assert.equal(report.sizeDeltaBytes, report.candidate.bytes - report.baseline.bytes);
+    assert.match(report.candidate.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(report.evidenceScope, 'static-apk-package-only');
+    assert.equal(report.abiSmokeStillRequired, true);
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(fakeBin, { force: true, recursive: true });
+    await rm(outputRoot, { force: true, recursive: true });
   }
 });
 
@@ -1482,8 +1737,80 @@ async function createGhosttyKitFixture({ header }) {
 async function zipGhosttyKitFixture(artifactPath) {
   const root = dirname(artifactPath);
   const zipPath = join(root, 'GhosttyKit.xcframework.zip');
-  await execFileAsync('zip', ['-qry', zipPath, 'GhosttyKit.xcframework'], { cwd: root });
+  const entries = await collectZipFixtureEntries(artifactPath, 'GhosttyKit.xcframework');
+  await writeFile(zipPath, createStoredZip(entries));
   return zipPath;
+}
+
+async function collectZipFixtureEntries(path, archivePath) {
+  const entries = [];
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const childPath = join(path, entry.name);
+    const childArchivePath = `${archivePath}/${entry.name}`;
+    if (entry.isDirectory()) {
+      entries.push(...await collectZipFixtureEntries(childPath, childArchivePath));
+    } else if (entry.isFile()) {
+      entries.push({ name: childArchivePath, data: await readFile(childPath) });
+    }
+  }
+  return entries.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+const crcTable = new Uint32Array(256).map((_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  return value >>> 0;
+});
+
+function crc32(data) {
+  let crc = 0xffffffff;
+  for (const byte of data) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function uint16(value) {
+  const buffer = Buffer.alloc(2);
+  buffer.writeUInt16LE(value);
+  return buffer;
+}
+
+function uint32(value) {
+  const buffer = Buffer.alloc(4);
+  buffer.writeUInt32LE(value >>> 0);
+  return buffer;
+}
+
+// Stored ZIP fixtures avoid a host `zip` prerequisite while exercising the real unzip/validation path.
+function createStoredZip(entries) {
+  const localEntries = [];
+  const centralEntries = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name);
+    const checksum = crc32(entry.data);
+    const local = Buffer.concat([
+      uint32(0x04034b50), uint16(20), uint16(0), uint16(0), uint16(0), uint16(0),
+      uint32(checksum), uint32(entry.data.length), uint32(entry.data.length),
+      uint16(name.length), uint16(0), name, entry.data,
+    ]);
+    localEntries.push(local);
+    centralEntries.push(Buffer.concat([
+      uint32(0x02014b50), uint16(0x031e), uint16(20), uint16(0), uint16(0), uint16(0), uint16(0),
+      uint32(checksum), uint32(entry.data.length), uint32(entry.data.length),
+      uint16(name.length), uint16(0), uint16(0), uint16(0), uint16(0),
+      uint32((0o100644 << 16) >>> 0), uint32(offset), name,
+    ]));
+    offset += local.length;
+  }
+  const centralDirectory = Buffer.concat(centralEntries);
+  return Buffer.concat([
+    ...localEntries,
+    centralDirectory,
+    uint32(0x06054b50), uint16(0), uint16(0), uint16(entries.length), uint16(entries.length),
+    uint32(centralDirectory.length), uint32(offset), uint16(0),
+  ]);
 }
 
 async function createTermuxSourceFixture({ modules }) {
