@@ -34,6 +34,34 @@ function createExactLimitMultibyteResult(): string {
 }
 
 describe('executeExternalAction', () => {
+  it('keeps a client-placed public Action discoverable but refuses daemon relocation', async () => {
+    const resolveTarget = vi.fn<ResolveExternalActionTarget>();
+    const execute = vi.fn<ExternalActionExecutor['execute']>();
+
+    await expect(executeExternalAction({
+      actionId: 'ui.current_context.read',
+      envelope: { v: 1, requestId: 'request-client-placement', input: {} },
+      principal,
+      currentMachineId: 'machine-1',
+      resolveTarget,
+      executor: { execute },
+    })).resolves.toMatchObject({
+      kind: 'response',
+      response: {
+        v: 1,
+        actionId: 'ui.current_context.read',
+        requestId: 'request-client-placement',
+        execution: {
+          ok: false,
+          errorCode: 'placement_unavailable',
+          error: 'placement_unavailable',
+        },
+      },
+    });
+    expect(resolveTarget).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('returns the one prepared direct-HTTP response projection from the ingress owner', async () => {
     const result = await executeExternalAction({
       actionId: 'session.spawn_new',

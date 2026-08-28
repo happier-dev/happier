@@ -111,6 +111,9 @@ import { createSimulatorInputLeaseManager } from './devices/simulator/lease';
 import type {
   AgentExternalSessionsManagedEndpointReadHost,
 } from '@/session/external/agentExternalSessionsInvocation';
+import type {
+  ManagedServiceSessionBaseUrlResolver,
+} from '@/plugins/runtime/invocation/services/managedServiceEndpointProjection';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createServerUrlServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnapshotStore';
 import { createDaemonPeerMediationObservabilityRuntime } from './machine/peerMediationObservabilityRuntime';
@@ -881,6 +884,8 @@ export async function startDaemon(
     let connectedAccountRequestAuthHttpPort: number | null = null;
     let managedServiceEndpointReadHost:
       AgentExternalSessionsManagedEndpointReadHost | null = null;
+    let managedServiceSessionBaseUrlResolver:
+      ManagedServiceSessionBaseUrlResolver | null = null;
     const managedProviderOperationAuthority =
       createManagedProviderOperationAuthority({
         materializationBaseDir: join(
@@ -979,6 +984,13 @@ export async function startDaemon(
           );
         }
         return await host(input);
+      },
+      resolveManagedServiceSessionBaseUrl: async (input) => {
+        const resolver = managedServiceSessionBaseUrlResolver;
+        if (!resolver) {
+          throw new Error('Managed server Session endpoint owner is unavailable');
+        }
+        return await resolver(input);
       },
       externalSessionPluginAdmissionOwner: pluginAdmissionOwner,
       resolveExternalSessionCurrentMachineId: () => machineId,
@@ -1080,7 +1092,6 @@ export async function startDaemon(
       stopControlServer,
       connectedServiceAuthGroupPreTurnSwitchCoordinator,
       connectedServicePredictiveSwitchGuard,
-      connectedServiceRuntimeAuthApplyCapabilityResolver,
       consumeCommittedAuthGroupGeneration,
       requestConnectedServiceRefreshRestartSignal,
       cancelConnectedServiceRuntimeAuthRecovery,
@@ -1161,6 +1172,9 @@ export async function startDaemon(
       },
       onManagedServiceEndpointReadHostReady: (host) => {
         managedServiceEndpointReadHost = host;
+      },
+      onManagedServiceSessionBaseUrlResolverReady: (resolver) => {
+        managedServiceSessionBaseUrlResolver = resolver;
       },
       onLocalServicesPreviewRoutesReady: machineRpcRouteAttachments.attachLocalServicesPreviewRoutes,
       onBrowserControlRoutesReady: machineRpcRouteAttachments.attachBrowserControlRoutes,
@@ -1359,7 +1373,6 @@ export async function startDaemon(
       // K2: FSM-routed proactive quota coordinator (built by the session-control runtime).
       connectedServiceAuthGroupPreTurnSwitchCoordinator,
       connectedServicePredictiveSwitchGuard,
-      connectedServiceRuntimeAuthApplyCapabilityResolver,
       consumeCommittedAuthGroupGeneration,
       // K2: shared single runtime quota-snapshot store (proactive selection + quotas coordinator).
       connectedServiceRuntimeQuotaSnapshots,

@@ -42,7 +42,7 @@ import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
-  ConnectedServiceBindingsV1Schema,
+  SessionConnectedServiceAuthSwitchRpcParamsSchema,
   createProviderErrorV1,
   ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceAuthGroupIdSchema,
@@ -87,6 +87,7 @@ import {
   SshTunnelProbeRequestSchema,
   SshTunnelReleaseRequestSchema,
   SshTunnelStopRequestSchema,
+  StrictJsonValueSchema,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
@@ -130,10 +131,15 @@ import type { LocalServicePreviewRoutes } from './local/services/preview/routes'
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
 import {
   readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
+  isAgentRuntimeDaemonServiceAuthorityHardRevocationCurrent,
   verifyAgentRuntimeSessionBridgeToken,
   type AgentRuntimeDaemonServiceAuthorityDocumentV2,
   type AgentRuntimeDaemonServiceAuthorityRunnerIdentity,
 } from './agentRuntime/sessionBridgeAuthorization';
+import {
+  areRunnerManagedProviderRetainedAuthoritiesEqual,
+  type RunnerManagedProviderRetainedAuthorityV1,
+} from '@/plugins/runtime/runner/runnerManagedDependencyRetention';
 import { constantTimeEqualUtf8 } from './privateBearerFile';
 import type {
   PersistedTakeoverAdmissionPhase,
@@ -211,7 +217,10 @@ import {
 import { buildRuntimeAuthRecoveryScheduledResult } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryProjection';
 import { isRecord } from './connectedServices/quotas/quotaNormalization';
 import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
-import { registerDaemonPluginChangeRoutes } from '@/plugins/daemon/controlRoutes';
+import {
+  executeAppliedDaemonPluginActionWithController,
+  registerDaemonPluginChangeRoutes,
+} from '@/plugins/daemon/controlRoutes';
 import { readCurrentDaemonPluginCatalogSnapshot } from '@/plugins/daemon/currentCatalog';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type {
@@ -222,10 +231,15 @@ import type { DaemonPatVerifier } from './auth/daemonPatVerifier';
 import {
   registerDaemonExternalActionRoute,
 } from './externalActions/registerDaemonExternalActionRoute';
-import type {
-  ExternalActionExecutor,
-  ResolveExternalActionTarget,
+import {
+  executeExternalAction,
+  type ExternalActionExecutor,
+  type ResolveExternalActionTarget,
 } from './externalActions/executeExternalAction';
+import {
+  SIGNED_ROOT_ACTION_EXECUTE_PATH,
+  SignedRootActionExecuteRequestSchema,
+} from './externalActions/signedRootActionControl';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
@@ -345,12 +359,15 @@ type TrackedAgentRuntimeDaemonServiceAuthority = Readonly<{
   authority: AgentRuntimeDaemonServiceAuthorityDocumentV2;
   runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
   retainedAgent: AgentSessionRunnerBindingV1;
+  adoptedManagedProviderAuthority:
+    RunnerManagedProviderRetainedAuthorityV1 | null;
   invocationContext: RunnerAgentInvocationContext;
 }>;
 
 async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
   tracked: TrackedSession,
   sessionId: string,
+  readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>,
 ): Promise<TrackedAgentRuntimeDaemonServiceAuthority | null> {
   const authorityPath =
     typeof tracked.agentRuntimeDaemonServiceAuthorityFilePath === 'string'
@@ -403,6 +420,20 @@ async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
   ) {
     return null;
   }
+  const trackedAdoptedManagedProviderAuthority = tracked
+    .runnerManagedDependencyRetentionV1
+    ?.adoptedManagedProviderAuthority;
+  const adoptedManagedProviderAuthority = trackedAdoptedManagedProviderAuthority
+    ? Object.freeze({ ...trackedAdoptedManagedProviderAuthority })
+    : null;
+  if (!await isAgentRuntimeDaemonServiceAuthorityHardRevocationCurrent({
+    happyHomeDir: configuration.happyHomeDir,
+    authority,
+    adoptedManagedProviderAuthority,
+    readPluginHardRevocationRevision,
+  })) {
+    return null;
+  }
   return Object.freeze({
     tracked,
     authorityPath,
@@ -410,6 +441,7 @@ async function resolveTrackedAgentRuntimeDaemonServiceAuthority(
     authority,
     runner: authority.runner,
     retainedAgent: authority.retainedAgent,
+    adoptedManagedProviderAuthority,
     invocationContext,
   });
 }
@@ -424,6 +456,10 @@ function trackedAgentRuntimeDaemonServiceAuthorityMatches(
     && current.authorityPath === expected.authorityPath
     && current.capabilityHash === expected.capabilityHash
     && current.invocationContext === expected.invocationContext
+    && areRunnerManagedProviderRetainedAuthoritiesEqual(
+      current.adoptedManagedProviderAuthority,
+      expected.adoptedManagedProviderAuthority,
+    )
     && isDeepStrictEqual(current.authority, expected.authority),
   );
 }
@@ -663,6 +699,7 @@ export function createDaemonControlApp({
   pluginChangeService,
   pluginActionCurrentIntent,
   externalActionApi,
+  readPluginHardRevocationRevision,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
@@ -795,6 +832,7 @@ export function createDaemonControlApp({
   ) => Promise<TargetActionCurrentIntentResult>;
   /** Public PAT-only ingress; intentionally outside the daemon control-token guard. */
   externalActionApi?: DaemonExternalActionApi;
+  readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>;
 }): FastifyInstance {
   const normalizedRuntimeId = runtimeId.trim();
   const normalizedControlToken = controlToken.trim();
@@ -1081,6 +1119,42 @@ export function createDaemonControlApp({
   });
 
   const requireAuth = createDaemonControlAuthGuard(normalizedControlToken);
+  if (externalActionApi) {
+    app.post(SIGNED_ROOT_ACTION_EXECUTE_PATH, { preHandler: requireAuth }, async (request, reply) => {
+      const parsed = SignedRootActionExecuteRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return await reply.code(400).send({
+          ok: false,
+          errorCode: 'invalid_action_request',
+          error: 'invalid_action_request',
+        });
+      }
+      const execution = await executeExternalAction({
+        actionId: parsed.data.actionId,
+        envelope: {
+          v: 1,
+          input: parsed.data.input,
+          ...(parsed.data.targetMachineId
+            ? { target: { kind: 'machine' as const, machineId: parsed.data.targetMachineId } }
+            : {}),
+          ...(parsed.data.actionRequestId ? { requestId: parsed.data.actionRequestId } : {}),
+        },
+        principal: { authority: 'present_user' },
+        currentMachineId: machineId,
+        currentServerId: externalActionApi.currentServerId,
+        resolveTarget: externalActionApi.resolveTarget,
+        executor: externalActionApi.executor,
+      });
+      if (execution.kind === 'invalid_request') {
+        return await reply.code(400).send({
+          ok: false,
+          errorCode: execution.errorCode,
+          error: execution.errorCode,
+        });
+      }
+      return execution.response.execution;
+    });
+  }
 
   const connectedAccountRequestAuthErrorResponses = {
     [CONNECTED_ACCOUNT_REQUEST_AUTH_ERROR_HTTP_STATUS_V1.request_auth_unauthorized]:
@@ -1198,6 +1272,47 @@ export function createDaemonControlApp({
     registerDaemonPluginChangeRoutes(app, {
       service: pluginChangeService,
       requireAuth,
+      executeAction: async (request) => {
+        if (externalActionApi
+          && (request.actionId === 'action.spec.search'
+            || request.actionId === 'action.spec.get'
+            || request.actionId === 'action.invoke')) {
+          const execution = await externalActionApi.executor.execute(
+            request.actionId,
+            request.input,
+            {
+              surface: request.surface,
+              authority: request.surface === 'cli' ? 'present_user' : 'account_automation',
+              actionCaller: { kind: 'host' },
+              ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+            },
+          );
+          if (!execution.ok) {
+            return {
+              matched: true,
+              result: {
+                ok: false,
+                errorCode: execution.errorCode,
+                error: execution.error,
+              },
+            };
+          }
+          const result = StrictJsonValueSchema.safeParse(execution.result);
+          return {
+            matched: true,
+            result: result.success
+              ? { ok: true, result: result.data }
+              : {
+                  ok: false,
+                  errorCode: 'invalid_action_output',
+                  error: 'The Action returned a non-JSON result',
+                },
+          };
+        }
+        return await executeAppliedDaemonPluginActionWithController(
+          request, pluginReloadController, pluginActionCurrentIntent,
+        );
+      },
       ...(pluginActionCurrentIntent ? { requestCurrentIntent: pluginActionCurrentIntent } : {}),
       readCatalogSnapshot: async () => await readCurrentDaemonPluginCatalogSnapshot({
         reloadController: pluginReloadController,
@@ -1328,13 +1443,7 @@ export function createDaemonControlApp({
 
   typed.post('/connected-service-auth/session/switch', {
     schema: {
-      body: z.object({
-        sessionId: z.string().trim().min(1),
-        agentId: z.string().trim().min(1),
-        bindings: ConnectedServiceBindingsV1Schema,
-        expectedGroupGenerationByServiceId: z.record(z.string(), z.number().int().nonnegative()).optional(),
-        accountSettingsVersionHint: z.number().int().nonnegative().optional(),
-      }),
+      body: SessionConnectedServiceAuthSwitchRpcParamsSchema,
       response: {
         200: z.object({
           ok: z.literal(true),
@@ -1365,6 +1474,9 @@ export function createDaemonControlApp({
       sessionId: request.body.sessionId,
       agentId: request.body.agentId,
       bindings: request.body.bindings,
+      ...(request.body.rematerializeServiceId === undefined
+        ? {}
+        : { rematerializeServiceId: request.body.rematerializeServiceId }),
       ...(request.body.expectedGroupGenerationByServiceId === undefined
         ? {}
         : { expectedGroupGenerationByServiceId: request.body.expectedGroupGenerationByServiceId }),
@@ -2639,6 +2751,7 @@ export function createDaemonControlApp({
       ? await resolveTrackedAgentRuntimeDaemonServiceAuthority(
         authorizedTracked,
         request.body.context.sessionId,
+        readPluginHardRevocationRevision,
       )
       : null;
     const tracked = trackedAuthority?.tracked ?? null;
@@ -2767,6 +2880,7 @@ export function createDaemonControlApp({
         await resolveTrackedAgentRuntimeDaemonServiceAuthority(
           current,
           request.body.context.sessionId,
+          readPluginHardRevocationRevision,
         ),
       );
     };
@@ -2809,6 +2923,9 @@ export function createDaemonControlApp({
     } finally {
       reply.raw.removeListener('close', onClientClose);
     }
+    if (tracked && !await trackedAuthorityRemainsCurrent()) {
+      return admissionCustodyUnavailable();
+    }
     if (
       request.body.operation.kind
         === 'turn.admission.authorize'
@@ -2830,9 +2947,6 @@ export function createDaemonControlApp({
               'Agent runtime daemon service admission result is invalid',
           },
         };
-      }
-      if (!await trackedAuthorityRemainsCurrent()) {
-        return admissionCustodyUnavailable();
       }
       const admission = {
         turnId: result.result.witness.turnId,

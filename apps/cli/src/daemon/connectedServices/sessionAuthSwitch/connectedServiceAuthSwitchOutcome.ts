@@ -1,5 +1,6 @@
 import {
   ConnectedServiceCredentialRevisionV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type ConnectedAccountServiceKey,
   type ConnectedServiceCredentialRevisionV1,
   type ConnectedServiceExecutionAuthorityV1,
@@ -94,8 +95,10 @@ function normalizeCredentialRevision(value: unknown): ConnectedServiceCredential
 }
 
 function normalizeTarget(target: ConnectedServiceAuthGroupGenerationTargetInput): ConnectedServiceAuthGroupGenerationTarget {
+  const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(target.serviceId);
+  if (!serviceId) throw new Error('connected_service_auth_generation_service_id_invalid');
   return Object.freeze({
-    serviceId: target.serviceId,
+    serviceId,
     groupId: normalizeNonEmpty(target.groupId, 'group_id'),
     profileId: normalizeNonEmpty(target.profileId, 'profile_id'),
     generation: normalizeGeneration(target.generation),

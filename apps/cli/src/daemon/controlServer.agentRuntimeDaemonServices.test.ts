@@ -46,6 +46,276 @@ function createRetainedAgent() {
 }
 
 describe('daemon control server: runner-scoped Agent runtime services', () => {
+  it.each([
+    ['retained Agent', 'acme.plugin', 'before'],
+    ['retained Agent', 'acme.plugin', 'during'],
+    ['adopted Provider', 'acme.provider', 'before'],
+    ['adopted Provider', 'acme.provider', 'during'],
+  ] as const)(
+    'refuses turn admission when the current hard-revocation revision advances for the %s %s dispatch',
+    async (_label, revokedPluginId, revocationPhase) => {
+      const sessionId = `session-revocation-${revokedPluginId}`;
+      const retainedAgent = createRetainedAgent();
+      const runner = {
+        pid: revokedPluginId === 'acme.plugin' ? 2234 : 2235,
+        processStartTimeMs: 1_717_171_717_100,
+        processCommandHash: 'b'.repeat(64),
+        snapshotIdentity: `snapshot:${revokedPluginId}`,
+      };
+      const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({
+        happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing,
+      });
+      const currentRevisions = new Map<string, number>([
+        [retainedAgent.pluginId, 7],
+        ['acme.provider', 11],
+      ]);
+      const authority = await publishAgentRuntimeDaemonServiceAuthority({
+        happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing,
+        path: authorityPath,
+        sessionId,
+        runner,
+        retainedAgent,
+        httpPort: 46_002,
+        capability: capabilityA,
+        expectedPluginHardRevocationRevision: 7,
+        readPluginHardRevocationRevision: async (pluginId) =>
+          currentRevisions.get(pluginId) ?? 0,
+      });
+      if (revocationPhase === 'before') {
+        currentRevisions.set(
+          revokedPluginId,
+          (currentRevisions.get(revokedPluginId) ?? 0) + 1,
+        );
+      }
+      const tracked: TrackedSession = {
+        startedBy: 'daemon',
+        pid: runner.pid,
+        sessionRunnerPid: runner.pid,
+        happySessionId: sessionId,
+        processStartTimeMs: runner.processStartTimeMs,
+        processCommandHash: runner.processCommandHash,
+        agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+        agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
+        runnerAgentImmutableGenerationId: retainedAgent.immutableGenerationId,
+        runnerAgentInvocationContext: Object.freeze({
+          cwd: '/workspace',
+          environment: Object.freeze({}),
+          providerBindingActive: true,
+        }),
+        runnerManagedDependencyRetentionV1: {
+          v: 1,
+          adoptedManagedProviderAuthority: {
+            pluginId: 'acme.provider',
+            immutableGenerationId: 'provider-generation',
+            manifestAuthority: 'external',
+            hardRevocationRevisionAtAdmission: 11,
+          },
+          sourceGenerationIds: [],
+          qualifiedDependencyIds: [],
+        },
+      };
+      const dispatch = vi.fn(async (request: { operation: { kind: string } }) => {
+        if (revocationPhase === 'during') {
+          currentRevisions.set(
+            revokedPluginId,
+            (currentRevisions.get(revokedPluginId) ?? 0) + 1,
+          );
+        }
+        return {
+          ok: true as const,
+          result: {
+            kind: 'turn.admission' as const,
+            status: 'admitted' as const,
+            witness: {
+              turnId: 'turn-revoked',
+              inputId: 'input-revoked',
+              userMessageSeq: 8,
+              userMessageSeqs: [8],
+            },
+          },
+        };
+      });
+      const recordAdmission = vi.fn<RecordAdmission>(async () => true);
+      const app = createDaemonControlApp({
+        getChildren: () => [tracked],
+        machineId: 'machine-1',
+        stopSession: async () => ({ status: 'not_found' as const }),
+        spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+        requestShutdown: () => {},
+        onHappySessionWebhook: () => {},
+        controlToken: 'control-token',
+        agentRuntimeDaemonServices: { dispatch },
+        recordAgentRuntimeDaemonServiceAdmission: recordAdmission,
+        readPluginHardRevocationRevision: async (pluginId) =>
+          currentRevisions.get(pluginId) ?? 0,
+      });
+
+      try {
+        const response = await app.inject({
+          method: 'POST',
+          url: AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+          headers: { 'x-happier-daemon-token': capabilityA },
+          payload: {
+            v: 1,
+            context: { token: capabilityA, sessionId },
+            operation: {
+              kind: 'turn.admission.authorize',
+              requestId: 'request-revoked',
+              witness: {
+                turnId: 'turn-revoked',
+                inputId: 'input-revoked',
+                userMessageSeq: 8,
+                userMessageSeqs: [8],
+              },
+            },
+          },
+        });
+
+        expect(response.statusCode).toBe(503);
+        expect(recordAdmission).not.toHaveBeenCalled();
+        expect(dispatch).toHaveBeenCalledTimes(
+          revocationPhase === 'during' ? 1 : 0,
+        );
+      } finally {
+        await app.close();
+        await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
+          happyHomeDir: configuration.happyHomeDir,
+          publicReleaseRing: configuration.publicReleaseRing,
+          path: authorityPath,
+          capabilityDigest: authority.capabilityDigest,
+        });
+      }
+    },
+  );
+
+  it('refuses a non-admission effect result when adopted Provider authority is replaced during dispatch', async () => {
+    const sessionId = 'session-secret-revocation';
+    const retainedAgent = createRetainedAgent();
+    const runner = {
+      pid: 2236,
+      processStartTimeMs: 1_717_171_717_200,
+      processCommandHash: 'c'.repeat(64),
+      snapshotIdentity: 'snapshot:secret-revocation',
+    };
+    const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({
+      happyHomeDir: configuration.happyHomeDir,
+      publicReleaseRing: configuration.publicReleaseRing,
+    });
+    const currentRevisions = new Map<string, number>([
+      [retainedAgent.pluginId, 7],
+      ['acme.provider', 11],
+      ['acme.provider.next', 19],
+    ]);
+    const authority = await publishAgentRuntimeDaemonServiceAuthority({
+      happyHomeDir: configuration.happyHomeDir,
+      publicReleaseRing: configuration.publicReleaseRing,
+      path: authorityPath,
+      sessionId,
+      runner,
+      retainedAgent,
+      httpPort: 46_003,
+      capability: capabilityA,
+      expectedPluginHardRevocationRevision: 7,
+      readPluginHardRevocationRevision: async (pluginId) =>
+        currentRevisions.get(pluginId) ?? 0,
+    });
+    const tracked: TrackedSession = {
+      startedBy: 'daemon',
+      pid: runner.pid,
+      sessionRunnerPid: runner.pid,
+      happySessionId: sessionId,
+      processStartTimeMs: runner.processStartTimeMs,
+      processCommandHash: runner.processCommandHash,
+      agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
+      agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
+      runnerAgentImmutableGenerationId: retainedAgent.immutableGenerationId,
+      runnerAgentInvocationContext: Object.freeze({
+        cwd: '/workspace',
+        environment: Object.freeze({}),
+        providerBindingActive: true,
+      }),
+      runnerManagedDependencyRetentionV1: {
+        v: 1,
+        adoptedManagedProviderAuthority: {
+          pluginId: 'acme.provider',
+          immutableGenerationId: 'provider-generation',
+          manifestAuthority: 'external',
+          hardRevocationRevisionAtAdmission: 11,
+        },
+        sourceGenerationIds: [],
+        qualifiedDependencyIds: [],
+      },
+    };
+    const dispatch = vi.fn(async () => {
+      tracked.runnerManagedDependencyRetentionV1 = {
+        v: 1,
+        adoptedManagedProviderAuthority: {
+          pluginId: 'acme.provider.next',
+          immutableGenerationId: 'provider-generation-next',
+          manifestAuthority: 'external',
+          hardRevocationRevisionAtAdmission: 19,
+        },
+        sourceGenerationIds: [],
+        qualifiedDependencyIds: [],
+      };
+      return {
+        ok: true as const,
+        result: {
+          kind: 'managed_server.secret' as const,
+          status: 'resolved' as const,
+          requestId: 'request-secret-revoked',
+          value: 'must-not-escape',
+          revision: 'revision-1',
+        },
+      };
+    });
+    const app = createDaemonControlApp({
+      getChildren: () => [tracked],
+      machineId: 'machine-1',
+      stopSession: async () => ({ status: 'not_found' as const }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'control-token',
+      agentRuntimeDaemonServices: { dispatch },
+      readPluginHardRevocationRevision: async (pluginId) =>
+        currentRevisions.get(pluginId) ?? 0,
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: AGENT_RUNTIME_DAEMON_SERVICES_PATH,
+        headers: { 'x-happier-daemon-token': capabilityA },
+        payload: {
+          v: 1,
+          context: { token: capabilityA, sessionId },
+          operation: {
+            kind: 'managed_server.secret.read',
+            requestId: 'request-secret-revoked',
+            phase: 'read',
+            secretId: 'provider-api-key',
+            canonicalOrigin: 'https://provider.example',
+          },
+        },
+      });
+
+      expect(response.statusCode).toBe(503);
+      expect(response.text()).not.toContain('must-not-escape');
+      expect(dispatch).toHaveBeenCalledOnce();
+    } finally {
+      await app.close();
+      await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
+        happyHomeDir: configuration.happyHomeDir,
+        publicReleaseRing: configuration.publicReleaseRing,
+        path: authorityPath,
+        capabilityDigest: authority.capabilityDigest,
+      });
+    }
+  });
+
   it('authorizes direct retained-runner custody with a rotated capability and exact turn witness', async () => {
     const sessionId = 'session-1';
     const retainedAgent = createRetainedAgent();

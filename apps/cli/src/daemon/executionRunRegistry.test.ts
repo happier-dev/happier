@@ -224,6 +224,48 @@ describe('executionRunRegistry', () => {
     expect(JSON.stringify(outward)).not.toContain('must-not-leave-owner');
   });
 
+  it('persists terminal cleanup custody owner-locally and omits it from outward marker lists', async () => {
+    const {
+      listExecutionRunMarkers,
+      listExecutionRunMarkersForRehydration,
+      writeExecutionRunMarker,
+      clearExecutionRunConnectedServicesCleanupReceipt,
+    } = await import('./executionRunRegistry');
+    const runId = 'run_terminal_cleanup_receipt';
+    const receipt = {
+      v: 1 as const,
+      activationId: '55555555-5555-4555-8555-555555555555',
+      runKey: runId,
+      agentId: 'codex',
+    };
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'session-1',
+      runId,
+      callId: 'call-1',
+      sidechainId: 'side-1',
+      intent: 'review',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'succeeded',
+      startedAtMs: 1,
+      updatedAtMs: 2,
+      finishedAtMs: 2,
+      executionRunConnectedServicesCleanupReceiptV1: receipt,
+    });
+
+    expect((await listExecutionRunMarkersForRehydration())[0])
+      .toHaveProperty('executionRunConnectedServicesCleanupReceiptV1', receipt);
+    expect((await listExecutionRunMarkers())[0])
+      .not.toHaveProperty('executionRunConnectedServicesCleanupReceiptV1');
+    await clearExecutionRunConnectedServicesCleanupReceipt(runId);
+    expect((await listExecutionRunMarkersForRehydration())[0])
+      .not.toHaveProperty('executionRunConnectedServicesCleanupReceiptV1');
+  });
+
   it('writes markers into a channel-scoped tmp dir for the dev public ring', async () => {
     process.env.HAPPIER_RELEASE_RING = 'dev';
     vi.resetModules();
@@ -420,7 +462,12 @@ describe('executionRunRegistry', () => {
   });
 
   it('gcExecutionRunMarkers removes stale terminal markers and markers for dead pids', async () => {
-    const { listExecutionRunMarkers, writeExecutionRunMarker, gcExecutionRunMarkers } = await import('./executionRunRegistry');
+    const {
+      clearExecutionRunConnectedServicesCleanupReceipt,
+      gcExecutionRunMarkers,
+      listExecutionRunMarkers,
+      writeExecutionRunMarker,
+    } = await import('./executionRunRegistry');
 
     const nowMs = Date.now();
     await writeExecutionRunMarker({
@@ -463,15 +510,47 @@ describe('executionRunRegistry', () => {
       updatedAtMs: nowMs - 9_000,
     });
 
+    await writeExecutionRunMarker({
+      pid: 444,
+      happySessionId: 'sess-4',
+      runId: 'run_keep_cleanup_receipt',
+      callId: 'call_4',
+      sidechainId: 'side_4',
+      intent: 'review',
+      backendTarget: { kind: 'backend', backendId: 'codex' },
+      status: 'succeeded',
+      startedAtMs: nowMs - 50_000,
+      updatedAtMs: nowMs - 40_000,
+      finishedAtMs: nowMs - 30_000,
+      executionRunConnectedServicesCleanupReceiptV1: {
+        v: 1,
+        activationId: '77777777-7777-4777-8777-777777777777',
+        runKey: 'run_keep_cleanup_receipt',
+        agentId: 'codex',
+      },
+    });
+
     await gcExecutionRunMarkers({
       nowMs,
       terminalTtlMs: 10_000,
       isPidAlive: (pid: number) => pid !== 333,
-      isPidSafeHappyProcess: (pid: number) => pid === 111 || pid === 222 || pid === 333,
+      isPidSafeHappyProcess: (pid: number) => pid === 111 || pid === 222 || pid === 333 || pid === 444,
     });
 
     const markers = await listExecutionRunMarkers();
     const ids = markers.map((m) => m.runId).sort();
-    expect(ids).toEqual(['run_keep_running']);
+    expect(ids).toEqual(['run_keep_cleanup_receipt', 'run_keep_running']);
+
+    await clearExecutionRunConnectedServicesCleanupReceipt(
+      'run_keep_cleanup_receipt',
+    );
+    await gcExecutionRunMarkers({
+      nowMs,
+      terminalTtlMs: 10_000,
+      isPidAlive: () => true,
+      isPidSafeHappyProcess: () => true,
+    });
+    expect((await listExecutionRunMarkers()).map((marker) => marker.runId))
+      .toEqual(['run_keep_running']);
   });
 });

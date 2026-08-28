@@ -594,14 +594,6 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
                     getChildren: () => children,
                     sessionId,
                     classification,
-                    runtimeAuthApplyCapability: {
-                        directLiveHotAuth: {
-                            supportsInTurnApply: true,
-                            requiresExactRuntimeIdentity: true,
-                            refreshSelectionResync: 'not_applicable',
-                            authMode: { kind: 'managed_provider_session' },
-                        },
-                    },
                 }),
         });
 

@@ -4,6 +4,7 @@
  */
 
 import { isPidPresent, isPidProvablyAbsent } from '@happier-dev/cli-common/process';
+import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { logger } from '@/ui/logger';
 import {
   clearReplaceableDaemonLock,
@@ -52,6 +53,7 @@ import {
   SessionRunnerRuntimeStateV1Schema,
   SessionRunnerRuntimeStatusV2Schema,
   type ConnectedServiceBindingsV1,
+  type ConnectedAccountServiceKey,
   type ConnectedServiceId,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageSnapshotV1,
@@ -127,6 +129,10 @@ import {
   PLUGIN_CHANGE_STATUS_PATH,
 } from '@/plugins/daemon/controlRoutes';
 import type { PluginActionExecutionAttempt } from '@/plugins/projection/actions/execute';
+import {
+  SIGNED_ROOT_ACTION_EXECUTE_PATH,
+  type SignedRootActionExecuteRequest,
+} from './externalActions/signedRootActionControl';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 
@@ -679,6 +685,27 @@ export async function requestDaemonPluginActionExecution(request: Readonly<{
   return result as PluginActionExecutionAttempt;
 }
 
+export async function requestDaemonSignedRootActionExecution(
+  request: SignedRootActionExecuteRequest,
+  options: DaemonControlRequestOptions = {},
+): Promise<ActionExecuteResult> {
+  const result = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, request, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 300_000,
+  });
+  if (options.signal?.aborted) {
+    return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+  }
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return {
+      ok: false,
+      errorCode: result.errorCode ?? 'daemon_unavailable',
+      error: result.error,
+    };
+  }
+  return result as ActionExecuteResult;
+}
+
 export async function readDaemonPluginCatalog(
   options: DaemonControlRequestOptions = {},
 ): Promise<
@@ -730,6 +757,7 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
     sessionId: string;
     agentId: string;
     bindings: ConnectedServiceBindingsV1;
+    rematerializeServiceId?: ConnectedAccountServiceKey;
     expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
     accountSettingsVersionHint?: number;
   }>,
@@ -739,6 +767,9 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
     sessionId: body.sessionId,
     agentId: body.agentId,
     bindings: body.bindings,
+    ...(body.rematerializeServiceId === undefined
+      ? {}
+      : { rematerializeServiceId: body.rematerializeServiceId }),
     ...(body.expectedGroupGenerationByServiceId === undefined
       ? {}
       : { expectedGroupGenerationByServiceId: body.expectedGroupGenerationByServiceId }),

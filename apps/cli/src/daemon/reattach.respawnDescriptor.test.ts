@@ -125,6 +125,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       connectionId: 'pc_gateway' as const,
       contributionKey: 'plugin.gateway/gateway',
       connectionRevision: 2,
+      model: { id: 'vendor/model', name: 'Provider model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'gateway',
@@ -314,13 +315,32 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     }
   });
 
-  it('refuses complete-marker adoption when newer metadata would downgrade Provider V2 continuity to native', () => {
+  it.each([
+    ['same Provider connection and a different model', {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_gateway',
+      modelId: 'provider/model-next',
+    }],
+    ['a different Provider connection', {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_other',
+      modelId: 'other/model',
+    }],
+    ['native selection', {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: null,
+      modelId: 'native-newer',
+    }],
+  ] as const)(
+    'adopts the retained Provider process without applying a newer %s next-launch intent',
+    (_caseName, pendingSelection) => {
     const markerCommand = 'happier codex --happy-starting-mode remote --started-by daemon';
     const providerBindingMetadataV1 = {
       v: 1 as const,
       connectionId: 'pc_gateway' as const,
       contributionKey: 'plugin.gateway/gateway',
       connectionRevision: 2,
+      model: { id: 'provider/model', name: 'Provider model' },
       protocol: 'openai-responses' as const,
       materialization: 'engineConfig' as const,
       adapterBindingKey: 'gateway',
@@ -344,14 +364,11 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       processCommandHash: hashProcessCommand(markerCommand),
       processCommand: markerCommand,
       metadata: {
+        providerBindingV1: providerBindingMetadataV1,
         modelSelectionIntentV1: {
           v: 1,
           updatedAt: 10,
-          selection: {
-            agentTargetKey: 'backend:codex',
-            providerConnectionId: null,
-            modelId: 'native-newer',
-          },
+          selection: pendingSelection,
         },
       },
       respawn: {
@@ -378,8 +395,16 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
       pidToTrackedSession: map,
     });
 
-    expect(adopted).toBe(0);
-    expect(map.has(marker.pid)).toBe(false);
+    expect(adopted).toBe(1);
+    expect(map.get(marker.pid)?.spawnOptions?.modelSelection?.ref).toEqual({
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: 'pc_gateway',
+      modelId: 'provider/model',
+    });
+    expect(map.get(marker.pid)?.spawnOptions?.providerBindingMetadataV1?.connectionId)
+      .toBe('pc_gateway');
+    expect(map.get(marker.pid)?.spawnOptions?.providerBindingMetadataV1?.model?.id)
+      .toBe('provider/model');
   });
 
   it('refuses complete-marker adoption when persisted Provider binding metadata is malformed', () => {
@@ -497,7 +522,7 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(map.get(234)?.spawnOptions).toBeUndefined();
   });
 
-  it('rehydrates legacy respawn descriptors onto canonical codexBackendMode for daemon restarts', () => {
+  it('rehydrates legacy respawn descriptors onto runtimeDescriptorV1 for daemon restarts', () => {
     const command = `${process.execPath} -e "setInterval(()=>{}, 1000)"`;
     const marker = {
       pid: 345,
@@ -529,8 +554,13 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(map.get(345)?.spawnOptions).toMatchObject({
       directory: '/tmp/workspace',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
+    expect(map.get(345)?.spawnOptions).not.toHaveProperty('codexBackendMode');
     expect(map.get(345)?.spawnOptions).not.toHaveProperty('experimentalCodexAcp');
   });
 

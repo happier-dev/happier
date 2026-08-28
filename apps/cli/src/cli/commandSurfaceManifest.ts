@@ -28,12 +28,6 @@ export function findCommandSurfaceEntry(command: string): CommandSurfaceDescript
 
 export { isStaticCommandSurfaceProviderPlaceholder, isStaticCommandSurfaceReserved };
 
-/**
- * Compatibility no-op for callers that prime root metadata alongside the live
- * command registry. Agent and plugin surfaces are now registered by that owner.
- */
-export async function primeProjectedCommandSurfaceEntries(): Promise<void> {}
-
 export function resolveCommandSurfaceCatalog(): CommandSurfaceCatalog {
   return createCommandSurfaceCatalog(listRegisteredCommandSurfaceEntries());
 }

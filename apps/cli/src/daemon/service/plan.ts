@@ -3,7 +3,13 @@ import { basename, join, win32 as win32Path } from 'node:path';
 import { getReleaseRingCatalogEntry, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { buildLaunchAgentPlistXml, buildLaunchdPath } from './darwin';
-import { buildServicePath, planServiceAction, renderSystemdServiceUnit, renderWindowsScheduledTaskWrapperPs1 } from '@happier-dev/cli-common/service';
+import {
+  buildServicePath,
+  HAPPIER_CRITICAL_SLICE_NAME,
+  planServiceAction,
+  renderSystemdServiceUnit,
+  renderWindowsScheduledTaskWrapperPs1,
+} from '@happier-dev/cli-common/service';
 import { isServerIdFilesystemSafe } from '@/server/serverId';
 
 export type DaemonServicePlatform = 'darwin' | 'linux' | 'win32';
@@ -419,6 +425,10 @@ export function planDaemonServiceInstall(params: Readonly<{
       ...pinnedTargetEnv,
     },
     killMode: 'process',
+    // The managed Linux guest provisions this user slice with a bounded
+    // The managed Linux guest gives this slice a MemoryLow reservation. Future
+    // daemon-owned control processes join it without a memory ceiling.
+    slice: mode === 'user' ? HAPPIER_CRITICAL_SLICE_NAME : undefined,
     managedOomPreference: 'avoid',
     restart: 'on-failure',
     runAsUser: mode === 'system' ? systemUser : '',

@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   isTmuxAllowedCommand,
   listRootHelpCommands,
-  primeProjectedCommandSurfaceEntries,
 } from './commandSurfaceManifest';
 import { buildRootHelpText } from './buildRootHelpText';
 
@@ -26,7 +25,6 @@ import { ensureMergedAgentCommandRegistryLoaded } from './commandRegistry';
 describe('CLI command-surface manifest', () => {
   it('exposes the current root help command list from static and projected command surfaces', async () => {
     await ensureMergedAgentCommandRegistryLoaded();
-    await primeProjectedCommandSurfaceEntries();
     const entries = listRootHelpCommands();
     const commands = entries.map((entry) => entry.command);
     expect(commands.slice(0, 36)).toEqual([
@@ -179,7 +177,6 @@ describe('CLI command-surface manifest', () => {
       pluginDiagnosticsByPluginId: {},
     });
     await ensureMergedAgentCommandRegistryLoaded();
-    await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands();
     const pluginEntry = entries.find((entry) => entry.command === 'acme.ohmypi');
@@ -235,7 +232,6 @@ describe('CLI command-surface manifest', () => {
       pluginDiagnosticsByPluginId: {},
     });
     await ensureMergedAgentCommandRegistryLoaded();
-    await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands().filter((entry) => entry.command === 'opencode');
     expect(entries).toHaveLength(1);

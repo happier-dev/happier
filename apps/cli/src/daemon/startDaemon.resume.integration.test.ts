@@ -662,6 +662,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     backendId: 'codex',
     sourceKind: 'built_in',
   } as const;
+  const canonicalCodexAcpRuntimeDescriptor = {
+    v: 1 as const,
+    agentId: 'codex',
+    agent: { backendMode: 'acp' },
+  };
   const canonicalClaudeBackendTarget = {
     kind: 'backend',
     backendId: 'claude',
@@ -925,7 +930,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess-stop-resume-barrier',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       }).finally(() => {
         resumeSettled = true;
       });
@@ -988,7 +993,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess-stop-resume-respawn',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       })).resolves.toEqual(expect.objectContaining({ type: 'success' }));
 
       const manager = sessionRespawnManagerCapture.managers.at(-1);
@@ -1048,7 +1053,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_plain',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
@@ -1094,7 +1099,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         directory: '/tmp',
         backendTarget: canonicalBuiltInBackendTarget,
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
@@ -1151,7 +1156,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_plain',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(result).toEqual({ type: 'success', sessionId: 'sess_plain' });
@@ -1205,7 +1210,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_plain',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       }).then((result) => {
         settled = true;
         return result;
@@ -1332,7 +1337,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_missing',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(result).toEqual({
@@ -1485,7 +1490,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_fetch_error',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(result).toEqual({
@@ -1526,7 +1531,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_plain',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(result).toEqual({ type: 'success', sessionId: 'sess_plain' });
@@ -1977,7 +1982,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         backendTarget: canonicalBuiltInBackendTarget,
         existingSessionId: 'sess_plain',
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
         windowsRemoteSessionConsole: 'visible',
       });
 
@@ -2024,7 +2029,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         directory: '/tmp',
         backendTarget: canonicalBuiltInBackendTarget,
         token: 't',
-        codexBackendMode: 'acp',
+        runtimeDescriptorV1: canonicalCodexAcpRuntimeDescriptor,
       });
 
       expect(spawnHappyCLI).not.toHaveBeenCalled();

@@ -232,6 +232,7 @@ export function adoptSessionsFromMarkers(params: {
         },
       );
       const runtimeSnapshot = resolveSessionRuntimeSnapshot({
+        resolutionMode: 'retained_live_process',
         incomingOptions: restoredSpawnOptions,
         persistedMetadata,
         trackedVendorResumeId: commandVendorResumeId,

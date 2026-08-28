@@ -2,6 +2,7 @@ import { readFile, readdir, readlink } from 'node:fs/promises';
 
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 
+import { parseProcessCustodyStartIdentity } from '@/subprocess/supervision/processCustody';
 import {
     readDarwinProcessFacts,
     type DarwinExecFileBoundary,
@@ -55,6 +56,102 @@ export function processGenerationProvesReuse(
     return isValidProcessStartTimeMs(expectedProcessStartTimeMs)
         && isValidProcessStartTimeMs(observedProcessStartTimeMs)
         && expectedProcessStartTimeMs !== observedProcessStartTimeMs;
+}
+
+/** Persisted process generation encoded as the observed pid and process start time. */
+type ParsedProcessGenerationIdentity = Readonly<{ pid: number; startMs: number }>;
+
+function parseProcessGenerationIdentity(
+    value: string,
+): ParsedProcessGenerationIdentity | null {
+    const match = /^(\d+):(\d+)$/u.exec(value);
+    if (!match?.[1] || !match[2]) return null;
+    const pid = Number(match[1]);
+    const startMs = Number(match[2]);
+    if (
+        !Number.isSafeInteger(pid)
+        || pid <= 0
+        || !Number.isSafeInteger(startMs)
+        || startMs < 0
+    ) return null;
+    return { pid, startMs };
+}
+
+/**
+ * Compare two tagged native-custody identities owned by the processCustody
+ * module (Windows job custody, Darwin subsecond start identity). A tag always
+ * decides exactly — the whole-second ambiguity below exists only for legacy
+ * `ps lstart` records — except when the two sides are not even the same tag
+ * family or a pid disagrees, which stays fenced.
+ */
+function compareTaggedProcessGenerationIdentities(
+    expectedIdentity: string,
+    observedIdentity: string,
+): ProcessGenerationIdentityComparison | null {
+    const expectedTagged = parseProcessCustodyStartIdentity(expectedIdentity);
+    const observedTagged = parseProcessCustodyStartIdentity(observedIdentity);
+    if (!expectedTagged && !observedTagged) return null;
+    if (
+        expectedTagged?.kind === 'win32-job'
+        && observedTagged?.kind === 'win32-job'
+    ) {
+        // Job names are generation-unique: the same name proves the same
+        // custody generation, a different name proves a different one.
+        return expectedTagged.jobName === observedTagged.jobName ? 'same' : 'reused';
+    }
+    if (
+        expectedTagged?.kind === 'darwin-proc'
+        && observedTagged?.kind === 'darwin-proc'
+    ) {
+        if (expectedTagged.pid !== observedTagged.pid) return 'ambiguous';
+        // The native timeval includes the subsecond field, so an equal pair
+        // proves the exact generation and any difference proves reuse — even
+        // within one wall-clock second, which is exactly what the legacy
+        // whole-second witness could never decide.
+        return expectedTagged.sec === observedTagged.sec && expectedTagged.usec === observedTagged.usec
+            ? 'same'
+            : 'reused';
+    }
+    // One side tagged and the other a legacy record (or malformed): the pair
+    // cannot decide, so custody fences instead of acting.
+    return 'ambiguous';
+}
+
+export type ProcessGenerationIdentityComparison =
+    /** Both sides prove the exact same process generation. */
+    | 'same'
+    /** Both sides prove the pid now names a different generation. */
+    | 'reused'
+    /** The evidence cannot decide; custody must fence instead of acting. */
+    | 'ambiguous';
+
+/**
+ * Compare a persisted generation identity against a fresh observation of the same-number pid.
+ *
+ * The verdict is honest about resolution: Linux/Windows start facts decide equality, while an
+ * equal whole-second Darwin observation remains ambiguous because it cannot exclude same-second
+ * pid reuse. 'ambiguous' is the fail-closed answer — it never authorizes signaling or reaping.
+ */
+export function compareProcessGenerationIdentities(
+    expectedIdentity: string,
+    observedIdentity: string,
+    platform: NodeJS.Platform = process.platform,
+): ProcessGenerationIdentityComparison {
+    const taggedComparison = compareTaggedProcessGenerationIdentities(
+        expectedIdentity,
+        observedIdentity,
+    );
+    if (taggedComparison !== null) return taggedComparison;
+    const expected = parseProcessGenerationIdentity(expectedIdentity);
+    const observed = parseProcessGenerationIdentity(observedIdentity);
+    if (
+        !expected
+        || !observed
+        || expected.pid !== observed.pid
+        || expected.pid <= 0
+    ) return 'ambiguous';
+    if (expected.startMs !== observed.startMs) return 'reused';
+    return platform === 'darwin' ? 'ambiguous' : 'same';
 }
 
 function normalizeExactProcessIdentity(

@@ -11,7 +11,6 @@ import {
   findCommandSurfaceEntry,
   isStaticCommandSurfaceProviderPlaceholder,
   isTmuxAllowedCommand,
-  primeProjectedCommandSurfaceEntries,
 } from '@/cli/commandSurfaceManifest';
 import { readStartedByArg } from '@/cli/readStartedByArg';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/daemonAutostartPolicy';
@@ -303,7 +302,6 @@ export async function dispatchCli(params: Readonly<{
   }
   if (isTopLevelHelpRequest(args)) {
     await ensureMergedAgentCommandRegistryLoaded();
-    await primeProjectedCommandSurfaceEntries();
     console.log(buildRootHelpText());
     return;
   }
@@ -321,7 +319,6 @@ export async function dispatchCli(params: Readonly<{
   }
   if (isTopLevelHelpRequest(args)) {
     await ensureMergedAgentCommandRegistryLoaded();
-    await primeProjectedCommandSurfaceEntries();
     console.log(buildRootHelpText());
     return;
   }

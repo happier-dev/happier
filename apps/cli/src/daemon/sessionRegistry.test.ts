@@ -2170,8 +2170,13 @@ describe('sessionRegistry', () => {
     expect(markers[0].respawn).toMatchObject({
       version: 1,
       directory: '/tmp',
-      codexBackendMode: 'acp',
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'acp' },
+      },
     });
+    expect(markers[0].respawn).not.toHaveProperty('codexBackendMode');
     expect(markers[0].respawn).not.toHaveProperty('experimentalCodexResume');
   });
 

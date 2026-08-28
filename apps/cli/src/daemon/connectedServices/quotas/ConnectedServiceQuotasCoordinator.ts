@@ -2904,21 +2904,22 @@ export class ConnectedServiceQuotasCoordinator {
       return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
     }
     const sourceSessionId = typeof input.sourceSessionId === 'string' ? input.sourceSessionId.trim() : '';
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
     const groupId = typeof input.groupId === 'string' ? input.groupId.trim() : '';
     const providerAccountId = typeof input.providerAccountId === 'string' ? input.providerAccountId.trim() : '';
-    if (!sourceSessionId || !groupId) {
+    if (!serviceId || !sourceSessionId || !groupId) {
       return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
     }
     const committedGeneration = input.committedGeneration ?? null;
     if (
-      committedGeneration?.decisionCommittedTarget.serviceId !== input.serviceId
+      committedGeneration?.decisionCommittedTarget.serviceId !== serviceId
       || committedGeneration.decisionCommittedTarget.groupId !== groupId
     ) {
       this.recordSameAccountFanoutDiagnostic('hard_limit_committed_generation_missing');
       return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
     }
     const generationTargets = this.listCommittedGenerationTargetsForGroup({
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
       sourceSessionId,
       sourceProfileId: input.exhaustedProfileId,
@@ -2931,7 +2932,7 @@ export class ConnectedServiceQuotasCoordinator {
     });
     const strategy = input.resolvedFanoutStrategy ?? await this.resolveSameAccountFanoutStrategy({
       sourceSessionId,
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
     });
     if (strategy === 'none') {
@@ -2943,7 +2944,7 @@ export class ConnectedServiceQuotasCoordinator {
 
     const candidates = await this.resolveSameAccountFanoutCandidates({
       sourceSessionId,
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
       strategy,
       providerAccountId,
@@ -2954,7 +2955,7 @@ export class ConnectedServiceQuotasCoordinator {
 
     const now = Math.max(0, Math.trunc(this.now()));
     const fanoutKey = this.makeSameAccountFanoutKey({
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
       providerAccountId: strategy === 'provider_account_id'
         ? providerAccountId
@@ -3145,21 +3146,22 @@ export class ConnectedServiceQuotasCoordinator {
     fanoutRequests: number;
   }>> {
     const sourceSessionId = typeof input.sourceSessionId === 'string' ? input.sourceSessionId.trim() : '';
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(input.serviceId);
     const groupId = typeof input.groupId === 'string' ? input.groupId.trim() : '';
     const exhaustedProfileId = typeof input.exhaustedProfileId === 'string' ? input.exhaustedProfileId.trim() : '';
-    if (!sourceSessionId || !groupId || !exhaustedProfileId) {
+    if (!serviceId || !sourceSessionId || !groupId || !exhaustedProfileId) {
       return { status: 'recorded', fanoutCandidates: 0, fanoutRequests: 0 };
     }
 
     const strategy = await this.resolveSameAccountFanoutStrategy({
       sourceSessionId,
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
     });
     if (strategy === 'shared_group_auth_surface') {
       return await this.recordAccountExhaustionAndFanout({
         sourceSessionId,
-        serviceId: input.serviceId,
+        serviceId,
         groupId,
         exhaustedProfileId,
         providerAccountId: '',
@@ -3177,7 +3179,7 @@ export class ConnectedServiceQuotasCoordinator {
     if (!sourceProviderAccountId) {
       return await this.recordAccountExhaustionAndFanout({
         sourceSessionId,
-        serviceId: input.serviceId,
+        serviceId,
         groupId,
         exhaustedProfileId,
         resetAtMs: input.resetAtMs,
@@ -3190,12 +3192,12 @@ export class ConnectedServiceQuotasCoordinator {
     const sourceGroupGeneration = normalizeNullableGeneration(input.sourceGroupGeneration)
       ?? this.resolveGroupGenerationForSession({
         sessionId: sourceSessionId,
-        serviceId: input.serviceId,
+        serviceId,
         groupId,
       });
     this.runtimeAccountIdentities.record({
       sessionId: sourceSessionId,
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
       profileId: exhaustedProfileId,
       providerAccountId: sourceProviderAccountId,
@@ -3209,7 +3211,7 @@ export class ConnectedServiceQuotasCoordinator {
     });
     return await this.recordAccountExhaustionAndFanout({
       sourceSessionId,
-      serviceId: input.serviceId,
+      serviceId,
       groupId,
       exhaustedProfileId,
       providerAccountId: sourceProviderAccountId,

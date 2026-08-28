@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  compareProcessGenerationIdentities,
   processGenerationMatches,
   processGenerationProvesReuse,
   readProcessIdentityByPid,
@@ -133,4 +134,82 @@ describe('readProcessIdentityByPid', () => {
       cwd: '/repo',
     });
   });
+});
+
+describe('compareProcessGenerationIdentities', () => {
+  it('fences an equal whole-second pair on Darwin but decides it exactly on sub-second platforms', () => {
+    expect(compareProcessGenerationIdentities('41:1754041400000', '41:1754041400000', 'darwin'))
+      .toBe('ambiguous');
+    expect(compareProcessGenerationIdentities('41:1754041400000', '41:1754041400000', 'linux'))
+      .toBe('same');
+  });
+
+  it('proves reuse when a legacy record observes a different birth second', () => {
+    expect(compareProcessGenerationIdentities(
+      '41:1754041400000',
+      '41:1754041401000',
+      'darwin',
+    )).toBe('reused');
+    expect(compareProcessGenerationIdentities('41:1000', '41:2000', 'linux')).toBe('reused');
+  });
+
+  it('fails closed on unparsable or pid-mismatched identities', () => {
+    expect(compareProcessGenerationIdentities('garbage', '41:1000')).toBe('ambiguous');
+    expect(compareProcessGenerationIdentities('41:1000', '42:1000'))
+      .toBe('ambiguous');
+    expect(compareProcessGenerationIdentities('41:1000', '')).toBe('ambiguous');
+    expect(compareProcessGenerationIdentities('garbage', 'garbage')).toBe('ambiguous');
+    expect(compareProcessGenerationIdentities(
+      '9007199254740992:1000',
+      '9007199254740992:1000',
+      'linux',
+    )).toBe('ambiguous');
+  });
+
+  it('decides tagged Darwin native identities exactly, including same-second reuse', () => {
+    const sameGeneration = 'darwin-proc:41:1754041400:123456';
+    expect(compareProcessGenerationIdentities(sameGeneration, sameGeneration, 'darwin'))
+      .toBe('same');
+    // The whole-second witness can never decide this case; the subsecond
+    // witness must.
+    expect(compareProcessGenerationIdentities(
+      'darwin-proc:41:1754041400:123456',
+      'darwin-proc:41:1754041400:654321',
+      'darwin',
+    )).toBe('reused');
+    expect(compareProcessGenerationIdentities(
+      'darwin-proc:41:1754041400:123456',
+      'darwin-proc:41:1754041401:000001',
+      'darwin',
+    )).toBe('reused');
+    expect(compareProcessGenerationIdentities(
+      'darwin-proc:41:1754041400:123456',
+      'darwin-proc:42:1754041400:123456',
+      'darwin',
+    )).toBe('ambiguous');
+  });
+
+  it('fences a tagged record against a legacy record and decides tagged job custody', () => {
+    expect(compareProcessGenerationIdentities(
+      '41:1754041400000',
+      'darwin-proc:41:1754041400:123456',
+      'darwin',
+    )).toBe('ambiguous');
+    expect(compareProcessGenerationIdentities(
+      'winjob:Local\\happier-svc09-a',
+      'winjob:Local\\happier-svc09-a',
+      'win32',
+    )).toBe('same');
+    expect(compareProcessGenerationIdentities(
+      'winjob:Local\\happier-svc09-a',
+      'winjob:Local\\happier-svc09-b',
+      'win32',
+    )).toBe('reused');
+    expect(compareProcessGenerationIdentities(
+      'winjob:Local\\happier-svc09-a',
+      '41:1754041400000',
+      'win32',
+    )).toBe('ambiguous');
+  });
+
 });

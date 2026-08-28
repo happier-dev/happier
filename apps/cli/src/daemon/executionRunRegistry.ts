@@ -5,13 +5,16 @@ import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/pro
 import { join } from 'node:path';
 import {
   DaemonExecutionRunMarkerPersistenceReadSchema,
+  DaemonExecutionRunMarkerOwnerWriteSchema,
   DaemonExecutionRunMarkerSchema,
   type DaemonExecutionRunMarker,
   type DaemonExecutionRunMarkerPersistenceRead,
+  type DaemonExecutionRunMarkerOwnerWrite,
 } from '@happier-dev/protocol';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 
 const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;
+const ExecutionRunMarkerOwnerWriteSchema = DaemonExecutionRunMarkerOwnerWriteSchema;
 const ExecutionRunMarkerPersistenceReadSchema = DaemonExecutionRunMarkerPersistenceReadSchema;
 
 export type ExecutionRunMarker = DaemonExecutionRunMarker;
@@ -90,7 +93,7 @@ async function shouldSkipOverwriteForTerminalMarker(filePath: string, next: Exec
   return false;
 }
 
-async function writeJsonAtomic(filePath: string, value: ExecutionRunMarker): Promise<void> {
+async function writeJsonAtomic(filePath: string, value: DaemonExecutionRunMarkerOwnerWrite): Promise<void> {
   const tmpPath = `${filePath}.tmp-${randomUUID()}`;
   try {
     await writeFile(tmpPath, JSON.stringify(value, null, 2), 'utf-8');
@@ -135,11 +138,11 @@ async function writeJsonAtomic(filePath: string, value: ExecutionRunMarker): Pro
   }
 }
 
-export async function writeExecutionRunMarker(marker: ExecutionRunMarker): Promise<void> {
+export async function writeExecutionRunMarker(marker: DaemonExecutionRunMarkerOwnerWrite): Promise<void> {
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
-  const payload: ExecutionRunMarker = ExecutionRunMarkerSchema.parse(marker);
+  const payload = ExecutionRunMarkerOwnerWriteSchema.parse(marker);
   await writeJsonAtomic(resolveExecutionRunMarkerPath(payload.runId), payload);
 }
 
@@ -176,6 +179,23 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
       logger.debug(`[executionRunRegistry] Failed to scan temp markers for run-${runId}.json`, e);
     }
   }
+}
+
+export async function clearExecutionRunConnectedServicesCleanupReceipt(
+  runId: string,
+): Promise<void> {
+  const filePath = resolveExecutionRunMarkerPath(runId);
+  const current = await readExecutionRunMarkerFile(filePath);
+  if (!current?.executionRunConnectedServicesCleanupReceiptV1) return;
+  const {
+    executionRunConnectedServicesCleanupReceiptV1: _cleanupReceipt,
+    executionRunConnectedServicesLaunchV1: _legacyLaunch,
+    happyHomeDir: _legacyHappyHomeDir,
+    ...marker
+  } = current;
+  const parsed = ExecutionRunMarkerOwnerWriteSchema.safeParse(marker);
+  if (!parsed.success) return;
+  await writeJsonAtomic(filePath, parsed.data);
 }
 
 async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarkerPersistenceRead[]> {
@@ -223,6 +243,7 @@ function projectExecutionRunMarkerForPublication(
   // consumers receive the bounded operational run state, never its launch config.
   const {
     executionRunConnectedServicesLaunchV1: _ownerLocalLaunch,
+    executionRunConnectedServicesCleanupReceiptV1: _ownerLocalCleanupReceipt,
     ...publicMarker
   } = marker;
   return ExecutionRunMarkerSchema.parse(publicMarker);
@@ -242,11 +263,14 @@ export async function gcExecutionRunMarkers(params: Readonly<{
   isPidAlive: (pid: number) => boolean | Promise<boolean>;
   isPidSafeHappyProcess: (pid: number) => boolean | Promise<boolean>;
 }>): Promise<{ removedRunIds: string[] }> {
-  const markers = await listExecutionRunMarkers();
+  const markers = await listExecutionRunMarkersRaw();
   const removedRunIds: string[] = [];
 
   for (const marker of markers) {
     const isTerminal = typeof marker.finishedAtMs === 'number' || marker.status !== 'running';
+    if (isTerminal && marker.executionRunConnectedServicesCleanupReceiptV1) {
+      continue;
+    }
     if (isTerminal && typeof marker.finishedAtMs === 'number') {
       if (params.nowMs - marker.finishedAtMs > params.terminalTtlMs) {
         await removeExecutionRunMarker(marker.runId);

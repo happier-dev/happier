@@ -181,6 +181,9 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
   > | null = null;
   try {
     lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+    if (typeof lease.registry.generation !== 'number') {
+      return UNKNOWN_AGENT_RUNTIME_CURRENTNESS;
+    }
     return resolveTrackedRunnerAgentRuntimeCurrentness({
       tracked,
       agentRuntimesByAgentId: lease.registry.agentRuntimesByAgentId,
@@ -188,6 +191,7 @@ export async function resolveAuthoritativeTrackedRunnerAgentRuntimeCurrentness(
         ...providerResolution,
         registry: resolveProviderContributionRegistryView(
           lease.registry.contributes,
+          lease.registry.generation,
         ),
       },
     });
