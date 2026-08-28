@@ -18,6 +18,7 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     getStream: vi.fn(() => ({}) as MediaStream),
   };
   const acquireAudioMode = vi.fn(async () => ({ release: vi.fn(async () => undefined) }));
+  const setInputMuted = vi.fn(async () => undefined);
   const controller: VoiceConversationController = {
     async start(input) {
       await resources?.prepare?.({
@@ -127,6 +128,7 @@ function createRuntimeForMode(mode: MicrophoneMode) {
       encodeTurnControl: vi.fn(() => null),
     },
     microphoneMode: mode,
+    ...(mode === 'provider_managed' ? { setInputMuted } : {}),
     createConnection: vi.fn(async () => { throw new Error('unused'); }),
     encodeToolResults: vi.fn(() => []),
     encodeToolContinuation: vi.fn(() => null),
@@ -135,7 +137,7 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     resolveSurfaceCapabilities: vi.fn(() => null),
   } as never);
 
-  return { runtime, mic, acquireAudioMode };
+  return { runtime, mic, acquireAudioMode, setInputMuted };
 }
 
 describe('createBundledRealtimeProviderRuntime microphone mode', () => {
@@ -157,6 +159,10 @@ describe('createBundledRealtimeProviderRuntime microphone mode', () => {
     expect(providerManaged.mic.ensurePermission).not.toHaveBeenCalled();
     expect(providerManaged.mic.ensureActive).not.toHaveBeenCalled();
     expect(providerManaged.acquireAudioMode).toHaveBeenCalledTimes(1);
+    expect(providerManaged.mic.setMuted).not.toHaveBeenCalled();
+    await providerManaged.runtime.adapter.setMuted({ sessionId: 'voice-test', muted: true });
+    expect(providerManaged.setInputMuted).toHaveBeenCalledWith(true);
+    expect(providerManaged.mic.setMuted).not.toHaveBeenCalled();
   });
 
   it('holds the audio-mode lease before host WebRTC capture opens its track', async () => {

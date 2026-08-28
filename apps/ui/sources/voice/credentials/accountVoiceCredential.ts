@@ -165,6 +165,7 @@ function canonicalVoiceCredentialSource(
       ? {
           ...projection,
           request: canonicalVoiceCredentialRequest(projection.request),
+          requiredHeaderNames: [...projection.requiredHeaderNames].sort(),
           allowedHeaderNames: [...projection.allowedHeaderNames].sort(),
         }
       : projection

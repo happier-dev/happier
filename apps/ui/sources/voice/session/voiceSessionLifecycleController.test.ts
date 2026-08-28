@@ -58,6 +58,7 @@ function createAdapter(params: Readonly<{
     retry: ReturnType<typeof vi.fn>;
     toggle: ReturnType<typeof vi.fn>;
     bargeIn: ReturnType<typeof vi.fn>;
+    setMuted: ReturnType<typeof vi.fn>;
     listenerCount: () => number;
 }> {
     let snapshot = params.snapshot;
@@ -84,6 +85,7 @@ function createAdapter(params: Readonly<{
     });
     const toggle = vi.fn(async () => {});
     const bargeIn = vi.fn(async () => {});
+    const setMuted = vi.fn(async () => {});
 
     return {
         controller: {
@@ -95,7 +97,7 @@ function createAdapter(params: Readonly<{
             retry,
             interrupt: vi.fn(async () => {}),
             bargeIn,
-            setMuted: vi.fn(async () => {}),
+            setMuted,
             sendContextUpdate: vi.fn(() => {}),
             getSnapshot: () => params.freshSnapshots ? { ...snapshot } : snapshot,
             subscribe: (listener: () => void) => {
@@ -114,11 +116,106 @@ function createAdapter(params: Readonly<{
         retry,
         toggle,
         bargeIn,
+        setMuted,
         listenerCount: () => listeners.size,
     };
 }
 
 describe('createVoiceSessionLifecycleController', () => {
+    it('removes native suspension without undoing a user mute chosen while suspended', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const snapshot: VoiceSessionSnapshot = {
+            adapterId: 'mute-owner',
+            sessionId: 'voice-session',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+            micMuted: false,
+        };
+        const adapter = createAdapter({ id: 'mute-owner', snapshot });
+        setVoiceSessionSnapshot(snapshot);
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: () => adapter.controller,
+            list: () => [adapter.controller],
+        }) });
+        controller.setConfiguredProviderId(adapter.controller.id);
+
+        const suspension = await controller.suspendInput('voice-session');
+        expect(adapter.setMuted).toHaveBeenLastCalledWith({ sessionId: 'voice-session', muted: true });
+
+        await controller.setMuted('voice-session', true);
+        await suspension?.release();
+        expect(adapter.setMuted).not.toHaveBeenCalledWith({ sessionId: 'voice-session', muted: false });
+
+        await controller.setMuted('voice-session', false);
+        expect(adapter.setMuted).toHaveBeenLastCalledWith({ sessionId: 'voice-session', muted: false });
+    });
+
+    it('fences a late suspension release from a same-id replacement adapter', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const active = (micMuted = false): VoiceSessionSnapshot => ({
+            adapterId: 'same-provider',
+            sessionId: 'voice-session',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+            micMuted,
+        });
+        const incumbent = createAdapter({ id: 'same-provider', snapshot: active() });
+        const replacement = createAdapter({ id: 'same-provider', snapshot: active() });
+        let registered = incumbent;
+        setVoiceSessionSnapshot(active());
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: () => registered.controller,
+            list: () => [registered.controller],
+        }) });
+        controller.setConfiguredProviderId('same-provider');
+
+        const suspension = await controller.suspendInput('voice-session');
+        expect(incumbent.setMuted).toHaveBeenCalledWith({ sessionId: 'voice-session', muted: true });
+
+        registered = replacement;
+        incumbent.setSnapshot({
+            adapterId: 'same-provider',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        });
+        await suspension?.release();
+
+        expect(incumbent.setMuted).not.toHaveBeenCalledWith({ sessionId: 'voice-session', muted: false });
+        expect(replacement.setMuted).not.toHaveBeenCalled();
+    });
+
+    it('does not apply a stale session mute or suspension to the current session', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const { setVoiceSessionSnapshot } = await import('./voiceSessionStore');
+        const snapshot: VoiceSessionSnapshot = {
+            adapterId: 'mute-owner',
+            sessionId: 'session-b',
+            status: 'connected',
+            mode: 'listening',
+            canStop: true,
+            micMuted: false,
+        };
+        const adapter = createAdapter({ id: 'mute-owner', snapshot });
+        setVoiceSessionSnapshot(snapshot);
+        const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
+            get: () => adapter.controller,
+            list: () => [adapter.controller],
+        }) });
+        controller.setConfiguredProviderId(adapter.controller.id);
+
+        await controller.setMuted('session-a', true);
+        const suspension = await controller.suspendInput('session-a');
+
+        expect(suspension).toBeNull();
+        expect(adapter.setMuted).not.toHaveBeenCalled();
+    });
+
     it('reports the configured provider consumed by the lifecycle owner', async () => {
         const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
         const controller = createVoiceSessionLifecycleController({ getRegistry: () => ({
@@ -2242,6 +2339,112 @@ describe('createVoiceSessionLifecycleController', () => {
             await controller.dispose();
         }
     });
+
+    it.each(['local', 'realtime'] as const)(
+        'retires an exact %s provider withdrawn while Start is still pending and fences late activation',
+        async (engineKind) => {
+            const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+            const captureAdmission = createVoiceCaptureAdmissionController();
+            const releaseStart = createDeferred<void>();
+            const providerId = `withdrawn-during-start-${engineKind}`;
+            const sessionId = 'voice-session';
+            let snapshot: VoiceSessionSnapshot = {
+                adapterId: providerId,
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            };
+            const adapterListeners = new Set<() => void>();
+            const publishAdapter = (next: VoiceSessionSnapshot) => {
+                snapshot = next;
+                for (const listener of [...adapterListeners]) listener();
+            };
+            const adapter: VoiceAdapterController = {
+                id: providerId,
+                engineKind,
+                start: vi.fn(async () => {
+                    await releaseStart.promise;
+                    publishAdapter({
+                        adapterId: providerId,
+                        sessionId,
+                        status: 'connected',
+                        mode: 'listening',
+                        canStop: true,
+                    });
+                }),
+                stop: vi.fn(async () => {
+                    publishAdapter({
+                        adapterId: providerId,
+                        sessionId,
+                        status: 'disconnected',
+                        mode: 'idle',
+                        canStop: false,
+                    });
+                }),
+                toggle: vi.fn(async () => {}),
+                interrupt: vi.fn(async () => {}),
+                setMuted: vi.fn(async () => {}),
+                sendContextUpdate: vi.fn(),
+                getSnapshot: () => snapshot,
+                subscribe: (listener) => {
+                    adapterListeners.add(listener);
+                    return () => adapterListeners.delete(listener);
+                },
+            };
+            let registered = true;
+            const registryListeners = new Set<() => void>();
+            const controller = createVoiceSessionLifecycleController({
+                captureAdmission,
+                getRegistry: () => ({
+                    get: (id) => registered && id === providerId ? adapter : null,
+                    list: () => registered ? [adapter] : [],
+                    subscribe: (listener) => {
+                        registryListeners.add(listener);
+                        return () => registryListeners.delete(listener);
+                    },
+                }),
+            });
+            let start: Promise<void> | null = null;
+
+            try {
+                controller.setConfiguredProviderId(providerId);
+                start = controller.toggle(sessionId);
+                await vi.waitFor(() => expect(adapter.start).toHaveBeenCalledOnce());
+
+                registered = false;
+                for (const listener of [...registryListeners]) listener();
+
+                // Withdrawal owns cancellation immediately; it does not wait
+                // for provider setup to finish before asking that exact object
+                // to retire.
+                await vi.waitFor(() => expect(adapter.stop).toHaveBeenCalledOnce());
+
+                // A provider that settles Start after its first Stop must not
+                // regain media/tool authority after its registration vanished.
+                releaseStart.resolve();
+                await start;
+                expect(adapter.stop).toHaveBeenCalledTimes(2);
+                expect(controller.getSnapshot()).toMatchObject({
+                    adapterId: providerId,
+                    sessionId,
+                    status: 'error',
+                    canStop: false,
+                    errorCode: 'service_temporarily_unavailable',
+                    errorMessage: 'voice_provider_adapter_not_registered',
+                });
+                if (engineKind === 'realtime') {
+                    const dictation = captureAdmission.acquire('dictation');
+                    expect(dictation).toMatchObject({ status: 'acquired' });
+                    if (dictation.status === 'acquired') dictation.lease.release();
+                }
+            } finally {
+                releaseStart.resolve();
+                await start?.catch(() => undefined);
+                await controller.dispose();
+            }
+        },
+    );
 
     it('tracks current and retained adapter subscriptions by object identity across a same-ID replacement', async () => {
         const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');

@@ -1,6 +1,7 @@
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import type { AgentId } from '@/agents/catalog/catalog';
 import {
+    buildQualifiedPluginContributionKey,
     readBackendTargetRefV2,
     readLegacyConfiguredAcpBackendId,
     type BackendTargetRefV2,
@@ -12,13 +13,14 @@ import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAge
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
 export function resolveSpawnBackendTargetFromState(
   state: any,
   opts?: Readonly<{ daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null }>,
 ): BackendTargetRefV2 {
   const settings = state?.settings ?? {};
-  return resolvePreferredBackendTargetFromProjection({
+  const preferredTarget = resolvePreferredBackendTargetFromProjection({
     lastUsedAgent: settings.lastUsedAgent,
     lastUsedBackendTarget: settings.lastUsedBackendTarget,
     defaultBuiltInAgentId: DEFAULT_AGENT_ID as AgentId,
@@ -26,6 +28,15 @@ export function resolveSpawnBackendTargetFromState(
     acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
     daemonMergedProjectionInputs: opts?.daemonMergedProjectionInputs ?? null,
   });
+  return resolveOperationalBackendTargetForAgentSelection({
+    backendTarget: preferredTarget,
+    mergedProviderProjectionById: opts?.daemonMergedProjectionInputs?.mergedProviderProjectionById,
+  }) ?? {
+    kind: 'backend',
+    backendId: preferredTarget.kind === 'agent'
+      ? buildQualifiedPluginContributionKey(preferredTarget.identity)
+      : preferredTarget.backendId,
+  };
 }
 
 export function resolveSpawnAgentIdFromState(state: any): AgentId {

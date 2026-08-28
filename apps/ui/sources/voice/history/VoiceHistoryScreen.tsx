@@ -22,6 +22,7 @@ import {
   type VoiceHistoryRow,
   type VoiceHistorySnapshot,
 } from './voiceHistoryConsumer';
+import { registerSessionTranscriptRetentionConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { saveVoiceHistoryExportArtifact } from './voiceHistoryExportTarget';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ExternalSessionOperationAccessibilityStatus } from '@/components/sessions/external/progress/ExternalSessionOperationAccessibilityStatus';
@@ -39,6 +40,7 @@ type VoiceHistoryScreenProps = Readonly<{
 }>;
 
 type InitialLoadState = 'loading' | 'ready' | VoiceHistoryInitialLoadFailureState;
+type VoiceHistoryScreenOperation = 'load_older' | 'export' | 'clear';
 
 const EMPTY_SNAPSHOT: VoiceHistorySnapshot = Object.freeze({
   sessionId: null,
@@ -150,9 +152,10 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const [query, setQuery] = React.useState('');
   const queryRef = React.useRef('');
   const [loadState, setLoadState] = React.useState<InitialLoadState>('loading');
-  const [loadingOlder, setLoadingOlder] = React.useState(false);
-  const [exporting, setExporting] = React.useState(false);
-  const [clearing, setClearing] = React.useState(false);
+  const activeOperationRef = React.useRef<VoiceHistoryScreenOperation | null>(null);
+  const [activeOperation, setActiveOperation] = React.useState<VoiceHistoryScreenOperation | null>(
+    null,
+  );
   const [actionMessage, setActionMessage] = React.useState<string | null>(null);
   const requestEpochRef = React.useRef(0);
   /*
@@ -178,6 +181,11 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     () => (loadState === 'loading' ? EMPTY_SNAPSHOT : consumer.read(query)),
     [consumer, loadState, query, revision],
   );
+
+  React.useEffect(() => {
+    if (!snapshot.sessionId) return;
+    return registerSessionTranscriptRetentionConsumer(snapshot.sessionId);
+  }, [snapshot.sessionId]);
 
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
     if (isVoiceHistoryOperationSupersededError(error)) {
@@ -222,22 +230,33 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     setActionMessage(null);
   }, []);
 
+  const beginOperation = React.useCallback((operation: VoiceHistoryScreenOperation): boolean => {
+    if (activeOperationRef.current !== null) return false;
+    activeOperationRef.current = operation;
+    setActiveOperation(operation);
+    return true;
+  }, []);
+
+  const finishOperation = React.useCallback((operation: VoiceHistoryScreenOperation): void => {
+    if (activeOperationRef.current !== operation) return;
+    activeOperationRef.current = null;
+    setActiveOperation(null);
+  }, []);
+
   const loadOlder = React.useCallback(async () => {
-    if (loadingOlder) return;
-    setLoadingOlder(true);
+    if (!beginOperation('load_older')) return;
     setActionMessage(null);
     try {
       await consumer.loadOlder(queryRef.current);
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.loadOlderFailed'));
     } finally {
-      setLoadingOlder(false);
+      finishOperation('load_older');
     }
-  }, [consumer, loadingOlder, showOperationError]);
+  }, [beginOperation, consumer, finishOperation, showOperationError]);
 
   const exportAll = React.useCallback(async () => {
-    if (exporting) return;
-    setExporting(true);
+    if (!beginOperation('export')) return;
     setActionMessage(null);
     try {
       const artifact = await consumer.exportHistory({ range: 'all' });
@@ -246,25 +265,24 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.exportFailed'));
     } finally {
-      setExporting(false);
+      finishOperation('export');
     }
-  }, [consumer, exporting, saveExport, showOperationError]);
+  }, [beginOperation, consumer, finishOperation, saveExport, showOperationError]);
 
   const clear = React.useCallback(async () => {
-    if (clearing) return;
-    const confirmed = await Modal.confirm(
-      t('settingsVoice.history.clearConfirmTitle'),
-      t('settingsVoice.history.clearConfirmBody'),
-      {
-        cancelText: t('common.cancel'),
-        confirmText: t('settingsVoice.history.clearConfirmAction'),
-        destructive: true,
-      },
-    );
-    if (!confirmed) return;
-    setClearing(true);
-    setActionMessage(null);
+    if (!beginOperation('clear')) return;
     try {
+      const confirmed = await Modal.confirm(
+        t('settingsVoice.history.clearConfirmTitle'),
+        t('settingsVoice.history.clearConfirmBody'),
+        {
+          cancelText: t('common.cancel'),
+          confirmText: t('settingsVoice.history.clearConfirmAction'),
+          destructive: true,
+        },
+      );
+      if (!confirmed) return;
+      setActionMessage(null);
       await consumer.clear();
       queryRef.current = '';
       setQuery('');
@@ -273,9 +291,14 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
     } catch (error) {
       showOperationError(error, t('settingsVoice.history.clearFailed'));
     } finally {
-      setClearing(false);
+      finishOperation('clear');
     }
-  }, [clearing, consumer, showOperationError]);
+  }, [beginOperation, consumer, finishOperation, showOperationError]);
+
+  const loadingOlder = activeOperation === 'load_older';
+  const exporting = activeOperation === 'export';
+  const clearing = activeOperation === 'clear';
+  const operationInFlight = activeOperation !== null;
 
   /*
    * Loading, failure and recovery are rendered as ordinary text, which a screen
@@ -407,7 +430,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
           icon={<Icon name="download" size={20} color={theme.colors.text.secondary} />}
           accessibilityRole="button"
           accessibilityLabel={t('settingsVoice.history.exportTitle')}
-          disabled={exporting || clearing}
+          disabled={operationInFlight}
           loading={exporting}
           onPress={() => { void exportAll(); }}
         />
@@ -420,7 +443,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
           icon={<Icon name="trash" size={20} color={theme.colors.state.danger.foreground} />}
           accessibilityRole="button"
           accessibilityLabel={t('settingsVoice.history.clearTitle')}
-          disabled={exporting || clearing}
+          disabled={operationInFlight}
           loading={clearing}
           destructive
           showChevron={false}
@@ -437,7 +460,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
             subtitle={t('settingsVoice.history.loadOlderSubtitle')}
             accessibilityRole="button"
             accessibilityLabel={t('settingsVoice.history.loadOlderTitle')}
-            disabled={loadingOlder || exporting || clearing}
+            disabled={operationInFlight}
             loading={loadingOlder}
             showChevron={false}
             onPress={() => { void loadOlder(); }}

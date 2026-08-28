@@ -1,4 +1,3 @@
-import type { AgentId } from '@/agents/catalog/catalog';
 import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -25,7 +24,7 @@ export async function ensureVoiceAgentInstallablesBackground(params: Readonly<{
   if (!machineId) return;
 
   await ensureAgentInstallablesBackground({
-    agentId: normalizedAgentId as AgentId,
+    agentId: normalizedAgentId,
     machineId,
     serverId: getActiveServerSnapshot().serverId,
     settings: state?.settings ?? {},

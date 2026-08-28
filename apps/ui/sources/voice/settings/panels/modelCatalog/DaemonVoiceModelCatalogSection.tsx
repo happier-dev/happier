@@ -68,6 +68,7 @@ function ModelCatalogGroup(props: Readonly<{
                     key={row.packId}
                     row={row}
                     actionInFlight={props.actionPackId === row.packId}
+                    actionsDisabled={props.actionPackId !== null}
                     onSetDefault={props.onSetDefault}
                     onInstall={props.onInstall}
                     onRemove={props.onRemove}
@@ -123,19 +124,17 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
     }, [refresh]);
 
     const handleInstall = React.useCallback((packId: string) => {
-        fireAndForget((async () => {
-            const review = state.statuses.find((status) => status.packId === packId)?.licenseReview;
-            if (review && !review.accepted) {
-                const accepted = await Modal.confirm(
-                    review.licenseTitle,
-                    review.licenseText,
-                    { confirmText: t('common.continue') },
-                );
-                if (!accepted) return;
-                await acceptLicense(review);
-            }
-            await install(packId);
-        })(), { tag: 'DaemonVoiceModelCatalogSection.install' });
+        const review = state.statuses.find((status) => status.packId === packId)?.licenseReview;
+        fireAndForget(install(packId, review && !review.accepted ? async (isCurrent) => {
+            const accepted = await Modal.confirm(
+                review.licenseTitle,
+                review.licenseText,
+                { confirmText: t('common.continue') },
+            );
+            if (!accepted || !isCurrent()) return false;
+            await acceptLicense(review);
+            return isCurrent();
+        } : undefined), { tag: 'DaemonVoiceModelCatalogSection.install' });
     }, [acceptLicense, install, state.statuses]);
 
     const handleRemove = React.useCallback((packId: string) => remove(packId), [remove]);

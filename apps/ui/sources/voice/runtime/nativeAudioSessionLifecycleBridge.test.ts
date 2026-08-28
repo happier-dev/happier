@@ -40,17 +40,44 @@ function createHarness(micMuted = false, aec: 'required' | 'preferred' = 'prefer
     adapterId: 'local_conversation', sessionId: 'voice-global', status: 'connected' as const,
     mode: 'listening' as const, canStop: true, micMuted,
   };
+  let userMuted = micMuted;
+  let suspensionCount = 0;
+  const setMuted = vi.fn(async (_sessionId: string, muted: boolean) => {
+    snapshot = { ...snapshot, micMuted: muted };
+  });
   const controller = {
     getSnapshot: vi.fn(() => snapshot),
     setOutputFocusState: vi.fn(async (): Promise<'applied' | 'unsupported'> => 'applied'),
-    setMuted: vi.fn(async () => undefined),
+    setMuted,
+    suspendInput: vi.fn(async () => {
+      suspensionCount += 1;
+      if (suspensionCount === 1 && !snapshot.micMuted) await setMuted('voice-global', true);
+      let released = false;
+      return {
+        async release() {
+          if (released) return;
+          released = true;
+          suspensionCount -= 1;
+          if (suspensionCount === 0 && !userMuted) await setMuted('voice-global', false);
+        },
+      };
+    }),
     stop: vi.fn(async () => undefined),
   };
   const bridge = createNativeAudioSessionLifecycleBridge({
     coordinator: coordinator as never,
     controller,
   });
-  return { bridge, controller, emit: (event: VoiceAudioSessionPlatformEvent) => listener?.(event), remove };
+  return {
+    bridge,
+    controller,
+    emit: (event: VoiceAudioSessionPlatformEvent) => listener?.(event),
+    remove,
+    async setUserMuted(muted: boolean) {
+      userMuted = muted;
+      if (suspensionCount === 0 || muted) await setMuted('voice-global', muted);
+    },
+  };
 }
 
 function createReconfigurationHarness() {
@@ -84,6 +111,17 @@ function createReconfigurationHarness() {
     getSnapshot: vi.fn(() => snapshot),
     setOutputFocusState: vi.fn(async (): Promise<'applied' | 'unsupported'> => 'applied'),
     setMuted: vi.fn(async () => undefined),
+    suspendInput: vi.fn(async () => {
+      await controller.setMuted('voice-global', true);
+      let released = false;
+      return {
+        async release() {
+          if (released) return;
+          released = true;
+          await controller.setMuted('voice-global', false);
+        },
+      };
+    }),
     stop: vi.fn(async () => undefined),
   };
   const bridge = createNativeAudioSessionLifecycleBridge({ coordinator, controller });
@@ -117,6 +155,70 @@ describe('createNativeAudioSessionLifecycleBridge', () => {
     expect(controller.setMuted).toHaveBeenCalledTimes(1);
     emit({ generation: 1, kind: 'focus_changed', state: 'gained' });
     await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', false));
+  });
+
+  it('removes only its interruption suspension when the user mutes during the interruption', async () => {
+    const { controller, emit, setUserMuted } = createHarness();
+
+    emit({ generation: 1, kind: 'interruption_began' });
+    await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', true));
+
+    await setUserMuted(true);
+    emit({ generation: 1, kind: 'interruption_ended', shouldResume: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(controller.setMuted).not.toHaveBeenCalledWith('voice-global', false);
+    expect(controller.getSnapshot().micMuted).toBe(true);
+  });
+
+  it('does not unmute a Voice attempt that was already user-muted before interruption', async () => {
+    const { controller, emit } = createHarness(true);
+
+    emit({ generation: 1, kind: 'interruption_began' });
+    emit({ generation: 1, kind: 'interruption_ended', shouldResume: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(controller.setMuted).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().micMuted).toBe(true);
+  });
+
+  it('releases an acquired suspension lease when the bridge is disposed', async () => {
+    const { bridge, controller, emit } = createHarness();
+    emit({ generation: 1, kind: 'interruption_began' });
+    await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', true));
+
+    bridge.dispose();
+
+    await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', false));
+  });
+
+  it('releases a suspension lease that materializes after disposal', async () => {
+    const acquired = createDeferred<Readonly<{ release(): Promise<void> }>>();
+    let listener: (event: VoiceAudioSessionPlatformEvent) => void = () => {};
+    const release = vi.fn(async () => undefined);
+    const suspendInput = vi.fn(() => acquired.promise);
+    const bridge = createNativeAudioSessionLifecycleBridge({
+      coordinator: {
+        subscribe(next: (event: VoiceAudioSessionPlatformEvent) => void) {
+          listener = next;
+          return { remove: vi.fn() };
+        },
+        getSnapshot: () => ({ configuration: { aec: 'preferred' as const } }),
+      } as never,
+      controller: {
+        getSnapshot: () => ({ sessionId: 'voice-global', status: 'connected' as const }),
+        suspendInput,
+        setOutputFocusState: vi.fn(async () => 'applied' as const),
+        stop: vi.fn(async () => undefined),
+      },
+    });
+
+    listener({ generation: 1, kind: 'interruption_began' });
+    await vi.waitFor(() => expect(suspendInput).toHaveBeenCalledTimes(1));
+    bridge.dispose();
+    acquired.resolve({ release });
+
+    await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
   });
 
   it('keeps an active unmuted iOS Voice attempt unchanged through ordinary background and foreground transitions', async () => {
@@ -286,6 +388,7 @@ describe('createNativeAudioSessionLifecycleBridge', () => {
       getSnapshot: vi.fn(() => snapshot),
       setOutputFocusState: vi.fn(() => outputFocus.promise),
       setMuted: vi.fn(async () => undefined),
+      suspendInput: vi.fn(async () => null),
       stop: vi.fn(async () => undefined),
     };
     const bridge = createNativeAudioSessionLifecycleBridge({

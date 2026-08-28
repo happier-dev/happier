@@ -291,6 +291,7 @@ const phaseSeparatedCredentialDeclaration = VoiceProviderContributionSchema.pars
           origin: 'https://api.openai.com',
           headerNames: ['authorization'],
         },
+        requiredHeaderNames: ['authorization'],
         allowedHeaderNames: ['authorization'],
       }],
     }],
@@ -370,6 +371,7 @@ const defaultCredentialDeclaration = (() => {
           origin: 'https://api.openai.com',
           headerNames: ['authorization', 'chatgpt-account-id'],
         },
+        requiredHeaderNames: ['authorization'],
         allowedHeaderNames: ['authorization', 'chatgpt-account-id'],
       }],
     }, {
@@ -384,6 +386,7 @@ const defaultCredentialDeclaration = (() => {
           origin: 'https://api.openai.com',
           headerNames: ['authorization'],
         },
+        requiredHeaderNames: ['authorization'],
         allowedHeaderNames: ['authorization'],
       }],
     }],
@@ -472,7 +475,7 @@ describe('account Voice operation service', () => {
         kind: 'httpHeaders' as const,
         headers: { authorization: 'Bearer machine-secret' },
       },
-      credentialRevision: null,
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
     }));
     const raw = createVoiceClientRawCredentialAccess({
       identity: rawCredentialIdentity,
@@ -704,7 +707,7 @@ describe('account Voice operation service', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('uses the selected Connected Account headers for the mediated request without reading the dormant SavedSecret', async () => {
+  it('accepts required Connected Account headers without requiring an optional header', async () => {
     mocks.state = {
       ...mocks.state,
       settings: {
@@ -734,12 +737,10 @@ describe('account Voice operation service', () => {
     const materializeSecret = vi.fn(async () => 'must-not-materialize');
     const materializeConnectedAccountHeaders = vi.fn(async () => ({
       authorization: 'Bearer codex-access-token',
-      'chatgpt-account-id': 'account-work',
     }));
     const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({
         authorization: 'Bearer codex-access-token',
-        'chatgpt-account-id': 'account-work',
       });
       return new Response(JSON.stringify({
         value: 'short-lived-client-auth',
@@ -777,7 +778,7 @@ describe('account Voice operation service', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('authorizes each operation in a multi-purpose recipient against its exact declared purpose', async () => {
+  it('selects by slot purpose while authorizing a different recipient operation purpose', async () => {
     mocks.state = {
       ...mocks.state,
       settings: {
@@ -792,7 +793,9 @@ describe('account Voice operation service', () => {
         connectedAccountPurposeBindingsV1: {
           v: 1 as const,
           bindings: [{
-            purpose: { consumer: contribution, purpose: 'voice.catalog.voices' },
+            // Source selection is owned by the credential slot purpose even
+            // though the recipient operation has its own purpose.
+            purpose: { consumer: contribution, purpose: 'voice.client-auth' },
             target: {
               kind: 'account' as const,
               account: {
@@ -833,11 +836,10 @@ describe('account Voice operation service', () => {
       },
       signal: new AbortController().signal,
     })).resolves.toMatchObject({ status: 200 });
-    // The client-auth purpose has no qualified binding in this snapshot, so the
-    // account-settings read cannot resolve it. That is indeterminate, not an
-    // absent credential: it must not claim the bound account is unusable.
+    // The same slot-selected Account is not an admitted source for client-auth,
+    // whose declaration names the Codex service instead.
     await expect(requestClientAuth(service)).rejects.toMatchObject({
-      code: 'service_temporarily_unavailable',
+      code: 'voice_account_operation_unauthorized',
     });
 
     expect(materializeConnectedAccountHeaders).toHaveBeenCalledTimes(1);

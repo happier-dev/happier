@@ -125,8 +125,31 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "delivery": "native_mcp"
           }
         },
+        "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "codex-cli"
+          },
+          "codingPromptBehavior": {
+            "blocks": [
+              {
+                "id": "provider.codex.exec_sequencing",
+                "text": "Tool execution ordering:\n- When you need to run multiple `exec_command` calls, run them sequentially.\n- Do not enqueue multiple `exec_command` calls at once.\n- If any command may require user approval (especially writes), wait for the user decision and the command result before issuing the next command.\n- If a dependent read runs before its prerequisite write and fails, rerun the read after the write succeeds."
+              }
+            ]
+          },
+          "resumeChecklist": {
+            "includeLoginStatus": true
+          },
+          "vendorResume": {
+            "support": "experimental"
+          }
+        },
         "cli": {
           "auth": {
+            "environmentVariables": [
+              "OPENAI_API_KEY",
+              "CODEX_API_KEY"
+            ],
             "loginLaunches": [
               {
                 "args": [
@@ -135,21 +158,7 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                 "kind": "primary"
               }
             ],
-            "probe": {
-              "backgroundChecks": "safe",
-              "credentialPaths": [
-                "~/.codex/auth.json"
-              ],
-              "envVars": [
-                "OPENAI_API_KEY",
-                "CODEX_API_KEY"
-              ],
-              "parser": "codexLoginStatus",
-              "statusArgs": [
-                "login",
-                "status"
-              ]
-            },
+            "nonInteractiveStatusProbe": true,
             "support": "login_terminal"
           },
           "displayName": "OpenAI Codex CLI",
@@ -2167,7 +2176,10 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                     ],
                     "kind": "httpHeaders",
                     "origin": "https://api.openai.com"
-                  }
+                  },
+                  "requiredHeaderNames": [
+                    "authorization"
+                  ]
                 }
               ],
               "service": {
@@ -2193,7 +2205,10 @@ const OPENAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
                     ],
                     "kind": "httpHeaders",
                     "origin": "https://api.openai.com"
-                  }
+                  },
+                  "requiredHeaderNames": [
+                    "authorization"
+                  ]
                 }
               ],
               "service": {

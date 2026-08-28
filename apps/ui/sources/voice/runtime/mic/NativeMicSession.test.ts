@@ -24,6 +24,7 @@ describe('NativeMicSession', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
+        (Platform as { OS: string }).OS = 'android';
         recorder.uri = 'file:///tmp/rec.m4a';
         acquireAudioMode.mockResolvedValue({ release: releaseAudioMode });
     });
@@ -230,6 +231,51 @@ describe('NativeMicSession', () => {
         expect(prepareToRecordAsync).toHaveBeenCalledTimes(1);
         expect(record).toHaveBeenCalledTimes(1);
         expect(acquireAudioMode).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the coordinator-owned native file recorder on iOS and never constructs Expo Audio', async () => {
+        (Platform as { OS: string }).OS = 'ios';
+        const nativeStart = vi.fn(async () => {});
+        const nativeSetMuted = vi.fn(async () => {});
+        const nativeStop = vi.fn(async () => 'file:///tmp/native-rec.m4a');
+        const session = createExpoAudioRecordingMicSession({
+            createRecorder,
+            createNativeFileRecording: () => ({
+                start: nativeStart,
+                setMuted: nativeSetMuted,
+                stop: nativeStop,
+            }),
+            requestPermission,
+            showPermissionDenied,
+            acquireAudioMode,
+        });
+
+        await session.beginRecording();
+        session.setMuted(true);
+        const uri = await session.stopRecording();
+
+        expect(createRecorder).not.toHaveBeenCalled();
+        expect(nativeStart).toHaveBeenCalledOnce();
+        expect(nativeSetMuted).toHaveBeenCalledWith(true);
+        expect(nativeStop).toHaveBeenCalledOnce();
+        expect(uri).toBe('file:///tmp/native-rec.m4a');
+        expect(releaseAudioMode).toHaveBeenCalledOnce();
+    });
+
+    it('fails closed on iOS when the paired native module lacks file recording', async () => {
+        (Platform as { OS: string }).OS = 'ios';
+        const session = createExpoAudioRecordingMicSession({
+            createRecorder,
+            createNativeFileRecording: () => null,
+            requestPermission,
+            showPermissionDenied,
+            acquireAudioMode,
+        });
+
+        await expect(session.beginRecording()).rejects.toThrow('voice_native_file_recording_unavailable');
+
+        expect(createRecorder).not.toHaveBeenCalled();
+        expect(releaseAudioMode).toHaveBeenCalledOnce();
     });
 
     it('lets the web recorder own its single microphone acquisition without a permission-probe stream', async () => {

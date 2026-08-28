@@ -22,6 +22,37 @@ import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' as 'ios' | 'web' }));
+const daemonProjectionState = vi.hoisted((): { current: any } => ({
+  current: {
+    phase: 'ready' as const,
+    inputs: {
+      mergedProviderProjectionById: {
+        'com.acme.voice.agent': {
+          agentId: 'com.acme.voice.agent',
+          qualifiedId: 'com.acme.voice.agent',
+          identity: { pluginId: 'com.acme.voice', localId: 'agent' },
+          installedPackage: null,
+          projectionGeneration: 7,
+          title: 'Acme Voice',
+          subtitle: 'External conversation Agent',
+          channel: 'plugin' as const,
+          isBuiltIn: false,
+          settingsBackendId: null,
+          catalogAgentId: null,
+          iconAgentId: null,
+          cli: null,
+          connectedAccounts: null,
+          ui: null,
+        },
+      },
+      mergedBackendProjectionById: {},
+      discoveredBackendIds: [],
+      pluginProjectionById: {},
+      pluginProjectionV2: null,
+      registryDiagnostics: [],
+    },
+  },
+}));
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -74,6 +105,10 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
   useEnabledAgentIds: () => ['codex', 'claude'],
+}));
+
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+  useDaemonMergedProjectionInputs: () => daemonProjectionState.current,
 }));
 
 vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
@@ -208,6 +243,7 @@ function findDropdownByItemTriggerTitle(
 beforeEach(() => {
   platformOsMock.value = 'ios';
   featureEnabledState['voice.agent'] = true;
+  daemonProjectionState.current.phase = 'ready';
   settingsState.current.recentMachinePaths = [{ machineId: 'machine-1', path: '/tmp/repo' }];
   preflightModelsCallSpy.mockClear();
 });
@@ -218,6 +254,102 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it('offers the current machine external Agent with its exact projected identity', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'agent',
+        agentId: 'codex',
+      },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const agentPicker = findDropdownByItemTriggerTitle(
+      screen,
+      t('settingsVoice.local.mediatorAgentId'),
+    );
+    const externalEntry = agentPicker?.props.items.find(
+      (item: any) => item.id === 'com.acme.voice.agent',
+    );
+
+    expect(externalEntry).toMatchObject({
+      id: 'com.acme.voice.agent',
+      title: 'Acme Voice',
+      subtitle: 'External conversation Agent',
+    });
+    expect(externalEntry.icon.props.entry).toMatchObject({
+      qualifiedId: 'com.acme.voice.agent',
+      identity: { pluginId: 'com.acme.voice', localId: 'agent' },
+      projectionGeneration: 7,
+      isBuiltIn: false,
+    });
+
+    // The exact target facts ride the catalog entry: no raw-id escape exists.
+    expect(agentPicker?.props.items.map((item: any) => item.id)).not.toContain('__custom__');
+
+    act(() => {
+      agentPicker?.props.onSelect('com.acme.voice.agent');
+    });
+
+    const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
+    expect(readLocalConversationVoiceSettings(nextVoice).agent.agentId).toBe('com.acme.voice.agent');
+    expect(readLocalConversationVoiceSettings(nextVoice).agent).toMatchObject({
+      agentTargetKey: 'agent:com.acme.voice/agent',
+      agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
+      agentProjectionGeneration: 7,
+    });
+  });
+
+  it('persists the exact backend target key of a bundled Agent selection', async () => {
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: {
+        agentSource: 'agent',
+        agentId: 'codex',
+      },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={setVoice} />);
+    const agentPicker = findDropdownByItemTriggerTitle(
+      screen,
+      t('settingsVoice.local.mediatorAgentId'),
+    );
+
+    act(() => {
+      agentPicker?.props.onSelect('codex');
+    });
+
+    const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
+    expect(readLocalConversationVoiceSettings(nextVoice).agent).toMatchObject({
+      agentId: 'codex',
+      agentTargetKey: 'backend:codex',
+      agentIdentity: null,
+    });
+  });
+
+  it('does not offer an external Agent from a retained non-current projection', async () => {
+    daemonProjectionState.current.phase = 'loading';
+    const LocalConversationSection = await loadLocalConversationSection();
+    const voice = createLocalConversationVoice({
+      conversationMode: 'agent',
+      agent: { agentSource: 'agent' },
+    });
+
+    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const agentPicker = findDropdownByItemTriggerTitle(
+      screen,
+      t('settingsVoice.local.mediatorAgentId'),
+    );
+
+    expect(agentPicker?.props.items).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'com.acme.voice.agent' }),
+    ]));
+  });
+
   it('does not expose the retired Voice-owned Chat endpoint or credential controls', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const voice = createLocalConversationVoice({

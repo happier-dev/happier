@@ -27,6 +27,8 @@ const REMOVE_BUTTON_STYLE = {
 export function DaemonModelPackRow(props: Readonly<{
     row: ModelCatalogRow;
     actionInFlight: boolean;
+    /** The catalog has one mutation owner, so every competing row is inert. */
+    actionsDisabled?: boolean;
     onSetDefault: (packId: string) => void;
     onInstall: (packId: string) => void;
     onRemove: (packId: string) => Promise<void> | void;
@@ -42,10 +44,12 @@ export function DaemonModelPackRow(props: Readonly<{
             testID={`voice-model-remove-${row.packId}`}
             accessibilityRole="button"
             accessibilityLabel={`${t('common.remove')}: ${row.displayName}`}
+            accessibilityState={{ disabled: props.actionsDisabled === true }}
+            disabled={props.actionsDisabled === true}
             style={REMOVE_BUTTON_STYLE}
             onPress={(event: any) => {
                 event?.stopPropagation?.();
-                if (props.actionInFlight) return;
+                if (props.actionsDisabled || props.actionInFlight) return;
                 fireAndForget((async () => {
                     const confirmed = await Modal.confirm(
                         t('settingsVoice.local.models.removeConfirmTitle'),
@@ -65,7 +69,7 @@ export function DaemonModelPackRow(props: Readonly<{
     ) : undefined;
 
     const isUnknown = row.state === 'unknown';
-    const onPress = isUnknown || isUnsupported ? undefined : () => {
+    const onPress = isUnknown || isUnsupported || props.actionsDisabled ? undefined : () => {
         if (props.actionInFlight) return;
         if (row.canInstall) props.onInstall(row.packId);
         else if (canPromoteToDefault) props.onSetDefault(row.packId);
@@ -88,6 +92,7 @@ export function DaemonModelPackRow(props: Readonly<{
             rightElement={isUnknown ? undefined : rightElement}
             rightElementOutsidePressable={showRemove}
             onPress={onPress}
+            disabled={props.actionsDisabled === true}
             loading={props.actionInFlight}
             selected={row.isDefault}
             showChevron={false}
@@ -118,6 +123,7 @@ export function SelectedDaemonModelPackRow(props: Readonly<{
         <DaemonModelPackRow
             row={row}
             actionInFlight={controller.state.actionPackId === row.packId}
+            actionsDisabled={controller.state.actionPackId !== null}
             onSetDefault={() => undefined}
             onInstall={controller.install}
             onRemove={controller.remove}

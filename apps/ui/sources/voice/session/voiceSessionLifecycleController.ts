@@ -32,6 +32,9 @@ export type VoiceSessionLifecycleController = Readonly<{
     setConfiguredProviderId: (providerId: VoiceAdapterId | 'off' | null) => void;
     setCurrentUiContextToolSetEnabled: (enabled: boolean) => void;
     setMuted: (sessionId: string, muted: boolean) => Promise<void>;
+    suspendInput: (sessionId: string) => Promise<Readonly<{
+        release(): Promise<void>;
+    }> | null>;
     retry: (sessionId: string) => Promise<void>;
     setOutputFocusState?: (
         sessionId: string,
@@ -63,6 +66,16 @@ type UnavailableConfiguredProvider = Readonly<{
     providerId: VoiceAdapterId;
     sessionId: string;
 }>;
+
+type MuteAttemptOwner = {
+    adapter: VoiceAdapterController;
+    sessionId: string;
+    userMuted: boolean;
+    appliedMuted: boolean;
+    userRevision: number;
+    suspensions: Set<object>;
+    tail: Promise<void>;
+};
 
 function createDisconnectedSnapshot(): VoiceSessionSnapshot {
     return {
@@ -152,6 +165,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         lease: VoiceCaptureAdmissionLease;
     }> | null = null;
     let retiredAttemptStopStarted = false;
+    let muteAttemptOwner: MuteAttemptOwner | null = null;
     let disposed = false;
     let disposePromise: Promise<void> | null = null;
     const listeners = new Set<() => void>();
@@ -215,6 +229,13 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             startingAdapter = startAttempt;
             try {
                 await adapter.start({ sessionId });
+                if (getRegistry().get(adapter.id) !== adapter) {
+                    // Registration withdrawal is a synchronous authority
+                    // boundary. A provider that finishes setup afterwards
+                    // must be terminalized again so late Start settlement
+                    // cannot regain media or tool authority.
+                    await stopAdapter(adapter, sessionId);
+                }
             } finally {
                 if (startingAdapter === startAttempt) {
                     startingAdapter = null;
@@ -248,6 +269,10 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         startingAdapter = startAttempt;
         try {
             await adapter.start({ sessionId });
+            if (getRegistry().get(adapter.id) !== adapter) {
+                await stopAdapter(adapter, sessionId);
+                return;
+            }
             if (adapter.getSnapshot().status === 'disconnected') {
                 releaseRealtimeCaptureAdmission({
                     adapterId: adapter.id,
@@ -337,6 +362,49 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             adapter,
             snapshot,
         };
+    };
+
+    const resolveMuteAttemptOwner = (
+        owned: NonNullable<ReturnType<typeof resolveOwnedAdapter>>,
+    ): MuteAttemptOwner => {
+        const sessionId = owned.snapshot.sessionId ?? '';
+        const current = muteAttemptOwner;
+        if (current?.adapter === owned.adapter && current.sessionId === sessionId) {
+            return current;
+        }
+        const muted = owned.snapshot.micMuted === true;
+        const replacement: MuteAttemptOwner = {
+            adapter: owned.adapter,
+            sessionId,
+            userMuted: muted,
+            appliedMuted: muted,
+            userRevision: 0,
+            suspensions: new Set(),
+            tail: Promise.resolve(),
+        };
+        muteAttemptOwner = replacement;
+        return replacement;
+    };
+
+    const applyMuteAttemptOwner = (owner: MuteAttemptOwner): Promise<boolean> => {
+        const operation = owner.tail.then(async () => {
+            if (disposed || muteAttemptOwner !== owner) return false;
+            const owned = resolveOwnedAdapter();
+            if (
+                owned?.adapter !== owner.adapter
+                || (owned.snapshot.sessionId ?? '') !== owner.sessionId
+            ) {
+                return false;
+            }
+            const effectiveMuted = owner.userMuted || owner.suspensions.size > 0;
+            if (effectiveMuted === owner.appliedMuted) return true;
+            await owner.adapter.setMuted({ sessionId: owner.sessionId, muted: effectiveMuted });
+            if (muteAttemptOwner !== owner) return false;
+            owner.appliedMuted = effectiveMuted;
+            return true;
+        });
+        owner.tail = operation.then(() => undefined, () => undefined);
+        return operation;
     };
 
     const computeSnapshot = (): VoiceSessionSnapshot => {
@@ -549,6 +617,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return publishedSnapshot;
         }
         publishedSnapshot = computeSnapshot();
+        if (publishedSnapshot.status === 'disconnected' || publishedSnapshot.canStop !== true) {
+            // Input preference and native suspension leases belong to one
+            // admitted attempt. A later attempt, even through the same adapter
+            // and control-session id, starts from its own runtime snapshot.
+            muteAttemptOwner = null;
+        }
         const startAttempt = startingAdapter;
         if (
             startAttempt
@@ -743,6 +817,23 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
     refreshAdapterSubscriptions();
     const unsubscribeRegistry = getRegistry().subscribe?.(() => {
         refreshAdapterSubscriptions();
+        const withdrawnStart = startingAdapter;
+        if (
+            withdrawnStart
+            && getRegistry().get(withdrawnStart.adapter.id) !== withdrawnStart.adapter
+        ) {
+            unavailableConfiguredProvider = {
+                providerId: withdrawnStart.adapter.id,
+                sessionId: withdrawnStart.expectedSnapshotSessionId,
+            };
+            // Stop immediately at withdrawal. The post-Start currentness check
+            // above repeats Stop after a late successful settlement, which is
+            // necessary when the provider's first cancellation settles before
+            // its pending setup promise does.
+            void stopAdapter(withdrawnStart.adapter, withdrawnStart.sessionId).finally(() => {
+                publishSnapshot();
+            });
+        }
         publishSnapshot();
     });
 
@@ -781,6 +872,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 });
             }
             disposed = true;
+            muteAttemptOwner = null;
             pendingAdapterSwitch = null;
             unsubscribeRegistry?.();
             for (const unsub of adapterUnsubs.values()) {
@@ -959,8 +1051,56 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         setMuted: async (sessionId, muted) => {
             if (disposed) return;
             const owned = resolveOwnedAdapter();
-            if (!owned) return;
-            await owned.adapter.setMuted({ sessionId: owned.snapshot.sessionId ?? sessionId, muted });
+            if (!owned || owned.snapshot.sessionId !== sessionId) return;
+            const owner = resolveMuteAttemptOwner(owned);
+            const previousMuted = owner.userMuted;
+            const revision = owner.userRevision + 1;
+            owner.userRevision = revision;
+            owner.userMuted = muted;
+            try {
+                await applyMuteAttemptOwner(owner);
+            } catch (error) {
+                // A rejected request must not become latent desired state that
+                // a later reconnect silently applies. Preserve a newer user
+                // choice and otherwise restore the last acknowledged intent.
+                if (muteAttemptOwner === owner && owner.userRevision === revision) {
+                    owner.userMuted = previousMuted;
+                }
+                throw error;
+            }
+        },
+        suspendInput: async (sessionId) => {
+            if (disposed) return null;
+            const owned = resolveOwnedAdapter();
+            if (!owned || owned.snapshot.sessionId !== sessionId) return null;
+            const owner = resolveMuteAttemptOwner(owned);
+            const token = Object.freeze({});
+            owner.suspensions.add(token);
+            try {
+                const current = await applyMuteAttemptOwner(owner);
+                if (!current) {
+                    owner.suspensions.delete(token);
+                    return null;
+                }
+            } catch {
+                owner.suspensions.delete(token);
+                await stopAdapter(owner.adapter, owner.sessionId || sessionId).catch(() => undefined);
+                return null;
+            }
+            let released = false;
+            return Object.freeze({
+                async release(): Promise<void> {
+                    if (released) return;
+                    released = true;
+                    owner.suspensions.delete(token);
+                    if (muteAttemptOwner !== owner) return;
+                    try {
+                        await applyMuteAttemptOwner(owner);
+                    } catch {
+                        await stopAdapter(owner.adapter, owner.sessionId || sessionId).catch(() => undefined);
+                    }
+                },
+            });
         },
         retry: async (sessionId) => {
             if (disposed) return;

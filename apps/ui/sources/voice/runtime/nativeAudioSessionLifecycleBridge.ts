@@ -12,9 +12,10 @@ type Controller = Readonly<{
   getSnapshot(): Readonly<{
     sessionId: string | null;
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
-    micMuted?: boolean;
   }>;
-  setMuted(sessionId: string, muted: boolean): Promise<void>;
+  suspendInput(sessionId: string): Promise<Readonly<{
+    release(): Promise<void>;
+  }> | null>;
   setOutputFocusState?(
     sessionId: string,
     state: VoiceOutputFocusState,
@@ -30,7 +31,9 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
   controller: Controller;
 }>) {
   const suspensionReasons = new Set<SuspensionReason>();
-  let autoMutedSessionId: string | null = null;
+  const suspensionLeases = new Map<SuspensionReason, Readonly<{
+    release(): Promise<void>;
+  }>>();
   let disposed = false;
   let workTail = Promise.resolve();
 
@@ -50,29 +53,24 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
   };
 
   const suspend = async (reason: SuspensionReason): Promise<void> => {
+    if (suspensionReasons.has(reason)) return;
     suspensionReasons.add(reason);
-    if (autoMutedSessionId) return;
-    const snapshot = input.controller.getSnapshot();
     const sessionId = activeSessionId();
-    if (!sessionId || snapshot.micMuted === true) return;
-    autoMutedSessionId = sessionId;
-    try {
-      await input.controller.setMuted(sessionId, true);
-    } catch {
-      autoMutedSessionId = null;
-      await input.controller.stop(sessionId).catch(() => undefined);
+    if (!sessionId) return;
+    const lease = await input.controller.suspendInput(sessionId);
+    if (!lease) return;
+    if (disposed || !suspensionReasons.has(reason)) {
+      await lease.release();
+      return;
     }
+    suspensionLeases.set(reason, lease);
   };
 
   const resume = async (reason: SuspensionReason): Promise<void> => {
     suspensionReasons.delete(reason);
-    if (suspensionReasons.size > 0) return;
-    const sessionId = autoMutedSessionId;
-    autoMutedSessionId = null;
-    if (!sessionId || activeSessionId() !== sessionId) return;
-    await input.controller.setMuted(sessionId, false).catch(async () => {
-      await input.controller.stop(sessionId).catch(() => undefined);
-    });
+    const lease = suspensionLeases.get(reason);
+    suspensionLeases.delete(reason);
+    await lease?.release();
   };
 
   /**
@@ -97,7 +95,7 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
 
   const stopActive = async (): Promise<void> => {
     suspensionReasons.clear();
-    autoMutedSessionId = null;
+    suspensionLeases.clear();
     const sessionId = activeSessionId();
     if (sessionId) await input.controller.stop(sessionId).catch(() => undefined);
   };
@@ -157,8 +155,13 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
       if (disposed) return;
       disposed = true;
       suspensionReasons.clear();
-      autoMutedSessionId = null;
+      const leases = [...suspensionLeases.values()];
+      suspensionLeases.clear();
       subscription.remove();
+      // A suspension is an attempt-owned lease, not a boolean write. Disposal
+      // relinquishes exactly the leases this bridge acquired; each release is
+      // idempotent and currentness-fenced by the lifecycle owner.
+      void Promise.allSettled(leases.map(async (lease) => await lease.release()));
     },
   });
 }

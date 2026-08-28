@@ -77,54 +77,59 @@ const IDLE_DICTATION_SNAPSHOT = Object.freeze({
 } as const);
 const subscribeToNothing = (): (() => void) => () => {};
 
-export function useVoiceDictation(sessionId: string | undefined): Readonly<{
+export function useVoiceDictation(
+    sessionId: string | undefined,
+    isPresented = true,
+    isEditable = true,
+): Readonly<{
     dismissFailure: (failureId: number) => void;
     failure: VoiceDictationFailure | null;
     status: VoiceDictationSnapshot['status'];
     toggle: () => Promise<VoiceDictationToggleResult>;
 }> {
     const normalizedSessionId = sessionId?.trim() ?? '';
+    const presentedSessionId = isPresented ? normalizedSessionId : '';
     const voiceEnabled = useFeatureEnabled('voice');
     const snapshot = React.useSyncExternalStore(
-        normalizedSessionId
+        presentedSessionId
             ? voiceDictationController.subscribe
             : subscribeToNothing,
-        normalizedSessionId
+        presentedSessionId
             ? voiceDictationController.getSnapshot
             : () => IDLE_DICTATION_SNAPSHOT,
-        normalizedSessionId
+        presentedSessionId
             ? voiceDictationController.getSnapshot
             : () => IDLE_DICTATION_SNAPSHOT,
     );
 
     React.useEffect(() => {
         if (!normalizedSessionId) return;
-        if (!voiceEnabled) {
+        if (!voiceEnabled || !isPresented || !isEditable) {
             void voiceDictationController.cancel(normalizedSessionId);
             return;
         }
         return () => {
             void voiceDictationController.cancel(normalizedSessionId);
         };
-    }, [normalizedSessionId, voiceEnabled]);
+    }, [isEditable, isPresented, normalizedSessionId, voiceEnabled]);
 
     const toggle = React.useCallback(async () => {
-        if (!normalizedSessionId || !voiceEnabled) {
+        if (!normalizedSessionId || !voiceEnabled || !isPresented || !isEditable) {
             return { kind: 'cancelled' } as const;
         }
         return await voiceDictationController.toggle(normalizedSessionId);
-    }, [normalizedSessionId, voiceEnabled]);
+    }, [isEditable, isPresented, normalizedSessionId, voiceEnabled]);
 
     const dismissFailure = React.useCallback((failureId: number) => {
         voiceDictationController.dismissFailure(failureId);
     }, []);
 
     return {
-        status: snapshot.sessionId === normalizedSessionId
+        status: snapshot.sessionId === presentedSessionId
             ? snapshot.status
             : 'idle',
         dismissFailure,
-        failure: snapshot.failure?.sessionId === normalizedSessionId
+        failure: snapshot.failure?.sessionId === presentedSessionId
             ? snapshot.failure
             : null,
         toggle,

@@ -18,6 +18,11 @@ import {
   type VoiceHistoryProviderSource,
 } from './voiceHistoryConsumer';
 import { AccountStoredContentClientUpgradeRequiredError } from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import {
+  clearMountedSessionRealtimeTranscriptConsumers,
+  readMountedSessionTranscriptConsumerSessionIdsForRetention,
+} from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
+import { planSessionTranscriptEviction } from '@/sync/engine/sessions/sessionTranscriptRetention';
 
 const legendListMock = createCapturingLegendListMock({ renderItems: true });
 const modalMock = createModalModuleMock({ confirmResult: true });
@@ -107,10 +112,40 @@ async function flushAsyncState(): Promise<void> {
 
 describe('VoiceHistoryScreen', () => {
   beforeEach(() => {
+    clearMountedSessionRealtimeTranscriptConsumers();
     legendListMock.state.reset();
     modalMock.spies.confirm.mockClear();
     modalMock.spies.confirm.mockResolvedValue(true);
     modalMock.spies.alert.mockClear();
+  });
+
+  it('holds the discovered carrier against transcript eviction only while History is mounted', async () => {
+    const consumer = createVoiceHistoryConsumer(createDeps([]));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+
+    await flushAsyncState();
+    expect(readMountedSessionTranscriptConsumerSessionIdsForRetention())
+      .toEqual(['voice-history-session']);
+    const plan = () => planSessionTranscriptEviction({
+      hydratedSessionIds: ['ordinary-session', 'voice-history-session'],
+      protectedSessionIds: new Set(readMountedSessionTranscriptConsumerSessionIdsForRetention()),
+      lastViewedAtBySessionId: {},
+      idleSinceAtBySessionId: new Map([
+        ['ordinary-session', 0],
+        ['voice-history-session', 0],
+      ]),
+      nowMs: 1,
+      recentKeepCount: 0,
+      graceMs: 0,
+    });
+    expect(plan().evictSessionIds).toEqual(['ordinary-session']);
+
+    await screen.unmount();
+    expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
+    expect(plan().evictSessionIds).toEqual(['ordinary-session', 'voice-history-session']);
   });
 
   it('loads canonical rows in chronology, searches loaded text, and pages older history', async () => {
@@ -353,6 +388,84 @@ describe('VoiceHistoryScreen', () => {
     expect(saveExportArtifact).toHaveBeenCalledTimes(1);
     expect(screen.getTextContent()).toContain('The latest deployment status');
     expect(screen.getTextContent()).not.toContain('An older release note');
+  });
+
+  it('keeps paging, export, and clear under one mutually exclusive screen operation', async () => {
+    const page = createDeferred<{
+      loaded: number;
+      hasMore: boolean;
+      status: 'no_more';
+    }>();
+    const saveExportArtifact = vi.fn(async () => undefined);
+    const loadOlderMessages = vi.fn(async () => await page.promise);
+    const deleteSession = vi.fn(async () => ({ success: true }));
+    const consumer = createVoiceHistoryConsumer(createDeps(
+      [voiceMessage({
+        id: 'one',
+        role: 'assistant',
+        text: 'Keep every operation attributable',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      })],
+      { loadOlderMessages, deleteSession },
+    ));
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={saveExportArtifact} />,
+    );
+
+    await act(async () => {
+      screen.pressByTestId('voice-history-load-older');
+      await Promise.resolve();
+    });
+
+    expect(screen.findByTestId('voice-history-load-older')?.props.disabled).toBe(true);
+    expect(screen.findByTestId('voice-history-export')?.props.disabled).toBe(true);
+    expect(screen.findByTestId('voice-history-clear')?.props.disabled).toBe(true);
+
+    // The callbacks share the same immediate ref-backed owner as their visual
+    // disabled state, so even a stale host press cannot supersede paging.
+    await act(async () => {
+      screen.pressByTestId('voice-history-export');
+      screen.pressByTestId('voice-history-clear');
+      await Promise.resolve();
+    });
+    expect(saveExportArtifact).not.toHaveBeenCalled();
+    expect(modalMock.spies.confirm).not.toHaveBeenCalled();
+    expect(deleteSession).not.toHaveBeenCalled();
+
+    await act(async () => {
+      page.resolve({ loaded: 0, hasMore: false, status: 'no_more' });
+      await page.promise;
+      await Promise.resolve();
+    });
+
+    expect(screen.findByTestId('voice-history-export')?.props.disabled).toBe(false);
+    expect(screen.findByTestId('voice-history-clear')?.props.disabled).toBe(false);
+
+    const confirmation = createDeferred<boolean>();
+    modalMock.spies.confirm.mockImplementationOnce(async () => await confirmation.promise);
+    await act(async () => {
+      screen.pressByTestId('voice-history-clear');
+      await Promise.resolve();
+    });
+
+    expect(screen.findByTestId('voice-history-export')?.props.disabled).toBe(true);
+    expect(screen.findByTestId('voice-history-clear')?.props.disabled).toBe(true);
+    await act(async () => {
+      screen.pressByTestId('voice-history-export');
+      await Promise.resolve();
+    });
+    expect(saveExportArtifact).not.toHaveBeenCalled();
+
+    await act(async () => {
+      confirmation.resolve(false);
+      await confirmation.promise;
+      await Promise.resolve();
+    });
+    expect(screen.findByTestId('voice-history-export')?.props.disabled).toBe(false);
+    expect(screen.findByTestId('voice-history-clear')?.props.disabled).toBe(false);
+    expect(deleteSession).not.toHaveBeenCalled();
   });
 
   it('exports the bounded canonical artifact and clears the whole carrier only after destructive confirmation', async () => {

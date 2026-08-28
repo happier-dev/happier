@@ -95,7 +95,10 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
 }>): Readonly<{
     state: DaemonVoiceModelCatalogState;
     refresh: () => Promise<void>;
-    install: (packId: string) => Promise<void>;
+    install: (
+        packId: string,
+        prepare?: (isCurrent: () => boolean) => Promise<boolean>,
+    ) => Promise<void>;
     acceptLicense: (review: NonNullable<DaemonVoiceInferenceModelStatus['licenseReview']>) => Promise<void>;
     remove: (packId: string) => Promise<void>;
 }> {
@@ -130,7 +133,14 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             }));
             return;
         }
-        setState((current) => ({ ...current, loading: true }));
+        // Keep an already-rendered catalog stable while polling or reconciling
+        // a completed mutation. `loading` is the empty/initial presentation,
+        // not a reason to insert a status row above known model rows on every
+        // background refresh.
+        setState((current) => ({
+            ...current,
+            loading: current.statuses.length === 0,
+        }));
         try {
             const [discoveredStatuses, canonicalStatuses] = machineScope
                 ? await Promise.all([
@@ -234,7 +244,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     const runAction = React.useCallback(async (
         packId: string,
         operation: 'install' | 'remove',
-        action: (id: string) => Promise<unknown>,
+        action: (id: string, isCurrent: () => boolean) => Promise<unknown>,
     ) => {
         if (!enabledRef.current) {
             return;
@@ -255,7 +265,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             errorCode: null,
         }));
         try {
-            await action(packId);
+            await action(packId, actionStillOwnsState);
         } catch (error) {
             if (!actionStillOwnsState()) return;
             const errorCode = readErrorCode(error) ?? 'internal_error';
@@ -276,11 +286,18 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     }, [enabled, refresh]);
 
     const install = React.useCallback(
-        (packId: string) => runAction(packId, 'install', (id) => (
-            machineScope
-                ? client.installModel({ packId: id }, machineScope)
-                : client.installModel({ packId: id })
-        )),
+        (
+            packId: string,
+            prepare?: (isCurrent: () => boolean) => Promise<boolean>,
+        ) => runAction(packId, 'install', async (id, isCurrent) => {
+            // License review is part of the same user-visible catalog
+            // operation. Acquire the one existing mutation owner before the
+            // confirmation opens so another row cannot race the review.
+            if (prepare && !(await prepare(isCurrent))) return;
+            if (!isCurrent()) return;
+            if (machineScope) await client.installModel({ packId: id }, machineScope);
+            else await client.installModel({ packId: id });
+        }),
         [client, machineScope, runAction],
     );
 
@@ -300,8 +317,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         };
         if (machineScope) await client.acceptModelPackLicense(input, machineScope);
         else await client.acceptModelPackLicense(input);
-        await refresh();
-    }, [client, machineScope, refresh]);
+    }, [client, machineScope]);
 
     const remove = React.useCallback(
         (packId: string) => runAction(packId, 'remove', (id) => (

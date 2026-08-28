@@ -3,7 +3,12 @@ import {
   PERMISSION_INTENTS,
   parsePermissionIntentAlias,
 } from '@happier-dev/agents';
-import { ProviderBoundModelRefSchema, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import {
+  BackendTargetKeyV2Schema,
+  PluginContributionIdentityV1Schema,
+  ProviderBoundModelRefSchema,
+  ProviderConnectionIdSchema,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
@@ -13,6 +18,34 @@ import { VoiceHandsFreeSchema } from '@/voice/adapters/local/settings';
 const VoiceLocalConversationProviderChatConfigurationSchema = z.object({
   temperature: z.number().min(0).max(2).nullable().default(null),
 }).strict().default({ temperature: null });
+
+/**
+ * Exact target facts of the configured Voice Agent selection. A persisted
+ * value the canonical owner refuses is dropped to `null` field-locally — one
+ * malformed fact must not void the whole Voice profile — and the selection
+ * then keeps resolving through its legacy raw `agentId`.
+ */
+const VoiceAgentSelectionTargetKeySchema = z.preprocess(
+  (value) => (typeof value === 'string' && BackendTargetKeyV2Schema.safeParse(value).success ? value : null),
+  z.string().nullable().default(null),
+);
+const VoiceAgentSelectionIdentitySchema = z.preprocess(
+  (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return PluginContributionIdentityV1Schema.safeParse(value).success ? value : null;
+  },
+  z.object({
+    pluginId: z.string().trim().min(1),
+    localId: z.string().trim().min(1),
+  }).nullable().default(null),
+);
+const VoiceAgentSelectionProjectionGenerationSchema = z.preprocess(
+  (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : null;
+  },
+  z.number().int().nonnegative().nullable().default(null),
+);
 
 export const VoiceLocalConversationProviderChatSchema = z.discriminatedUnion('status', [
   z.object({
@@ -44,6 +77,20 @@ export const VoiceLocalConversationSchema = z.object({
     .object({
       agentSource: z.enum(['session', 'agent']).default('session'),
       agentId: z.string().default(DEFAULT_AGENT_ID),
+      /**
+       * Exact backend target key of the configured Agent, captured at
+       * selection time from the one canonical Agent catalog. `null` on
+       * selections written before exact facts existed; those keep resolving
+       * through the raw `agentId` (legacy bundled behavior).
+       */
+      agentTargetKey: VoiceAgentSelectionTargetKeySchema,
+      /**
+       * Qualified external contribution identity of the configured Agent.
+       * `null` for bundled Agents, which need no contribution identity.
+       */
+      agentIdentity: VoiceAgentSelectionIdentitySchema,
+      /** Selection-time catalog projection generation, carried as evidence. */
+      agentProjectionGeneration: VoiceAgentSelectionProjectionGenerationSchema,
       // Read-only legacy migration inputs. Canonical machine selection is root-owned.
       machineTargetMode: z.enum(['auto', 'fixed']).default('auto'),
       machineTargetId: z.string().nullable().default(null),

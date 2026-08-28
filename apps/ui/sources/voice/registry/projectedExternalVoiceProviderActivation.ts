@@ -32,6 +32,7 @@ import {
 import {
   commitExternalVoiceProviderRegistration,
   removeExternalVoiceProviderRegistration,
+  replaceExternalVoiceProviderProjectionAuthority,
 } from './externalVoiceProviderRegistrations';
 import {
   projectVoiceProviderDeclarationRequirements,
@@ -44,7 +45,7 @@ import {
 import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
 
-const projectedSpeechRegistrationTokens = new WeakMap<PluginUiExecutableModuleHost, object>();
+const projectedVoiceProjectionTokens = new WeakMap<PluginUiExecutableModuleHost, object>();
 
 function localizedText(
   value: string | Readonly<{ key: string; fallback: string }> | undefined,
@@ -142,57 +143,76 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
   isCurrent?: () => boolean;
 }>): void {
   if (!readCurrent(input)) return;
-  const previousToken = projectedSpeechRegistrationTokens.get(input.executableHost);
-  if (previousToken) {
-    removeExternalVoiceProviderRegistration(previousToken);
-    projectedSpeechRegistrationTokens.delete(input.executableHost);
-  }
+  const previousToken = projectedVoiceProjectionTokens.get(input.executableHost);
   const projection = input.projection;
-  if (!projection || projection.generation === null || !readCurrent(input)) return;
+  if (!projection || projection.generation === null || !readCurrent(input)) {
+    if (previousToken) {
+      removeExternalVoiceProviderRegistration(previousToken);
+      projectedVoiceProjectionTokens.delete(input.executableHost);
+    }
+    return;
+  }
 
   const token = Object.freeze({});
-  let projected = false;
-  for (const entry of Object.values(projection.voiceProvidersById)) {
-    const declaration = entry.definition;
-    if (
-      entry.generation !== projection.generation
-      || declaration.kind !== 'speech'
-      || !declaration.platforms.includes(input.hostPlatform)
-    ) {
-      continue;
-    }
-    const descriptor = projectExternalSpeechDescriptor({ pluginId: entry.pluginId, declaration });
-    if (descriptor.providerId !== entry.id) continue;
-    commitExternalVoiceProviderRegistration(Object.freeze({
+  try {
+    replaceExternalVoiceProviderProjectionAuthority(
+      previousToken ?? null,
       token,
-      pluginId: entry.pluginId,
-      localId: declaration.id,
-      providerId: entry.id,
-      descriptor,
-      adapter: null,
-      ...(declaration.settings.actions?.length
-        ? {
-            settingsActions: Object.freeze({
-              execute: async (action: PluginSettingsActionInput & Readonly<{
-                settingsRevision?: string;
-                signal: AbortSignal;
-              }>) => await bundledSpeechDaemonClient.executeSettingsAction({
-                entry: descriptor,
-                actionId: action.actionId,
-                settings: action.settings,
-                expectedSettingsVersion: Number(action.settingsRevision),
-                signal: action.signal,
+      new Map(Object.values(projection.voiceProvidersById).map((entry) => (
+        [entry.id, String(entry.generation)] as const
+      ))),
+    );
+    projectedVoiceProjectionTokens.set(input.executableHost, token);
+    for (const entry of Object.values(projection.voiceProvidersById)) {
+      const declaration = entry.definition;
+      if (
+        entry.generation !== projection.generation
+        || declaration.kind !== 'speech'
+        || !declaration.platforms.includes(input.hostPlatform)
+      ) {
+        continue;
+      }
+      const descriptor = projectExternalSpeechDescriptor({ pluginId: entry.pluginId, declaration });
+      if (descriptor.providerId !== entry.id) continue;
+      commitExternalVoiceProviderRegistration(Object.freeze({
+        token,
+        pluginId: entry.pluginId,
+        localId: declaration.id,
+        providerId: entry.id,
+        projectionGeneration: String(entry.generation),
+        descriptor,
+        adapter: null,
+        ...(declaration.settings.actions?.length
+          ? {
+              settingsActions: Object.freeze({
+                execute: async (action: PluginSettingsActionInput & Readonly<{
+                  settingsRevision?: string;
+                  signal: AbortSignal;
+                }>) => await bundledSpeechDaemonClient.executeSettingsAction({
+                  entry: descriptor,
+                  actionId: action.actionId,
+                  settings: action.settings,
+                  expectedSettingsVersion: Number(action.settingsRevision),
+                  signal: action.signal,
+                }),
               }),
-            }),
-          }
-        : {}),
-    }));
-    projected = true;
+            }
+          : {}),
+      }));
+    }
+  } catch (error) {
+    try {
+      removeExternalVoiceProviderRegistration(token);
+    } catch {
+      // The registration/authority bytes are removed before listeners run;
+      // a failing observer cannot retain them or replace the original failure.
+    }
+    projectedVoiceProjectionTokens.delete(input.executableHost);
+    throw error;
   }
-  if (projected && readCurrent(input)) {
-    projectedSpeechRegistrationTokens.set(input.executableHost, token);
-  } else if (projected) {
+  if (!readCurrent(input)) {
     removeExternalVoiceProviderRegistration(token);
+    projectedVoiceProjectionTokens.delete(input.executableHost);
   }
 }
 
@@ -200,10 +220,10 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
 export async function withdrawProjectedExternalVoiceProviders(
   executableHost: PluginUiExecutableModuleHost = getInstalledPluginUiExecutableModuleHost(),
 ): Promise<void> {
-  const speechToken = projectedSpeechRegistrationTokens.get(executableHost);
-  if (!speechToken) return;
-  removeExternalVoiceProviderRegistration(speechToken);
-  projectedSpeechRegistrationTokens.delete(executableHost);
+  const projectionToken = projectedVoiceProjectionTokens.get(executableHost);
+  if (!projectionToken) return;
+  removeExternalVoiceProviderRegistration(projectionToken);
+  projectedVoiceProjectionTokens.delete(executableHost);
 }
 
 function createVoiceDerivedScope(input: Readonly<{

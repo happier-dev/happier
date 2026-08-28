@@ -164,6 +164,8 @@ export function createBundledRealtimeProviderRuntime(
     transcriptCarrierRebindPromise: Promise<void> | null;
     transcriptCarrierRebindDrain: BundledRetiringDirectMediaTranscriptDrain | null;
     micRequested: boolean;
+    inputMuted: boolean;
+    appliedInputMuted: boolean;
     preparePromise: Promise<void | Readonly<{ kind: 'declined'; code: string }>> | null;
     releasePromise: Promise<void> | null;
   };
@@ -318,9 +320,9 @@ export function createBundledRealtimeProviderRuntime(
   const settleInputMute = (
     controlSessionId: string,
     attemptId: number,
-    muted: boolean,
-  ): Promise<void> => {
-    const operation = inputMuteTail.then(() => {
+    readMuted: () => boolean,
+  ): Promise<boolean | null> => {
+    const operation = inputMuteTail.then(async () => {
       const activeRuntime = runtime;
       if (
         disposed
@@ -328,11 +330,13 @@ export function createBundledRealtimeProviderRuntime(
         || activeRuntime.getOwnedControlSessionId() !== controlSessionId
         || activeRuntime.getOwnedAttemptId() !== attemptId
       ) {
-        return;
+        return null;
       }
-      return config.setInputMuted?.(muted);
+      const muted = readMuted();
+      await config.setInputMuted?.(muted);
+      return muted;
     });
-    inputMuteTail = operation.catch(() => {});
+    inputMuteTail = operation.then(() => undefined, () => undefined);
     return operation;
   };
   const closeOutputLevelWriter = (): void => {
@@ -459,10 +463,18 @@ export function createBundledRealtimeProviderRuntime(
         transcriptCarrierRebindPromise: null,
         transcriptCarrierRebindDrain: null,
         micRequested: false,
+        inputMuted: false,
+        appliedInputMuted: false,
         preparePromise: null,
         releasePromise: null,
       };
       resourceAttempts.set(input.attemptId, attempt);
+      if (!existingAttempt) {
+        // Mute belongs to the controller attempt. A fresh Start establishes an
+        // unmuted baseline once; reconnect/auth-refresh reuse the same resource
+        // attempt and therefore preserve an intentional user mute.
+        if (!usesProviderManagedMic) mic.setMuted(false);
+      }
       // Mic ownership is claimed synchronously, before preparation's first
       // await. Release must be able to invalidate this attempt's acquisition
       // without first joining a preparation that the invalidation is what
@@ -491,9 +503,6 @@ export function createBundledRealtimeProviderRuntime(
           abortIfRequested(input.signal);
         }
         if (usesHostWebRtcMic) {
-          // Mute is attempt-scoped. A newly admitted attempt must not inherit a
-          // disabled capture track from the provider attempt it replaces.
-          mic.setMuted(false);
           host.machine.transitionToAcquiringMic(input.controlSessionId, providerId, input.attemptId);
           try {
             // Prompt, lease, THEN capture. The platform audio session is chosen
@@ -1277,11 +1286,34 @@ export function createBundledRealtimeProviderRuntime(
         bargeInCoordinator?.onInputSpeechStopped();
       }
     },
-    onConnectionReady: async ({ request, connection, signal }: Readonly<{
+    onConnectionReady: async ({ controlSessionId, attemptId, request, connection, signal }: Readonly<{
+      controlSessionId: string;
+      attemptId: number;
       request: VoiceRealtimeJsonValue;
       connection: VoiceRealtimeConnection;
       signal: AbortSignal;
     }>) => {
+      const resourceAttempt = resourceAttempts.get(attemptId);
+      if (resourceAttempt) {
+        // Read at queue execution, not callback registration. A mute pressed
+        // while connection setup is pending must not be overwritten by a stale
+        // initial/reconnect unmute operation.
+        const settledMuted = await settleInputMute(
+          controlSessionId,
+          attemptId,
+          () => resourceAttempt.inputMuted,
+        );
+        if (
+          settledMuted !== null
+          && resourceAttempts.get(attemptId) === resourceAttempt
+          && resourceAttempt.inputMuted === settledMuted
+        ) {
+          resourceAttempt.appliedInputMuted = settledMuted;
+          if (!usesProviderManagedMic) mic.setMuted(settledMuted);
+          if (settledMuted) inputLevelWriter?.reset();
+          host.machine.setMuted(controlSessionId, providerId, attemptId, settledMuted);
+        }
+      }
       const initialContext = readRequest(request).initialContext;
       if (typeof initialContext !== 'string' || !initialContext.trim()) return;
       for (const event of config.encodeContextUpdate(initialContext)) {
@@ -1391,6 +1423,11 @@ export function createBundledRealtimeProviderRuntime(
       : 'session_context';
 
   const start = async (input: Readonly<{ sessionId: string; initialContext?: string; textOnly?: boolean }>) => {
+    if (disposed || !isCurrentGeneration()) {
+      throw Object.assign(new Error('voice_runtime_generation_revoked'), {
+        code: 'voice_runtime_generation_revoked',
+      });
+    }
     const startAttempt = {};
     activeStartAttempt = startAttempt;
     startOutcomeNamed = false;
@@ -1577,19 +1614,53 @@ export function createBundledRealtimeProviderRuntime(
       const controlSessionId = runtime?.getOwnedControlSessionId();
       const attemptId = runtime?.getOwnedAttemptId();
       if (!controlSessionId || attemptId === null || attemptId === undefined) return;
-      // Do not expose physical capture while the canonical projection remains
-      // muted. Muting can wait for provider settlement because that ordering is
-      // conservative; unmuting projects first, then re-enables capture.
-      if (!muted) host.machine.setMuted(controlSessionId, providerId, attemptId, false);
-      mic.setMuted(muted);
-      if (muted) inputLevelWriter?.reset();
-      await settleInputMute(controlSessionId, attemptId, muted);
-      // A newer unmute may have changed the canonical physical mic while this
-      // provider operation was awaiting settlement. That newer physical fact
-      // remains authoritative for the projection.
-      if (muted && mic.isMuted()) {
-        host.machine.setMuted(controlSessionId, providerId, attemptId, true);
+      const resourceAttempt = resourceAttempts.get(attemptId);
+      if (!resourceAttempt) return;
+      if (
+        resourceAttempt.inputMuted === muted
+        && resourceAttempt.appliedInputMuted === muted
+      ) {
+        return;
       }
+      const previousDesiredMuted = resourceAttempt.inputMuted;
+      resourceAttempt.inputMuted = muted;
+      // Host capture fails safe toward silence. Unmute is deliberately delayed
+      // until the provider/transport has accepted it, so physical audio can
+      // never escape while the canonical surface still reports muted.
+      if (muted && !usesProviderManagedMic) {
+        mic.setMuted(true);
+        inputLevelWriter?.reset();
+      }
+      let settledMuted: boolean | null;
+      try {
+        settledMuted = await settleInputMute(controlSessionId, attemptId, () => muted);
+      } catch (error) {
+        if (
+          resourceAttempts.get(attemptId) === resourceAttempt
+          && resourceAttempt.inputMuted === muted
+        ) {
+          resourceAttempt.inputMuted = previousDesiredMuted;
+        }
+        // A provider-managed mute rejection cannot prove physical silence.
+        // Retire that exact attempt instead of leaving a truthful-looking
+        // muted surface over a live provider microphone. Rejected unmute stays
+        // safely muted and remains available for an explicit retry.
+        if (usesProviderManagedMic && muted) {
+          await runtime?.fail('voice_input_mute_failed').catch(() => undefined);
+        }
+        throw error;
+      }
+      if (
+        settledMuted === null
+        || resourceAttempts.get(attemptId) !== resourceAttempt
+        || resourceAttempt.inputMuted !== settledMuted
+      ) {
+        return;
+      }
+      resourceAttempt.appliedInputMuted = settledMuted;
+      if (!usesProviderManagedMic) mic.setMuted(settledMuted);
+      if (settledMuted) inputLevelWriter?.reset();
+      host.machine.setMuted(controlSessionId, providerId, attemptId, settledMuted);
     },
     sendContextUpdate({ update }) {
       if (runtime!.getActiveControlSessionId()) {

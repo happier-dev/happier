@@ -8,6 +8,11 @@ import {
   type VoiceUiRuntimeContribution,
 } from './providerRegistry';
 import { createDefaultVoiceProviderRegistry } from './defaultRegistry';
+import {
+  commitExternalVoiceProviderRegistration,
+  removeExternalVoiceProviderRegistration,
+  replaceExternalVoiceProviderProjectionAuthority,
+} from './externalVoiceProviderRegistrations';
 function contribution(
   providerId: string,
   overrides: Partial<VoiceUiRuntimeContribution> = {},
@@ -354,5 +359,99 @@ describe('voice provider registry', () => {
     });
     expect(disabled.get('happier.voice.google/gemini-stt')).toBeNull();
     expect(disabled.get('device')).not.toBeNull();
+  });
+
+  it('uses one projection-authoritative unique identity for get and list', () => {
+    const providerId = 'happier.voice.google/gemini-stt';
+    const registry = createDefaultVoiceProviderRegistry();
+    const fallback = registry.get(providerId);
+    if (!fallback) throw new Error('expected generated fallback provider');
+    const token = Object.freeze({});
+    try {
+      replaceExternalVoiceProviderProjectionAuthority(null, token, new Map([[providerId, '7']]));
+      commitExternalVoiceProviderRegistration(Object.freeze({
+        token,
+        pluginId: fallback.pluginId,
+        localId: 'gemini-stt',
+        providerId,
+        projectionGeneration: '6',
+        descriptor: Object.freeze({
+          ...fallback,
+          settingsSectionId: 'voice.projected.stale-google',
+        }),
+        adapter: null,
+      }));
+      expect(registry.get(providerId)).toBeNull();
+
+      commitExternalVoiceProviderRegistration(Object.freeze({
+        token,
+        pluginId: fallback.pluginId,
+        localId: 'gemini-stt',
+        providerId,
+        projectionGeneration: '7',
+        descriptor: Object.freeze({
+          ...fallback,
+          settingsSectionId: 'voice.projected.current-google',
+          source: Object.freeze({
+            kind: 'external' as const,
+            pluginId: fallback.pluginId,
+            localId: 'gemini-stt',
+          }),
+        }),
+        adapter: null,
+      }));
+
+      expect(registry.get(providerId)).toMatchObject({
+        settingsSectionId: 'voice.projected.current-google',
+        source: { kind: 'external' },
+      });
+      expect(registry.list().filter((entry) => entry.providerId === providerId)).toHaveLength(1);
+      expect(registry.list().find((entry) => entry.providerId === providerId))
+        .toBe(registry.get(providerId));
+    } finally {
+      removeExternalVoiceProviderRegistration(token);
+    }
+
+    expect(registry.get(providerId)?.source.kind).toBe('bundled');
+  });
+
+  it('does not re-admit disabled generated providers while projection authority is available', () => {
+    const registry = createDefaultVoiceProviderRegistry();
+    const token = Object.freeze({});
+    const admittedProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
+    try {
+      replaceExternalVoiceProviderProjectionAuthority(
+        null,
+        token,
+        new Map([[admittedProviderId, '8']]),
+      );
+
+      expect(registry.get('happier.voice.google/gemini-stt')).toBeNull();
+      // A complete projection is authority, not activation success. Until its
+      // runtime registration commits, the provider is truthfully absent rather
+      // than resurrected from generated fallback bytes.
+      expect(registry.get(admittedProviderId)).toBeNull();
+      expect(registry.get('device')).not.toBeNull();
+      expect(registry.list().some((entry) => entry.source.kind === 'bundled')).toBe(false);
+
+      commitExternalVoiceProviderRegistration(Object.freeze({
+        token,
+        pluginId: 'happier.voice.elevenlabs',
+        localId: 'realtime-elevenlabs',
+        providerId: admittedProviderId,
+        projectionGeneration: '8',
+        // Bundled conversations intentionally reuse their generated descriptor;
+        // the live registration supplies enablement/generation authority.
+        descriptor: null,
+        adapter: null,
+      }));
+      expect(registry.get(admittedProviderId)?.source).toEqual({
+        kind: 'bundled',
+        pluginId: 'happier.voice.elevenlabs',
+      });
+      expect(registry.list().filter((entry) => entry.providerId === admittedProviderId)).toHaveLength(1);
+    } finally {
+      removeExternalVoiceProviderRegistration(token);
+    }
   });
 });

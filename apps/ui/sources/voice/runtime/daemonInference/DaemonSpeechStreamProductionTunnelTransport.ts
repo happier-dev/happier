@@ -805,6 +805,7 @@ async function tryOpenDirectTunnel(
       signal: params.input.signal,
     }),
     loopbackEndpointUrl: params.direct.endpoint.url,
+    signal: params.input.signal,
   }).catch(() => null);
   if (!result?.ok) return null;
   if (result.response.encoding !== PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) {
@@ -943,6 +944,7 @@ async function tryOpenServerRelayTunnel(
       },
       onEnvelope: relaySocket.onEnvelope,
     },
+    signal: params.input.signal,
   }).catch(() => null);
   if (!result?.ok) {
     relaySocket.disconnect();

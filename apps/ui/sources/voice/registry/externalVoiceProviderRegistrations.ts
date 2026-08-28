@@ -13,6 +13,8 @@ export type ExternalVoiceProviderRegistration = Readonly<{
   pluginId: string;
   localId: string;
   providerId: string;
+  /** Exact daemon projection generation; required while projection authority is present. */
+  projectionGeneration?: string;
   descriptor: VoiceProviderRegistryEntry | null;
   adapter: VoiceAdapterController | null;
   settingsOperations?: Readonly<{
@@ -32,6 +34,7 @@ export type ExternalVoiceProviderRegistration = Readonly<{
 }>;
 
 const registrationsByProviderId = new Map<string, ExternalVoiceProviderRegistration>();
+const authoritativeProvidersByToken = new Map<object, ReadonlyMap<string, string>>();
 const listeners = new Set<() => void>();
 let revision = 0;
 
@@ -56,7 +59,46 @@ export function removeExternalVoiceProviderRegistration(token: object): void {
     registrationsByProviderId.delete(providerId);
     changed = true;
   }
+  if (authoritativeProvidersByToken.delete(token)) changed = true;
   if (changed) emitChange();
+}
+
+/**
+ * Publishes the exact provider identities admitted by the current daemon
+ * projection. While at least one projection is present, generated bundled
+ * descriptors are discovery-only fallback bytes and must not re-admit a
+ * disabled or stale provider behind the projection's back.
+ *
+ * Projection authority and runtime registration remain deliberately distinct
+ * facts: the former says which exact generation may exist; the latter says
+ * activation actually succeeded. A projected provider without its matching
+ * registration is unavailable, never silently restored from fallback bytes.
+ *
+ * The activation token already owns registration lifetime, so this adds no
+ * second generation or enablement owner.
+ */
+export function replaceExternalVoiceProviderProjectionAuthority(
+  previousToken: object | null,
+  token: object,
+  providers: ReadonlyMap<string, string>,
+): void {
+  if (previousToken) {
+    for (const [providerId, registration] of registrationsByProviderId) {
+      if (registration.token === previousToken) registrationsByProviderId.delete(providerId);
+    }
+    authoritativeProvidersByToken.delete(previousToken);
+  }
+  authoritativeProvidersByToken.set(token, Object.freeze(new Map(providers)));
+  emitChange();
+}
+
+export function getExternalVoiceProviderProjectionAuthority(): ReadonlyMap<string, string> | null {
+  if (authoritativeProvidersByToken.size === 0) return null;
+  const providers = new Map<string, string>();
+  for (const entries of authoritativeProvidersByToken.values()) {
+    for (const [id, generation] of entries) providers.set(id, generation);
+  }
+  return Object.freeze(providers);
 }
 
 export function listExternalVoiceProviderRegistrations(): readonly ExternalVoiceProviderRegistration[] {
@@ -81,7 +123,8 @@ export function getExternalVoiceProviderRegistrationsRevision(): number {
 }
 
 export function resetExternalVoiceProviderRegistrationsForTests(): void {
-  if (registrationsByProviderId.size === 0) return;
+  if (registrationsByProviderId.size === 0 && authoritativeProvidersByToken.size === 0) return;
   registrationsByProviderId.clear();
+  authoritativeProvidersByToken.clear();
   emitChange();
 }

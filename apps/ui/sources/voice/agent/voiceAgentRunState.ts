@@ -45,7 +45,6 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
         agentId: resolveAgentIdFromSessionMetadata(metadata),
         capability: 'surface.terminal',
         metadata,
-        accountSettings: state.settings,
     })) {
         throw Object.assign(
             new Error('Target session provider does not support local voice control.'),

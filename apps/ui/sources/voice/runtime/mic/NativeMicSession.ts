@@ -1,4 +1,8 @@
 import { Platform } from 'react-native';
+import {
+    createVoiceFileRecording,
+    type VoiceFileRecording,
+} from '@happier-dev/audio-stream-native';
 
 import {
     isPermissionDeniedMicrophoneError,
@@ -45,6 +49,7 @@ type CreateExpoAudioRecordingMicSessionOptions = Readonly<{
     requestPermission?: () => Promise<RecordingPermissionResult>;
     showPermissionDenied?: (canAskAgain: boolean) => void;
     acquireAudioMode?: () => Promise<VoiceAudioModeLease>;
+    createNativeFileRecording?: () => VoiceFileRecording | null;
 }>;
 
 export function createNativeMicSession(options: CreateNativeMicSessionOptions = {}): MicSession {
@@ -165,6 +170,7 @@ export function createExpoAudioRecordingMicSession(
     options: CreateExpoAudioRecordingMicSessionOptions = {},
 ): RecordingMicSession {
     let recorder: ExpoAudioRecorderLike | null = null;
+    let nativeFileRecording: VoiceFileRecording | null = null;
     let audioModeLease: VoiceAudioModeLease | null = null;
     let muted = false;
     const requestPermission = options.requestPermission ?? requestMicrophonePermission;
@@ -173,7 +179,10 @@ export function createExpoAudioRecordingMicSession(
         options.createRecorder
         ?? createExpoAudioRecorder;
     const acquireAudioMode = options.acquireAudioMode
-        ?? (() => acquireVoiceForegroundRecordingAudioMode('expo-audio-recorder'));
+        ?? (() => acquireVoiceForegroundRecordingAudioMode(
+            Platform.OS === 'ios' ? 'native-file-recorder' : 'expo-audio-recorder',
+        ));
+    const createNativeRecording = options.createNativeFileRecording ?? createVoiceFileRecording;
 
     const releaseAudioMode = async (): Promise<void> => {
         const activeLease = audioModeLease;
@@ -184,6 +193,7 @@ export function createExpoAudioRecordingMicSession(
 
     const syncRecorderMuteState = (activeRecorder: ExpoAudioRecorderLike | null): void => {
         if (!activeRecorder) {
+            if (nativeFileRecording) void nativeFileRecording.setMuted(muted).catch(() => {});
             return;
         }
 
@@ -214,6 +224,17 @@ export function createExpoAudioRecordingMicSession(
         },
         isMuted: () => muted,
         teardown: async () => {
+            const activeNativeRecording = nativeFileRecording;
+            nativeFileRecording = null;
+            if (activeNativeRecording) {
+                try {
+                    await activeNativeRecording.stop();
+                } catch {
+                    // Terminal artifact custody is best-effort here. The
+                    // ordinary stop path transfers the finalized URI to the
+                    // recorded-artifact owner before teardown.
+                }
+            }
             const activeRecorder = recorder;
             recorder = null;
             if (activeRecorder) {
@@ -238,13 +259,34 @@ export function createExpoAudioRecordingMicSession(
                     throw new Error('mic_permission_denied');
                 }
             }
-            const nextRecorder = createRecorder();
             const nextAudioModeLease = await acquireAudioMode();
             if (signal?.aborted) {
                 await nextAudioModeLease.release();
                 return;
             }
             try {
+                if (Platform.OS === 'ios') {
+                    const nextNativeRecording = createNativeRecording();
+                    if (!nextNativeRecording) {
+                        throw new Error('voice_native_file_recording_unavailable');
+                    }
+                    try {
+                        await nextNativeRecording.start();
+                        if (signal?.aborted) {
+                            await nextNativeRecording.stop().catch(() => null);
+                            await nextAudioModeLease.release();
+                            return;
+                        }
+                        if (muted) await nextNativeRecording.setMuted(true);
+                    } catch (error) {
+                        await nextNativeRecording.stop().catch(() => null);
+                        throw error;
+                    }
+                    audioModeLease = nextAudioModeLease;
+                    nativeFileRecording = nextNativeRecording;
+                    return;
+                }
+                const nextRecorder = createRecorder();
                 await nextRecorder.prepareToRecordAsync();
                 if (signal?.aborted) {
                     try {
@@ -272,9 +314,12 @@ export function createExpoAudioRecordingMicSession(
             }
         },
         stopRecording: async () => {
+            const activeNativeRecording = nativeFileRecording;
+            nativeFileRecording = null;
             const activeRecorder = recorder;
             recorder = null;
             try {
+                if (activeNativeRecording) return await activeNativeRecording.stop();
                 if (!activeRecorder) return null;
                 await activeRecorder.stop();
                 // Expo Audio's web recorder creates its Blob URL while stop()

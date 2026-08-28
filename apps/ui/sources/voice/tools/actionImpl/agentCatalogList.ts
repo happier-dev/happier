@@ -272,10 +272,12 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     const enabled = backendEnabledByTargetKey?.[effectiveTargetKey] !== false;
     if (!params.includeDisabled && !enabled) continue;
 
-    const executionTarget = resolveAgentExecutionTargetForBackendTarget({
-      backendTarget: entry.backendTarget,
-      daemonMergedProjectionInputs: params.daemonMergedProjectionInputs,
-    });
+    const executionTarget = entry.backendTarget.kind === 'agent'
+      ? entry.backendTarget
+      : resolveAgentExecutionTargetForBackendTarget({
+        backendTarget: entry.backendTarget,
+        daemonMergedProjectionInputs: params.daemonMergedProjectionInputs,
+      });
 
     if (entry.kind === 'builtInAgent' && entry.builtInAgentId) {
       items.push({

@@ -1297,13 +1297,19 @@ describe('external Voice provider activation', () => {
     expect(getCurrentBundledConversationRuntimeHost()).toBe(hostLease.host);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
     expect(createDefaultVoiceProviderRegistry().get(providerId)).toBeNull();
+    await expect(adapter.start({ sessionId: 'voice-after-retirement' }))
+      .rejects.toThrow(/voice_runtime_generation_revoked/u);
     await expect(host.activate(activationInput)).resolves.toEqual({ ok: true });
-    expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
+    const replacementAdapter = getVoiceAdapterRegistry().get(providerId);
+    expect(replacementAdapter).not.toBeNull();
+    if (!replacementAdapter) throw new Error('expected_replacement_external_voice_adapter');
     expect(createDefaultVoiceProviderRegistry().get(providerId)).not.toBeNull();
     await host.replaceAuthority({ ...authority, projectionGeneration: 13 });
     expect(disposeProviderLeaf).toHaveBeenCalledTimes(2);
     expect(getVoiceAdapterRegistry().get(providerId)).toBeNull();
     expect(createDefaultVoiceProviderRegistry().get(providerId)).toBeNull();
+    await expect(replacementAdapter.start({ sessionId: 'voice-after-update' }))
+      .rejects.toThrow(/voice_runtime_generation_revoked/u);
     await expect(host.activate(activationInput)).resolves.toMatchObject({
       ok: false, code: 'stale_projection_generation',
     });

@@ -253,7 +253,14 @@ describe('DaemonVoiceModelCatalogSection', () => {
             accepted: false,
         } as const;
         const acceptLicense = vi.fn(async () => undefined);
-        const install = vi.fn(async () => undefined);
+        const installAfterReview = vi.fn(async () => undefined);
+        const install = vi.fn(async (
+            _packId: string,
+            prepare?: (isCurrent: () => boolean) => Promise<boolean>,
+        ) => {
+            if (prepare && !(await prepare(() => true))) return;
+            await installAfterReview();
+        });
         confirmSpy.mockResolvedValueOnce(true);
         const tree = await renderSection({
             getModelsStatus: vi.fn(async () => []),
@@ -295,7 +302,40 @@ describe('DaemonVoiceModelCatalogSection', () => {
             expect.objectContaining({ confirmText: expect.any(String) }),
         );
         expect(acceptLicense).toHaveBeenCalledWith(review);
-        expect(install).toHaveBeenCalledWith(packId);
-        expect(acceptLicense.mock.invocationCallOrder[0]).toBeLessThan(install.mock.invocationCallOrder[0]!);
+        expect(install).toHaveBeenCalledWith(packId, expect.any(Function));
+        expect(acceptLicense.mock.invocationCallOrder[0]).toBeLessThan(
+            installAfterReview.mock.invocationCallOrder[0]!,
+        );
+    });
+
+    it('makes every competing model action inert while the catalog mutation owner is active', async () => {
+        const sttPack = getDefaultModelPackId('stt_sherpa')!;
+        const ttsPack = getDefaultModelPackId('tts_sherpa')!;
+        const tree = await renderSection({
+            getModelsStatus: vi.fn(async () => []),
+            installModel: vi.fn(async () => undefined as never),
+            removeModel: vi.fn(async () => undefined),
+        }, {
+            catalogController: {
+                state: {
+                    statuses: [status(sttPack), status(ttsPack)],
+                    errorCode: null,
+                    loading: false,
+                    actionPackId: sttPack,
+                    actionError: null,
+                },
+                refresh: vi.fn(async () => undefined),
+                install: vi.fn(async () => undefined),
+                acceptLicense: vi.fn(async () => undefined),
+                remove: vi.fn(async () => undefined),
+            },
+        });
+
+        const competingRow = tree.root.findByProps({ testID: `voice-model-row-${ttsPack}` });
+        const competingRemove = tree.root.findByProps({ testID: `voice-model-remove-${ttsPack}` });
+        expect(competingRow.props.onPress ?? competingRow.props.onClick).toBeUndefined();
+        expect(competingRow.props.disabled).toBe(true);
+        expect(competingRemove.props.disabled).toBe(true);
+        expect(competingRemove.props.accessibilityState).toEqual({ disabled: true });
     });
 });

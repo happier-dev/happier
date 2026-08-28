@@ -3,7 +3,10 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
+import type {
+    DaemonVoiceInferenceClient,
+    DaemonVoiceInferenceModelMachineScope,
+} from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
 import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
 import { listModelPackCatalogEntries } from '@happier-dev/protocol';
 
@@ -68,6 +71,7 @@ function TestHarness(props: Readonly<{
             {React.createElement('State', {
                 installState: sttStatus?.installState ?? null,
                 count: state.statuses.length,
+                loading: state.loading,
                 actionPackId: state.actionPackId,
                 actionErrorPackId: state.actionError?.packId ?? null,
                 actionErrorOperation: state.actionError?.operation ?? null,
@@ -397,6 +401,39 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(tree.root.findByType('State').props.installState).toBe('installed');
     });
 
+    it('keeps known catalog rows stable while a background refresh is pending', async () => {
+        let resolveRefresh!: (statuses: DaemonVoiceInferenceModelStatus[]) => void;
+        const pendingRefresh = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        const getModelsStatus = vi.fn()
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installed' })])
+            .mockImplementationOnce(() => pendingRefresh);
+        const client = {
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => { await Promise.resolve(); });
+
+        let refresh!: Promise<void>;
+        await act(async () => {
+            refresh = tree.root.findByType('RefreshButton').props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(tree.root.findByType('State').props).toMatchObject({
+            installState: 'installed',
+            loading: false,
+        });
+
+        await act(async () => {
+            resolveRefresh([status(STT_PACK, { installState: 'installed' })]);
+            await refresh;
+        });
+    });
+
     it('rejects a second model mutation while the current action is still in flight', async () => {
         let resolveInstall!: (value: DaemonVoiceInferenceModelStatus) => void;
         const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((resolve) => {
@@ -422,6 +459,126 @@ describe('useDaemonVoiceModelCatalogState', () => {
             resolveInstall(status(STT_PACK, { installState: 'installed' }));
             await firstAction;
         });
+    });
+
+    it('owns the catalog mutation while an install prerequisite is being reviewed', async () => {
+        let finishReview!: (accepted: boolean) => void;
+        const review = new Promise<boolean>((resolve) => {
+            finishReview = resolve;
+        });
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(async () => status(STT_PACK, { installState: 'installed' })),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        function ReviewHarness(): React.ReactElement {
+            const { state, install, remove } = useDaemonVoiceModelCatalogState({
+                client: React.useMemo(() => catalogClient(client), []),
+            });
+            return React.createElement('ReviewState', {
+                actionPackId: state.actionPackId,
+                start: () => install(STT_PACK, () => review),
+                competing: () => remove(STT_PACK),
+            });
+        }
+
+        const { tree } = await renderScreen(<ReviewHarness />);
+        await act(async () => { await Promise.resolve(); });
+        const owner = tree.root.findByType('ReviewState');
+        let installResult!: Promise<void>;
+        await act(async () => {
+            installResult = owner.props.start();
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('ReviewState').props.actionPackId).toBe(STT_PACK);
+
+        await act(async () => {
+            await tree.root.findByType('ReviewState').props.competing();
+        });
+        expect(client.removeModel).not.toHaveBeenCalled();
+
+        await act(async () => {
+            finishReview(false);
+            await installResult;
+        });
+        expect(client.installModel).not.toHaveBeenCalled();
+        expect(tree.root.findByType('ReviewState').props.actionPackId).toBeNull();
+    });
+
+    it('does not accept or install through a stale license review after machine replacement', async () => {
+        let finishReview!: (accepted: boolean) => void;
+        const reviewDecision = new Promise<boolean>((resolve) => {
+            finishReview = resolve;
+        });
+        const review = {
+            pluginId: 'acme.speech',
+            packId: 'english-small',
+            pluginVersion: '1.2.3',
+            packVersion: '2026.7.0',
+            licenseId: 'acme-model-license-v1',
+            licenseTitle: 'Acme model license',
+            licenseText: 'Review these exact model terms.',
+            licenseSourceUrl: 'https://example.test/licenses/acme-v1',
+            licenseTextDigest: `sha256:${'a'.repeat(64)}`,
+            artifactBinding: {
+                kind: 'materialization' as const,
+                immutableGenerationId: 'generation-local-1',
+            },
+            accepted: false,
+        };
+        const acceptModelPackLicense = vi.fn(async () => status(STT_PACK));
+        const installModel = vi.fn(async () => status(STT_PACK, { installState: 'installed' }));
+        const client = {
+            listModels: vi.fn(async (scope?: DaemonVoiceInferenceModelMachineScope) => [
+                status(STT_PACK, {
+                    installState: scope?.machineId === 'machine-b' ? 'installed' : 'not_installed',
+                }),
+            ]),
+            getModelsStatus: vi.fn(async () => []),
+            installModel,
+            acceptModelPackLicense,
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        function ScopeReviewHarness(props: Readonly<{ machineId: string }>): React.ReactElement {
+            const controller = useDaemonVoiceModelCatalogState({
+                client,
+                refreshKey: props.machineId,
+            });
+            const current = controller.state.statuses.find((candidate) => candidate.packId === STT_PACK);
+            return React.createElement('ScopeReviewState', {
+                installState: current?.installState ?? null,
+                start: () => controller.install(STT_PACK, async (isCurrent) => {
+                    const accepted = await reviewDecision;
+                    if (!accepted || !isCurrent()) return false;
+                    await controller.acceptLicense(review);
+                    return isCurrent();
+                }),
+            });
+        }
+
+        const { tree } = await renderScreen(<ScopeReviewHarness machineId="machine-a" />);
+        await act(async () => { await Promise.resolve(); });
+        let staleInstall!: Promise<void>;
+        await act(async () => {
+            staleInstall = tree.root.findByType('ScopeReviewState').props.start();
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            tree.update(<ScopeReviewHarness machineId="machine-b" />);
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('ScopeReviewState').props.installState).toBe('installed');
+
+        await act(async () => {
+            finishReview(true);
+            await staleInstall;
+        });
+        expect(acceptModelPackLicense).not.toHaveBeenCalled();
+        expect(installModel).not.toHaveBeenCalled();
+        expect(tree.root.findByType('ScopeReviewState').props.installState).toBe('installed');
     });
 
     it('settles a completed mutation without waiting for a slow status refresh', async () => {

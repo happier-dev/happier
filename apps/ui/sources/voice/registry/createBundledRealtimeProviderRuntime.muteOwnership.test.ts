@@ -46,7 +46,7 @@ function createOpenConnection(): VoiceRealtimeConnection {
 }
 
 describe('createBundledRealtimeProviderRuntime mute ownership', () => {
-  it('keeps physical, projected, and provider mute state current through delayed controls and replacement', async () => {
+  it('keeps projected and provider mute state current without mutating the host mic', async () => {
     const providerId = 'realtime_mute_owner';
     const controlSessionId = 'voice-session';
     const runtimeMachine = createVoiceConversationRuntimeMachine();
@@ -55,19 +55,22 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
     const delayedUnmuteA = createDeferredVoid();
     const delayedMuteB = createDeferredVoid();
     const rejectedUnmute = createDeferredVoid();
-    const recoveredMute = createDeferredVoid();
     const delayedReplacedUnmute = createDeferredVoid();
     const delayedReplacedMute = createDeferredVoid();
+    const rejectedTerminalMute = createDeferredVoid();
     const providerCapture = { muted: false };
     const providerSettlements: boolean[] = [];
     const providerOperations = [
+      { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: true, deferred: settledInitialMute },
       { muted: false, deferred: delayedUnmuteA },
       { muted: true, deferred: delayedMuteB },
       { muted: false, deferred: rejectedUnmute },
-      { muted: true, deferred: recoveredMute },
+      { muted: true, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: false, deferred: delayedReplacedUnmute },
       { muted: true, deferred: delayedReplacedMute },
+      { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
+      { muted: true, deferred: rejectedTerminalMute },
     ];
     const setInputMuted = vi.fn(async (muted: boolean) => {
       const operation = providerOperations.shift();
@@ -94,6 +97,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       };
     };
     const mic = createMic(physicalTrack);
+    let controllerDeps: Parameters<typeof createVoiceConversationController>[0] | null = null;
     let selectedProviderId = providerId;
     let transcriptEpoch = 0;
     const host = {
@@ -157,7 +161,10 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
         ),
         subscribe: (listener: () => void) => useVoiceConversationRuntimeStore.subscribe(listener),
       },
-      createConversationController: createVoiceConversationController,
+      createConversationController: (deps) => {
+        controllerDeps = deps;
+        return createVoiceConversationController(deps);
+      },
       createMicSession: vi.fn(() => mic),
       createSdkHandleConnection: vi.fn(() => { throw new Error('unused'); }),
       createWebRtcConnection: vi.fn(() => { throw new Error('unused'); }),
@@ -218,7 +225,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       createConnection: vi.fn(async () => createOpenConnection()),
       encodeToolResults: vi.fn(() => []),
       encodeToolContinuation: vi.fn(() => ({ type: 'unused' })),
-      microphoneMode: 'host_webrtc',
+      microphoneMode: 'provider_managed',
       ...(runtimeSetInputMuted ? { setInputMuted: runtimeSetInputMuted } : {}),
       encodeContextUpdate: vi.fn(() => []),
       encodeTextTurn: vi.fn(() => []),
@@ -228,8 +235,9 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
 
     try {
       await runtime.adapter.start({ sessionId: controlSessionId });
+      expect(setInputMuted).toHaveBeenCalledWith(false);
       const initialMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
-      expect(physicalTrack.enabled).toBe(false);
+      expect(physicalTrack.enabled).toBe(true);
       expect(runtimeMachine.getSnapshot().micMuted).toBe(false);
 
       settledInitialMute.resolve();
@@ -239,61 +247,77 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
 
       const unmuteA = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: false });
       expect(physicalTrack.enabled).toBe(true);
-      expect(runtimeMachine.getSnapshot().micMuted).toBe(false);
+      expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
       const muteB = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
-      expect(physicalTrack.enabled).toBe(false);
-      expect(runtimeMachine.getSnapshot().micMuted).toBe(false);
+      expect(physicalTrack.enabled).toBe(true);
+      expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
 
       delayedMuteB.resolve();
       delayedUnmuteA.resolve();
       await Promise.all([unmuteA, muteB]);
 
       expect(providerCapture.muted).toBe(true);
-      expect(providerSettlements).toEqual([true, false, true]);
+      expect(providerSettlements).toEqual([false, true, false, true]);
       expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
-      expect(physicalTrack.enabled).toBe(false);
+      expect(physicalTrack.enabled).toBe(true);
 
       const failedUnmute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: false });
-      const recoveredMuteRequest = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
-      recoveredMute.resolve();
       rejectedUnmute.reject(new Error('provider_input_mute_rejected'));
       await expect(failedUnmute).rejects.toThrow('provider_input_mute_rejected');
-      await recoveredMuteRequest;
+      const callsAfterRejectedUnmute = setInputMuted.mock.calls.length;
+      await runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
 
       expect(providerCapture.muted).toBe(true);
+      expect(setInputMuted).toHaveBeenCalledTimes(callsAfterRejectedUnmute);
       expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
-      expect(physicalTrack.enabled).toBe(false);
+      expect(physicalTrack.enabled).toBe(true);
+
+      await controllerDeps?.onConnectionReady?.({
+        controlSessionId,
+        attemptId: 1,
+        request: {},
+        connection: createOpenConnection(),
+        signal: new AbortController().signal,
+      });
+      expect(setInputMuted).toHaveBeenLastCalledWith(true);
 
       const replacedUnmute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: false });
-      await vi.waitFor(() => expect(setInputMuted).toHaveBeenCalledTimes(6));
+      await vi.waitFor(() => expect(setInputMuted).toHaveBeenCalledTimes(7));
       const replacedMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
-      await runtime.adapter.start({ sessionId: controlSessionId });
-
-      expect(runtimeMachine.getSnapshot()).toMatchObject({
-        controlSessionId,
-        adapterId: providerId,
-        state: 'connected',
-        micMuted: false,
-      });
-      expect(physicalTrack.enabled).toBe(true);
 
       delayedReplacedUnmute.resolve();
       delayedReplacedMute.resolve();
       await Promise.all([replacedUnmute, replacedMute]);
+      // Replacement is a lifecycle boundary, not a second concurrent Start on
+      // the same adapter. Stop retires the old attempt; the fresh Start must
+      // establish an unmuted provider baseline without inheriting its state.
+      await runtime.adapter.stop();
+      await runtime.adapter.start({ sessionId: controlSessionId });
 
       expect(providerCapture.muted).toBe(false);
-      expect(providerSettlements).toEqual([true, false, true, true, false]);
-      expect(setInputMuted.mock.calls.map(([muted]) => muted)).toEqual([true, false, true, false, true, false]);
+      expect(providerSettlements).toEqual([false, true, false, true, true, false, true, false]);
+      expect(setInputMuted.mock.calls.map(([muted]) => muted)).toEqual([
+        false, true, false, true, false, true, false, true, false,
+      ]);
       expect(runtimeMachine.getSnapshot().micMuted).toBe(false);
       expect(physicalTrack.enabled).toBe(true);
+
+      const failedMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
+      expect(physicalTrack.enabled).toBe(true);
+      rejectedTerminalMute.reject(new Error('provider_input_mute_rejected'));
+      await expect(failedMute).rejects.toThrow('provider_input_mute_rejected');
+      await vi.waitFor(() => expect(['disconnected', 'error']).toContain(
+        runtimeMachine.getSnapshot().state,
+      ));
+      expect(mic.setMuted).not.toHaveBeenCalled();
     } finally {
       settledInitialMute.resolve();
       delayedUnmuteA.resolve();
       delayedMuteB.resolve();
       rejectedUnmute.resolve();
-      recoveredMute.resolve();
       delayedReplacedUnmute.resolve();
       delayedReplacedMute.resolve();
+      rejectedTerminalMute.resolve();
       await runtime.dispose();
       runtimeMachine.reset();
     }

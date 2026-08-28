@@ -13,7 +13,7 @@ import {
   createPluginPermissionGrantActions,
   type PluginPermissionGrantActions,
 } from '@/sync/domains/plugins/permissions/actions';
-import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
   selectPluginPermissionGrants,
   selectPluginPermissionPendingRequests,
@@ -144,7 +144,7 @@ export function createVoiceRawCredentialReviewDetailRows(
 export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessReviewProps) {
   const client = props.client ?? rawCredentialAuthorizationClient;
   const defaultActions = React.useMemo(() => createPluginPermissionGrantActions({
-    execute: createPluginPermissionGrantHttpActionExecutor(),
+    execute: createFrontDoorUiActionExecutor(),
   }), []);
   const actions = props.actions ?? defaultActions;
   const settingsVersion = useSettingsVersion();

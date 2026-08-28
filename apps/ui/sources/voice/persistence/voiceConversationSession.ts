@@ -2,6 +2,7 @@ import {
     CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS,
     CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
     buildBackendTargetKeyV2,
+    buildQualifiedPluginContributionKey,
     buildSystemSessionMetadataV1,
     AgentSessionStartupInstructionsV1Schema,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
@@ -22,8 +23,10 @@ import {
 } from '@happier-dev/agents';
 
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
+import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -310,24 +313,48 @@ async function resolveVoiceConversationBackendTarget(state: any, machineId: stri
     const requestedAgentId = normalizeNonEmptyString(agentCfg?.agentId);
 
     // An explicitly configured voice Agent is the user's selection, bundled or
-    // externally installed. Narrowing to the bundled ids here silently ran the
-    // conversation on the projection's preferred backend instead of the Agent
-    // the user picked.
+    // externally installed. The exact persisted selection facts resolve against
+    // the current catalog and fail closed when the selection is no longer
+    // supported; selections written before exact facts existed keep resolving
+    // through their raw id.
     if (agentSource === 'agent' && requestedAgentId) {
-        return { kind: 'backend', backendId: requestedAgentId };
+        const resolved = await resolveVoiceConfiguredAgentTarget({
+            machineId,
+            selection: {
+                agentId: requestedAgentId,
+                agentTargetKey: agentCfg?.agentTargetKey ?? null,
+                agentIdentity: agentCfg?.agentIdentity ?? null,
+            },
+        });
+        if (!resolved.ok) {
+            throw Object.assign(
+                new Error('The configured Voice Agent is no longer available. Re-select it in Voice settings.'),
+                { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' },
+            );
+        }
+        return resolved.backendTarget;
     }
 
     const daemonMergedProjectionInputs = await loadDaemonMergedProjectionInputs({
         machineId,
         serverId: getActiveServerSnapshot().serverId,
     });
-    return resolvePreferredBackendTargetFromProjection({
+    const preferredTarget = resolvePreferredBackendTargetFromProjection({
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
         acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
         daemonMergedProjectionInputs,
     });
+    return resolveOperationalBackendTargetForAgentSelection({
+        backendTarget: preferredTarget,
+        mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById,
+    }) ?? {
+        kind: 'backend',
+        backendId: preferredTarget.kind === 'agent'
+            ? buildQualifiedPluginContributionKey(preferredTarget.identity)
+            : preferredTarget.backendId,
+    };
 }
 
 function sameContributionIdentity(

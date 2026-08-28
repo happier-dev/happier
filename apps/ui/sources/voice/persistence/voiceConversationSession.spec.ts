@@ -105,6 +105,42 @@ function enableCodexStartupInstructionsV1(): void {
   });
 }
 
+/**
+ * A novel external qualified Agent projected by the target machine, used by the
+ * exact-target Voice selection corridors.
+ */
+function enableExternalVoiceAgentProjection(): void {
+  clearDaemonMergedProjectionCacheForTests();
+  machineContributionRegistryProjectionDescribe.mockResolvedValue({
+    supported: true,
+    projection: PluginProjectionV2Schema.parse({
+      v: 2,
+      generation: 7,
+      agentsById: {
+        'acme-voice-agent': {
+          id: 'acme-voice-agent',
+          identity: {
+            pluginId: 'acme.voice',
+            localId: 'agent',
+          },
+          title: 'Acme Voice Agent',
+          capabilities: {
+            sessions: {
+              open: ['create', 'resume'],
+              delivery: ['newTurn'],
+              cancel: true,
+            },
+          },
+        },
+      },
+      backendsById: {
+        'acme-voice-agent': { id: 'acme-voice-agent', agentId: 'acme-voice-agent' },
+      },
+      familiesById: {},
+    }),
+  });
+}
+
 function enableCollidingQualifiedAgentProjection(): void {
   clearDaemonMergedProjectionCacheForTests();
   machineContributionRegistryProjectionDescribe.mockResolvedValue({
@@ -652,6 +688,45 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       permissionMode: 'read-only',
       serverId: 'server-1',
     }));
+  });
+
+  it('spawns the configured external Agent through its exact projected backend target', async () => {
+    enableExternalVoiceAgentProjection();
+    state.settings.voice.providers.local_conversation.config.agent = {
+      agentSource: 'agent',
+      agentId: 'acme-voice-agent',
+      agentTargetKey: 'agent:acme.voice/agent',
+      agentIdentity: { pluginId: 'acme.voice', localId: 'agent' },
+      agentProjectionGeneration: 7,
+    };
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-1',
+      directory: '/Users/test/.happier/voice-agent',
+      backendTarget: { kind: 'backend', backendId: 'acme-voice-agent' },
+    }));
+  });
+
+  it('fails the voice-home spawn closed when the configured external Agent is no longer projected', async () => {
+    // No machine projection carries the configured Agent: its exact selection
+    // is stale/unsupported on this machine, so no spawn may silently fall back
+    // to a different Agent.
+    state.settings.voice.providers.local_conversation.config.agent = {
+      agentSource: 'agent',
+      agentId: 'acme-voice-agent',
+      agentTargetKey: 'agent:acme.voice/agent',
+      agentIdentity: { pluginId: 'acme.voice', localId: 'agent' },
+      agentProjectionGeneration: 7,
+    };
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
+    });
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
   });
 
   it('coalesces concurrent voice-home ensures while the spawn is pending', async () => {

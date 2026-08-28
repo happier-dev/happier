@@ -400,6 +400,10 @@ export function createAccountVoiceOperationService(input: Readonly<{
   const requiredRecipientContractDigest =
     resolveRequiredRecipientContractApprovalDigestV1(recipientContract);
   const credentialSlotId = recipientContract.credentialSlot.id;
+  const credentialBindingPurpose = Object.freeze({
+    consumer: input.contribution,
+    purpose: input.declaration.credentials!.slot.purpose,
+  });
   const operationAuthorities = new Map<string, AccountOperationCredentialAuthority>(
     recipientContract.operations.map((operation) => [
       operation.id,
@@ -408,7 +412,9 @@ export function createAccountVoiceOperationService(input: Readonly<{
           contribution: input.contribution,
           providerId: input.providerId,
           credentialSlotId,
-          purpose: { consumer: input.contribution, purpose: operation.purpose },
+          // Source selection belongs to the credential slot. The operation's
+          // distinct purpose is consumed only by the recipient materializer.
+          purpose: credentialBindingPurpose,
           machineId: null,
           isCurrent: input.isCurrent,
         });
@@ -541,6 +547,9 @@ export function createAccountVoiceOperationService(input: Readonly<{
           const allowedHeaderNames = new Set(
             authorization.projection.allowedHeaderNames.map((name) => name.toLowerCase()),
           );
+          const requiredHeaderNames = new Set(
+            authorization.projection.requiredHeaderNames.map((name) => name.toLowerCase()),
+          );
           const normalized = new Map<string, string>();
           for (const [rawName, value] of Object.entries(returned)) {
             const name = rawName.trim().toLowerCase();
@@ -557,7 +566,7 @@ export function createAccountVoiceOperationService(input: Readonly<{
             }
             normalized.set(name, value);
           }
-          if (normalized.size !== allowedHeaderNames.size) {
+          if ([...requiredHeaderNames].some((name) => !normalized.has(name))) {
             throw operationError('credential_unavailable');
           }
           credentialHeaders = Object.freeze(Object.fromEntries(normalized));

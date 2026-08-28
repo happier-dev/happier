@@ -4,7 +4,9 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { DEFAULT_AGENT_ID, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
+import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { getModelDropdownMenuItems, REFRESH_MODELS_DROPDOWN_ITEM_ID } from '@/components/settings/pickers/modelDropdownItems';
 import { renderDropdownItemIcon } from '@/components/settings/pickers/renderDropdownItemIcon';
 import { Item } from '@/components/ui/lists/Item';
@@ -88,31 +90,6 @@ export function LocalConversationSection(props: {
     return raw.length > 0 ? raw : null;
   }, [cfg.agent.agentId]);
 
-  const selectedAgentIdLabel = React.useMemo(() => {
-    const raw = String(cfg.agent.agentId ?? '').trim();
-    if (!raw) return t('settingsVoice.local.notSet');
-    if (isBundledAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
-    return raw;
-  }, [cfg.agent.agentId]);
-
-  const agentIdMenuItems = React.useMemo(() => {
-    return [
-      ...getAgentDropdownMenuItems({
-        agentIds: enabledAgentIds as any,
-        iconColor: theme.colors.text.secondary,
-      }),
-      {
-        id: '__custom__',
-        title: t('settingsVoice.local.modelCustomTitle'),
-        subtitle: t('settingsVoice.local.conversation.customBackendIdSubtitle'),
-        icon: renderDropdownItemIcon({
-          name: 'pencil-simple',
-          color: theme.colors.text.secondary,
-        }),
-      },
-    ];
-  }, [enabledAgentIds, theme.colors.text.secondary]);
-
   // The configured voice Agent may be any installed Agent, bundled or plugin-contributed, so its
   // id goes to the model preflight as-is. Narrowing to the bundled ids here would preflight the
   // default Agent's catalog and offer models the selected Agent cannot run.
@@ -135,6 +112,77 @@ export function LocalConversationSection(props: {
     });
   }, [executionMachine.machineId, executionMachine.mode, machines, recentMachinePaths]);
 
+  const capabilityServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+  const daemonMergedProjection = useDaemonMergedProjectionInputs({
+    machineId: preflightMachineId,
+    serverId: capabilityServerId,
+    enabled: Boolean(preflightMachineId),
+  });
+  const currentDaemonProjectionInputs = daemonMergedProjection.phase === 'ready'
+    ? daemonMergedProjection.inputs
+    : null;
+  const enabledBuiltInAgentIds = React.useMemo(
+    () => new Set<string>(enabledAgentIds),
+    [enabledAgentIds],
+  );
+  const resolvedAgentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
+    enabledAgentIds,
+    acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+    backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+    mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById ?? null,
+    mergedBackendProjectionById: currentDaemonProjectionInputs?.mergedBackendProjectionById ?? null,
+  }).filter((entry) => (
+    entry.isBuiltIn
+      ? enabledBuiltInAgentIds.has(entry.agentId)
+      : entry.enabled !== false
+  )), [
+    currentDaemonProjectionInputs?.mergedBackendProjectionById,
+    currentDaemonProjectionInputs?.mergedProviderProjectionById,
+    enabledBuiltInAgentIds,
+    enabledAgentIds,
+    settings.acpCatalogSettingsV1,
+    settings.backendEnabledByTargetKey,
+  ]);
+  const selectedAgentIdLabel = React.useMemo(() => {
+    const raw = String(cfg.agent.agentId ?? '').trim();
+    if (!raw) return t('settingsVoice.local.notSet');
+    const projectedEntry = resolvedAgentEntries.find((entry) => entry.agentId === raw);
+    if (projectedEntry) return projectedEntry.title;
+    if (isBundledAgentId(raw as any)) return t(getAgentCore(raw as any).displayNameKey);
+    return raw;
+  }, [cfg.agent.agentId, resolvedAgentEntries]);
+  const agentIdMenuItems = React.useMemo(() => [
+    ...resolvedAgentEntries.map((entry) => ({
+      id: entry.agentId,
+      title: entry.title,
+      subtitle: entry.subtitle ?? entry.qualifiedId,
+      icon: (
+        <AgentCatalogIdentityIcon
+          entry={entry}
+          machineId={preflightMachineId}
+          serverId={capabilityServerId || null}
+          current={daemonMergedProjection.phase === 'ready'}
+          size={22}
+        />
+      ),
+    })),
+    {
+      id: '__custom__',
+      title: t('settingsVoice.local.modelCustomTitle'),
+      subtitle: t('settingsVoice.local.conversation.customBackendIdSubtitle'),
+      icon: renderDropdownItemIcon({
+        name: 'pencil-simple',
+        color: theme.colors.text.secondary,
+      }),
+    },
+  ], [
+    capabilityServerId,
+    daemonMergedProjection.phase,
+    preflightMachineId,
+    resolvedAgentEntries,
+    theme.colors.text.secondary,
+  ]);
+
   const preflightModels = useNewSessionPreflightModelsState({
     backendTarget: hasConfiguredProviderChat
       ? null
@@ -143,7 +191,7 @@ export function LocalConversationSection(props: {
     // a non-bundled backend id alone leaves the preflight with no Agent to probe.
     runtimeCarrierAgentId: effectiveAgentIdForModelOptions as AgentId,
     selectedMachineId: preflightMachineId,
-    capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
+    capabilityServerId,
   });
 
   const selectableModelMenuItems = React.useMemo(() => {

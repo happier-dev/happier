@@ -73,6 +73,7 @@ vi.mock('@/sync/domains/plugins/availability/reactNativeArtifactDaemonTransport'
 }));
 vi.mock('@/voice/settings/executionMachine', () => ({
   resolveVoiceExecutionMachineId: () => 'machine-1',
+  isCapturedVoiceExecutionMachineCurrent: (machineId: string | null) => machineId === 'machine-1',
 }));
 afterEach(() => {
   reactNativeArtifactDaemonTransport.fetch.mockReset();
@@ -361,11 +362,10 @@ describe('projected external Voice provider activation', () => {
     const initialAttempts = await reconcileAppShellProjectedClientExecutables({
       projection: null,
       platform: 'web',
-      voice: Object.freeze({
-        projection,
-        machineId: 'machine-1',
-        serverId: null,
-      }),
+      // Catalog projection remains authoritative even when Voice interaction
+      // cannot activate an executable runtime on this client.
+      voiceProviderProjection: projection,
+      voice: null,
       executableHost,
     });
 
@@ -1480,7 +1480,7 @@ describe('projected external Voice provider activation', () => {
           kind: 'httpHeaders',
           headers: { authorization: `Bearer ${payload.cacheIdentity.contributionId}` },
         },
-        credentialRevision: null,
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
       };
     });
     onTestFinished(async () => {

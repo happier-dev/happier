@@ -24,6 +24,7 @@ function createLifecycleControllerStub(
     setConfiguredProviderId: vi.fn(() => {}),
     setCurrentUiContextToolSetEnabled: vi.fn(() => {}),
     setMuted: vi.fn(async () => {}),
+    suspendInput: vi.fn(async () => null),
     retry: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     subscribe: vi.fn(() => () => {}),

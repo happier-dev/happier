@@ -551,7 +551,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
 
     expect(mic.ensureActive).not.toHaveBeenCalled();
     expect(host.acquireAudioMode).toHaveBeenCalledWith('realtime_sdk');
-    expect(mic.setMuted).toHaveBeenCalledWith(true);
+    expect(mic.setMuted).not.toHaveBeenCalled();
     expect(setInputMuted).toHaveBeenCalledWith(true);
     expect(host.machine.setMuted).toHaveBeenCalledWith('voice-global', 'realtime_sdk', 1, true);
     expect(releaseAudioMode).toHaveBeenCalledTimes(1);

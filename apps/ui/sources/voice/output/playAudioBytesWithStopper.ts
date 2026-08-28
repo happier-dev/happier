@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { createVoiceEncodedAudioPlayback } from '@happier-dev/audio-stream-native';
 
 import type {
   VoicePlaybackStopperRegistrar,
@@ -337,12 +338,96 @@ export async function playAudioBytesWithStopper(opts: {
     });
   }
 
-  const { createAudioPlayer } = await import('expo-audio');
   const playbackLease = await acquireVoicePlaybackAudioMode('audio-bytes');
   try {
     const ext = opts.format === 'wav' ? '.wav' : '.mp3';
     const { File, Paths } = await import('expo-file-system');
     const file = new File(Paths.cache, `happier-voice-${Date.now()}${ext}`);
+    if (Platform.OS === 'ios') {
+      const playback = createVoiceEncodedAudioPlayback();
+      if (!playback) throw new Error('voice_native_encoded_playback_unavailable');
+      let cleanupPromise: Promise<void> | null = null;
+      let unsubscribe = () => {};
+      const runCleanup = (): Promise<void> => {
+        cleanupPromise ??= (async () => {
+          unsubscribe();
+          await playback.stop().catch(() => {});
+          // Temp-file deletion does not own the AVAudioSession transition and
+          // must not keep playback settlement (or a following Voice turn)
+          // waiting on filesystem cleanup.
+          try {
+            file.delete();
+          } catch {
+            // Best-effort cleanup must not delay or replace playback settlement.
+          }
+        })();
+        return cleanupPromise;
+      };
+      try {
+        await file.write(new Uint8Array(opts.bytes));
+      } catch (error) {
+        await runCleanup();
+        throw error;
+      }
+      const qaOutputTap = beginVoiceQaOutputTap({ bytes: opts.bytes, format: opts.format });
+      return await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let clearStopper = () => {};
+        const settle = (error?: unknown): void => {
+          if (settled) return;
+          settled = true;
+          clearStopper();
+          // The native player must retire before the outer finally releases
+          // the coordinator lease. File deletion remains best-effort above.
+          void runCleanup().then(() => {
+            if (error) reject(error); else resolve();
+          });
+        };
+        const stopPlayback = (): void => {
+          qaOutputTap.markCancelled();
+          settle();
+        };
+        const target: VoicePlaybackTarget = {
+          stop: stopPlayback,
+          beginCandidate: () => {
+            if (settled) return 'unsupported';
+            void playback.setPaused(true).catch(() => {});
+            return 'retained';
+          },
+          resolveCandidate: (resolution) => {
+            if (settled || resolution !== 'false_alarm') return;
+            void playback.setPaused(false).catch((error) => settle(error));
+          },
+        };
+        clearStopper = opts.registerPlaybackStopper.registerTarget?.(target)
+          ?? opts.registerPlaybackStopper(stopPlayback);
+        if (settled) {
+          clearStopper();
+          return;
+        }
+        unsubscribe = playback.subscribe((event) => {
+          if (settled) return;
+          if (event.status === 'started') {
+            qaOutputTap.markPlaying();
+            notifyPlaybackStarted();
+            return;
+          }
+          if (event.status === 'finished') {
+            qaOutputTap.markCompleted();
+            settle();
+            return;
+          }
+          qaOutputTap.markFailed(event.reason ?? 'audio_playback_failed');
+          settle(new Error(event.reason ?? 'audio_playback_failed'));
+        });
+        void playback.start(file.uri).catch((error) => {
+          qaOutputTap.markFailed('audio_playback_failed');
+          settle(error);
+        });
+      });
+    }
+
+    const { createAudioPlayer } = await import('expo-audio');
     let player: ReturnType<typeof createAudioPlayer> | null = null;
     let subscription: { remove(): void } | null = null;
     let cleanupPromise: Promise<void> | null = null;
@@ -375,7 +460,7 @@ export async function playAudioBytesWithStopper(opts: {
       // player must remain only a lease consumer until the coordinator releases.
       player = createAudioPlayer(
         file.uri,
-        Platform.OS === 'ios' ? { keepAudioSessionActive: true } : undefined,
+        undefined,
       );
       const playbackPlayer = player;
       const qaOutputTap = beginVoiceQaOutputTap({ bytes: opts.bytes, format: opts.format });

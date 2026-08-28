@@ -973,6 +973,7 @@ describe('external Voice provider host composition', () => {
                 origin: 'https://voice.example.test',
                 headerNames: ['authorization'],
               },
+              requiredHeaderNames: ['authorization'],
               allowedHeaderNames: ['authorization'],
             }],
           }],

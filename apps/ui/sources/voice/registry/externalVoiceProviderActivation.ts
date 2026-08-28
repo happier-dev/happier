@@ -401,6 +401,8 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     releaseComposerContent: async () => unavailable(),
     executeAction: async () => unavailable(),
     selectActionInput: async () => unavailable(),
+    openNewSession: async () => unavailable(),
+    settleEphemeralInput: async () => unavailable(),
     readResource: async () => unavailable(),
     statOpenableContent: async () => unavailable(),
     readOpenableContent: async () => unavailable(),
@@ -1326,6 +1328,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
             pluginId: input.pluginId,
             localId: declaration.id,
             providerId,
+            ...(input.generation ? { projectionGeneration: input.generation } : {}),
             descriptor: hostBinding?.descriptor === 'bundled' ? null : Object.freeze({
               pluginId: input.pluginId,
               providerId,

@@ -97,6 +97,7 @@ async function activateRawCredentialOnlyProvider(
                     origin: 'https://voice.example.test',
                     headerNames: ['x-account-token'],
                   },
+                  requiredHeaderNames: ['x-account-token'],
                   allowedHeaderNames: ['x-account-token'],
                 }],
               }),
