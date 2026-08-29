@@ -7,6 +7,7 @@ import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
     mutateTriageSavedViews,
     readTriageSavedViews,
+    TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
     type CorpusSavedViewCommandV1,
     type CorpusSavedViewV1,
     type CorpusSavedViewsDepsV1,
@@ -17,6 +18,8 @@ import type {
     TriageReadSavedViewsInputV1,
     TriageReadSavedViewsResultV1,
 } from './savedViewsProtocol.js';
+import { createTriageAccountKvCatalogStore } from '../settings/accountKvCatalogStore.js';
+import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 
 /**
  * The two saved-view Actions: the surface's only path to the one
@@ -30,7 +33,7 @@ import type {
  */
 
 export type TriageSavedViewsDepsV1 = Readonly<{
-    settings: CorpusSavedViewsDepsV1['settings'];
+    catalog: CorpusSavedViewsDepsV1['catalog'];
     mintViewId: () => string;
     signal?: AbortSignal;
 }>;
@@ -50,7 +53,7 @@ export async function readTriageSavedViewsForSurface(
     deps: TriageSavedViewsDepsV1,
 ): Promise<TriageReadSavedViewsResultV1> {
     const read = await readTriageSavedViews({
-        settings: deps.settings,
+        catalog: deps.catalog,
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return {
@@ -97,7 +100,7 @@ export async function administerTriageSavedView(
     if (command === null) return { v: 1, status: 'rejected', reason: 'smartPolicy' };
 
     const result = await mutateTriageSavedViews({
-        settings: deps.settings,
+        catalog: deps.catalog,
         mintViewId: deps.mintViewId,
         ...(deps.signal ? { signal: deps.signal } : {}),
     }, command);
@@ -121,7 +124,10 @@ export function createTriageReadSavedViewsActionHandler(): ActionHandler<
     TriageReadSavedViewsResultV1
 > {
     return async (input, context: PluginInvocationContext) => await readTriageSavedViewsForSurface(input, {
-        settings: context.services.settings.forScope({ kind: 'account' }),
+        catalog: createTriageAccountKvCatalogStore(
+            requireTriageAccountStorage(context).kv,
+            TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
+        ),
         mintViewId: () => mintTriageOpaqueIdV1(),
         signal: context.signal,
     });
@@ -132,7 +138,10 @@ export function createTriageAdministerSavedViewActionHandler(): ActionHandler<
     TriageAdministerSavedViewResultV1
 > {
     return async (input, context: PluginInvocationContext) => await administerTriageSavedView(input, {
-        settings: context.services.settings.forScope({ kind: 'account' }),
+        catalog: createTriageAccountKvCatalogStore(
+            requireTriageAccountStorage(context).kv,
+            TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
+        ),
         // Minted at the writer, never by a caller: a client-chosen id would let
         // two devices claim one view.
         mintViewId: () => mintTriageOpaqueIdV1(),

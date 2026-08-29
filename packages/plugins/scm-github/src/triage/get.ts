@@ -409,6 +409,8 @@ export async function readGithubPullRequest(
 export type GithubIssueFactsV1 = Readonly<{
   /** GitHub's own `state`, trimmed: `open` or `closed`. */
   state: string | null;
+  /** GitHub's own close classification; null while open or when omitted. */
+  stateReason: string | null;
   labels: readonly string[];
   assignees: readonly string[];
 }>;
@@ -433,6 +435,9 @@ function readNamedMembers(value: unknown, member: string): readonly string[] {
 function readGithubIssueFacts(raw: Readonly<Record<string, unknown>>): GithubIssueFactsV1 {
   return Object.freeze({
     state: typeof raw.state === 'string' && raw.state.trim() ? raw.state.trim() : null,
+    stateReason: typeof raw.state_reason === 'string' && raw.state_reason.trim()
+      ? raw.state_reason.trim()
+      : null,
     // GitHub publishes a label as an object with a `name`, and the same field as a
     // bare string on some legacy payloads. Both are read, because a delta that
     // silently saw no labels would report every removal as already satisfied.

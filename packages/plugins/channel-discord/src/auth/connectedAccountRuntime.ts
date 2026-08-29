@@ -1,5 +1,6 @@
 import type {
   ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  ConnectedAccountAuthCompletionResult as PluginConnectedAccountAuthCompletionResult,
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
@@ -16,10 +17,10 @@ function diagnostic(code: string, message: string) {
 }
 
 type ConfirmedDiscordBot = Readonly<{ status: 'confirmed'; identity: DiscordBotIdentity }>;
-type DiscordBotProbeFailure = Readonly<{
-  status: 'rejected' | 'unavailable';
-  diagnostic: ReturnType<typeof diagnostic>;
-}>;
+type DiscordBotProbeFailure = Extract<
+  PluginConnectedAccountAuthCompletionResult,
+  Readonly<{ status: 'rejected' | 'unavailable' }>
+>;
 type DiscordConnectedAccountReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
 
 function probeFailure(failure: DiscordApiFailure): DiscordBotProbeFailure {

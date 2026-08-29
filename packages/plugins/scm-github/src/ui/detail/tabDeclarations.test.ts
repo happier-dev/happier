@@ -48,8 +48,8 @@ describe('GitHub detail tab declarations', () => {
 
   it('names every tab through a catalog key, not a hardcoded English word', () => {
     // A tab title reaches `Tabs.Item` as a plain string, so an untranslated
-    // declaration renders English on ten of the eleven locales this plugin
-    // ships and nothing fails.
+    // declaration renders English in every locale missing its own entry and
+    // nothing fails.
     for (const tab of GITHUB_DETAIL_TABS_V1) {
       expect(tab.titleKey, tab.id).toMatch(/^plugins\.github\.ui\.tab\./u);
       expect(GITHUB_ADDITIONAL_UI_TRANSLATIONS.en[

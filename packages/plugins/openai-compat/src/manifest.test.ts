@@ -1,4 +1,5 @@
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import { VOICE_SPEECH_OUTPUT_MAX_BYTES } from '@happier-dev/plugin-sdk/voice';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -92,7 +93,7 @@ describe('OpenAI-compatible batch speech manifest', () => {
       limits: {
         synthesize: {
           maxInputCharacters: 200_000,
-          maxOutputBytes: 32 * 1024 * 1024,
+          maxOutputBytes: VOICE_SPEECH_OUTPUT_MAX_BYTES,
         },
       },
     });

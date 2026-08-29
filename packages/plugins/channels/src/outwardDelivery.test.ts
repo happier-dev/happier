@@ -1029,7 +1029,7 @@ describe('Channels control-response outward custody', () => {
     });
   });
 
-  it('settles a generic host-proven no-handler failure as retry-safe without invoking the provider handler', async () => {
+  it('settles a canonical host-reported no-handler marker as retry-safe without invoking the provider handler', async () => {
     const state = new MemoryAccountCollection();
     await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
     await state.put({
@@ -2404,6 +2404,39 @@ describe('Channels control-response outward custody', () => {
     await expect(acceptConversationOutwardDeliveryReady({ store, prepared: blocked, signal }))
       .resolves.toEqual({ kind: 'suppressed', reason: 'bindingDisabled' });
     expect(deliveries.rows.size).toBe(1);
+  });
+
+  it('rejects a binding that fails the canonical persisted policy schema before ready custody', async () => {
+    const state = new MemoryAccountCollection();
+    await state.put(providerConnectionRow(), { expectedRevision: 'absent' });
+    await state.put({
+      id: 'binding-1',
+      'record-kind': 'binding',
+      'connection-id': 'connection-1',
+      'binding-id': 'binding-1',
+      payload: {
+        authorityEpoch: 7,
+        enabled: true,
+        deletionState: 'none',
+        endpoint,
+        target: sessionTarget,
+        linkPreviewPolicy: 'suppress',
+        senderFeedback: 'not-a-policy',
+      },
+    }, { expectedRevision: 'absent' });
+
+    await expect(prepareConversationOutwardDeliveryReady({
+      stateCollection: state as never,
+      signal: new AbortController().signal,
+      obligation: {
+        ...obligation(),
+        source: {
+          kind: 'sessionProjection',
+          sessionId: 'session-1',
+          semanticItemId: 'canonical-binding-corruption',
+        },
+      },
+    })).resolves.toEqual({ kind: 'unavailable', reason: 'stateCorrupt' });
   });
 
   it('records provider-bound oversized ready admission as terminal no-effect custody before a provider can run', async () => {

@@ -175,7 +175,6 @@ export const OPENCODE_PLUGIN = definePlugin({
             compaction: { events: true, manual: true },
             catalog: { active: ['skills'] },
           },
-          executionRuns: { open: ['create'], checkpoint: true, stop: true },
         }),
         providerRequirements: {
           acceptsProtocols: ['openai-responses', 'openai-chat'],
@@ -280,7 +279,7 @@ export const OPENCODE_PLUGIN = definePlugin({
         buildSessionOptions: (input) => ({
           ok: true,
           options: resolveOpenCodeSessionRuntimePreferences({
-            settings: input.settings,
+            settings: input.pluginSettings.account ?? {},
             environment: input.environment,
           }),
         }),

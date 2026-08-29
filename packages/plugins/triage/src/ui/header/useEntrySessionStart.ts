@@ -697,6 +697,7 @@ export function useTriageEntrySessionStart(
                         checkoutIntent: checkout,
                         ...(executionPlacement === null ? {} : {
                             placement: {
+                                kind: 'exactTarget',
                                 serverId: executionPlacement.executionTarget.serverId,
                                 machineId: executionPlacement.executionTarget.machineId,
                                 ...(checkout === 'preparedReviewWorkspace'

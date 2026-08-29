@@ -26,13 +26,11 @@ import { sameTriageFilterValueV1, type TriageSurfaceStateV1 } from '../state/sur
  *
  * **`selectedViewId` is carried, in the `sv` segment.** `core/SURFACE.md` §3.2
  * names it as part of the effective lens, and it now has a real producer: the
- * list's own compact **Views** control, which is the affordance
- * `settings/savedViewsContribution.ts` describes when it hides the field from
- * the Settings page. Carrying it is what makes a copied link name the view its
+ * list's own compact **Views** control. Carrying it is what makes a copied link name the view its
  * sender was looking through, and what makes an explicit route lens win on
  * restart without the shell having to guess which of two lenses is current.
  *
- * **A route never mutates Settings.** The id here is a statement about the lens
+ * **A route never mutates Account Data.** The id here is a statement about the lens
  * this location carries, not a selection command: an id naming no stored view —
  * deleted elsewhere, or belonging to another Account — is cleared by the shell
  * while the facets, order and policy in the same location survive
@@ -195,7 +193,7 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
     const [key, ...components] = segment.split(',');
     if (key === 'sv' && components.length === 1) {
       // Opaque and never parsed for meaning: the id either names a stored view
-      // or it does not, and only the Settings owner can say which. An id no
+      // or it does not, and only the Account KV owner can say which. An id no
       // stored view answers to is cleared by the shell rather than refused
       // here, because the lens carried beside it is still the reader's.
       const value = decode(components[0] ?? '');
@@ -343,7 +341,7 @@ export function readTriageRouteLensV1(state: TriageSurfaceStateV1): TriageRouteL
  * Whether a location names a LENS of its own, as opposed to only a selection.
  *
  * `core/SURFACE.md` §6.5: on restart an explicit valid route lens wins without
- * mutating Settings, and otherwise the canonical selected saved view restores
+ * mutating Account KV, and otherwise the canonical selected saved view restores
  * its exact facets, order and policy. That decision needs exactly this fact, and
  * it is answered by the canonical builder rather than by a second field-by-field
  * comparison — a location is at its default lens precisely when this owner would

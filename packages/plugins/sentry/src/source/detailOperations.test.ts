@@ -24,7 +24,6 @@ import {
 } from '../sentryContracts.js';
 
 import {
-  SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   fitSentryEventResult,
   listSentryIssueEvents,
   listSentryTagValues,
@@ -237,8 +236,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('Sentry mounted detail deadline', () => {
-  it('disposes the mounted detail deadline after a normal success', async () => {
+describe('Sentry mounted detail lifetime', () => {
+  it('adds no provider timer around a normal success', async () => {
     vi.useFakeTimers();
     const harness = host([{ status: 200, headers: {}, body: ISSUE_BODY }]);
 
@@ -251,8 +250,7 @@ describe('Sentry mounted detail deadline', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('stops waiting on a deployment that never answers, and says so', async () => {
-    vi.useFakeTimers();
+  it('stops a silent deployment when the mounted caller cancels', async () => {
     const harness = silentHost();
     const pending = readSentryIssue({
       v: 1,
@@ -261,28 +259,16 @@ describe('Sentry mounted detail deadline', () => {
       projection: 'overview',
     }, harness.context);
 
-    // Nothing has settled: this is the outcome the reader cannot retry, report,
-    // or tell apart from a very slow provider.
-    await vi.advanceTimersByTimeAsync(SENTRY_MOUNTED_DETAIL_DEADLINE_MS - 1);
-    let settled = false;
-    void pending.then(() => { settled = true; });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(2);
+    await harness.waitForRequest();
+    harness.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
     const result = await pending;
     expect(result).toMatchObject({
       kind: 'unavailable',
-      // Nobody cancelled this read, and a reader told "cancelled" has no reason
-      // to try again.
-      failure: { class: 'transient', code: 'sentry-deadline-elapsed' },
+      failure: { class: 'transient', code: 'sentry-cancelled' },
     });
-    // The bound is this source's own: the caller's signal is untouched.
-    expect(harness.caller.signal.aborted).toBe(false);
   });
 
-  it('bounds the account materialization too, not only the fetch after it', async () => {
-    vi.useFakeTimers();
+  it('propagates caller cancellation through account materialization too', async () => {
     const harness = silentMaterializationHost();
     const pending = listSentryIssueEvents({
       v: 1,
@@ -291,12 +277,10 @@ describe('Sentry mounted detail deadline', () => {
       limit: 100,
     }, harness.context);
 
-    await vi.advanceTimersByTimeAsync(SENTRY_MOUNTED_DETAIL_DEADLINE_MS + 1);
-    // A connection that hangs while the credential is being materialized
-    // strands the panel exactly as a hanging read does.
+    harness.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
     expect(await pending).toMatchObject({
       kind: 'unavailable',
-      failure: { code: 'sentry-deadline-elapsed' },
+      failure: { code: 'sentry-cancelled' },
     });
     expect(harness.request).not.toHaveBeenCalled();
   });

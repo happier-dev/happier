@@ -109,6 +109,9 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 2,
         searchMode: 'full',
+        // The merged native+rollout ordering is the searched browse owner; an
+        // unsearched browse selects the bounded chunk/preparation mode.
+        searchTerm: '/repo',
       } as const;
 
       const drained: string[] = [];
@@ -179,6 +182,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 2,
         searchMode: 'full',
+        searchTerm: '/repo',
       } as const;
 
       const drained: string[] = [];
@@ -253,6 +257,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 2,
         searchMode: 'full',
+        searchTerm: '/repo',
       } as const;
 
       const drained: string[] = [];
@@ -308,6 +313,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 10,
         searchMode: 'full' as const,
+        searchTerm: '/repo',
       };
 
       const first = await listCodexSessionCandidates(request);
@@ -375,7 +381,7 @@ describe('Codex external-session candidate pagination', () => {
       await utimes(nativeOwnedRolloutPath, nativeOwnedRolloutUpdatedAt, nativeOwnedRolloutUpdatedAt);
 
       appServerProbe.pages.set('active:', {
-        data: [{ id: 'native-newer', updatedAt: Date.parse('2026-08-25T12:00:00.000Z') / 1000 }],
+        data: [{ id: 'native-newer', updatedAt: Date.parse('2026-08-25T12:00:00.000Z') / 1000, cwd: '/repo' }],
         nextCursor: 'active-later',
       });
       // This later native row names the already-visible rollout identity but is
@@ -383,8 +389,8 @@ describe('Codex external-session candidate pagination', () => {
       // page one and then emit this native duplicate on page two.
       appServerProbe.pages.set('active:active-later', {
         data: [
-          { id: nativeOwnedId, updatedAt: Date.parse('2026-08-25T11:00:00.000Z') / 1000 },
-          { id: overlappingId, updatedAt: Date.parse('2026-08-25T09:00:00.000Z') / 1000 },
+          { id: nativeOwnedId, updatedAt: Date.parse('2026-08-25T11:00:00.000Z') / 1000, cwd: '/repo' },
+          { id: overlappingId, updatedAt: Date.parse('2026-08-25T09:00:00.000Z') / 1000, cwd: '/repo' },
         ],
         nextCursor: null,
       });
@@ -397,6 +403,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 10,
         searchMode: 'full' as const,
+        searchTerm: '/repo',
       };
 
       const first = await listCodexSessionCandidates(request);
@@ -441,6 +448,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 10,
         searchMode: 'full',
+        searchTerm: 'repeat-thread',
       });
       expect(first.nextCursor).toEqual(expect.any(String));
 
@@ -453,6 +461,7 @@ describe('Codex external-session candidate pagination', () => {
         } as unknown as ExecService,
         limit: 10,
         searchMode: 'full',
+        searchTerm: 'repeat-thread',
         cursor: first.nextCursor ?? undefined,
       })).rejects.toThrow(/candidate source changed/i);
 

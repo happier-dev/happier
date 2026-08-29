@@ -11,7 +11,7 @@ import {
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { TriageSettingsRevisionV1Schema } from '../settings/actions.js';
+import { TriageAccountKvRevisionV1Schema } from '../settings/actions.js';
 import {
     TriageListFilterSelectionV1Schema,
     TriageSmartPolicyV1Schema,
@@ -20,9 +20,9 @@ import {
 /**
  * The strict contract of the two saved-view Actions.
  *
- * A mounted surface holds a Host API with actions and no Settings or storage
- * member, so this is the only transport between the reader choosing a lens and
- * the one `triage.savedViews` CAS owner. Nothing here is a second authority:
+ * This is the daemon fallback transport between the reader choosing a lens and
+ * the one `triage.savedViews` CAS owner. A mount with direct Account Data binds
+ * the same semantic owner to Account KV without crossing this wire. Nothing here is a second authority:
  * `savedViews.ts` still mints the view id, validates every bound, decides the
  * conflict verdict and owns the atomic clear of a deleted selection.
  *
@@ -80,7 +80,7 @@ export const TriageReadSavedViewsResultV1Schema = defineProtocolObject({
     availability: TriageSavedViewsAvailabilityV1Schema,
     views: defineProtocolArray(TriageSavedViewV1Schema),
     selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
-    revision: TriageSettingsRevisionV1Schema,
+    revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadSavedViewsResultV1 = ReturnType<typeof TriageReadSavedViewsResultV1Schema.parse>;
 export const TriageReadSavedViewsResultV1JsonSchema: PluginJsonSchema =
@@ -105,7 +105,7 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('create'),
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
         ...TriageSavedViewDraftV1Schema,
         select: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
     }, { policy: 'closed' }),
@@ -113,20 +113,20 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('update'),
         viewId: triageViewId,
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
         ...TriageSavedViewDraftV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('delete'),
         viewId: triageViewId,
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('select'),
         viewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]),
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
     }, { policy: 'closed' }),
 ]);
 export type TriageAdministerSavedViewInputV1 =
@@ -160,7 +160,7 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
     /** The authoritative set after an applied write; omitted otherwise. */
     views: defineProtocolArray(TriageSavedViewV1Schema).optional(),
     selectedViewId: defineProtocolUnion([triageViewId, defineProtocolLiteral(null)]).optional(),
-    revision: TriageSettingsRevisionV1Schema.optional(),
+    revision: TriageAccountKvRevisionV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageAdministerSavedViewResultV1 =
     ReturnType<typeof TriageAdministerSavedViewResultV1Schema.parse>;

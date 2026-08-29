@@ -89,9 +89,9 @@ import type { GithubTriageKindIdV1 } from '../../triage/types.js';
  * GitHub's own merge-method vocabulary, in the order the chooser offers it.
  *
  * Typed against the contract's union so a method added or renamed there fails this
- * build rather than silently disappearing from the chooser. Which of the three a
- * repository actually allows is not knowable from here — a repository that forbids
- * one answers `merge_method_not_allowed`, and that refusal is rendered as itself.
+ * build rather than silently disappearing from the chooser. The mounted capability
+ * read narrows this vocabulary to the methods GitHub explicitly enables for the
+ * current repository; an omitted setting is unknown and therefore never offered.
  */
 export const GITHUB_MERGE_METHODS_V1: readonly GithubMergeMethodV1[] = Object.freeze([
   'merge',

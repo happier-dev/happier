@@ -54,6 +54,8 @@ export const AZURE_CONTINUATION_TOKEN_HEADER_V1 = 'x-ms-continuationtoken';
 export const AZURE_COMMITS_PAGE_SIZE_V1 = 30;
 /** One page of iteration changes. The provider decides every following window. */
 export const AZURE_CHANGES_PAGE_SIZE_V1 = 100;
+/** One bounded policy-evaluation page. A short page ends the provider walk. */
+export const AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1 = 100;
 
 function collectionPageLength(body: unknown): number {
   return typeof body === 'object'
@@ -282,6 +284,7 @@ export async function readAzurePoliciesSurface(
       {
         // The documented artifact identifier for a pull request's code review.
         artifactId,
+        $top: AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1,
         $skip: skip,
       },
     );
@@ -323,10 +326,10 @@ export async function readAzurePoliciesSurface(
       || projectedPage.projectionTruncated;
 
     const pageLength = collectionPageLength(evaluations.value.body);
-    // Azure documents `$top` only as an optional requested count, with no default or maximum.
-    // Omitting it leaves page geometry with the provider; the first explicit empty page is the
-    // only authoritative terminal signal available to this offset API.
-    if (pageLength === 0) break;
+    // The approved source contract owns one bounded native page and stops on Azure's short-page
+    // signal. Issuing an extra empty-page request after a short page spends quota and can turn a
+    // complete answer into a false partial failure when the unnecessary request fails.
+    if (pageLength < AZURE_POLICY_EVALUATIONS_PAGE_SIZE_V1) break;
     if (addedRows === 0) {
       // A Server that ignores `$skip` can legally keep returning a successful page. The
       // invocation-local identity set is only a progress witness: it neither persists provider

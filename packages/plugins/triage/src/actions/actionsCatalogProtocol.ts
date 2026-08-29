@@ -10,15 +10,15 @@ import {
     TRIAGE_ACTION_DRAFT_MEMBERS_V1,
     TriageActionIdV1Schema,
     TriageActionRecordsV1Schema,
-    TriageSettingsRevisionV1Schema,
+    TriageAccountKvRevisionV1Schema,
 } from '../settings/actions.js';
 
 /**
  * The strict contract of the two action-catalog Actions.
  *
- * A mounted surface holds a Host API with actions and no Settings or storage
- * member, so this is the only transport between the Settings editor a person
- * uses and the one `triage.actions` CAS owner. Nothing here is a second
+ * This is the daemon fallback transport between the mounted editor and the one
+ * `triage.actions` CAS owner. A mount with direct Account Data binds the same
+ * semantic owner to Account KV without crossing this wire. Nothing here is a second
  * authority: `settings/actions.ts` still mints the action id, validates every
  * bound and closed vocabulary, decides the conflict verdict, and declines to
  * overwrite a stored value this build cannot read.
@@ -31,9 +31,8 @@ import {
 
 /**
  * Every member below is PROJECTED from the one action grammar in
- * `settings/actions.ts`. These schemas used to restate it, which is exactly how
- * the declared Settings field drifted from the record it declares; a projection
- * cannot drift from its source.
+ * `settings/actions.ts`. These schemas used to restate it; a projection cannot
+ * drift from its source.
  */
 const triageActionId = TriageActionIdV1Schema;
 const triageActions = TriageActionRecordsV1Schema;
@@ -74,7 +73,7 @@ export const TriageReadActionsResultV1Schema = defineProtocolObject({
      * nothing that changed while the editor was open. It is opaque: the surface
      * carries it back unread.
      */
-    revision: TriageSettingsRevisionV1Schema,
+    revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadActionsResultV1 = ReturnType<typeof TriageReadActionsResultV1Schema.parse>;
 export const TriageReadActionsResultV1JsonSchema: PluginJsonSchema =
@@ -100,27 +99,27 @@ export const TriageAdministerActionInputV1Schema = defineProtocolUnion([
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('create'),
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
         ...TriageActionDraftV1WireSchema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('update'),
         actionId: triageActionId,
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
         ...TriageActionDraftV1WireSchema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('delete'),
         actionId: triageActionId,
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
         kind: defineProtocolLiteral('reorder'),
         actionIds: defineProtocolArray(triageActionId),
-        expectedRevision: TriageSettingsRevisionV1Schema,
+        expectedRevision: TriageAccountKvRevisionV1Schema,
     }, { policy: 'closed' }),
 ]);
 export type TriageAdministerActionInputV1 =
@@ -164,7 +163,7 @@ export const TriageAdministerActionResultV1Schema = defineProtocolObject({
      * names the set it just created rather than the one it replaced. Omitted
      * for every refusal, because nothing moved.
      */
-    revision: TriageSettingsRevisionV1Schema.optional(),
+    revision: TriageAccountKvRevisionV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageAdministerActionResultV1 =
     ReturnType<typeof TriageAdministerActionResultV1Schema.parse>;

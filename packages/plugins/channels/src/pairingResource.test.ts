@@ -136,6 +136,7 @@ describe('Channels pairing Resource', () => {
     const challengeA = pairing.createChallenge({
       connectionId: 'connection-a',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-a',
       materialization,
       destinationLabel: 'Account A bot',
       endpoint,
@@ -144,6 +145,7 @@ describe('Channels pairing Resource', () => {
     pairing.createChallenge({
       connectionId: 'connection-b',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-b',
       materialization,
       destinationLabel: 'Account B bot',
       endpoint,
@@ -206,6 +208,7 @@ describe('Channels pairing Resource', () => {
     pairing.createChallenge({
       connectionId: 'connection-a',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-a',
       materialization,
       destinationLabel: 'Account A bot',
       endpoint,
@@ -225,6 +228,7 @@ describe('Channels pairing Resource', () => {
     pairing.createChallenge({
       connectionId: 'connection-b',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-b',
       materialization,
       destinationLabel: 'Account B bot',
       endpoint,

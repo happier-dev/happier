@@ -160,6 +160,12 @@
           }
         },
         {
+          "locale": "de",
+          "messages": {
+            "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"
+          }
+        },
+        {
           "locale": "ru",
           "messages": {
             "agentInput.connectedServiceLabel.copilot": "GitHub Copilot"

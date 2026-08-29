@@ -398,4 +398,84 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
     });
     expect(environmentSignal.aborted).toBe(true);
   });
+
+  it('cancels an in-flight organization page when the editor unmounts', async () => {
+    let organizationSignal!: AbortSignal;
+    let observeOrganization!: () => void;
+    const organizationStarted = new Promise<void>((resolve) => { observeOrganization = resolve; });
+    configurationResult = async ({ request, signal }) => {
+      if (request.kind !== 'organizations') {
+        return { kind: 'unavailable', failure: { class: 'unknown', code: 'unexpected-read' } };
+      }
+      organizationSignal = signal;
+      observeOrganization();
+      return await new Promise<JsonValue>(() => {
+        // The provider boundary deliberately ignores abort. The editor still owns the
+        // mounted request lifetime and must withdraw it when Cancel unmounts the page.
+      });
+    };
+
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add Example organization to PRs & Issues',
+      }));
+    });
+    await organizationStarted;
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', { name: 'Cancel' }));
+    });
+    expect(organizationSignal.aborted).toBe(true);
+  });
+
+  it('keeps Save disabled until every concurrently mounted directory read settles', async () => {
+    let observeOrganization!: () => void;
+    const organizationStarted = new Promise<void>((resolve) => { observeOrganization = resolve; });
+    configurationResult = async ({ request }) => {
+      if (request.kind === 'organizations') {
+        observeOrganization();
+        return await new Promise<JsonValue>(() => {
+          // Keep the organization read pending after the selected-environment read settles.
+        });
+      }
+      return {
+        kind: 'environments',
+        organizationUuid: request.organizationUuid ?? '00000000-0000-4000-8000-0000000000a1',
+        rows: [],
+      };
+    };
+
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add Example organization to PRs & Issues',
+      }));
+    });
+    await organizationStarted;
+    await act(async () => { await Promise.resolve(); });
+
+    const save = await page.findByRole('button', { name: 'Save PostHog configuration' });
+    expect(save.state?.disabled).toBe(true);
+  });
+
+  it('does not let a successful environment read erase an organization failure', async () => {
+    configurationResult = async ({ request }) => request.kind === 'organizations'
+      ? { kind: 'unavailable', failure: { class: 'transient', code: 'posthog/transport-failed' } }
+      : {
+        kind: 'environments',
+        organizationUuid: request.organizationUuid ?? '00000000-0000-4000-8000-0000000000a1',
+        rows: [],
+      };
+
+    const page = await mountSettings();
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add Example organization to PRs & Issues',
+      }));
+    });
+
+    await expect(page.getByText('PostHog could not read this configuration page.'))
+      .resolves.toBeDefined();
+  });
 });

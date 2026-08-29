@@ -6,6 +6,13 @@ export const PI_UI_TRANSLATIONS = Object.freeze({
     'settingsAgents.plugins.pi.sections.storage.title': 'Storage',
     'settingsAgents.plugins.pi.sections.storage.footer': 'This directory is used only for Pi sessions started or discovered by Happier.',
   }),
+  de: Object.freeze({
+    'settingsAgents.plugins.pi.title': 'Pi',
+    'settingsAgents.plugins.pi.fields.piAgentDir.title': 'Agentenverzeichnis',
+    'settingsAgents.plugins.pi.fields.piAgentDir.subtitle': 'Optionales Stammverzeichnis für Pi-Daten. Leer lassen, um ~/.pi/agent zu verwenden.',
+    'settingsAgents.plugins.pi.sections.storage.title': 'Speicher',
+    'settingsAgents.plugins.pi.sections.storage.footer': 'Dieses Verzeichnis wird nur für Pi-Sitzungen verwendet, die von Happier gestartet oder erkannt wurden.',
+  }),
   ru: Object.freeze({
     'settingsAgents.plugins.pi.title': 'Pi',
     'settingsAgents.plugins.pi.fields.piAgentDir.title': 'Каталог агента',

@@ -2,6 +2,7 @@ export const GEMINI_UI_TRANSLATIONS = Object.freeze({
   en: Object.freeze({
     'agentInput.connectedServiceLabel.gemini': 'Google Gemini',
   }),
+  de: Object.freeze({ 'agentInput.connectedServiceLabel.gemini': 'Google Gemini' }),
   ru: Object.freeze({ 'agentInput.connectedServiceLabel.gemini': 'Google Gemini' }),
   pl: Object.freeze({ 'agentInput.connectedServiceLabel.gemini': 'Google Gemini' }),
   es: Object.freeze({ 'agentInput.connectedServiceLabel.gemini': 'Google Gemini' }),
@@ -16,6 +17,7 @@ export const GEMINI_UI_TRANSLATIONS = Object.freeze({
 
 export const GEMINI_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: GEMINI_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: GEMINI_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: GEMINI_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: GEMINI_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: GEMINI_UI_TRANSLATIONS.es },

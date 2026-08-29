@@ -75,6 +75,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
     let latestStartSequence = 0;
     let disposed = false;
     let outputVolume = 1;
+    let micMuted: boolean | null = null;
     const listeners = new Set<(event: ElevenLabsConversationHandleEvent) => void>();
 
     const emit = (event: ElevenLabsConversationHandleEvent): void => {
@@ -170,6 +171,10 @@ export function createElevenLabsConversationHandle(params: Readonly<{
                 // it above and apply it before exposing this conversation as
                 // active, so a late provider output cannot briefly play.
                 if (outputVolume !== 1) conversation.setVolume({ volume: outputVolume });
+                // Mute has the same late-start custody requirement. The host
+                // can suspend input while the SDK is still negotiating; apply
+                // the latest desired value before publishing the handle.
+                if (micMuted !== null) conversation.setMicMuted(micMuted);
             } catch (error) {
                 await endConversationQuietly(conversation);
                 throw error;
@@ -189,6 +194,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             return activeConversation ? readConversationId(activeConversation) : null;
         },
         setMicMuted(muted: boolean): void {
+            micMuted = muted;
             activeConversation?.setMicMuted(muted);
         },
         setOutputVolume(volume: number): void {

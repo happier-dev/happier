@@ -270,7 +270,6 @@ export const CODEX_PLUGIN = definePlugin({
             workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
             startupInstructions: { versions: [1] },
           },
-          executionRuns: { open: ['create', 'resume'], checkpoint: true, stop: true },
         }),
         providerRequirements: {
           acceptsProtocols: ['openai-responses'],
@@ -374,7 +373,7 @@ export const CODEX_PLUGIN = definePlugin({
             options: {
               ...command.options,
               ...resolveCodexSessionRuntimePreferences({
-                settings: input.settings,
+                settings: input.pluginSettings.account ?? {},
                 environment: input.environment,
                 startOrigin: input.startOrigin,
               }),

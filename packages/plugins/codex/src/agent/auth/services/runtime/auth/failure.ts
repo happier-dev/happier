@@ -1,10 +1,7 @@
 import { parseTimestampMs } from '@happier-dev/plugin-sdk';
-import {
-    classifyProviderLimitEvidence,
-} from '@happier-dev/plugin-sdk/connected-accounts';
-import {
-    type ProviderLimitCategory,
-} from '@happier-dev/plugin-sdk/connected-accounts';
+import { classifyProviderLimitEvidence } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+
+type ProviderLimitCategory = ReturnType<typeof classifyProviderLimitEvidence>['category'];
 
 export type CodexConnectedServiceRuntimeFailureKind =
   | 'usage_limit'

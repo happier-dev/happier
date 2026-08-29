@@ -28,13 +28,9 @@ describe('Gemini plugin session media capabilities', () => {
           delivery: ['newTurn', 'steer', 'followUp'],
           cancel: true,
         },
-        executionRuns: {
-          open: ['create'],
-          checkpoint: true,
-          stop: true,
-        },
       },
     });
+    expect(backend?.capabilities).not.toHaveProperty('executionRuns');
     expect(PLUGIN_MANIFEST.contributes.systemTools).toContainEqual({
       id: 'gemini-cli',
       title: 'Google Gemini CLI',

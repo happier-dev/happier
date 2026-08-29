@@ -36,9 +36,6 @@ import {
 } from './managedServer.js';
 import { pageOpenCodeTranscript } from './pageTranscript.js';
 import {
-  OpenCodeTranscriptItemLimitError,
-} from '../../../runtime/server/transcript/indexedTranscript.js';
-import {
   readAfterOpenCodeTranscript,
   type OpenCodeExternalReadAfterOutcome,
 } from './readAfterTranscript.js';
@@ -487,9 +484,6 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           'OpenCode transcript result byte budget cannot fit the page envelope.',
         );
       } catch (error) {
-        if (error instanceof OpenCodeTranscriptItemLimitError) {
-          return failed('agent_error', error.message, false);
-        }
         return operationFailure(request, error, 'OpenCode external-session transcript operation failed.');
       }
     },
@@ -521,9 +515,6 @@ export function createOpenCodeExternalSessionsContribution(params: Readonly<{
           'OpenCode transcript result byte budget cannot fit the page envelope.',
         );
       } catch (error) {
-        if (error instanceof OpenCodeTranscriptItemLimitError) {
-          return failed('agent_error', error.message, false);
-        }
         const after = invocationFailure(request);
         return after ?? ok({ outcome: 'read_failed' });
       }

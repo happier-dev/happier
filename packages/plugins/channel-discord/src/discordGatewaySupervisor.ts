@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import type { Disposable, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectPluginEventSourceConnectionStatusV1, type PluginEventSourceConnectionStatusV1 } from '@happier-dev/plugin-sdk/events';
 
 import {
   assertDiscordChannelsCoreCaller,
@@ -33,6 +34,10 @@ import {
   DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID,
   DISCORD_PLUGIN_ID,
 } from './discordPluginConstants.js';
+import {
+  DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
+  DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+} from './discordAutomationEvent.js';
 
 const CHANNELS_CORE_PLUGIN_ID = 'happier.channels';
 const RECONCILIATION_INTERVAL_MS = 30_000;
@@ -248,6 +253,40 @@ function providerReadinessFactFromWorkerResult(
     : undefined;
 }
 
+/**
+ * The Gateway supervisor owns this transport fact. The SDK helper only
+ * projects it through the current Automation source catalog; it never owns a
+ * connection-health row or a second status store.
+ */
+async function projectDiscordAutomationSourceConnectionStatus(
+  snapshot: ConversationProviderConnectionReconciliationSnapshotV1,
+  status: PluginEventSourceConnectionStatusV1,
+  context: PluginInvocationContext,
+): Promise<void> {
+  const configuration = readDiscordConnectionConfiguration(snapshot);
+  if ('kind' in configuration) return;
+  await projectPluginEventSourceConnectionStatusV1({
+    eventRef: { pluginId: DISCORD_PLUGIN_ID, localId: DISCORD_AUTOMATION_MESSAGE_EVENT_ID },
+    sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    sourceInstanceIdPrefix: `discord:application:${configuration.applicationId}:channel:`,
+    scope: { kind: 'socket' },
+    status,
+  }, context);
+}
+
+function automationSourceStatusFromWorkerResult(
+  result: DiscordGatewayWorkerResult,
+): PluginEventSourceConnectionStatusV1 | null {
+  if (result.kind === 'historyGap') return 'historyGap';
+  if (
+    result.kind === 'notReady'
+    || result.kind === 'blocked'
+    || result.kind === 'terminal'
+    || result.kind === 'messageContentIntentRecoveryRequired'
+  ) return 'reconnecting';
+  return null;
+}
+
 function waitForCompletion(
   completion: Promise<void>,
   signal: AbortSignal,
@@ -442,7 +481,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
             admissionOptions,
           );
         },
-        reportReadiness: () => {
+        reportReadiness: async () => {
           // The worker never writes status. It can only queue a fact through
           // the current supervisor entry; the core transport-fact Action is
           // still the single persistence and projection owner.
@@ -453,6 +492,7 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
           ) return;
           blockedUntilByFingerprint.delete(entry.fingerprint);
           addFact(snapshot, { kind: 'providerReadiness', status: 'ready' });
+          await projectDiscordAutomationSourceConnectionStatus(snapshot, 'ready', context);
         },
         signal: context.signal,
         identifyConcurrency,
@@ -468,6 +508,15 @@ export function createDiscordGatewaySupervisor(options: DiscordGatewaySupervisor
       }
     } finally {
       recordWorkerResult(entry, result);
+      const sourceStatus = automationSourceStatusFromWorkerResult(result);
+      if (
+        sourceStatus !== null
+        && workers.get(snapshot.connectionId) === entry
+        && !entry.controller.signal.aborted
+        && !context.signal.aborted
+      ) {
+        await projectDiscordAutomationSourceConnectionStatus(snapshot, sourceStatus, context);
+      }
       if (workers.get(snapshot.connectionId) === entry) workers.delete(snapshot.connectionId);
     }
   };

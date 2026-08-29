@@ -109,30 +109,17 @@ type LaneState = {
 };
 
 /**
- * How long this owner lets one source lane's whole walk run.
- *
- * It spans every `scan` invocation used to walk that lane, each of which may
- * itself make several provider round trips, and it is a third of
- * `TRIAGE_VIEW_REFRESH_MIN_INTERVAL_MS`, the
- * interval measured from a read's *start* that decides when the next
- * view-triggered pass may run. A page allowed to outlast that interval would
- * still be hanging when the next pass is already eligible.
- *
- * It is private implementation discretion, never public source ABI, a
- * per-source override, or a generic host timer: a source owns its own deadlines
- * for the mounted detail reads and provider operations it starts.
+ * Optional owner-test/external absolute bound for one source lane's whole walk.
  *
  * A source answering every page instantly while never converging still needs
  * the structural non-progress exits beside the continuation arm below, because
  * that shape can stay entirely inside one millisecond and starve the event loop
  * rather than hanging one Action.
  *
- * The bounded ceiling is one absolute deadline per lane, not one deadline per
- * page. A lane reaches it once and leaves the rotation, while another lane's
- * budget starts only when that lane is first asked. `passDeadlineMs` exists so
- * owner tests inject a short one.
+ * When a real caller supplies `passDeadlineMs`, it is one absolute deadline per
+ * lane, not one deadline per page. Production otherwise follows the canonical
+ * caller signal instead of inventing a latency policy in this provider layer.
  */
-const TRIAGE_SCAN_PASS_DEADLINE_MS = 10_000;
 
 /**
  * Every way one returned page can fail the V1 page contract: the per-observation
@@ -234,11 +221,11 @@ export async function runTriageScanPass(input: Readonly<{
     observationBudget: number;
     nowMs: () => number;
     signal?: AbortSignal;
-    /** Owner-private absolute deadline for one lane's whole pass. */
+    /** Optional caller/test-supplied absolute duration for one lane's whole pass. */
     passDeadlineMs?: number;
 }>): Promise<TriageScanPassResultV1> {
     const pageLimit = Math.max(1, Math.trunc(input.pageLimit));
-    const passDeadlineMs = input.passDeadlineMs ?? TRIAGE_SCAN_PASS_DEADLINE_MS;
+    const passDeadlineMs = input.passDeadlineMs;
     const states: LaneState[] = input.lanes.map((lane) => {
         const deadline = new AbortController();
         return {
@@ -289,8 +276,9 @@ export async function runTriageScanPass(input: Readonly<{
             // every other source's chance to answer.
             const nowMs = performance.now();
             state.deadlineStartedAtMs ??= nowMs;
-            const elapsedMs = nowMs - state.deadlineStartedAtMs;
-            const remainingMs = Math.max(0, passDeadlineMs - elapsedMs);
+            const remainingMs = passDeadlineMs === undefined
+                ? null
+                : Math.max(0, passDeadlineMs - (nowMs - state.deadlineStartedAtMs));
             if (remainingMs === 0) {
                 // Do not start another provider page after this lane has spent
                 // its absolute budget. An already-resolved page can otherwise
@@ -303,10 +291,10 @@ export async function runTriageScanPass(input: Readonly<{
             const options: PluginCancellationOptions = { signal: state.signal };
             let settled: RaceWithTimeoutResult<TriageScanResultV1>;
             try {
-                settled = await raceWithTimeout(
-                    state.lane.scan(scanInputFor(state, pageLimit), options),
-                    remainingMs,
-                );
+                const pending = state.lane.scan(scanInputFor(state, pageLimit), options);
+                settled = remainingMs === null
+                    ? { type: 'resolved', value: await pending }
+                    : await raceWithTimeout(pending, remainingMs);
             } catch (error) {
                 // A synchronous throw is the same defect as a rejection.
                 settled = { type: 'rejected', error };

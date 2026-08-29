@@ -1,4 +1,4 @@
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -15,6 +15,7 @@ import {
   SENTRY_CONNECTED_ACCOUNT_PURPOSE,
   SENTRY_CONTRIBUTION_ID,
   SENTRY_ENTRY_KIND_ID,
+  SENTRY_EVIDENCE_REFERENCE_ID,
   SENTRY_SOURCE_DISPLAY_NAME,
   SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID,
   SENTRY_TRIAGE_SETTINGS_GROUP_ID,
@@ -51,6 +52,10 @@ import {
   listSentryInstances,
   scanSentrySource,
 } from './source/operations.js';
+import {
+  resolveSentryEvidenceReference,
+  searchSentryEvidenceReferences,
+} from './composer/reference.js';
 
 /** The detail surface's declared renderer and the UI artifact it mounts. */
 export const SENTRY_DETAIL_RENDERER_ID = 'sentry-detail';
@@ -190,6 +195,16 @@ export const SENTRY_PLUGIN = definePlugin({
   engines: { happier: '^0.0.0' },
   runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
+  composer: {
+    references: {
+      [SENTRY_EVIDENCE_REFERENCE_ID]: defineComposerReference({
+        title: 'Sentry occurrence',
+        icon: 'error',
+        search: searchSentryEvidenceReferences,
+        resolve: resolveSentryEvidenceReference,
+      }),
+    },
+  },
   hostAccess: {
     required: [{
       id: SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID,
@@ -292,6 +307,7 @@ export const SENTRY_PLUGIN = definePlugin({
       { locale: 'fr', messages: { ...SENTRY_UI_TRANSLATIONS.fr, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR et tickets', 'plugins.sentry.settings.sources.subtitle': 'Choisissez les organisations Sentry affichées dans PR et tickets.' } },
       { locale: 'it', messages: { ...SENTRY_UI_TRANSLATIONS.it, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR e segnalazioni', 'plugins.sentry.settings.sources.subtitle': 'Scegli le organizzazioni Sentry da mostrare in PR e segnalazioni.' } },
       { locale: 'pt', messages: { ...SENTRY_UI_TRANSLATIONS.pt, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs e problemas', 'plugins.sentry.settings.sources.subtitle': 'Escolha as organizações Sentry apresentadas em PRs e problemas.' } },
+      { locale: 'de', messages: { ...SENTRY_UI_TRANSLATIONS.de, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs & Tickets', 'plugins.sentry.settings.sources.subtitle': 'Wähle aus, welche Sentry-Organisationen unter PRs & Tickets angezeigt werden.' } },
       { locale: 'ca', messages: { ...SENTRY_UI_TRANSLATIONS.ca, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR i incidències', 'plugins.sentry.settings.sources.subtitle': 'Tria les organitzacions de Sentry que es mostren a PR i incidències.' } },
       { locale: 'zh-Hans', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hans'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 和问题', 'plugins.sentry.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Sentry 组织。' } },
       { locale: 'zh-Hant', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hant'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 與問題', 'plugins.sentry.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Sentry 組織。' } },

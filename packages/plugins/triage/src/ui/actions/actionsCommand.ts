@@ -19,13 +19,13 @@ import {
   type TriageActionV1,
   type TriageActionsReadV1,
 } from '../../settings/actions.js';
-import type { TriageAccountSettingsV1 } from '../durable/accountDurableState.js';
+import type { TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.js';
 
 /**
  * The surface's path to the `triage.actions` CAS owner.
  *
  * Two transports, one owner. A mount that can reach the reader's Account
- * directly drives `actions/actionsCatalog.ts` over its own Account Settings
+ * directly drives `actions/actionsCatalog.ts` over its own Account KV
  * scope, so the configured actions stay readable and editable with no daemon
  * reachable — a configured action is Account state, not provider data. A mount
  * that cannot invokes the same two published Actions through a daemon. The module owns no state and makes no decision:
@@ -62,20 +62,20 @@ export type TriageActionsTransportV1 = Readonly<{
 }>;
 
 /**
- * The direct transport: this mount's own Account Settings scope, handed to the
+ * The direct transport: this mount's own Account KV catalog, handed to the
  * same projection the daemon handler calls. It restates no bound, no CAS rule
  * and no id-minting decision.
  */
 export function createDirectTriageActionsTransport(
-  settings: TriageAccountSettingsV1,
+  catalog: TriageCatalogStoreV1,
 ): TriageActionsTransportV1 {
   return Object.freeze({
     read: async (options) => await readTriageActionsForSurface({ v: 1 }, {
-      settings,
+      catalog,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
     administer: async (input, options) => await administerTriageAction(input, {
-      settings,
+      catalog,
       // Minted at the writer, which for this transport is this mount.
       mintActionId: mintTriageOpaqueIdV1,
       ...(options?.signal ? { signal: options.signal } : {}),

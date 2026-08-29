@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { VOICE_SPEECH_OUTPUT_MAX_BYTES } from '@happier-dev/plugin-sdk/voice';
 import type { VoiceSpeechOperationContext } from '@happier-dev/plugin-sdk/voice/speech';
 
 import {
@@ -155,6 +156,25 @@ describe('OpenAI-compatible public batch speech runtimes', () => {
       },
       { signal: operationContext.signal },
     );
+  });
+
+  it('accepts exactly the canonical speech output ceiling and rejects its first byte over', async () => {
+    const runtime = createOpenAiCompatTtsRuntime();
+    const run = async (size: number) => await runtime.synthesize!(TTS_REQUEST, context({
+      settings: Object.freeze({ baseUrl: 'https://tts.example.test/v1' }),
+      request: vi.fn(async () => response({
+        headers: { 'content-type': 'audio/wav' },
+        body: new Uint8Array(size),
+      })),
+    }));
+
+    await expect(run(VOICE_SPEECH_OUTPUT_MAX_BYTES)).resolves.toMatchObject({
+      requestId: TTS_REQUEST.requestId,
+      mimeType: 'audio/wav',
+    });
+    await expect(run(VOICE_SPEECH_OUTPUT_MAX_BYTES + 1)).rejects.toMatchObject({
+      code: 'provider_response_invalid',
+    });
   });
 
   it('does not capture settings at activation and supports credential-less compatible endpoints', async () => {

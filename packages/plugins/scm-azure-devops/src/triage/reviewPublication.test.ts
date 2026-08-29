@@ -5,7 +5,10 @@ import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-proto
 import { describe, expect, it } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
-import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
+import {
+  AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+  AZURE_DEVOPS_TRIAGE_PURPOSE,
+} from './descriptor.js';
 import { buildAzureCollisionScope } from './identity.js';
 import { AzureReviewPublicationResultV1Schema } from './mutations/contracts.js';
 import { normalizeAzureDevOpsBaseUrl } from './origin.js';
@@ -32,7 +35,7 @@ function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
     service: {
       pluginId: 'happier.scm.forge.azure-devops',
-      localId: AZURE_DEVOPS_TRIAGE_PURPOSE,
+      localId: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
     },
     accountId,
   };

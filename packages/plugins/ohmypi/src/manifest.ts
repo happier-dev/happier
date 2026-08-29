@@ -112,11 +112,6 @@ export const OH_MY_PI_PLUGIN = definePlugin({
             cancel: true,
             configuration: true,
           },
-          executionRuns: {
-            open: ['create', 'resume'],
-            checkpoint: true,
-            stop: true,
-          },
         }),
         surfaces: {
           externalSession: {
@@ -167,7 +162,7 @@ export const OH_MY_PI_PLUGIN = definePlugin({
         buildSessionOptions: (input) => {
           const environmentVariables = resolveSessionFileStoreLaunchEnvironment({
             product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
-            settings: input.settings,
+            settings: input.pluginSettings.account ?? {},
             env: input.environment,
           });
           return {

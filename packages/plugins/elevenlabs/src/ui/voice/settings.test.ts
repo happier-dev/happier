@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { createElevenLabsSettingsSection } from './settings.js';
+import { ELEVENLABS_SETTINGS_SECTION } from '../../voiceSettingsPresentation.js';
 
 describe('ElevenLabs settings descriptor', () => {
   it('provides presentation data for every generic renderer field', () => {
-    const descriptor = createElevenLabsSettingsSection();
+    const descriptor = ELEVENLABS_SETTINGS_SECTION;
     expect(descriptor).toMatchObject({
-      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      kind: 'voice.provider-settings.v1',
+      modes: ['happier', 'byo'],
       titleKey: 'settingsVoice.byo.title',
       footerKey: 'settingsVoice.byo.provisioningGroupFooter',
       credential: {

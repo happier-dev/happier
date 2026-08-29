@@ -7,6 +7,9 @@ import {
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
 import {
+  ProtocolComposerReferenceResolutionV1Schema,
+} from '@happier-dev/plugin-sdk/protocol';
+import {
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
   TriageReadConfiguredSourceInstancesResultV1Schema,
   type TriageConfiguredSourceInstanceV1,
@@ -14,7 +17,9 @@ import {
 
 import { decodeSentryLocalInstanceKey } from '../instances/sentryInstanceConfiguration.js';
 import { deriveSentryCollisionScope } from '../instances/sentryCollisionScope.js';
-import type { SentryEventProjectionV1 } from '../privacy/sentryEventProjection.js';
+import {
+  type SentryEventProjectionV1,
+} from '../privacy/sentryEventProjection.js';
 import { SENTRY_ENTRY_KIND_ID } from '../sentryContracts.js';
 import { readSentryEvent } from '../source/detailOperations.js';
 
@@ -37,31 +42,191 @@ function unavailableEvidence(reason: string): PluginError {
   });
 }
 
-function selectedEvidenceContext(projection: SentryEventProjectionV1): string {
-  const lines = [sentryEvidenceCandidateLabel(projection.eventId)];
-  if (projection.dateCreatedMs !== null) {
-    lines.push(`Occurred: ${new Date(projection.dateCreatedMs).toISOString()}`);
+type EvidenceChunkKind = 'section' | 'frame' | 'breadcrumb' | 'tag' | 'field';
+
+type EvidenceChunk = Readonly<{
+  kind: EvidenceChunkKind;
+  text: string;
+}>;
+
+function timestampText(timestampMs: number | null): string | null {
+  if (timestampMs === null) return null;
+  // Protocol timestamps admit every safe integer while JavaScript Date has a
+  // narrower representable range. Preserve the exact admitted provider value
+  // when it is outside that range instead of making evidence resolution throw.
+  const timestamp = new Date(timestampMs);
+  return Number.isNaN(timestamp.getTime()) ? String(timestampMs) : timestamp.toISOString();
+}
+
+function retainedUserFieldCount(projection: SentryEventProjectionV1): number {
+  if (projection.user === null) return 0;
+  return [
+    projection.user.id,
+    projection.user.email,
+    projection.user.username,
+    projection.user.ipAddress,
+    projection.user.name,
+  ].filter((value) => value !== null).length;
+}
+
+function evidenceChunks(projection: SentryEventProjectionV1): readonly EvidenceChunk[] {
+  const chunks: EvidenceChunk[] = [];
+  const field = (label: string, value: string | null): void => {
+    if (value !== null && value !== '') chunks.push({ kind: 'field', text: `${label}: ${value}` });
+  };
+  field('Title', projection.title);
+  if (projection.message !== projection.title) field('Message', projection.message);
+  field('Location', projection.location);
+  field('Culprit', projection.culprit);
+  field('Platform', projection.platform);
+
+  const release = projection.tags.find((tag) => tag.key === 'release' || tag.key === 'sentry:release');
+  const environment = projection.tags.find((tag) => tag.key === 'environment');
+  if (release !== undefined) field('Release', release.value);
+  if (environment !== undefined) field('Environment', environment.value);
+  for (const tag of projection.tags) {
+    if (tag === release || tag === environment) continue;
+    chunks.push({ kind: 'tag', text: `Tag ${tag.key}: ${tag.value}` });
   }
-  if (projection.title !== '') lines.push(projection.title);
-  if (projection.message !== '' && projection.message !== projection.title) {
-    lines.push(projection.message);
-  }
-  if (projection.location !== null) lines.push(`Location: ${projection.location}`);
-  if (projection.culprit !== null) lines.push(`Culprit: ${projection.culprit}`);
+
   for (const section of projection.sections) {
-    if (section.kind === 'exception') lines.push(`${section.type}: ${section.value}`);
-    if (section.kind !== 'exception' && section.kind !== 'stacktrace') continue;
-    // The allow-list projector already owns the event bound. This dormant
-    // resolver must not silently create a second, source-private excerpt while
-    // the manifest fails closed pending the evidence-projection amendment.
-    for (const frame of section.frames) {
-      const where = frame.filename ?? 'unknown file';
-      const line = frame.lineNo === null ? '' : `:${String(frame.lineNo)}`;
-      const label = frame.function ?? where;
-      lines.push(label === where ? `  at ${where}${line}` : `  at ${label} (${where}${line})`);
+    if (section.kind === 'exception') {
+      const identity = section.type === '' ? 'Exception' : section.type;
+      chunks.push({
+        kind: 'section',
+        text: section.value === ''
+          ? `Exception: ${identity}`
+          : `Exception: ${identity}: ${section.value}`,
+      });
+      for (const frame of section.frames) {
+        const where = frame.filename ?? 'unknown file';
+        const line = frame.lineNo === null ? '' : `:${String(frame.lineNo)}`;
+        const column = frame.colNo === null ? '' : `:${String(frame.colNo)}`;
+        const label = frame.function ?? where;
+        chunks.push({
+          kind: 'frame',
+          text: label === where
+            ? `  at ${where}${line}${column}`
+            : `  at ${label} (${where}${line}${column})${frame.inApp ? ' [application]' : ''}`,
+        });
+        field('    Context', frame.contextLine);
+      }
+      continue;
     }
+    if (section.kind === 'stacktrace') {
+      chunks.push({ kind: 'section', text: 'Stack trace:' });
+      for (const frame of section.frames) {
+        const where = frame.filename ?? 'unknown file';
+        const line = frame.lineNo === null ? '' : `:${String(frame.lineNo)}`;
+        const column = frame.colNo === null ? '' : `:${String(frame.colNo)}`;
+        const label = frame.function ?? where;
+        chunks.push({
+          kind: 'frame',
+          text: label === where
+            ? `  at ${where}${line}${column}`
+            : `  at ${label} (${where}${line}${column})${frame.inApp ? ' [application]' : ''}`,
+        });
+        field('    Context', frame.contextLine);
+      }
+      continue;
+    }
+    if (section.kind === 'breadcrumbs') {
+      for (const breadcrumb of section.entries) {
+        const parts = [
+          timestampText(breadcrumb.timestampMs),
+          breadcrumb.level,
+          breadcrumb.category,
+          breadcrumb.message,
+        ].filter((value): value is string => value !== null && value !== '');
+        if (parts.length > 0) chunks.push({ kind: 'breadcrumb', text: `Breadcrumb: ${parts.join(' · ')}` });
+      }
+      continue;
+    }
+    if (section.kind === 'message') {
+      if (section.formatted !== projection.message) field('Message detail', section.formatted);
+      continue;
+    }
+    chunks.push({ kind: 'section', text: `Unsupported event section: ${section.entryType}` });
   }
+
+  return chunks;
+}
+
+function selectedEvidenceContext(
+  projection: SentryEventProjectionV1,
+  selected: readonly EvidenceChunk[],
+  all: readonly EvidenceChunk[],
+): string {
+  const lines = [sentryEvidenceCandidateLabel(projection.eventId)];
+  const occurredAt = timestampText(projection.dateCreatedMs);
+  if (occurredAt !== null) lines.push(`Occurred: ${occurredAt}`);
+  lines.push(...selected.map((chunk) => chunk.text));
+  const providerScrubbed = projection.redactions.filter(
+    (redaction) => redaction.reason === 'providerScrubbed',
+  ).length;
+  const pluginWithheld = projection.redactions.length - providerScrubbed;
+  lines.push(
+    `Evidence disclosure: ${String(providerScrubbed)} provider-scrubbed field(s), `
+      + `${String(pluginWithheld)} plugin-withheld field(s), `
+      + `${String(projection.sensitivePaths.length)} sensitive projected path(s).`,
+  );
+  const counted = (count: number, noun: string): string => (
+    `${String(count)} ${noun}${count === 1 ? '' : 's'}`
+  );
+  const selectedSet = new Set(selected);
+  const notAdmitted = (kind: EvidenceChunkKind): number => all.filter(
+    (chunk) => chunk.kind === kind && !selectedSet.has(chunk),
+  ).length;
+  const userFields = retainedUserFieldCount(projection);
+  const omissions = [
+    projection.omitted.frames + notAdmitted('frame') === 0
+      ? null : counted(projection.omitted.frames + notAdmitted('frame'), 'frame'),
+    projection.omitted.tags + notAdmitted('tag') === 0
+      ? null : counted(projection.omitted.tags + notAdmitted('tag'), 'tag'),
+    projection.omitted.sections + notAdmitted('section') === 0
+      ? null : counted(projection.omitted.sections + notAdmitted('section'), 'section'),
+    projection.omitted.breadcrumbs + notAdmitted('breadcrumb') === 0
+      ? null : counted(projection.omitted.breadcrumbs + notAdmitted('breadcrumb'), 'breadcrumb'),
+    notAdmitted('field') === 0 ? null : counted(notAdmitted('field'), 'field'),
+    userFields === 0 ? null : counted(userFields, 'event user field'),
+    projection.projectionTruncated ? 'additional upstream-projected content' : null,
+  ].filter((value): value is string => value !== null);
+  if (omissions.length > 0) lines.push(`Agent evidence omitted: ${omissions.join(', ')}.`);
   return lines.join('\n');
+}
+
+/**
+ * Selects whole, already-redacted semantic items against the canonical Composer
+ * resolution schema. There is no provider-local byte/count ledger: each item is
+ * retained as one provider-ordered prefix admitted by the complete public wire
+ * object, and every remaining item stays visible in the omission disclosure.
+ */
+function selectedEvidenceResolution(
+  candidateId: string,
+  label: string,
+  projection: SentryEventProjectionV1,
+): ComposerReferenceResolutionV1 {
+  const all = evidenceChunks(projection);
+  const admit = (includedCount: number): ReturnType<typeof ProtocolComposerReferenceResolutionV1Schema.safeParse> => (
+    ProtocolComposerReferenceResolutionV1Schema.safeParse({
+      id: candidateId,
+      label,
+      context: selectedEvidenceContext(projection, all.slice(0, includedCount), all),
+    })
+  );
+
+  const complete = admit(all.length);
+  if (complete.success) return complete.data;
+  let low = 0;
+  let high = all.length;
+  while (low < high) {
+    const candidateCount = Math.ceil((low + high) / 2);
+    if (admit(candidateCount).success) low = candidateCount;
+    else high = candidateCount - 1;
+  }
+  const fitted = admit(low);
+  if (!fitted.success) throw unavailableEvidence('evidence-contract-exceeded');
+  return fitted.data;
 }
 
 /** This provider is direct-disclosure-only; generic Composer search returns no rows. */
@@ -111,10 +276,9 @@ export async function resolveSentryEvidenceReference(
   if (result.kind !== 'event' || result.projection.eventId !== candidate.eventId) {
     throw unavailableEvidence(result.kind === 'event' ? 'event-changed' : result.failure.code);
   }
-
-  return Object.freeze({
-    id: candidateId,
-    label: sentryEvidenceCandidateLabel(candidate.eventId),
-    context: selectedEvidenceContext(result.projection),
-  });
+  return selectedEvidenceResolution(
+    candidateId,
+    sentryEvidenceCandidateLabel(candidate.eventId),
+    result.projection,
+  );
 }

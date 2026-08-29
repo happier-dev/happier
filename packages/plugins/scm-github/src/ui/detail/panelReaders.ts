@@ -8,12 +8,14 @@ import type {
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
 import {
+  GithubCapabilitiesResultV1Schema,
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
   GithubFeedbackResultV1Schema,
   GithubReviewsResultV1Schema,
   GithubTimelineResultV1Schema,
 } from '../../triage/detail/contracts.js';
+import type { GithubRepositoryCapabilitiesV1 } from '../../triage/capabilities.js';
 import type {
   GithubFeedbackCommentV1,
   GithubFeedbackRequestV1,
@@ -107,6 +109,51 @@ function useLocalRef(input: TriageDetailSurfaceInputV1) {
 /** The source-private route the target observed for this entry, if it has one. */
 export function useGithubRoutingToken(input: TriageDetailSurfaceInputV1): string | null {
   return input.observation.locator.routingToken ?? null;
+}
+
+/** One mount-owned repository capability read shared by every write control. */
+export function useGithubCapabilities(
+  input: TriageDetailSurfaceInputV1,
+): GithubReadStateV1<GithubRepositoryCapabilitiesV1> {
+  const action = useMemo(() => ({
+    pluginId: GITHUB_PLUGIN_ID,
+    localId: GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities,
+  }), []);
+  const { execute } = useExecutePluginAction(action);
+  const localRef = useLocalRef(input);
+  const routingToken = useGithubRoutingToken(input);
+  const { instance } = input;
+  const [state, setState] = useState<GithubReadStateV1<GithubRepositoryCapabilitiesV1>>(
+    { kind: 'loading' },
+  );
+  useEffect(() => {
+    const controller = new AbortController();
+    if (routingToken === null) {
+      setState({ kind: 'unavailable', failure: ROUTE_UNAVAILABLE });
+      return () => controller.abort();
+    }
+    void execute({ v: 1, instance, localRef, routingToken }, { signal: controller.signal })
+      .then((execution: ExecuteResult) => {
+        if (controller.signal.aborted) return;
+        if (execution.status !== 'success') {
+          setState({ kind: 'unavailable', failure: dispatchFailure(
+            execution.status,
+            execution.code ?? 'github-capabilities-read-failed',
+          ) });
+          return;
+        }
+        const parsed = GithubCapabilitiesResultV1Schema.safeParse(execution.result);
+        if (!parsed.success) {
+          setState({ kind: 'unavailable', failure: UNREADABLE_RESULT });
+        } else if (parsed.data.kind === 'unavailable') {
+          setState({ kind: 'unavailable', failure: parsed.data.failure });
+        } else {
+          setState({ kind: 'ready', value: parsed.data });
+        }
+      });
+    return () => controller.abort();
+  }, [execute, instance, localRef, routingToken]);
+  return state;
 }
 
 /* ------------------------------------------------------------- paged planes */

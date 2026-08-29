@@ -31,7 +31,7 @@ describe('Discord Automation Event contribution', () => {
         eligible: true,
         source: {
           sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
-          supportedObservationTransports: ['checkpointedPull'],
+          supportedObservationTransports: ['socket'],
           setupActionRef: {
             pluginId: DISCORD_PLUGIN_ID,
             localId: DISCORD_AUTOMATION_MESSAGE_SETUP_ACTION_ID,

@@ -8,6 +8,15 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
     'subAgentGuidance.settings.agents.claude.openTitle': 'Claude subagent options',
     'subAgentGuidance.settings.agents.claude.openSubtitle': 'Manage Agent Teams and other Claude-specific subagent behavior.',
   }),
+  de: Object.freeze({
+    'agentInput.connectedServiceLabel.claude': 'Claude Code',
+    'session.subagents.panel.launchTeammateAction': 'Teammitglied starten',
+    'session.subagents.panel.launchClaudeTeamsSubtitle': 'Ein Team erstellen oder ein Teammitglied mit strukturierten Claude-Team-Befehlen starten.',
+    'subAgentGuidance.settings.agents.claude.title': 'Claude-Team-Agents',
+    'subAgentGuidance.settings.agents.claude.footer': 'Agent-spezifisches Subagent-Verhalten bleibt Sache des Agent-Einstellungsbildschirms.',
+    'subAgentGuidance.settings.agents.claude.openTitle': 'Claude-Subagent-Optionen',
+    'subAgentGuidance.settings.agents.claude.openSubtitle': 'Agent Teams und weiteres Claude-spezifisches Subagent-Verhalten verwalten.',
+  }),
   ru: Object.freeze({
     'agentInput.connectedServiceLabel.claude': 'Claude Code',
     'session.subagents.panel.launchTeammateAction': 'Запустить участника',
@@ -102,6 +111,7 @@ export const CLAUDE_UI_TRANSLATIONS = Object.freeze({
 
 export const CLAUDE_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: CLAUDE_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: CLAUDE_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: CLAUDE_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: CLAUDE_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: CLAUDE_UI_TRANSLATIONS.es },

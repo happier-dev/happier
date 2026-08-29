@@ -115,7 +115,6 @@ export const PI_PLUGIN = definePlugin({
             configuration: true,
             compaction: { events: true, manual: true },
           },
-          executionRuns: { open: ['create'], checkpoint: false, stop: true },
         }),
         surfaces: {
           externalSession: {
@@ -184,7 +183,7 @@ export const PI_PLUGIN = definePlugin({
         buildSessionOptions: (input) => ({
           ok: true,
           options: resolvePiSessionRuntimePreferences({
-            settings: input.settings,
+            settings: input.pluginSettings.account ?? {},
             environment: input.environment,
           }),
         }),

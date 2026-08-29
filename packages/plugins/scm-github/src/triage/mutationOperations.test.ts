@@ -1181,6 +1181,18 @@ describe('GitHub pull-request close and reopen', () => {
     expect(writes(stub)).toHaveLength(0);
   });
 
+  it('does not call an already merged pull request an already satisfied close', async () => {
+    const stub = transportFor({ reads: [pullRequestBody({ state: 'closed', merged: true })] });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubPullRequestAction(stateInput(), stub.context),
+    );
+    if (result.kind !== 'refused') throw new Error(`expected a refusal, got ${result.kind}`);
+    expect(result.reason).toBe('state_changed');
+    expect(result.observation?.kind).toBe('present');
+    expect(writes(stub)).toHaveLength(0);
+  });
+
   it('reopens a closed, unmerged pull request', async () => {
     const stub = transportFor({
       reads: [pullRequestBody({ state: 'closed' }), pullRequestBody()],
@@ -1237,6 +1249,18 @@ describe('GitHub pull-request close and reopen', () => {
     if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
     expect(result.effect).toBe('changed');
     expect(entryReads(stub)).toHaveLength(2);
+    expect(writes(stub)).toHaveLength(1);
+  });
+
+  it('does not confirm a close when the pull request merged during the write', async () => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody({ state: 'closed', merged: true })],
+    });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubPullRequestAction(stateInput(), stub.context),
+    );
+    expect(result.kind).toBe('uncertain');
     expect(writes(stub)).toHaveLength(1);
   });
 
@@ -1984,6 +2008,7 @@ function issueInput(overrides: Readonly<Record<string, unknown>> = {}) {
 
 type IssueShape = Readonly<{
   state?: 'open' | 'closed';
+  stateReason?: 'completed' | 'not_planned';
   labels?: readonly string[];
   assignees?: readonly string[];
 }>;
@@ -1994,6 +2019,7 @@ function issueBody(shape: IssueShape = {}): Readonly<Record<string, unknown>> {
     ...GITHUB_ISSUE_RESPONSE,
     number: 7,
     state,
+    state_reason: shape.stateReason ?? null,
     closed_at: state === 'closed' ? '2026-08-13T10:00:00Z' : null,
     labels: (shape.labels ?? []).map((name) => ({ id: 1, name, color: 'ededed' })),
     assignees: (shape.assignees ?? []).map((login) => ({ login, id: 2, type: 'User' })),
@@ -2156,7 +2182,7 @@ describe('GitHub issue comment publication', () => {
 describe('GitHub issue close and reopen', () => {
   it('closes an open issue with the caller’s explicit reason and confirms it', async () => {
     const stub = issueTransportFor({
-      reads: [issueBody(), issueBody({ state: 'closed' })],
+      reads: [issueBody(), issueBody({ state: 'closed', stateReason: 'not_planned' })],
     });
 
     const result = GithubPullRequestStateResultV1Schema.parse(
@@ -2186,13 +2212,29 @@ describe('GitHub issue close and reopen', () => {
   });
 
   it('answers an already closed issue from the read, with no second write', async () => {
-    const stub = issueTransportFor({ reads: [issueBody({ state: 'closed' })] });
+    const stub = issueTransportFor({
+      reads: [issueBody({ state: 'closed', stateReason: 'completed' })],
+    });
 
     const result = GithubPullRequestStateResultV1Schema.parse(
       await closeGithubIssueAction(issueInput({ stateReason: 'completed' }), stub.context),
     );
     if (result.kind !== 'applied') throw new Error(`expected applied, got ${result.kind}`);
     expect(result.effect).toBe('alreadySatisfied');
+    expect(writes(stub)).toHaveLength(0);
+  });
+
+  it('does not call a differently classified issue close already satisfied', async () => {
+    const stub = issueTransportFor({
+      reads: [issueBody({ state: 'closed', stateReason: 'not_planned' })],
+    });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubIssueAction(issueInput({ stateReason: 'completed' }), stub.context),
+    );
+    expect(result.kind).toBe('refused');
+    if (result.kind !== 'refused') throw new Error(`expected a refusal, got ${result.kind}`);
+    expect(result.reason).toBe('state_changed');
     expect(writes(stub)).toHaveLength(0);
   });
 
@@ -2223,9 +2265,21 @@ describe('GitHub issue close and reopen', () => {
     expect(writes(stub)).toHaveLength(1);
   });
 
+  it('reports a close confirmed with a different reason as uncertain', async () => {
+    const stub = issueTransportFor({
+      reads: [issueBody(), issueBody({ state: 'closed', stateReason: 'not_planned' })],
+    });
+
+    const result = GithubPullRequestStateResultV1Schema.parse(
+      await closeGithubIssueAction(issueInput({ stateReason: 'completed' }), stub.context),
+    );
+    expect(result.kind).toBe('uncertain');
+    expect(writes(stub)).toHaveLength(1);
+  });
+
   it('reconciles a possibly-applied issue close after a server error', async () => {
     const stub = issueTransportFor({
-      reads: [issueBody(), issueBody({ state: 'closed' })],
+      reads: [issueBody(), issueBody({ state: 'closed', stateReason: 'completed' })],
       write: json({ message: 'Internal Server Error' }, 503),
     });
 

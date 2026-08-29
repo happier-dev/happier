@@ -29,6 +29,7 @@ import {
   Banner,
   Button,
   Divider,
+  DiffViewer,
   EmptyState,
   ErrorState,
   Item,
@@ -371,7 +372,11 @@ function DiffPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): 
                 descriptionKey="plugins.bitbucket.ui.rawDiffShortened.description"
               />
             ) : null}
-            <Text variant="code" value={controller.raw.text} />
+            <DiffViewer
+              unifiedDiff={controller.raw.text}
+              label={text('plugins.bitbucket.ui.tabs.diff', 'Diff')}
+              testID="bitbucket-pull-request-diff"
+            />
           </Stack>
         )}
         <Metadata

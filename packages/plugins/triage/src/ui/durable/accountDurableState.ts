@@ -1,11 +1,13 @@
 import { useMemo } from 'react';
-import { usePluginAccountSettings, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui/data';
-import type { PluginUiAccountSettings } from '@happier-dev/plugin-ui/data';
+import { usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui/data';
 
 import {
   bindCorpusCollectionsWith,
   type CorpusCollectionsV1,
 } from '../../corpus/collections/bindCorpusCollections.js';
+import { createTriageAccountKvCatalogStore, type TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.js';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../settings/actions.js';
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../../settings/savedViews.js';
 
 /**
  * What this mount can reach of the reader's durable Account state, directly.
@@ -18,7 +20,7 @@ import {
  *
  * A mounted surface already holds an Account-lifetime Data client, so this is a
  * binding and nothing more: the three Collections come from the one corpus
- * binder, and Account Settings comes from the client's own Settings scope. No
+ * binder, and the two catalogs come from the client's own Account KV scope. No
  * identity derivation, codec, CAS rule or encryption decision is restated here,
  * and neither half is cached beyond the client that owns it.
  *
@@ -30,22 +32,21 @@ import {
  * speculatively in either direction.
  */
 
-export type TriageAccountSettingsV1 = Pick<PluginUiAccountSettings, 'snapshot' | 'set'>;
-
 export type TriageDurableAccountV1 = Readonly<{
   /** The three durable Collections, or `null` when the Account is out of reach. */
   collections: CorpusCollectionsV1 | null;
-  /** The plugin's Account Settings scope, or `null` for the same reason. */
-  settings: TriageAccountSettingsV1 | null;
+  /** The plugin's saved-view catalog, or `null` for the same reason. */
+  savedViews: TriageCatalogStoreV1 | null;
+  actions: TriageCatalogStoreV1 | null;
 }>;
 
-const UNREACHABLE: TriageDurableAccountV1 = Object.freeze({ collections: null, settings: null });
+const UNREACHABLE: TriageDurableAccountV1 = Object.freeze({ collections: null, savedViews: null, actions: null });
 
 export function useTriageDurableAccount(): TriageDurableAccountV1 {
   const client = usePluginUiDataClientOrNull();
-  const settings = usePluginAccountSettings();
   return useMemo(() => client === null ? UNREACHABLE : Object.freeze({
     collections: bindCorpusCollectionsWith((definition) => client.collection(definition)),
-    settings,
-  }), [client, settings]);
+    savedViews: createTriageAccountKvCatalogStore(client.accountKv, TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
+    actions: createTriageAccountKvCatalogStore(client.accountKv, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
+  }), [client]);
 }

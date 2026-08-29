@@ -127,6 +127,9 @@ describe('Codex public Agent External Sessions contribution', () => {
       await expect(contribution.listCandidates({
         source: { kind: 'codexHome', home: 'user' },
         maxItems: 10,
+        // Native app-server listing is part of the searched browse; an
+        // unsearched browse selects the bounded rollout chunk/preparation mode.
+        searchTerm: '33333333',
         searchMode: 'full',
         ...invocation({ exec: createThreadListingExec(requests) }),
       })).resolves.toMatchObject({
@@ -484,7 +487,7 @@ describe('Codex public Agent External Sessions contribution', () => {
     }
   });
 
-  it('reports a bounded nonempty appended suffix as a gap instead of accepting a partial cursor', async () => {
+  it('advances a bounded nonempty appended suffix with a continuation cursor instead of reporting a gap', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-public-read-after-bound-'));
     try {
       const codexHome = join(root, 'codex-home');
@@ -547,15 +550,47 @@ describe('Codex public Agent External Sessions contribution', () => {
         }),
       ].join(''), 'utf8');
 
-      await expect(contribution.readAfterTranscript({
+      const firstBounded = await contribution.readAfterTranscript({
         source,
         remoteSessionId,
         cursor: initial.value.tailCursor,
         maxItems: 1,
         ...invocation(),
+      });
+      if (!firstBounded.ok || firstBounded.value.outcome !== 'advanced') {
+        throw new Error('Expected a bounded appended suffix to advance');
+      }
+      expect(firstBounded.value.items).toHaveLength(1);
+      expect(JSON.stringify(firstBounded.value.items[0])).toContain('first appended item');
+      expect(firstBounded.value.hasMore).toBe(true);
+      expect(firstBounded.value.nextCursor).toEqual(expect.any(String));
+
+      // The bounded page's continuation cursor must make progress without
+      // repeating or dropping the appended suffix.
+      const secondBounded = await contribution.readAfterTranscript({
+        source,
+        remoteSessionId,
+        cursor: firstBounded.value.nextCursor,
+        maxItems: 1,
+        ...invocation(),
+      });
+      if (!secondBounded.ok || secondBounded.value.outcome !== 'advanced') {
+        throw new Error('Expected the bounded continuation to advance');
+      }
+      expect(secondBounded.value.items).toHaveLength(1);
+      expect(JSON.stringify(secondBounded.value.items[0])).toContain('second appended item');
+      expect(secondBounded.value.hasMore).toBe(false);
+      expect(secondBounded.value.nextCursor).toEqual(expect.any(String));
+
+      await expect(contribution.readAfterTranscript({
+        source,
+        remoteSessionId,
+        cursor: secondBounded.value.nextCursor,
+        maxItems: 1,
+        ...invocation(),
       })).resolves.toEqual({
         ok: true,
-        value: { outcome: 'gap_or_cursor_expired' },
+        value: { outcome: 'already_current' },
       });
     } finally {
       await rm(root, { recursive: true, force: true });

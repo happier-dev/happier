@@ -8,7 +8,7 @@ import type { TriageSavedViewLensV1 } from './savedViewsCommand.js';
  *
  * `core/SURFACE.md` §6.5 makes this a product statement rather than a detail:
  * editing filters, the query, Order or the Smart policy after selecting a view
- * marks the lens **modified without a Settings write**, and **Update** is the
+ * marks the lens **modified without an Account KV write**, and **Update** is the
  * separate explicit operation. So a surface has to be able to say which of the
  * two it is showing, and it must say it from the same comparison the Update
  * button would write — otherwise the reader is told "modified" over a view that

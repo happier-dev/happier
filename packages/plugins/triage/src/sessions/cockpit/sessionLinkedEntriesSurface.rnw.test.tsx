@@ -14,13 +14,13 @@ import type {
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../../../../../plugin-ui/src/data/accountKv.js';
-import { createUnavailablePluginUiAccountSettings } from '../../../../../plugin-ui/src/data/accountSettings.js';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
 import type { CorpusSessionLinkRowV1 } from '../../corpus/collections/rows.js';
 import { sessionLinkTagComponents } from '../../corpus/identity/components.js';
 import { TRIAGE_SESSION_LINKED_ENTRIES_UI_QUERY_ID_V1 } from './linkedEntriesQuery.js';
 import { renderSurface as renderSessionLinkedEntriesSurface } from './sessionLinkedEntriesSurface.js';
+import { TRIAGE_ENTRY_DETAIL_DESTINATION_V1 } from '../../composer/openEntryDetails.js';
 
 /**
  * The mounted Session cockpit, driven through the real host boundary.
@@ -172,7 +172,6 @@ function createDataHarness(input: Readonly<{
             return control.pager;
         },
         accountKv: createUnavailablePluginUiAccountKv(),
-        accountSettings: createUnavailablePluginUiAccountSettings(),
     };
 
     return { client, opened, gets, identityRequests, deletes, control };
@@ -201,6 +200,8 @@ function createCockpitAdapter(
 const mounted: PluginUiTestkit[] = [];
 type ActionCall = Readonly<{ action: string; input: unknown }>;
 const actionCalls: ActionCall[] = [];
+type SurfaceOpen = Readonly<{ view: unknown; input?: unknown; subPath?: string }>;
+const surfaceOpens: SurfaceOpen[] = [];
 
 /**
  * The one Action the cockpit can invoke, scripted per test.
@@ -214,6 +215,7 @@ async function mountCockpit(
     target: ReturnType<typeof createSurfaceContextFixture>['target'],
     unlinkResult: unknown = null,
     accountReachable = true,
+    openSurfaceError: unknown = null,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -242,6 +244,10 @@ async function mountCockpit(
                     }
                     return unlinkResult as never;
                 },
+                openSurface: async ({ view, input, subPath }) => {
+                    surfaceOpens.push({ view, ...(input === undefined ? {} : { input }), ...(subPath === undefined ? {} : { subPath }) });
+                    if (openSurfaceError !== null) throw openSurfaceError;
+                },
             },
         });
     });
@@ -254,6 +260,7 @@ async function mountCockpit(
 
 afterEach(async () => {
     actionCalls.splice(0);
+    surfaceOpens.splice(0);
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
@@ -443,6 +450,54 @@ describe('the mounted Session cockpit', () => {
         expect(actionCalls).toEqual([]);
     });
 
+    it('opens a linked row through the qualified Triage destination and preserves a separate Unlink action', async () => {
+        const harness = createDataHarness({
+            snapshot: { rows: [queryRow('link-a', 2_000)], hasMore: false, status: 'ready' },
+            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]),
+        });
+        const fixture = await mountCockpit(harness, { kind: 'session', sessionId: SESSION_ID });
+
+        // The row itself is the primary, accessible action. Its accessory is
+        // outside that press target and remains a separate Unlink button.
+        await fixture.press(await fixture.findByRole('button', { name: 'example/repository#42' }));
+        await act(async () => { await Promise.resolve(); });
+
+        expect(surfaceOpens).toHaveLength(1);
+        expect(surfaceOpens[0]).toMatchObject({
+            view: TRIAGE_ENTRY_DETAIL_DESTINATION_V1,
+            subPath: 'e,happier.example.source,example-forge,pull-request,example%2Frepository,42',
+        });
+        expect(surfaceOpens[0]?.input).toBeUndefined();
+        expect((await fixture.queryAllByRole('button'))
+            .filter((button) => button.name === 'Unlink'))
+            .toHaveLength(1);
+        expect(actionCalls).toEqual([]);
+    });
+
+    it('keeps an open refusal visible and leaves unlink available', async () => {
+        const harness = createDataHarness({
+            snapshot: { rows: [queryRow('link-a', 2_000)], hasMore: false, status: 'ready' },
+            rowsById: new Map([['link-a', linkRow({ displayPathAtLink: 'example/repository#42' })]]),
+        });
+        const fixture = await mountCockpit(
+            harness,
+            { kind: 'session', sessionId: SESSION_ID },
+            null,
+            true,
+            new Error('The destination is unavailable.'),
+        );
+
+        await fixture.press(await fixture.findByRole('button', { name: 'example/repository#42' }));
+        await act(async () => { await Promise.resolve(); });
+
+        await expect(fixture.getByText('This entry could not be opened.')).resolves
+            .toEqual({ content: 'This entry could not be opened.' });
+        expect((await fixture.queryAllByRole('button'))
+            .filter((button) => button.name === 'Unlink'))
+            .toHaveLength(1);
+        expect(actionCalls).toEqual([]);
+    });
+
     it('does not re-read a hydrated row when the pager republishes the same revisions', async () => {
         const rows = [queryRow('link-a', 2_000)];
         const harness = createDataHarness({
@@ -612,7 +667,8 @@ describe('undoing a link from the mounted cockpit', () => {
             { v: 1, status: 'unlinked' },
         );
 
-        const buttons = await fixture.queryAllByRole('button');
+        const buttons = (await fixture.queryAllByRole('button'))
+            .filter((button) => button.name === 'Unlink');
         // One per resolved link and no more: a row that is still being read,
         // already removed, or unreadable carries no reference to remove.
         expect(buttons.map((button) => button.name ?? '')).toEqual(['Unlink', 'Unlink']);

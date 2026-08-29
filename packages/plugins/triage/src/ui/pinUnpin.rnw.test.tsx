@@ -235,12 +235,12 @@ describe('the mounted Pin/Unpin affordance', () => {
         // pinned entry that also appeared under Open would read as two pins for
         // one thing, and would collide on the List's own row key.
         //
-        // The query is the section header's own role rather than a sweep for
+        // The query is the grid section header's own row role rather than a sweep for
         // the word: the filter rail's State facet offers an **Open** option
         // (`core/SURFACE.md` §6), so a text sweep now proves nothing about
         // sections at all.
-        await expect(shell.queryByRole('group', { name: 'Open' })).resolves.toBeUndefined();
-        await expect(shell.getByRole('group', { name: 'Pinned' })).resolves.toBeDefined();
+        await expect(shell.queryByRole('row', { name: 'Open' })).resolves.toBeUndefined();
+        await expect(shell.getByRole('row', { name: 'Pinned' })).resolves.toBeDefined();
         // A materialized pinned row offers its one Pin/Unpin operation through
         // the shared secondary-action owner, not a nested per-row control.
         expect(await shell.getAllByRole('button', {
@@ -305,7 +305,7 @@ describe('the mounted Pin/Unpin affordance', () => {
         const shell = await mountShell(harness);
 
         await act(async () => {
-            await shell.press(await shell.getByRole('option', {
+            await shell.press(await shell.getByRole('button', {
                 name: 'Replace the duplicated normalizer',
             }));
         });
@@ -329,7 +329,7 @@ describe('the mounted Pin/Unpin affordance', () => {
         const harness = createHarness();
         const shell = await mountShell(harness);
         await act(async () => {
-            await shell.press(await shell.getByRole('option', {
+            await shell.press(await shell.getByRole('button', {
                 name: 'Replace the duplicated normalizer',
             }));
         });

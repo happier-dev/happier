@@ -1403,6 +1403,204 @@ describe('Channels mounted provider setup recovery', () => {
     }
   });
 
+  it('retries the exact durablePush ensure and continuation after distinct response-loss outcomes', async () => {
+    const credentialRef = {
+      service: {
+        pluginId: 'com.example.conversation-provider',
+        localId: 'provider-account',
+      },
+      accountId: 'provider-account-a',
+    } as const;
+    const submittedProviderSetup = {
+      kind: 'submitted' as const,
+      action: providerSetupOperation.action,
+      input: { repository: 'happier-dev/happier' },
+      selection: {
+        target: {
+          pluginId: 'happier.channels',
+          immutableGenerationId: 'channels-target-generation-a',
+        },
+        point: providerSetupOperation.point,
+        contributor: providerSetupOperation.contributor,
+      },
+      connectedAccount: { kind: 'selected' as const, fieldPath: 'credentialRef', ref: credentialRef },
+    };
+    const selectedActionInput = {
+      operation: providerSetupOperation,
+      result: submittedProviderSetup,
+    } as const;
+    const endpointRequiredResult = {
+      kind: 'endpointRequired',
+      connectionId: 'connection-durable-1',
+      webhookContribution: {
+        pluginId: 'com.example.conversation-provider',
+        localId: 'webhook',
+      },
+      targetMaterialization: {
+        pluginId: 'com.example.conversation-provider',
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+      },
+      sourceInstanceId: 'channels.connection.connection-durable-1',
+      webhookEndpointSetup: {
+        kind: 'accountEndpointV1',
+        credential: 'serverGenerated',
+      },
+      webhookEndpointIdempotencyKey: 'endpoint-attempt-0123456789abcdef',
+    };
+    let endpointEnsureCalls = 0;
+    let endpointContinuationCalls = 0;
+    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare) {
+        return {
+          kind: 'ready',
+          supportedTransports: ['checkpointedPull', 'durablePush'],
+          recommendedTransport: 'durablePush',
+          overlapSafety: 'safe',
+          replayContinuity: 'none',
+          outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+        };
+      }
+      if (request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate) {
+        const input = request.input as Readonly<{
+          endpointContinuation?: Readonly<{
+            connectionId: string;
+            webhookEndpointId: string;
+          }>;
+        }>;
+        if (input.endpointContinuation === undefined) {
+          return endpointRequiredResult;
+        }
+        expect(input.endpointContinuation).toEqual({
+          connectionId: 'connection-durable-1',
+          webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+        });
+        endpointContinuationCalls += 1;
+        if (endpointContinuationCalls === 1) {
+          throw new PluginError({
+            code: 'timeout',
+            message: 'The connection continuation response was lost.',
+          });
+        }
+        return { kind: 'created', connectionId: 'connection-durable-1' };
+      }
+      if (request.action === 'plugin.webhook.endpoint.ensure') {
+        expect(request.input).toEqual({
+          webhookContribution: {
+            pluginId: 'com.example.conversation-provider',
+            localId: 'webhook',
+          },
+          targetMaterialization: {
+            pluginId: 'com.example.conversation-provider',
+            machineId: 'machine-1',
+            materializationId: 'materialization-1',
+          },
+          sourceInstanceId: 'channels.connection.connection-durable-1',
+          setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+          idempotencyKey: 'endpoint-attempt-0123456789abcdef',
+        });
+        endpointEnsureCalls += 1;
+        if (endpointEnsureCalls === 1) {
+          throw new PluginError({
+            code: 'timeout',
+            message: 'The endpoint ensure response was lost.',
+          });
+        }
+        return {
+          webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+          revision: 3,
+          publicUrl: 'https://webhooks.example.test/wh_ep_AAECAwQFBgcICQoLDA0ODw',
+          readiness: 'ready',
+        };
+      }
+      throw new Error(`Unexpected mounted Action: ${String(request.action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-provider-setup-durable-push',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => submittedProviderSetup,
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('button', { name: 'Set up Integration provider' }));
+      await expect(fixture.getByRole('button', { name: 'Create connection' })).resolves.toBeDefined();
+      await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
+      await vi.waitFor(() => {
+        expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare,
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+          'plugin.webhook.endpoint.ensure',
+        ]);
+      });
+      expect(document.querySelector(
+        '[data-testid="channels-provider-setup-endpoint-ensure-outcome-unknown"]',
+      )).not.toBeNull();
+
+      // Retry the exact retained generic ensure input. It rejoins the endpoint,
+      // then the first continuation response is independently lost.
+      await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
+      await vi.waitFor(() => {
+        expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare,
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+          'plugin.webhook.endpoint.ensure',
+          'plugin.webhook.endpoint.ensure',
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+        ]);
+      });
+      expect(document.querySelector(
+        '[data-testid="channels-provider-setup-creation-outcome-unknown"]',
+      )).not.toBeNull();
+
+      // The retained endpoint continuation is itself safe to retry: the core
+      // reruns currentness/setup/test/correspondence and rejoins the same final
+      // connection identity.
+      await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
+      await vi.waitFor(() => {
+        expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare,
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+          'plugin.webhook.endpoint.ensure',
+          'plugin.webhook.endpoint.ensure',
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+          CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+        ]);
+      });
+      // Only the first outer relay consumes the host retention; the
+      // continuation is a plain dispatch of the same management Action.
+      const createCalls = executeAction.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate);
+      expect(createCalls).toHaveLength(3);
+      expect((createCalls[0] as unknown as Readonly<{ consumeSelectedActionInput?: unknown }>)
+        .consumeSelectedActionInput).toBe(true);
+      expect((createCalls[1] as unknown as Readonly<{ consumeSelectedActionInput?: unknown }>)
+        .consumeSelectedActionInput).toBeUndefined();
+      expect(createCalls[1]?.selectedActionInput).toBeUndefined();
+      expect(createCalls[2]?.input).toEqual(createCalls[1]?.input);
+      expect(createCalls[2]?.selectedActionInput).toBeUndefined();
+      const ensureCalls = executeAction.mock.calls
+        .map(([request]) => request)
+        .filter((request) => request.action === 'plugin.webhook.endpoint.ensure');
+      expect(ensureCalls).toHaveLength(2);
+      expect(ensureCalls[1]?.input).toEqual(ensureCalls[0]?.input);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
   it('cancels both selected outer relays when their Account lifetime retires before create reaches provider setup', async () => {
     const credentialRef = {
       service: {
@@ -2503,6 +2701,7 @@ describe('Channels mounted binding creation', () => {
         challengeId: 'pairing-challenge',
         connectionId: 'connection-1',
         expectedConnectionRevision: 1,
+        pairingRequestId: 'pairing-request-fixture',
         expiresAt: 1_040,
         attemptsRemaining: 5,
         destinationLabel: 'Project room',
@@ -2614,6 +2813,7 @@ describe('Channels mounted binding creation', () => {
         challengeId: 'pairing-challenge',
         connectionId: 'connection-1',
         expectedConnectionRevision: 1,
+        pairingRequestId: 'pairing-request-fixture',
         expiresAt: 601_000,
         attemptsRemaining: 5,
         destinationLabel: 'Project room',
@@ -2778,6 +2978,7 @@ describe('Channels mounted binding creation', () => {
           input: {
             connectionId: 'connection-1',
             expectedConnectionRevision: 1,
+            pairingRequestId: expect.stringMatching(/\S/u),
             endpointSelection: bindingEndpointSelection,
             target: {
               kind: 'session',
@@ -2845,9 +3046,10 @@ describe('Channels mounted binding creation', () => {
     }
   });
 
-  it('recovers an unknown pairing create only through a fresh exact pairing Resource challenge', async () => {
+  it('recovers an unknown pairing create only through the exact request id it sent', async () => {
     let bindingsReads = 0;
     let pairingReads = 0;
+    let sentPairingRequestId: string | undefined;
     let resolvePairingRefresh: ((value: ResourceContent) => void) | undefined;
     const pairingEmptyResource = jsonResource({
       generationId: 'pairing-generation',
@@ -2855,13 +3057,14 @@ describe('Channels mounted binding creation', () => {
       challenges: [],
       proposals: [],
     }, '4');
-    const pairingChallengeResource = jsonResource({
+    const pairingChallengeResourceFor = (pairingRequestId: string) => jsonResource({
       generationId: 'pairing-generation',
       observedAt: 1,
       challenges: [{
         challengeId: 'pairing-challenge',
         connectionId: 'connection-1',
         expectedConnectionRevision: 1,
+        pairingRequestId,
         expiresAt: 601_000,
         attemptsRemaining: 5,
         destinationLabel: 'Project room',
@@ -2880,6 +3083,7 @@ describe('Channels mounted binding creation', () => {
         return { sessions: [{ id: 'session-pairing', title: 'Pairing Session' }], nextCursor: null };
       }
       if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate) {
+        sentPairingRequestId = (input as Readonly<{ pairingRequestId?: string }>).pairingRequestId;
         throw new PluginError({ code: 'timeout', message: 'The pairing request timed out.' });
       }
       throw new Error(`Unexpected mounted Action: ${String(action)}`);
@@ -2927,16 +3131,114 @@ describe('Channels mounted binding creation', () => {
       await vi.waitFor(() => {
         expect(pairingReads).toBe(2);
         expect(resolvePairingRefresh).toBeTypeOf('function');
+        expect(sentPairingRequestId).toEqual(expect.any(String));
       });
       await expect(fixture.queryByText('ABCDEFGH')).resolves.toBeUndefined();
+
+      // A challenge created by another request — a second device's superseding
+      // create on the same connection and revision — is never adopted: the
+      // exact request id this create sent is the only recovery match.
       await act(async () => {
-        resolvePairingRefresh?.(pairingChallengeResource);
+        resolvePairingRefresh?.(pairingChallengeResourceFor('another-device-request'));
       });
-      await expect(fixture.getByText('ABCDEFGH')).resolves.toBeDefined();
+      await expect(fixture.queryByText('ABCDEFGH')).resolves.toBeUndefined();
+      await expect(fixture.getByText('Pairing status is unavailable')).resolves.toBeDefined();
       expect(bindingsReads).toBe(1);
       expect(executeAction.mock.calls.filter(([request]) => (
         request.action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate
       ))).toHaveLength(1);
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('recovers an unknown pairing create through the challenge carrying its own request id', async () => {
+    let pairingReads = 0;
+    let sentPairingRequestId: string | undefined;
+    let resolvePairingRefresh: ((value: ResourceContent) => void) | undefined;
+    const pairingEmptyResource = jsonResource({
+      generationId: 'pairing-generation',
+      observedAt: 1,
+      challenges: [],
+      proposals: [],
+    }, 'b');
+    const pairingChallengeResourceFor = (pairingRequestId: string) => jsonResource({
+      generationId: 'pairing-generation',
+      observedAt: 1,
+      challenges: [{
+        challengeId: 'pairing-challenge',
+        connectionId: 'connection-1',
+        expectedConnectionRevision: 1,
+        pairingRequestId,
+        expiresAt: 601_000,
+        attemptsRemaining: 5,
+        destinationLabel: 'Project room',
+        manualToken: 'ABCDEFGH',
+        deepLinkUrl: null,
+      }],
+      proposals: [],
+    }, 'c');
+    const executeAction = vi.fn(async ({ action, input }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingResolve) {
+        return (input as Readonly<{ kind?: unknown }>).kind === 'endpoint'
+          ? { kind: 'endpointCandidates', candidates: [bindingEndpointCandidate] }
+          : { kind: 'unavailable', reason: 'principalResolveUnsupported' };
+      }
+      if (action === 'session.list') {
+        return { sessions: [{ id: 'session-pairing', title: 'Pairing Session' }], nextCursor: null };
+      }
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPairingCreate) {
+        sentPairingRequestId = (input as Readonly<{ pairingRequestId?: string }>).pairingRequestId;
+        throw new PluginError({ code: 'timeout', message: 'The pairing request timed out.' });
+      }
+      throw new Error(`Unexpected mounted Action: ${String(action)}`);
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-pairing-create-unknown-exact',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: createChannelsSurfaceContext(),
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: async ({ resource }) => {
+          const localId = typeof resource === 'string' ? resource : resource.localId;
+          if (localId === BINDINGS_RESOURCE.localId) return bindingsResource;
+          if (localId === CONNECTIONS_RESOURCE.localId) return connectionsResource;
+          if (localId === PAIRING_RESOURCE.localId) {
+            pairingReads += 1;
+            if (pairingReads === 1) return pairingEmptyResource;
+            return await new Promise<ResourceContent>((resolve) => {
+              resolvePairingRefresh = resolve;
+            });
+          }
+          throw new Error(`Unexpected Resource: ${localId}`);
+        },
+      },
+    });
+
+    try {
+      await openBindingEndpointSelection(fixture);
+      await searchBindingPrincipal(fixture);
+      await fixture.press(await fixture.getByRole('button', { name: 'Pairing Session' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Review binding' }));
+      await fixture.press(await fixture.getByRole('button', { name: 'Create pairing challenge' }));
+
+      await vi.waitFor(() => {
+        expect(pairingReads).toBe(2);
+        expect(resolvePairingRefresh).toBeTypeOf('function');
+        if (sentPairingRequestId === undefined) throw new Error('The create request id was not captured yet.');
+      });
+      await act(async () => {
+        resolvePairingRefresh?.(pairingChallengeResourceFor(sentPairingRequestId!));
+      });
+      await expect(fixture.getByText('ABCDEFGH')).resolves.toBeDefined();
     } finally {
       await fixture.dispose();
     }
@@ -2953,6 +3255,7 @@ describe('Channels mounted binding creation', () => {
             challengeId: 'pairing-challenge',
             connectionId: 'connection-1',
             expectedConnectionRevision: 1,
+            pairingRequestId: 'pairing-request-fixture',
             expiresAt: 601_000,
             attemptsRemaining: 5,
             destinationLabel: 'Project room',
@@ -4581,8 +4884,9 @@ describe('Channels mounted binding editor', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Save binding' }));
 
       await expect(fixture.getByText(
-        'The Account collection quota is incompatible (collection_quota_incompatible). Ask an administrator to make the Account collection quota compatible, then reload this binding and try again.',
+        'The Account collection quota is incompatible. Ask an administrator to make the Account collection quota compatible, then reload this binding and try again.',
       )).resolves.toBeDefined();
+      expect(document.body.textContent).not.toContain('collection_quota_incompatible');
       expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
         CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead,
         CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingUpdate,
@@ -4951,11 +5255,60 @@ describe('Channels binding enablement presentation', () => {
       });
       await expect(fixture.getByText('Could not update binding enablement')).resolves.toBeDefined();
       await expect(fixture.getByText(
-        'This binding could not be enabled because the Account collection quota is incompatible (collection_quota_incompatible). Ask an administrator to make the Account collection quota compatible, then refresh and try again.',
+        'This binding could not be enabled because the Account collection quota is incompatible. Ask an administrator to make the Account collection quota compatible, then refresh and try again.',
       )).resolves.toBeDefined();
       await vi.waitFor(() => {
         expect(bindingsReadCount).toBeGreaterThanOrEqual(2);
       });
+    } finally {
+      await fixture.dispose();
+    }
+  });
+
+  it('keeps raw Action diagnostics out of the primary binding-enablement failure chrome', async () => {
+    const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
+      if (action === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled) {
+        throw new PluginError({
+          code: 'channels_binding_set_enabled_conflict',
+          message: 'RAW DAEMON DIAGNOSTIC MUST NOT BECOME USER-FACING COPY',
+          retryable: true,
+        });
+      }
+      throw new Error('Unexpected mounted Action: ' + String(action));
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: {
+        pluginId: 'happier.channels',
+        pluginVersion: '0.0.0',
+        viewId: 'channels-account',
+        generation: 'channels-binding-enable-localized-failure',
+        sessionId: 'session-1',
+      },
+      surface: renderSurface,
+      surfaceContext: {
+        ...createChannelsSurfaceContext(),
+        translations: {
+          'plugins.channels.surface.bindingEnableFailedDescription': 'Aktualisiere die Bindungsdetails und versuche es erneut.',
+        },
+      },
+      adapter: createChannelsSemanticAdapter(),
+      handlers: {
+        selectActionInput: async () => ({ kind: 'cancelled' as const }),
+        executeAction,
+        readResource: bindingResourceReader(),
+      },
+    });
+
+    try {
+      await fixture.press(await fixture.getByRole('switch', {
+        name: 'Binding enabled',
+        state: { checked: true },
+      }));
+      await expect(fixture.getByText(
+        'Aktualisiere die Bindungsdetails und versuche es erneut.',
+      )).resolves.toBeDefined();
+      expect(document.body.textContent).not.toContain('RAW DAEMON DIAGNOSTIC');
+      expect(document.body.textContent).not.toContain('channels_binding_set_enabled_conflict');
     } finally {
       await fixture.dispose();
     }

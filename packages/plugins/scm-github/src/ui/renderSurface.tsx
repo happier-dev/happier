@@ -71,7 +71,6 @@ import {
   defineUiSurface,
   usePluginTranslation,
   useExecutePluginAction,
-  usePluginHostApi,
   useReviewCommentProposalsForEntry,
   useSurfaceContext,
   type ReviewCommentProposalReadV1,
@@ -130,6 +129,7 @@ import {
   type GithubPullRequestReviewVerdictV1,
 } from '../triage/mutations/contracts.js';
 import type { GithubTriageKindIdV1 } from '../triage/types.js';
+import type { GithubRepositoryCapabilitiesV1 } from '../triage/capabilities.js';
 
 import {
   projectGithubFeedback,
@@ -138,18 +138,13 @@ import {
   type GithubFeedbackViewV1,
 } from './detail/feedback.js';
 import {
-  buildGithubFixCiSessionSeed,
-  requestGithubFixCiSession,
-  type GithubFixCiSessionHostV1,
-  type GithubFixCiSessionSeedV1,
-} from './detail/fixCi.js';
-import {
   projectGithubDetailBody,
   type GithubDetailBodyV1,
   type GithubDetailFieldV1,
 } from './detail/model.js';
 import {
   useGithubChangedFiles,
+  useGithubCapabilities,
   useGithubChecks,
   useGithubFeedbackComments,
   useGithubFeedbackRequests,
@@ -717,10 +712,12 @@ function MergeWrite({
   input,
   terminal,
   onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   terminal: boolean;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubRepositoryCapabilitiesV1;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [mergeMethod, setMergeMethod] = React.useState<GithubMergeMethodV1 | null>(null);
@@ -742,6 +739,8 @@ function MergeWrite({
     [input, mergeMethod],
   );
   const head = input.observation.nativeRevision;
+  const allowedMethods = GITHUB_MERGE_METHODS_V1.filter((method) =>
+    capabilities.mergeMethods[method].kind === 'available');
 
   if (!addressable) {
     // A merge is pinned to the head the user saw. Without one there is nothing
@@ -757,11 +756,32 @@ function MergeWrite({
     );
   }
 
+  if (allowedMethods.length === 0) {
+    const exposed = GITHUB_MERGE_METHODS_V1.map((method) => capabilities.mergeMethods[method]);
+    const reason = exposed.some((value) => value.kind === 'denied' && value.code === 'repository_archived')
+      ? text('plugins.github.ui.capabilities.archived', 'This repository is archived.')
+      : exposed.every((value) => value.kind === 'unavailable' && value.code === 'repository_unsupported')
+        ? text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.')
+        : text('plugins.github.ui.capabilities.unknown', 'GitHub did not expose enough permission information to enable this change.');
+    return (
+      <Stack gap="small">
+        <Button
+          title="Merge pull request"
+          titleKey="plugins.github.ui.mutations.merge"
+          variant="primary"
+          disabled
+          onPress={() => {}}
+        />
+        <Text variant="caption" tone="neutral" value={reason} />
+      </Stack>
+    );
+  }
+
   return (
     <Stack gap="small">
       <Form.Select
         label={text('plugins.github.ui.mutations.mergeMethod', 'Merge method')}
-        options={GITHUB_MERGE_METHODS_V1.map((method) => ({
+        options={allowedMethods.map((method) => ({
           value: method,
           label: text(MERGE_METHOD_COPY[method].key, MERGE_METHOD_COPY[method].fallback),
         }))}
@@ -1443,19 +1463,47 @@ function IssueWrites({
   );
 }
 
+function githubOperationCapabilityReason(
+  text: PluginTranslate,
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>,
+  operation: keyof GithubRepositoryCapabilitiesV1['operations'],
+): string | null {
+  if (capabilities.kind === 'loading') {
+    return text('plugins.github.ui.capabilities.checking', 'Checking repository permissions…');
+  }
+  if (capabilities.kind === 'unavailable') {
+    return text('plugins.github.ui.capabilities.unavailable', 'GitHub repository permissions could not be read.');
+  }
+  const availability = capabilities.value.operations[operation];
+  if (availability.kind === 'available') return null;
+  if (availability.code === 'repository_archived') {
+    return text('plugins.github.ui.capabilities.archived', 'This repository is archived.');
+  }
+  if (availability.code === 'repository_unsupported') {
+    return text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.');
+  }
+  if (availability.code === 'forbidden_by_forge') {
+    return text('plugins.github.ui.capabilities.forbidden', 'Your GitHub repository role does not allow this change.');
+  }
+  return text('plugins.github.ui.capabilities.unknown', 'GitHub did not expose enough permission information to enable this change.');
+}
+
 function WritesSection({
   input,
   kindId,
   mergeSignature,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   kindId: GithubTriageKindIdV1;
   mergeSignature: GithubMergeSignatureStateV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement | null {
+  const text = usePluginTranslation();
   const offered = githubOfferedMutationsV1({
     kindId,
     state: input.observation.snapshot.state,
@@ -1465,12 +1513,28 @@ function WritesSection({
     [input],
   );
   if (offered.length === 0 && kindId !== 'pull-request') return null;
+  const representative = kindId === 'issue' ? 'issueComment' : 'pullRequestClose';
+  const readyCapabilities = capabilities.kind === 'ready' ? capabilities.value : null;
+  const reason = githubOperationCapabilityReason(text, capabilities, representative);
 
   return (
     <Stack gap="small">
       <Divider />
       {kindId === 'pull-request' ? <GithubMergeSignature state={mergeSignature} /> : null}
-      {offered.length === 0 ? null : (
+      {reason === null ? null : (
+        <Stack gap="small">
+          <Button
+            title="Changes unavailable"
+            titleKey="plugins.github.ui.capabilities.changesUnavailable"
+            variant="secondary"
+            disabled
+            onPress={() => {}}
+          />
+          <Text variant="caption" tone="neutral" value={reason} />
+        </Stack>
+      )}
+      {reason !== null ? null : (
+      <>{offered.length === 0 ? null : (
         <>
       <Text
         variant="label"
@@ -1503,6 +1567,7 @@ function WritesSection({
                   input={input}
                   terminal={mergeSignature.terminal}
                   onObserved={onObserved}
+                  capabilities={readyCapabilities as GithubRepositoryCapabilitiesV1}
                 />
               )
               : null}
@@ -1540,6 +1605,7 @@ function WritesSection({
           </Stack>
         )}
         </>
+      )}</>
       )}
     </Stack>
   );
@@ -1556,6 +1622,7 @@ function OverviewPanel({
   mergeSignature,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   body: GithubDetailBodyV1;
   input: TriageDetailSurfaceInputV1;
@@ -1565,6 +1632,7 @@ function OverviewPanel({
   mergeSignature: GithubMergeSignatureStateV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const statusFields = body.fields.filter(
@@ -1633,6 +1701,7 @@ function OverviewPanel({
           mergeSignature={mergeSignature}
           onObserved={onObserved}
           publicationProposals={publicationProposals}
+          capabilities={capabilities}
         />
       </Stack>
     </ScrollArea>
@@ -1995,13 +2064,11 @@ function checksRollup(view: GithubChecksViewV1): readonly MetadataEntry[] {
 
 function ChecksBody({
   view,
-  repository,
   locale,
   nowMs,
   onRefresh,
 }: Readonly<{
   view: GithubChecksViewV1;
-  repository: string;
   locale: string;
   nowMs: number;
   onRefresh: () => void;
@@ -2136,49 +2203,11 @@ function ChecksBody({
                   )}
                   />
                 )}
-              <FixCiSessionButton
-                seed={buildGithubFixCiSessionSeed({
-                  repository,
-                  headRevision: view.headRevision,
-                  check: row,
-                })}
-              />
             </Row>
           )}
         />
       )}
     />
-  );
-}
-
-function FixCiSessionButton({
-  seed,
-}: Readonly<{ seed: GithubFixCiSessionSeedV1 | null }>): React.ReactElement | null {
-  const text = usePluginTranslation();
-  const host = usePluginHostApi() as unknown as GithubFixCiSessionHostV1;
-  const [status, setStatus] = React.useState<'idle' | 'pending' | 'seeded' | 'failed'>('idle');
-  if (seed === null) return null;
-  return (
-    <Stack gap="small">
-      <Button
-        title={status === 'seeded' ? 'Fix CI Session opened' : 'Fix CI in a Session'}
-        titleKey={status === 'seeded'
-          ? 'plugins.github.ui.fixCiSessionOpened'
-          : 'plugins.github.ui.fixCiInSession'}
-        variant="secondary"
-        busy={status === 'pending'}
-        disabled={status === 'pending' || status === 'seeded'}
-        onPress={() => {
-          setStatus('pending');
-          void requestGithubFixCiSession(host, seed).then((result) => {
-            setStatus(result.status === 'seeded' ? 'seeded' : 'failed');
-          });
-        }}
-      />
-      {status === 'failed'
-        ? <Text variant="caption" tone="danger">{text('plugins.github.ui.fixCiSessionFailed', 'The New Session screen could not be opened.')}</Text>
-        : null}
-    </Stack>
   );
 }
 
@@ -2213,7 +2242,6 @@ function ChecksPanel({
   return (
     <ChecksBody
       view={checks.value}
-      repository={input.observation.snapshot.scopeLabel}
       locale={locale}
       nowMs={nowMs}
       onRefresh={controller.refresh}
@@ -2523,6 +2551,7 @@ function FeedbackFindingRow({
   nowMs,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   finding: GithubFeedbackFindingV1;
   input: TriageDetailSurfaceInputV1;
@@ -2530,6 +2559,7 @@ function FeedbackFindingRow({
   nowMs: number;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   if (finding.resource === 'comment') {
@@ -2584,6 +2614,7 @@ function FeedbackFindingRow({
           nowMs={nowMs}
           onObserved={onObserved}
           publicationProposals={publicationProposals}
+          capabilities={capabilities}
         />
       )
       : (
@@ -2595,6 +2626,7 @@ function FeedbackFindingRow({
           nowMs={nowMs}
           onObserved={onObserved}
           publicationProposals={publicationProposals}
+          capabilities={capabilities}
         />
       );
   }
@@ -2624,6 +2656,7 @@ function ThreadFeedbackFinding({
   nowMs,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   finding: GithubThreadFindingV1;
@@ -2634,6 +2667,7 @@ function ThreadFeedbackFinding({
   nowMs: number;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const location = finding.path === null
@@ -2648,6 +2682,13 @@ function ThreadFeedbackFinding({
   const action = nextResolved
     ? text('plugins.github.ui.mutations.thread.resolve', 'Resolve conversation')
     : text('plugins.github.ui.mutations.thread.reopen', 'Reopen conversation');
+  const resolutionReason = githubOperationCapabilityReason(
+    text,
+    capabilities,
+    'pullRequestThreadResolution',
+  );
+  const replyReason = githubOperationCapabilityReason(text, capabilities, 'pullRequestThreadReply');
+  const capabilityReason = resolutionReason ?? replyReason;
   return (
       <Stack gap="small">
         <Item
@@ -2674,7 +2715,7 @@ function ThreadFeedbackFinding({
         {loadMore === undefined
           ? null
           : <Button title="Load earlier replies" titleKey="plugins.github.ui.loadEarlierReplies" variant="secondary" busy={pending} onPress={loadMore} />}
-        <ExactWrite
+        {capabilityReason === null ? <><ExactWrite
           localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution}
           payload={payload}
           title={`${action} at ${location}`}
@@ -2691,7 +2732,22 @@ function ThreadFeedbackFinding({
           kind="thread-reply"
           threadId={finding.id}
           onObserved={onObserved}
-        />
+        /></> : (
+          <Stack gap="small">
+            <Button
+              title="Changes unavailable"
+              titleKey="plugins.github.ui.capabilities.changesUnavailable"
+              variant="secondary"
+              disabled
+              onPress={() => {}}
+            />
+            <Text
+              variant="caption"
+              tone="neutral"
+              value={capabilityReason}
+            />
+          </Stack>
+        )}
       </Stack>
   );
 }
@@ -2704,6 +2760,7 @@ function PagedThreadFeedbackFinding({
   nowMs,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   finding: GithubThreadFindingV1;
@@ -2712,6 +2769,7 @@ function PagedThreadFeedbackFinding({
   nowMs: number;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const replies = useGithubFeedbackThreadReplies(input, finding.id, firstCursor);
   return (
@@ -2725,6 +2783,7 @@ function PagedThreadFeedbackFinding({
       nowMs={nowMs}
       onObserved={onObserved}
       publicationProposals={publicationProposals}
+      capabilities={capabilities}
     />
   );
 }
@@ -2743,12 +2802,14 @@ function FeedbackPanel({
   nowMs,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   locale: string;
   nowMs: number;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const conversation = useGithubFeedbackComments(input);
@@ -2985,6 +3046,7 @@ function FeedbackPanel({
           nowMs={nowMs}
           onObserved={onObserved}
           publicationProposals={publicationProposals}
+          capabilities={capabilities}
         />
       )}
     />
@@ -3127,6 +3189,7 @@ function GithubDetailBody({
     launched.observation.entryRef.kindId,
   ]);
   const input = launched;
+  const capabilities = useGithubCapabilities(input);
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
   const publicationProposals = useReviewCommentProposalsForEntry({
     linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
@@ -3152,6 +3215,7 @@ function GithubDetailBody({
         mergeSignature={mergeSignature}
         onObserved={onObserved}
         publicationProposals={publicationProposals}
+        capabilities={capabilities}
       />
     ),
     timeline: <TimelinePanel input={input} locale={locale} nowMs={nowMs} />,
@@ -3164,6 +3228,7 @@ function GithubDetailBody({
         nowMs={nowMs}
         onObserved={onObserved}
         publicationProposals={publicationProposals}
+        capabilities={capabilities}
       />
     ),
     comments: <CommentsPanel input={input} locale={locale} nowMs={nowMs} />,

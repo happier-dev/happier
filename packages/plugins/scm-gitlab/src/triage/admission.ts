@@ -14,14 +14,8 @@
  * here. The account is rematerialized on every invocation and grants no standing
  * authority.
  *
- * The Action entry points install the source-owned deadline before calling this
- * admission rule and dispose it after the whole operation settles. That keeps
- * account materialization and every later request under one signal while still
- * letting normal completion clear the timer.
- *
- * `scan`, `get` and `listInstances` deliberately do NOT pass through here.
- * §5.2 gives those three to Triage, and a second deadline underneath a
- * target-owned one would be a second owner of when that invocation gives up.
+ * Action entry points carry the host-stamped invocation signal through this
+ * admission rule and every later request. This source adds no second timer.
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -114,7 +108,6 @@ export function resolveGitlabItemRoute(
  * past it the honest answer is that this panel could not be filled, which the surface can show
  * and retry, rather than a spinner that outlives the reader's attention.
  */
-export const GITLAB_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
 
 /**
  * How long one exact GitLab mutation may take, end to end.
@@ -124,7 +117,6 @@ export const GITLAB_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
  * longer than a detail read's because it contains three provider round trips, and because a
  * mutation that times out is settled by its own confirming read rather than by a retry.
  */
-export const GITLAB_MUTATION_DEADLINE_MS = 45_000;
 
 export type GitlabAdmittedInvocation =
   | Readonly<{

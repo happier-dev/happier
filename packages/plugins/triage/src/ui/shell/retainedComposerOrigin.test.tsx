@@ -34,11 +34,15 @@ type Props = Readonly<{
 function render(initial: Props): Readonly<{
     origin: () => ComposerRefV1 | null;
     update: (next: Props) => Promise<void>;
+    /** Value rendered during each commit, oldest first. */
+    renderedOrigins: () => readonly (ComposerRefV1 | null)[];
 }> {
     let current: ComposerRefV1 | null = null;
+    const rendered: Array<ComposerRefV1 | null> = [];
 
     function Harness(props: Props): React.ReactElement {
         current = useTriageRetainedComposerOriginV1(props);
+        rendered.push(current);
         return <span>{current === null ? 'none' : 'bound'}</span>;
     }
 
@@ -49,7 +53,11 @@ function render(initial: Props): Readonly<{
 
     return {
         origin: () => current,
-        update: async (next) => { await act(async () => { root?.render(<Harness {...next} />); }); },
+        update: async (next) => {
+            rendered.length = 0;
+            await act(async () => { root?.render(<Harness {...next} />); });
+        },
+        renderedOrigins: () => rendered,
     };
 }
 
@@ -99,6 +107,76 @@ describe('useTriageRetainedComposerOriginV1', () => {
             selectedEntryRef: LAUNCHED,
         });
 
+        expect(harness.origin()).toBeNull();
+    });
+
+    it('derives the Composer origin in the very commit that delivers the launch', async () => {
+        // The deciding derivation case: the origin is a fact of the open the
+        // reader just performed, not one commit later.
+        const harness = render({
+            launch: buildTriageEntryDetailLaunchInput({
+                entryRef: LAUNCHED,
+                sourceInstance: { source: LAUNCHED.source, sourceInstanceId: 'instance-a' },
+                originComposer: COMPOSER,
+            }),
+            selectedEntryRef: LAUNCHED,
+        });
+
+        expect(harness.renderedOrigins()[0]).toEqual(COMPOSER);
+    });
+
+    it('never renders the previous Composer for the commit that opens from another Composer', async () => {
+        const composerB = Object.freeze({ kind: 'session', sessionId: 'session-b' }) as ComposerRefV1;
+        const harness = render({
+            launch: buildTriageEntryDetailLaunchInput({
+                entryRef: LAUNCHED,
+                sourceInstance: { source: LAUNCHED.source, sourceInstanceId: 'instance-a' },
+                originComposer: COMPOSER,
+            }),
+            selectedEntryRef: LAUNCHED,
+        });
+        expect(harness.origin()).toEqual(COMPOSER);
+
+        await harness.update({
+            launch: buildTriageEntryDetailLaunchInput({
+                entryRef: LAUNCHED,
+                sourceInstance: { source: LAUNCHED.source, sourceInstanceId: 'instance-a' },
+                originComposer: composerB,
+            }),
+            selectedEntryRef: LAUNCHED,
+        });
+
+        expect(harness.renderedOrigins().length).toBeGreaterThan(0);
+        expect(harness.renderedOrigins().every((origin) => origin === composerB)).toBe(true);
+        expect(harness.origin()).toEqual(composerB);
+    });
+
+    it('clears a retained Composer origin the moment a same-entry app launch arrives, and keeps it cleared', async () => {
+        const harness = render({
+            launch: buildTriageEntryDetailLaunchInput({
+                entryRef: LAUNCHED,
+                sourceInstance: { source: LAUNCHED.source, sourceInstanceId: 'instance-a' },
+                originComposer: COMPOSER,
+            }),
+            selectedEntryRef: LAUNCHED,
+        });
+        expect(harness.origin()).toEqual(COMPOSER);
+
+        await harness.update({
+            launch: buildTriageEntryDetailLaunchInput({
+                entryRef: LAUNCHED,
+                sourceInstance: { source: LAUNCHED.source, sourceInstanceId: 'instance-a' },
+            }),
+            selectedEntryRef: LAUNCHED,
+        });
+
+        // The app-origin open replaced the open's origin fact: the earlier
+        // Composer never renders for that commit and does not return after
+        // the launch retires.
+        expect(harness.renderedOrigins().length).toBeGreaterThan(0);
+        expect(harness.renderedOrigins().every((origin) => origin === null)).toBe(true);
+
+        await harness.update({ launch: undefined, selectedEntryRef: LAUNCHED });
         expect(harness.origin()).toBeNull();
     });
 });

@@ -782,6 +782,7 @@ async function seedNewSession(input: Readonly<{
         checkoutIntent: input.checkoutIntent,
         ...(input.placement.kind !== 'exact' ? {} : {
             placement: {
+                kind: 'exactTarget',
                 serverId: input.placement.placement.executionTarget.serverId,
                 machineId: input.placement.placement.executionTarget.machineId,
                 ...(input.checkoutIntent === 'preparedReviewWorkspace'

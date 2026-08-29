@@ -60,6 +60,7 @@ import {
 } from './githubRepositoryEventsCursor.js';
 import { GithubObservationRequestCoalescer } from './githubRequestCoalescer.js';
 import { requireGithubAccountStorage } from '../requiredAccountStorage.js';
+import { githubAutomationAdmissionCounterDeltas } from './githubAutomationAdmissionAccounting.js';
 
 const REPOSITORY_EVENTS_ENDPOINT_KIND = 'repositoryEvents' as const;
 const REPOSITORY_EVENTS_PAGE_SIZE = 100;
@@ -1427,6 +1428,10 @@ async function runObservedSource(input: Readonly<{
     let safeObservationCount = 0;
     let admittedDelta = 0;
     let skippedDelta = 0;
+    const matchingObservedDelta = classified.observations.filter(
+      (observation) => observation.eventRef.pluginId === input.source.definition.eventRef.pluginId
+        && observation.eventRef.localId === input.source.definition.eventRef.localId,
+    ).length;
     let lastContiguousOccurrenceId = existing.row.value.payload.lastContiguousOccurrenceId;
     let unsafe: SourceFailureStatusV1 | null = null;
     for (const observation of classified.observations) {
@@ -1460,8 +1465,9 @@ async function runObservedSource(input: Readonly<{
       }
       safeObservationCount += 1;
       lastContiguousOccurrenceId = observation.occurrenceId;
-      if (outcome.kind === 'admitted') admittedDelta += 1;
-      if (outcome.kind === 'skipped') skippedDelta += 1;
+      const counterDeltas = githubAutomationAdmissionCounterDeltas(outcome);
+      admittedDelta += counterDeltas.admittedDelta;
+      skippedDelta += counterDeltas.skippedDelta;
     }
 
     const checkpoint = checkpointForSafeObservations({
@@ -1490,7 +1496,10 @@ async function runObservedSource(input: Readonly<{
       lastObservedAt: observedAtMs,
       lastDispositionAt: checkpoint === null ? null : observedAtMs,
       nextRetryAt: unsafe?.nextRetryAt ?? null,
-      observedDelta: classified.observations.length,
+      // Cursor safety requires traversing the shared repository timeline, but
+      // source counters describe this semantic trigger rather than its sibling
+      // GitHub Event kinds.
+      observedDelta: matchingObservedDelta,
       admittedDelta,
       skippedDelta,
     });

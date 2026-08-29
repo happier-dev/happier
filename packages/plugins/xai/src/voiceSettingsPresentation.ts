@@ -1,5 +1,5 @@
 /** xAI Realtime Voice settings presentation. */
-import { XAI_SUPPORTED_LANGUAGE_HINTS } from '../../protocol/voice/settings.js';
+import { XAI_SUPPORTED_LANGUAGE_HINTS } from './protocol/voice/settings.js';
 
 const vadField = (suffix: string, bounds: Readonly<{ min: number; max: number; integer?: boolean }>) => Object.freeze({
   suffix,
@@ -13,9 +13,8 @@ const vadField = (suffix: string, bounds: Readonly<{ min: number; max: number; i
 });
 
 export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
-  kind: 'voice.internal.realtime-settings.v1' as const,
-  providerId: 'happier.voice.xai/realtime-grok' as const,
-  mode: 'byo' as const,
+  kind: 'voice.provider-settings.v1' as const,
+  modes: Object.freeze(['byo'] as const),
   titleKey: 'settingsVoice.realtimeProviders.setup.title',
   footerKey: 'settingsVoice.realtimeProviders.xai.setup.footer',
   credential: Object.freeze({
@@ -116,14 +115,9 @@ export const XAI_REALTIME_SETTINGS_SECTION = Object.freeze({
       kind: 'privacy_opt_in' as const,
       path: 'resumptionEnabled',
       defaultValue: false,
-      retentionMinutes: 30,
       forgetAction: 'forget_provider_conversation' as const,
       titleKey: 'settingsVoice.realtimeProviders.fields.resumption.title',
       subtitleKey: 'settingsVoice.realtimeProviders.fields.resumption.subtitle',
     }),
   ]),
 });
-
-export function createXaiRealtimeSettingsSection() {
-  return XAI_REALTIME_SETTINGS_SECTION;
-}

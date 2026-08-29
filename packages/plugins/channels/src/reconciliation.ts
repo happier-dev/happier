@@ -216,6 +216,12 @@ function requiresFullSharedMessageContent(
  * The sole list/read projection gate. The persisted current row and the
  * immediate host-stamped caller must carry the exact same materialization;
  * output deliberately retains neither transport nor provenance authority.
+ *
+ * Eligibility does not depend on the connection's persisted transport kind:
+ * every truthful kind (checkpointedPull, socket, durablePush) is listable so
+ * providers such as Telegram observe their own checkpointed-pull connection
+ * through source setup. Caller materialization, history-gap custody, and
+ * destructive-replacement exclusions remain the authority gates.
  */
 function projectReconciliationSnapshotForCaller(
   connection: ConversationReconciliationConnectionStateV1,
@@ -223,10 +229,9 @@ function projectReconciliationSnapshotForCaller(
   bindingPolicies: readonly ConversationReconciliationBindingPolicyStateV1[],
 ): ConversationProviderConnectionReconciliationSnapshotV1 | undefined {
   if (
-    connection.transport.kind !== 'socket'
     // The lifecycle owner records an incompatible replacement's gap before the
     // replacement becomes visible to ordinary reconciliation.
-    || connection.historyGap !== null
+    connection.historyGap !== null
     // A `none` deletion state with a pending old stop is the Collection
     // lifecycle's transfer-only shape. Destructive replacements cannot start
     // reconciliation until that exact custody is proven or explicitly accepted.

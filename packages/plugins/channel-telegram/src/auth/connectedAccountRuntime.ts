@@ -1,5 +1,6 @@
 import type {
   ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
+  ConnectedAccountAuthCompletionResult as PluginConnectedAccountAuthCompletionResult,
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
@@ -23,10 +24,10 @@ type ConfirmedTelegramBot = Readonly<{
   status: 'confirmed';
   identity: TelegramBotIdentity;
 }>;
-type TelegramBotProbeFailure = Readonly<{
-  status: 'rejected' | 'unavailable';
-  diagnostic: ReturnType<typeof diagnostic>;
-}>;
+type TelegramBotProbeFailure = Extract<
+  PluginConnectedAccountAuthCompletionResult,
+  Readonly<{ status: 'rejected' | 'unavailable' }>
+>;
 type TelegramConnectedAccountReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
 
 function isAllowedTelegramOrigin(origin: string): boolean {

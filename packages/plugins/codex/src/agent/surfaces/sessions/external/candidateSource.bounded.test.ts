@@ -366,6 +366,56 @@ describe('Codex rollout candidate paging bounds', () => {
     }
   });
 
+  it('serves an ordinary unsearched browse from one bounded chunk without draining the corpus', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-ordinary-'));
+    try {
+      const codexHome = await writeCandidateCorpus(root, 24);
+
+      fsProbe.openCalls = 0;
+      fsProbe.readCalls = 0;
+      fsProbe.statCalls = 0;
+      // No searchMode and no searchTerm: the ordinary mounted machine Browse.
+      // It must select the incumbent bounded chunk/preparation mode rather
+      // than enumerate the whole rollout corpus for its ordering.
+      const firstPage = await listCodexSessionCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome },
+        exec: fastModeExec,
+        limit: 4,
+      });
+
+      expect(firstPage.candidates).toHaveLength(4);
+      expect(firstPage.preparation).toEqual({ kind: 'building_candidate_index', scanned: 4 });
+      expect(firstPage.nextCursor).toEqual(expect.any(String));
+      // Complete work stays proportional to the chunk: a corpus far larger than
+      // one chunk must not be walked (statted) for an unsearched first page.
+      expect(fsProbe.statCalls).toBeLessThanOrEqual((4 * 2) + 8);
+      expect(fsProbe.openCalls).toBeLessThanOrEqual(4);
+
+      // Continuation stays stable: the next chunk advances without repeating
+      // or draining the corpus in one call.
+      const secondPage = await listCodexSessionCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: { CODEX_HOME: codexHome },
+        exec: fastModeExec,
+        cursor: firstPage.nextCursor ?? undefined,
+        limit: 4,
+      });
+      expect(secondPage.candidates).toHaveLength(4);
+      expect(secondPage.preparation?.scanned).toBe(8);
+      expect(
+        new Set([
+          ...firstPage.candidates.map((candidate) => candidate.remoteSessionId),
+          ...secondPage.candidates.map((candidate) => candidate.remoteSessionId),
+        ]).size,
+      ).toBe(8);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps selected-candidate title extraction within the rollout head budget', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-candidate-title-head-'));
     try {

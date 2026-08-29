@@ -108,8 +108,6 @@ import {
 } from './corpus/collections/ids.js';
 import { TRIAGE_DISPLAY_NAME } from './displayName.js';
 import { mintTriageOpaqueIdV1 } from './opaqueId.js';
-import { TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1 } from './settings/actionsContribution.js';
-import { TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1 } from './settings/savedViewsContribution.js';
 import {
   TRIAGE_ENTRIES_COMPACT_ARTIFACT_ID_V1,
   TRIAGE_ENTRIES_COMPACT_RENDERER_ID_V1,
@@ -154,7 +152,7 @@ function createTriagePlugin() {
       required: [{
         id: 'account-storage',
         capability: 'storage.account',
-        reason: 'Read and write the source instances the user configured, read the list window assembled from them, and read and write the pins the user placed on entries.',
+        reason: 'Read and write configured sources, saved views, entry actions, Session links, and pins in this Happier Account.',
         scope: { enabled: true },
       }],
       optional: [],
@@ -405,9 +403,7 @@ function createTriagePlugin() {
         execution: { target: 'daemon' },
         inputSchema: TriageReadSavedViewsInputV1Schema,
         resultSchema: TriageReadSavedViewsResultV1Schema,
-        // No `hostAccess` entry: saved views are Account Settings, which the
-        // declared Settings contribution authorizes. Naming `account-storage`
-        // here would claim Collection access this Action never uses.
+        hostAccess: ['account-storage'],
         run: createTriageReadSavedViewsActionHandler(),
       },
       [TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1]: {
@@ -429,6 +425,7 @@ function createTriagePlugin() {
         execution: { target: 'daemon' },
         inputSchema: TriageAdministerSavedViewInputV1Schema,
         resultSchema: TriageAdministerSavedViewResultV1Schema,
+        hostAccess: ['account-storage'],
         run: createTriageAdministerSavedViewActionHandler(),
       },
       [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: {
@@ -443,6 +440,7 @@ function createTriagePlugin() {
         execution: { target: 'daemon' },
         inputSchema: TriageReadActionsInputV1Schema,
         resultSchema: TriageReadActionsResultV1Schema,
+        hostAccess: ['account-storage'],
         run: createTriageReadActionsActionHandler(),
       },
       [TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1]: {
@@ -462,17 +460,9 @@ function createTriagePlugin() {
         execution: { target: 'daemon' },
         inputSchema: TriageAdministerActionInputV1Schema,
         resultSchema: TriageAdministerActionResultV1Schema,
+        hostAccess: ['account-storage'],
         run: createTriageAdministerActionActionHandler(),
       },
-    },
-    settings: {
-      [TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1.id]: TRIAGE_SAVED_VIEWS_SETTINGS_CONTRIBUTION_V1,
-      // Declared here or it does not exist. The retired `triage.agentSelection`
-      // built a whole setting, a choices resolver and a contribution that this
-      // object never named, and it was dead for weeks with every source test
-      // green — so `packagedManifest.test.ts` asserts the PACKAGED bytes carry
-      // this field, not that this line exists.
-      [TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1.id]: TRIAGE_ACTIONS_SETTINGS_CONTRIBUTION_V1,
     },
     /**
      * The four mounted surfaces this package actually ships.
@@ -558,6 +548,9 @@ function createTriagePlugin() {
         id: TRIAGE_SESSION_ENTRIES_RENDERER_ID_V1,
         kind: 'reactNative',
         artifact: TRIAGE_SESSION_ENTRIES_ARTIFACT_ID_V1,
+        // A resolved linked row opens the canonical Triage destination through
+        // the generic host navigation seam; unresolved rows remain read-only.
+        requiredHostMethods: ['openSurface'],
       }],
     },
     composer: {

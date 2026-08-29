@@ -3,7 +3,7 @@ import { act, cloneElement, type ReactElement } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import type { PluginUiAccountSettings, PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import type { RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -42,9 +42,8 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
-import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
-import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
+import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import type { TriageSessionActionInvokerV1 } from '../sessions/entrySessionOpen.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
@@ -164,8 +163,8 @@ function createHarness(options: Readonly<{
 }> = {}) {
     const kindId = options.kindId ?? 'pull-request';
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
-    const accountSettings = createTestkitAccountSettings(
-        options.actions === undefined ? {} : { [TRIAGE_ACTIONS_SETTING_ID_V1]: options.actions },
+    const accountKv = createTestkitAccountKv(
+        options.actions === undefined ? {} : { [TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1]: options.actions },
     );
     const referenceReads: string[] = [];
     const newSessionSeeds: unknown[] = [];
@@ -184,12 +183,6 @@ function createHarness(options: Readonly<{
         ['session-links', collections.sessionLinks],
         ['user-marks', collections.userMarks],
     ]);
-    const settings: PluginUiAccountSettings = {
-        snapshot: (request) => accountSettings.settings.snapshot(request),
-        get: (id, request) => accountSettings.settings.get(id, request),
-        set: (id, value, request) => accountSettings.settings.set(id, value, request),
-        reset: (id, request) => accountSettings.settings.reset(id, request),
-    };
     const dataClient = {
         collection(definition: Readonly<{ id: string }>) {
             const collection = collectionsById.get(definition.id);
@@ -199,8 +192,7 @@ function createHarness(options: Readonly<{
         async openCollectionQuery() {
             throw new Error('This mounted journey opens no declared UI query.');
         },
-        accountKv: createUnavailablePluginUiAccountKv(),
-        accountSettings: settings,
+        accountKv: accountKv.kv,
     } as unknown as PluginUiDataClient;
 
     // The actual Session-link writer runs below. This records its real durable
@@ -336,7 +328,7 @@ function createHarness(options: Readonly<{
         if (action === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) {
             return await readTriageActionsForSurface(
                 TriageReadActionsInputV1Schema.parse(request.input),
-                { settings: accountSettings.settings },
+                { catalog: accountKv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) },
             );
         }
         if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) {
@@ -542,24 +534,26 @@ afterEach(async () => {
 });
 
 
-const rowOptions = () => Array.from(
-    document.querySelectorAll<HTMLElement>('[role="option"]'),
+const gridRows = () => Array.from(
+    document.querySelectorAll<HTMLElement>('[role="grid"] [role="row"]'),
 );
-const optionNamed = (label: string) => rowOptions().find(
-    (option) => option.textContent?.includes(label),
+const rowNamed = (label: string) => gridRows().find(
+    (row) => row.textContent?.includes(label),
 );
-const selectedLabels = () => rowOptions()
-    .filter((option) => option.getAttribute('aria-selected') === 'true')
-    .map((option) => option.textContent ?? '');
+const selectedLabels = () => gridRows()
+    .filter((row) => row.getAttribute('aria-selected') === 'true')
+    .map((row) => row.textContent ?? '');
 
 async function pressRow(
     label: string,
     modifiers: Readonly<{ shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean }> = {},
 ): Promise<void> {
-    const option = optionNamed(label);
-    expect(option).toBeDefined();
+    const row = rowNamed(label);
+    const primaryAction = row?.querySelector<HTMLElement>('[role="gridcell"] [role="button"]');
+    expect(row).toBeDefined();
+    expect(primaryAction).not.toBeNull();
     await act(async () => {
-        option?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...modifiers }));
+        primaryAction?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, ...modifiers }));
     });
 }
 
@@ -938,6 +932,49 @@ describe('selecting several PRs & Issues rows', () => {
         expect(document.body.textContent).toContain(
             'Use Attach to New Session so its prompt and entries are ready before anything starts.',
         );
+        await expect(shell.getByRole('status', {
+            name: 'This action needs review before sending. Use Attach to New Session so its prompt and entries are ready before anything starts.',
+        })).resolves.toBeDefined();
+    });
+
+    it('refuses a direct formal-review destination as an announced status before any review or Session starts', async () => {
+        // A formal review has one selected-PR scope and one prepared workspace.
+        // A multi-entry bulk destination cannot truthfully choose either fact,
+        // so V1 reports the refusal and leaves Attach to New Session available
+        // without creating a Triage-local collection of drafts.
+        const harness = createHarness({
+            actions: {
+                v: 1,
+                actions: [{
+                    actionId: 'formal-review',
+                    label: 'Formal review',
+                    enabled: true,
+                    appliesTo: ['pullRequest'],
+                    profileId: null,
+                    workspaceMode: 'pull_request',
+                    target: { kind: 'reviewStart', promptInvocationId: null },
+                }],
+            },
+        });
+        const { shell, locations } = await mountShell(harness);
+
+        await pressRow('Replace the duplicated normalizer', { ctrlKey: true });
+        await pressRow('Extract the selection reducer', { ctrlKey: true });
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: 'One session for all' }));
+        });
+        await settle();
+
+        expect(harness.referenceReads).toEqual([]);
+        expect(harness.lifecycle).toEqual([]);
+        expect(harness.spawnInputs).toEqual([]);
+        expect(harness.composerTransactions).toEqual([]);
+        expect(harness.newSessionSeeds).toEqual([]);
+        expect(harness.wasRetired).toBe(false);
+        expect(locations).toEqual([]);
+        await expect(shell.getByRole('status', {
+            name: 'A formal code review cannot be started in bulk from here, so nothing was started.',
+        })).resolves.toBeDefined();
     });
 
     it('admits every per-entry structured input before its Session can run', async () => {

@@ -144,6 +144,48 @@ class MemoryProjectionCollection {
   }
 }
 
+function persistedProjectionBindingRow(input: Readonly<{
+  revision?: number;
+  deliveryMode?: 'repliesOnly' | 'mirrorSession';
+}> = {}) {
+  const revision = input.revision ?? 7;
+  return {
+    rowId: 'binding-1',
+    revision,
+    value: {
+      id: 'binding-1',
+      'record-kind': 'binding',
+      v: 1,
+      'connection-id': 'connection-1',
+      'binding-id': 'binding-1',
+      'created-at': 100,
+      'updated-at': 100,
+      payload: {
+        endpoint: { kind: 'direct', audience: 'direct', id: 'chat-1' },
+        target: {
+          kind: 'session',
+          sessionId: 'session-1',
+          policy: {
+            deliveryMode: input.deliveryMode ?? 'mirrorSession',
+            permissionCeiling: 'read-only',
+            approvals: { kind: 'off' },
+            newSession: { kind: 'off' },
+          },
+        },
+        allowedPrincipalIds: ['person-1'],
+        allowBotSenders: false,
+        inputMode: 'allAllowedMessages',
+        inboundDebounceMs: 750,
+        linkPreviewPolicy: 'suppress',
+        senderFeedback: 'off',
+        authorityEpoch: 1,
+        enabled: true,
+        deletionState: 'none',
+      },
+    },
+  };
+}
+
 function actions(result: PluginActionResultById['session.transcript.get']) {
   const execute = vi.fn(async () => result);
   // Fixture boundary: the projection only invokes the public Actions service.
@@ -518,21 +560,7 @@ describe('Conversation Session projection no-history baseline', () => {
 describe('Conversation Session projection retained frontier', () => {
   it('accepts one exact persisted history gap at the current transcript tail', async () => {
     const collection = new MemoryProjectionCollection();
-    collection.rows.set('binding-1', {
-      rowId: 'binding-1',
-      revision: 7,
-      value: {
-        id: 'binding-1',
-        'record-kind': 'binding',
-        'connection-id': 'connection-1',
-        'binding-id': 'binding-1',
-        payload: {
-          enabled: true,
-          deletionState: 'none',
-          target: { kind: 'session', sessionId: 'session-1', policy: { deliveryMode: 'mirrorSession' } },
-        },
-      },
-    });
+    collection.rows.set('binding-1', persistedProjectionBindingRow());
     const frontierRow = createConversationSessionProjectionFrontierRow({
       bindingId: 'binding-1',
       targetSessionId: 'session-1',
@@ -572,25 +600,7 @@ describe('Conversation Session projection retained frontier', () => {
 
   it('reads the canonical binding/frontier pair and advances only with its binding-revision guard', async () => {
     const collection = new MemoryProjectionCollection();
-    collection.rows.set('binding-1', {
-      rowId: 'binding-1',
-      revision: 7,
-      value: {
-        id: 'binding-1',
-        'record-kind': 'binding',
-        'connection-id': 'connection-1',
-        'binding-id': 'binding-1',
-        payload: {
-          enabled: true,
-          deletionState: 'none',
-          target: {
-            kind: 'session',
-            sessionId: 'session-1',
-            policy: { deliveryMode: 'mirrorSession' },
-          },
-        },
-      },
-    });
+    collection.rows.set('binding-1', persistedProjectionBindingRow());
     const initialFrontier = createConversationSessionProjectionFrontierRow({
       bindingId: 'binding-1',
       targetSessionId: 'session-1',
@@ -660,24 +670,19 @@ describe('Conversation Session projection retained frontier', () => {
     })).resolves.toEqual({ kind: 'conflict' });
   });
 
-  it('fails closed when a canonical projection row loses an identity or timestamp scalar', async () => {
+  it('fails closed when the canonical binding or frontier row is malformed', async () => {
     const collection = new MemoryProjectionCollection();
-    collection.rows.set('binding-1', {
-      rowId: 'binding-1',
+    const canonicalBinding = persistedProjectionBindingRow({
       revision: 1,
+      deliveryMode: 'repliesOnly',
+    });
+    collection.rows.set('binding-1', {
+      ...canonicalBinding,
       value: {
-        id: 'binding-1',
-        'record-kind': 'binding',
-        'connection-id': ['not-a-connection-id'],
-        'binding-id': 'binding-1',
+        ...canonicalBinding.value,
         payload: {
-          enabled: true,
-          deletionState: 'none',
-          target: {
-            kind: 'session',
-            sessionId: 'session-1',
-            policy: { deliveryMode: 'repliesOnly' },
-          },
+          ...canonicalBinding.value.payload,
+          senderFeedback: 'not-a-policy',
         },
       },
     });
@@ -695,7 +700,13 @@ describe('Conversation Session projection retained frontier', () => {
     if (validBinding === undefined) throw new Error('expected binding fixture');
     collection.rows.set('binding-1', {
       ...validBinding,
-      value: { ...validBinding.value, 'connection-id': 'connection-1' },
+      value: {
+        ...validBinding.value,
+        payload: {
+          ...(validBinding.value.payload as Readonly<Record<string, unknown>>),
+          senderFeedback: 'off',
+        },
+      },
     });
     const frontier = createConversationSessionProjectionFrontierRow({
       bindingId: 'binding-1',

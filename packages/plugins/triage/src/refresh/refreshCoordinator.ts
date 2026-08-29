@@ -130,7 +130,7 @@ type RefreshSlot = {
 export function createTriageRefreshCoordinator(deps: Readonly<{
     /**
      * Runs one live materialization for the eligible configured-source set. It
-     * owns paging, mapping, and its own deadlines, and returns one outcome per
+     * owns paging and mapping, follows the caller lifetime, and returns one outcome per
      * source rather than rejecting.
      */
     runPass: (input: TriageRefreshPassInputV1) => Promise<readonly Readonly<{

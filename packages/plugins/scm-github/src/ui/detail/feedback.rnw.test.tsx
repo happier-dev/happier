@@ -167,6 +167,18 @@ async function mountFeedback(input: JsonValue): Promise<PluginUiTestkit> {
             } as JsonValue;
           }
           const localId = (action as { localId: string }).localId;
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities) {
+            return {
+              kind: 'capabilities',
+              operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+                .map((key) => [key, { kind: 'available' }])),
+              mergeMethods: {
+                merge: { kind: 'available' },
+                squash: { kind: 'available' },
+                rebase: { kind: 'available' },
+              },
+            } as JsonValue;
+          }
           if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback) {
             const connection = (actionInput as { connection: keyof typeof answers }).connection;
             dispatched.push(`${localId}:${connection}`);

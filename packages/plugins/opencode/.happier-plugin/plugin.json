@@ -5,13 +5,6 @@
     "agents": [
       {
         "capabilities": {
-          "executionRuns": {
-            "checkpoint": true,
-            "open": [
-              "create"
-            ],
-            "stop": true
-          },
           "sessions": {
             "cancel": true,
             "catalog": {

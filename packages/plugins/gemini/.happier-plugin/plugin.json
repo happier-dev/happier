@@ -5,13 +5,6 @@
     "agents": [
       {
         "capabilities": {
-          "executionRuns": {
-            "checkpoint": true,
-            "open": [
-              "create"
-            ],
-            "stop": true
-          },
           "sessions": {
             "cancel": true,
             "delivery": [
@@ -192,6 +185,12 @@
       "translations": [
         {
           "locale": "en",
+          "messages": {
+            "agentInput.connectedServiceLabel.gemini": "Google Gemini"
+          }
+        },
+        {
+          "locale": "de",
           "messages": {
             "agentInput.connectedServiceLabel.gemini": "Google Gemini"
           }

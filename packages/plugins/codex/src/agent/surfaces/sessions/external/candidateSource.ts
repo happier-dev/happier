@@ -814,13 +814,16 @@ export async function listCodexSessionCandidates(params: Readonly<{
   throwIfCodexExternalSessionInvocationStopped(params);
   const searchTerm = typeof params.searchTerm === 'string' ? params.searchTerm.trim().toLowerCase() : '';
   const limit = Math.max(1, Math.trunc(params.limit));
-  // An explicitly fast, unsearched browse builds the host candidate index from
-  // bounded scan chunks. Every invocation has execution authority; capability
-  // absence is not a second candidate-source decision path.
+  // Every unsearched browse — the ordinary mounted machine Browse included —
+  // builds the host candidate index from bounded scan chunks. An empty query
+  // has nothing to search, so the merged whole-corpus ordering (and its
+  // MAX_SAFE_INTEGER enumeration) is reserved for real searches. Every
+  // invocation has execution authority; capability absence is not a second
+  // candidate-source decision path.
   // Search — including the index owner's own per-row hydration — keeps the exact
   // filename/metadata search path, which prunes by filename before it stats or
   // opens anything and so answers an id lookup in one call.
-  if (params.searchMode === 'fast' && !searchTerm) {
+  if (!searchTerm) {
     return await scanBoundedRolloutCandidateChunk({
       source: params.source,
       activeServerDir: params.activeServerDir,

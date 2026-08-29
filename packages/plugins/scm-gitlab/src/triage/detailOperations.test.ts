@@ -32,7 +32,6 @@ import {
   type RecordedGitlabRequest,
   type StubGitlabResponse,
 } from './testkit/gitlabTriage.test-support.js';
-import { GITLAB_MOUNTED_DETAIL_DEADLINE_MS } from './admission.js';
 
 const MERGE_REQUEST_REF = Object.freeze({
   kindId: 'merge-request',
@@ -713,35 +712,28 @@ describe('GitLab discussions plane', () => {
 });
 
 
-/**
- * The source-owned deadline on a mounted GitLab detail read.
- *
- * `CONTRACT.md` §5.2 gives the SOURCE the private deadline for every mounted detail read, and
- * gives it no public field and no host timer to borrow one from. Without it a panel whose provider
- * stops answering waits on the caller's signal alone — which, for a mounted surface, means until
- * the surface is torn down. The reader sees a spinner that never resolves beside retained sibling
- * content that quietly disappears, and the invocation holds its account materialization open the
- * whole time.
- */
-describe('the GitLab detail deadline', () => {
+/** Caller cancellation is the mounted detail read's lifetime unless its owner supplies a bound. */
+describe('the GitLab detail lifetime', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('abandons a mounted detail read on its own deadline instead of waiting on the caller', async () => {
-    vi.useFakeTimers();
-    const transport = createStubGitlabTransport({ respond: () => GITLAB_STUB_NEVER_ANSWERS });
+  it('abandons a mounted detail read when its caller cancels', async () => {
+    const caller = new AbortController();
+    const transport = createStubGitlabTransport({
+      respond: () => GITLAB_STUB_NEVER_ANSWERS,
+      signal: caller.signal,
+    });
 
     const pending = listGitlabNotes(planeInput(), transport.context);
-    // The caller never cancels: this proves the source's own bound, not the host's.
-    await vi.advanceTimersByTimeAsync(GITLAB_MOUNTED_DETAIL_DEADLINE_MS + 1);
+    caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
     const result = GitlabNotesResultV1Schema.parse(await pending);
 
-    // A deadline is not a cancellation. The reader navigated nowhere; GitLab stopped answering,
-    // and the panel is owed that answer rather than the one that means "you left".
+    // The shared public failure class is transient; the stable source code preserves the more
+    // precise fact that the mounted caller cancelled this read.
     expect(result).toMatchObject({
       kind: 'unavailable',
-      failure: { class: 'transient', code: 'deadline-exceeded' },
+      failure: { class: 'transient', code: 'cancelled' },
     });
     expect(transport.requests).toHaveLength(1);
   });

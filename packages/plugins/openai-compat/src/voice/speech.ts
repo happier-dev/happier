@@ -1,5 +1,6 @@
 import {
   classifyVoiceProviderHttpFailure,
+  VOICE_SPEECH_OUTPUT_MAX_BYTES,
   type VoiceCredentialAccess,
 } from '@happier-dev/plugin-sdk/voice';
 import {
@@ -20,7 +21,6 @@ import {
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_AUDIO_INPUT_BYTES = 8 * 1024 * 1024;
-const MAX_AUDIO_OUTPUT_BYTES = 32 * 1024 * 1024;
 const MAX_TRANSCRIPT_CHARACTERS = 1_000_000;
 const MAX_SYNTHESIS_CHARACTERS = 200_000;
 
@@ -275,7 +275,7 @@ async function synthesize(
   if (
     contentType !== expectedMimeType
     || !response.body.byteLength
-    || response.body.byteLength > MAX_AUDIO_OUTPUT_BYTES
+    || response.body.byteLength > VOICE_SPEECH_OUTPUT_MAX_BYTES
     || (bearerToken && containsProviderRegisteredSensitiveValue(
       new TextDecoder().decode(response.body),
       [bearerToken],

@@ -17,7 +17,10 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
-import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
+import {
+  AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+  AZURE_DEVOPS_TRIAGE_PURPOSE,
+} from './descriptor.js';
 import {
   runAzureTriageGet,
   runAzureTriageListInstances,
@@ -44,7 +47,10 @@ const FULL_PAGE_FIXTURE_SIZE = 30;
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
-    service: { pluginId: 'happier.scm.forge.azure-devops', localId: AZURE_DEVOPS_TRIAGE_PURPOSE },
+    service: {
+      pluginId: 'happier.scm.forge.azure-devops',
+      localId: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+    },
     accountId,
   };
 }

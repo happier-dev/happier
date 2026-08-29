@@ -17,13 +17,16 @@
  */
 
 import type {
+  ConnectedAccountAuthCompletionResult as PluginConnectedAccountAuthCompletionResult,
   ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
+import {
+  createBoundedInvocation,
+} from '@happier-dev/triage-sources/runtime';
 import {
   SENTRY_CLOUD_REGION_ORIGINS,
   SENTRY_FAILURE_CODES,
@@ -31,6 +34,10 @@ import {
 } from '../sentryContracts.js';
 
 import { normalizeSentryOrigin } from './sentryOrigin.js';
+import {
+  readSentryRateLimitSnapshot,
+  resolveSentryRetryNotBeforeMs,
+} from '../api/sentryRateLimit.js';
 
 /**
  * The self-hosted configuration field: an exact origin the host normalizes and
@@ -63,19 +70,6 @@ export const SENTRY_TOKEN_CREDENTIAL_KEY = 'token';
 export const SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY = 'confirmed-origin';
 /** `[SCHEMA]` the documented maximum-bounded page parameter of this listing. */
 const SENTRY_CONFIRMATION_PATH = '/api/0/organizations/?per_page=1';
-/**
- * How long a connect, refresh or health confirmation may take before this
- * runtime stops waiting.
- *
- * The host supplies a cancellation signal, not a deadline: it ends this work
- * when the person walks away, and never because Sentry went quiet. A mistyped
- * self-hosted origin that resolves and accepts a connection but never answers
- * therefore leaves the connect dialog spinning with nothing to act on, which is
- * exactly the case the field exists to catch. It is shorter than a mounted
- * detail read's bound because the whole invocation is one small `GET` a person
- * is watching.
- */
-export const SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS = 15_000;
 const EMPTY_HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({});
 
 type SentryReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
@@ -123,10 +117,10 @@ function readConfiguredOrigin(
 
 type SentryConfirmation =
   | Readonly<{ status: 'confirmed'; origin: string }>
-  | Readonly<{
-    status: 'rejected' | 'unavailable';
-    diagnostic: ReturnType<typeof diagnostic>;
-  }>;
+  | Extract<
+    PluginConnectedAccountAuthCompletionResult,
+    Readonly<{ status: 'rejected' | 'unavailable' }>
+  >;
 
 /**
  * Three distinct answers, because collapsing them lies to the user.
@@ -169,7 +163,6 @@ async function confirmSentryIdentity(
   // answer at all.
   const bounded = createBoundedInvocation({
     callerSignal,
-    timeoutMs: SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS,
   });
   try {
     let response: Awaited<ReturnType<typeof context.services.http.request>>;
@@ -181,10 +174,8 @@ async function confirmSentryIdentity(
         redirect: 'error',
       }, { signal: bounded.signal });
     } catch (error) {
-      // Only the CALLER abandoning this work is a cancellation to propagate. Our
-      // own deadline elapsing aborts a signal the caller does not hold, so it
-      // falls through to the stated answer below rather than being rethrown as if
-      // the person had walked away.
+      // Caller cancellation propagates. Provider/transport failures become the
+      // stated unavailable result; this source does not add a second timer.
       if (callerSignal.aborted) throw error;
       return {
         status: 'unavailable',
@@ -214,12 +205,18 @@ async function confirmSentryIdentity(
       };
     }
     if (response.status === 429) {
+      const retryNotBeforeMs = resolveSentryRetryNotBeforeMs(
+        readSentryRateLimitSnapshot(response.headers),
+        Date.now(),
+      );
       return {
         status: 'unavailable',
         diagnostic: diagnostic(
           SENTRY_FAILURE_CODES.rateLimited,
           'Sentry is rate limiting this connection; try again shortly.',
         ),
+        failureClass: 'rateLimit',
+        ...(retryNotBeforeMs === null ? {} : { retryNotBeforeMs }),
       };
     }
     if (response.status === 404 || response.status >= 500) {

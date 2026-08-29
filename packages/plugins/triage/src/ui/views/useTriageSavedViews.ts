@@ -40,7 +40,7 @@ export type TriageSavedViewsNoticeV1 = Readonly<{
 export type TriageMountedSavedViewsV1 = Readonly<{
   /** The authoritative durable set, or `null` while the first read is in flight. */
   saved: CorpusSavedViewsReadV1 | null;
-  /** The Settings document revision behind `saved`, or `null` before the first read. */
+  /** The Account KV entry version behind `saved`, or `null` before the first read. */
   revision: string | null;
   /** A write this mount asked for has not settled. */
   busy: boolean;
@@ -64,14 +64,14 @@ export function useTriageSavedViews(): TriageMountedSavedViewsV1 {
   const hostApi = usePluginHostApi();
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
-  // One owner, two transports. Direct Account Settings when this mount can
+  // One owner, two transports. Direct Account KV when this mount can
   // reach the Account — which is what keeps saved views readable and writable
   // while no daemon is — and the published Actions otherwise.
   const transport = useMemo<TriageSavedViewsTransportV1>(
-    () => durable.settings
-      ? createDirectTriageSavedViewsTransport(durable.settings)
+    () => durable.savedViews
+      ? createDirectTriageSavedViewsTransport(durable.savedViews)
       : createActionTriageSavedViewsTransport(hostApi),
-    [durable.settings, hostApi],
+    [durable.savedViews, hostApi],
   );
   const [saved, setSaved] = useState<CorpusSavedViewsReadV1 | null>(null);
   const [revision, setRevision] = useState<string | null>(null);

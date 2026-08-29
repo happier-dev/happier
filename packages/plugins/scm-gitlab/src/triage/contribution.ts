@@ -89,8 +89,9 @@ export const GITLAB_TRIAGE_ACTION_IDS = Object.freeze({
  *
  * They carry no Triage role: a note, a resource event, a discussion, an approval
  * state, a pipeline and a changed file are GitLab-native content this source's
- * own mounted detail body reads. Their published surface is `plugin`, so the
- * only caller that can reach them is this plugin's own detail artifact.
+ * own mounted detail body reads. Their published surface is `ui`: the mounted
+ * dispatcher supplies present-user authority, while direct plugin/backend code
+ * is refused because the declarations omit `plugin`.
  */
 export const GITLAB_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
   listNotes: 'triage/list-gitlab-notes',

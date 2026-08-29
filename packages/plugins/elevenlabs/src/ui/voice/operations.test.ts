@@ -5,29 +5,24 @@ import {
   mintElevenLabsConversationAuthWithAccountOperations,
   provisionElevenLabsWithAccountOperations,
 } from './operations';
-import { VOICE_PROVIDER_PRESENTATIONS } from './index';
-import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../protocol/voice/index.js';
+import {
+  ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+  ElevenLabsVoiceProviderSettingsSchema,
+} from '../../protocol/voice/index.js';
 
-function migrateLegacyProvisionTts() {
-  const migrated = VOICE_PROVIDER_PRESENTATIONS[0].legacySettingsMigration.migrateLegacy({
-    billingMode: 'byo',
+function createProvisionTtsSettings() {
+  return ElevenLabsVoiceProviderSettingsSchema.parse({
+    ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
     tts: {
       voiceId: 'voice_1',
       modelId: null,
       voiceSettings: {
         stability: 0.4,
         similarityBoost: 0.8,
-        style: 0.35,
-        useSpeakerBoost: true,
         speed: 1.1,
       },
     },
-    byo: { agentId: 'agent_existing', apiKey: null },
-  });
-  if (!migrated) throw new Error('expected_legacy_elevenlabs_settings_to_migrate');
-  expect(migrated.config.tts.voiceSettings).not.toHaveProperty('style');
-  expect(migrated.config.tts.voiceSettings).not.toHaveProperty('useSpeakerBoost');
-  return migrated.config.tts;
+  }).tts;
 }
 
 /** The bound account owns `voice_1`, which every provisioning fixture selects. */
@@ -207,7 +202,7 @@ describe('ElevenLabs public account operations', () => {
         description: 'Send a message.',
         parameters: { type: 'object', properties: {} },
       }],
-      tts: migrateLegacyProvisionTts(),
+      tts: createProvisionTtsSettings(),
     };
 
     await expect(provisionElevenLabsWithAccountOperations({
@@ -308,7 +303,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, agentId: 'agent_created' });
@@ -376,7 +371,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, updated: true });
@@ -435,7 +430,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).resolves.toEqual({ ok: true, updated: true });
@@ -754,7 +749,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
@@ -801,7 +796,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
@@ -869,7 +864,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Create a session.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
@@ -921,7 +916,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: controller.signal,
     })).rejects.toMatchObject({
@@ -965,7 +960,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Send a message.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: new AbortController().signal,
     })).rejects.toMatchObject({
@@ -1022,7 +1017,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Request approval.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: controller.signal,
     })).rejects.toMatchObject({
@@ -1088,7 +1083,7 @@ describe('ElevenLabs public account operations', () => {
           description: 'Request approval.',
           parameters: { type: 'object', properties: {} },
         }],
-        tts: migrateLegacyProvisionTts(),
+        tts: createProvisionTtsSettings(),
       },
       signal: controller.signal,
     })).rejects.toMatchObject({

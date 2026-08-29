@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SENTRY_CLOUD_REGION_ORIGINS, SENTRY_FAILURE_CODES } from '../sentryContracts.js';
 
 import {
-  SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS,
   SENTRY_CLOUD_MODE_ID,
   SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY,
   SENTRY_SELF_HOSTED_MODE_ID,
@@ -16,7 +15,11 @@ const ACCOUNT = Object.freeze({
   accountId: 'account-1',
 });
 
-type ResponseStub = Readonly<{ status: number; body: string }>;
+type ResponseStub = Readonly<{
+  status: number;
+  body: string;
+  headers?: Readonly<Record<string, string>>;
+}>;
 
 function jsonResponse(status: number, body: unknown): ResponseStub {
   return { status, body: JSON.stringify(body) };
@@ -43,7 +46,7 @@ function createHarness(input: Readonly<{
     return {
       status: next.status,
       finalUrl: 'https://example.invalid/',
-      headers: {},
+      headers: next.headers ?? {},
       body: new TextEncoder().encode(next.body),
     };
   });
@@ -55,8 +58,10 @@ function createHarness(input: Readonly<{
     getSecret: async () => null,
   };
   const services = { http: { request } };
-  const signal = new AbortController().signal;
+  const caller = new AbortController();
+  const signal = caller.signal;
   return {
+    caller,
     request,
     stored,
     configuration,
@@ -131,12 +136,12 @@ function createSilentHarness(input: Readonly<{
   return harness;
 }
 
-describe('Sentry connected-account confirmation deadline', () => {
+describe('Sentry connected-account confirmation lifetime', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('disposes the confirmation deadline after a normal success', async () => {
+  it('adds no provider timer around a normal success', async () => {
     vi.useFakeTimers();
     const harness = createHarness({
       modeId: SENTRY_SELF_HOSTED_MODE_ID,
@@ -147,32 +152,21 @@ describe('Sentry connected-account confirmation deadline', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('answers a silent deployment instead of waiting on it forever', async () => {
-    vi.useFakeTimers();
+  it('stops a silent deployment when the connecting caller cancels', async () => {
     const harness = createSilentHarness({
       modeId: SENTRY_SELF_HOSTED_MODE_ID,
       values: { origin: 'https://sentry.example.com' },
     });
     const pending = completeConnection(harness);
 
-    await vi.advanceTimersByTimeAsync(SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS - 1);
-    let settled = false;
-    void pending.then(() => { settled = true; });
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(2);
-    expect(await pending).toMatchObject({
-      status: 'unavailable',
-      diagnostic: { code: SENTRY_FAILURE_CODES.verificationUnavailable },
-    });
+    harness.caller.abort(new DOMException('The connection dialog closed.', 'AbortError'));
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     // Nothing was staged: a connection that was never confirmed must not leave
     // a credential or a confirmed origin behind.
     expect(harness.stored.size).toBe(0);
   });
 
-  it('reports the same silence on a health read rather than hanging the account', async () => {
-    vi.useFakeTimers();
+  it('stops a silent health read when its caller cancels', async () => {
     const harness = createSilentHarness({
       modeId: SENTRY_SELF_HOSTED_MODE_ID,
       values: { origin: 'https://sentry.example.com' },
@@ -183,11 +177,8 @@ describe('Sentry connected-account confirmation deadline', () => {
     });
     const pending = sentryConnectedAccountRuntime.status(harness.readContext as never);
 
-    await vi.advanceTimersByTimeAsync(SENTRY_ACCOUNT_CONFIRMATION_DEADLINE_MS + 1);
-    expect(await pending).toMatchObject({
-      status: 'unavailable',
-      diagnostic: { code: SENTRY_FAILURE_CODES.verificationUnavailable },
-    });
+    harness.caller.abort(new DOMException('The account read was cancelled.', 'AbortError'));
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
 
@@ -236,6 +227,32 @@ describe('Sentry connected-account runtime — Cloud region choice', () => {
 });
 
 describe('Sentry connected-account runtime — confirmation outcomes', () => {
+  it('reports only normalized generic rate-limit evidence from a valid Reset header', async () => {
+    const harness = createHarness({
+      modeId: SENTRY_CLOUD_MODE_ID,
+      values: { region: 'us' },
+      responses: [{
+        status: 429,
+        body: '{}',
+        headers: {
+          'x-sentry-rate-limit-reset': '4000000060',
+          'retry-after': '120',
+        },
+      }],
+    });
+
+    await expect(completeConnection(harness)).resolves.toEqual({
+      status: 'unavailable',
+      diagnostic: {
+        code: SENTRY_FAILURE_CODES.rateLimited,
+        severity: 'error',
+        message: 'Sentry is rate limiting this connection; try again shortly.',
+      },
+      failureClass: 'rateLimit',
+      retryNotBeforeMs: 4_000_000_060_000,
+    });
+  });
+
   it('reports an unreadable 200 body as unparseable rather than as an empty organization list', async () => {
     const harness = createHarness({
       modeId: SENTRY_CLOUD_MODE_ID,

@@ -48,11 +48,6 @@ describe('OhMyPi plugin manifest', () => {
       }],
       capabilities: {
         surfaces: ['externalSessions'],
-        executionRuns: {
-          open: ['create', 'resume'],
-          checkpoint: true,
-          stop: true,
-        },
       },
       surfaces: {
         externalSession: {
@@ -75,6 +70,7 @@ describe('OhMyPi plugin manifest', () => {
         },
       },
     });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities).not.toHaveProperty('executionRuns');
   });
 
   it('declares the prerequisite hook as data without a handler reference', () => {

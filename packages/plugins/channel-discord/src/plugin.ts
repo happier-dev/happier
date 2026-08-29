@@ -369,7 +369,11 @@ function createDiscordPlugin() {
           eligible: true,
           source: {
             sourceContractVersion: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
-            supportedObservationTransports: ['checkpointedPull'],
+            // Discord observes through its own long-lived Gateway session. It
+            // has no ordered provider pull checkpoint, so `checkpointedPull`
+            // would falsely claim checkpoint coverage the Gateway cannot
+            // deliver (an unresumable session reports a history gap).
+            supportedObservationTransports: ['socket'],
             sourceConfigSchema: DISCORD_AUTOMATION_MESSAGE_SOURCE_CONFIG_SCHEMA,
             setupActionRef: {
               pluginId: DISCORD_PLUGIN_ID,

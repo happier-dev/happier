@@ -26,11 +26,7 @@ import {
 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 
-import {
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  admitGitlabItemInvocation,
-} from './admission.js';
-import { withGitlabInvocationDeadline } from './invocationDeadline.js';
+import { admitGitlabItemInvocation } from './admission.js';
 import {
   GitlabActivityEventsInputV1Schema,
   GitlabApprovalsInputV1Schema,
@@ -529,31 +525,10 @@ async function readGitlabRawDiffUnbounded(
   }));
 }
 
-export const listGitlabNotes = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  listGitlabNotesUnbounded,
-);
-export const listGitlabActivityEvents = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  listGitlabActivityEventsUnbounded,
-);
-export const listGitlabDiscussions = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  listGitlabDiscussionsUnbounded,
-);
-export const readGitlabApprovals = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  readGitlabApprovalsUnbounded,
-);
-export const listGitlabPipelines = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  listGitlabPipelinesUnbounded,
-);
-export const listGitlabChanges = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  listGitlabChangesUnbounded,
-);
-export const readGitlabRawDiff = withGitlabInvocationDeadline(
-  GITLAB_MOUNTED_DETAIL_DEADLINE_MS,
-  readGitlabRawDiffUnbounded,
-);
+export const listGitlabNotes = listGitlabNotesUnbounded;
+export const listGitlabActivityEvents = listGitlabActivityEventsUnbounded;
+export const listGitlabDiscussions = listGitlabDiscussionsUnbounded;
+export const readGitlabApprovals = readGitlabApprovalsUnbounded;
+export const listGitlabPipelines = listGitlabPipelinesUnbounded;
+export const listGitlabChanges = listGitlabChangesUnbounded;
+export const readGitlabRawDiff = readGitlabRawDiffUnbounded;

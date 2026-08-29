@@ -10,6 +10,7 @@ import {
   deliverTelegramMessage,
   pollTelegramObservations,
   remediateTelegramWebhook,
+  resolveTelegramEndpoint,
   testTelegramConnection,
 } from './channelActions.js';
 import { TELEGRAM_BOT_CREDENTIAL_PURPOSE } from './constants.js';
@@ -214,6 +215,34 @@ describe('Telegram Channel provider actions', () => {
     )).resolves.toMatchObject({
       kind: 'ready',
       sharedEndpointInputModes: ['directMentionsOnly', 'addressedMessages', 'allAllowedMessages'],
+    });
+  });
+
+  it('resolves an observed Telegram topic identity through its authenticated parent chat', async () => {
+    const http = {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => {
+        if (input.url.endsWith('/getMe')) return response(botIdentity());
+        if (input.url.endsWith('/getChat')) {
+          expect(JSON.parse(new TextDecoder().decode(input.body))).toEqual({ chat_id: '-100456' });
+          return response({ ok: true, result: { id: -100456, type: 'supergroup', title: 'Deploys' } });
+        }
+        throw new Error(`Unexpected Telegram request: ${input.url}`);
+      }),
+    };
+
+    await expect(resolveTelegramEndpoint({
+      ...connection,
+      query: '-100456:17',
+      kinds: ['thread'],
+    }, coreContext(http))).resolves.toEqual({
+      kind: 'resolved',
+      candidates: [{
+        kind: 'thread',
+        audience: 'shared',
+        id: '-100456:17',
+        parentId: '-100456',
+        parentLabel: 'Deploys',
+      }],
     });
   });
 
@@ -1321,6 +1350,100 @@ describe('Telegram Channel provider actions', () => {
     }
   });
 
+  it('projects idle-ready, reconnecting, and history-gap poll facts only to matching current Automation sources', async () => {
+    const reports: unknown[] = [];
+    const executeAction = vi.fn(async (actionId: string, input: unknown) => {
+      if (actionId === 'automation.event.sources.list') {
+        return {
+          kind: 'page',
+          revision: '17',
+          definitions: [
+            {
+              automationId: '11111111-1111-4111-8111-111111111111',
+              triggerId: 'telegram-current',
+              triggerRevision: 3,
+              eventRef: { pluginId: 'happier.channel.telegram', localId: 'automation/chat-message-v1' },
+              sourceInstanceId: 'telegram:chat:123:456',
+              sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+              sourceContractVersion: 1,
+              sourceConfig: { v: 1, botId: '123', chatId: '456' },
+              observationTransport: {
+                kind: 'checkpointedPull',
+                watcherMaterializationRef: {
+                  pluginId: 'happier.channel.telegram',
+                  machineId: 'machine-1',
+                  materializationId: 'materialization-1',
+                },
+              },
+              filter: null,
+              maximumObservationAgeMs: null,
+            },
+            {
+              automationId: '33333333-3333-4333-8333-333333333333',
+              triggerId: 'telegram-other-connection',
+              triggerRevision: 2,
+              eventRef: { pluginId: 'happier.channel.telegram', localId: 'automation/chat-message-v1' },
+              sourceInstanceId: 'telegram:chat:999:456',
+              sourceSelectorId: '44444444-4444-4444-8444-444444444444',
+              sourceContractVersion: 1,
+              sourceConfig: { v: 1, botId: '999', chatId: '456' },
+              observationTransport: {
+                kind: 'checkpointedPull',
+                watcherMaterializationRef: {
+                  pluginId: 'happier.channel.telegram',
+                  machineId: 'machine-1',
+                  materializationId: 'materialization-1',
+                },
+              },
+              filter: null,
+              maximumObservationAgeMs: null,
+            },
+          ],
+          nextCursor: null,
+        };
+      }
+      if (actionId === 'automation.event.source.status.report') {
+        reports.push(input);
+        return {};
+      }
+      throw new Error(`unexpected host action ${actionId}`);
+    });
+    const http = {
+      request: vi.fn(async (input: TelegramHttpRequestInput) => response(
+        input.url.endsWith('/getMe') ? botIdentity() : { ok: true, result: [] },
+      )),
+    };
+
+    await expect(pollTelegramObservations({
+      ...connection,
+      checkpoint: null,
+      limit: 10,
+      waitMs: 0,
+    }, coreContext(http, { executeAction }))).resolves.toMatchObject({ kind: 'checkpointOnly' });
+    await expect(pollTelegramObservations({
+      ...connection,
+      checkpoint: { v: 1, offset: '42', caughtUpAtMs: 0 },
+      limit: 10,
+      waitMs: 0,
+    }, coreContext({ request: vi.fn() }, { executeAction }))).resolves.toMatchObject({ kind: 'historyGap' });
+    await expect(pollTelegramObservations({
+      ...connection,
+      providerConfigVersion: 2,
+      checkpoint: null,
+      limit: 10,
+      waitMs: 0,
+    }, coreContext({ request: vi.fn() }, { executeAction }))).resolves.toMatchObject({ kind: 'notReady' });
+
+    expect(reports).toEqual([
+      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'checkpointedPull' }, observedRevision: '17' }),
+      expect.objectContaining({ kind: 'source', triggerId: 'telegram-current', state: 'observing', code: 'none' }),
+      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'checkpointedPull' }, observedRevision: '17' }),
+      expect.objectContaining({ kind: 'source', triggerId: 'telegram-current', state: 'attention', code: 'historyGap' }),
+      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'checkpointedPull' }, observedRevision: '17' }),
+      expect.objectContaining({ kind: 'source', triggerId: 'telegram-current', state: 'backingOff', code: 'admissionUnavailable' }),
+    ]);
+  });
+
   it('emits one Event candidate with the observed ingress without reaching Automation directly', async () => {
     const executeAction = vi.fn(async (actionId: string) => {
       throw new PluginError({
@@ -1379,7 +1502,13 @@ describe('Telegram Channel provider actions', () => {
       }],
       checkpointAfterBatch: { v: 1, offset: '43' },
     });
-    expect(executeAction).not.toHaveBeenCalled();
+    // The poller may reconcile its current source catalog for connection
+    // health, but it still never admits this ingress directly to Automation.
+    expect(executeAction).toHaveBeenCalledWith(
+      'automation.event.sources.list',
+      { transport: { kind: 'checkpointedPull' } },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('bounds a core maximum wait to Telegram’s long-poll limit while preserving a longer HTTP deadline', async () => {

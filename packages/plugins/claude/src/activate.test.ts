@@ -40,10 +40,11 @@ describe('activate', () => {
         try {
             const buildSessionOptions = activation.registration('agents', 'claude')?.cliSessionCommand?.buildSessionOptions;
             expect(buildSessionOptions).toBeTypeOf('function');
-            expect(buildSessionOptions?.({
+            expect(await buildSessionOptions?.({
                 isExplicitCliSubcommand: true,
                 parsed: { agentArgs: [] },
-                settings: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' },
+                settings: { claudeUnifiedTerminalResumeChoice: 'wrong-global-value' },
+                pluginSettings: { account: { claudeUnifiedTerminalResumeChoice: 'resume_from_summary' } },
                 environment: {},
                 startOrigin: 'terminal',
             })).toEqual({

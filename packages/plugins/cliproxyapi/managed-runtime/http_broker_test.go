@@ -1,11 +1,13 @@
 package managedruntime
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +21,144 @@ import (
 	"time"
 )
 
+func brokerSuccessEnvelope(value any) (*http.Response, error) {
+	body, err := json.Marshal(map[string]any{"ok": true, "value": value})
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}, nil
+}
+
+func testAuthenticationFailureRequest(credentialContext RequestAuthCredentialContext) ConnectedAccountAuthFailureRequest {
+	return ConnectedAccountAuthFailureRequest{
+		CredentialContext: credentialContext,
+		NormalizedFailure: ConnectedAccountConsumerFailure{
+			Class: "authentication",
+			Evidence: BoundedProviderFailureEvidence{
+				HTTPStatus:    intPointer(http.StatusUnauthorized),
+				LimitCategory: "auth_invalid",
+				QuotaScope:    "unknown",
+				EvidenceSource: ProviderFailureEvidenceSource{
+					Kind: "structured",
+				},
+			},
+		},
+	}
+}
+
+// The daemon owns a 300-second request-auth recovery ceiling (bounded OAuth
+// rotation plus account projection). Its generated clients wait out that
+// recovery with a slightly larger 310-second transport ceiling, and the
+// wrapper's authentication-failure report is one of those clients: truncating
+// the report at the ordinary 30-second operation bound would drop the recovery
+// outcome mid-recovery. Ordinary lookup and quota reports keep the 30-second
+// bound, and caller cancellation must win over the longer recovery deadline.
+func TestHTTPBrokerBoundsAuthFailureReportsByTheCanonicalRecoveryTransportDeadline(t *testing.T) {
+	t.Parallel()
+
+	capabilityPath := filepath.Join(t.TempDir(), "capability.json")
+	writeCapabilityV2(t, capabilityPath, testCapability(25), 32123)
+	broker, err := NewHTTPBroker(HTTPBrokerConfig{CapabilityPath: capabilityPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	deadlineDeltaByPath := map[string]time.Duration{}
+	broker.client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		deadlineDelta := time.Duration(-1)
+		if deadline, ok := request.Context().Deadline(); ok {
+			deadlineDelta = time.Until(deadline)
+		}
+		mu.Lock()
+		deadlineDeltaByPath[request.URL.Path] = deadlineDelta
+		mu.Unlock()
+		if request.URL.Path == ConnectedAccountRequestAuthLookupPath {
+			return brokerSuccessEnvelope(validLease("recovery-deadline-lease", nil))
+		}
+		return brokerSuccessEnvelope(RequestAuthFailureOutcome{Status: FailureStatusCurrentUnchanged})
+	})
+
+	lease, err := broker.LookupRequestAuth(context.Background(), testPurpose("openai-upstream"))
+	if err != nil {
+		t.Fatalf("LookupRequestAuth() error = %v", err)
+	}
+	if _, err := broker.ReportAuthFailure(context.Background(), testAuthenticationFailureRequest(lease.CredentialContext)); err != nil {
+		t.Fatalf("ReportAuthFailure() error = %v", err)
+	}
+	if _, err := broker.ReportQuotaFailure(context.Background(), ConnectedAccountQuotaFailureRequest{
+		CredentialContext: lease.CredentialContext,
+		NormalizedFailure: ConnectedAccountConsumerFailure{
+			Class: "quota",
+			Evidence: BoundedProviderFailureEvidence{
+				HTTPStatus:    intPointer(http.StatusTooManyRequests),
+				LimitCategory: "rate_limit",
+				QuotaScope:    "unknown",
+				EvidenceSource: ProviderFailureEvidenceSource{
+					Kind: "structured",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("ReportQuotaFailure() error = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if got := deadlineDeltaByPath[ConnectedAccountRequestAuthFailurePath]; got <= 305*time.Second || got > 312*time.Second {
+		t.Fatalf("auth-failure report transport deadline = %s, want the canonical ~310s recovery ceiling", got)
+	}
+	for _, path := range []string{
+		ConnectedAccountRequestAuthLookupPath,
+		ConnectedAccountRequestAuthQuotaFailurePath,
+	} {
+		if got := deadlineDeltaByPath[path]; got <= 25*time.Second || got > 32*time.Second {
+			t.Fatalf("%s transport deadline = %s, want the ordinary 30s bound", path, got)
+		}
+	}
+}
+
+func TestHTTPBrokerPreservesCallerCancellationAcrossTheRecoveryReportDeadline(t *testing.T) {
+	t.Parallel()
+
+	capabilityPath := filepath.Join(t.TempDir(), "capability.json")
+	writeCapabilityV2(t, capabilityPath, testCapability(26), 32123)
+	broker, err := NewHTTPBroker(HTTPBrokerConfig{CapabilityPath: capabilityPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	broker.client.Transport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		close(started)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	})
+	reportContext, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, reportErr := broker.ReportAuthFailure(
+			reportContext,
+			testAuthenticationFailureRequest(validLease("recovery-cancel-context", nil).CredentialContext),
+		)
+		result <- reportErr
+	}()
+	<-started
+	cancel()
+	select {
+	case reportErr := <-result:
+		if !errors.Is(reportErr, context.Canceled) {
+			t.Fatalf("cancelled auth-failure report error = %v, want context cancellation", reportErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("caller cancellation did not terminate the auth-failure report")
+	}
+}
+
 func TestHTTPBrokerBoundsTransportLifetimeAndPreservesCallerCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -28,8 +168,8 @@ func TestHTTPBrokerBoundsTransportLifetimeAndPreservesCallerCancellation(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := broker.client.Timeout; got != 30*time.Second {
-		t.Fatalf("broker transport timeout = %s, want 30s bounded request-auth lifetime", got)
+	if got := broker.client.Timeout; got != 0 {
+		t.Fatalf("broker global transport timeout = %s, want per-operation deadlines only", got)
 	}
 
 	started := make(chan struct{})

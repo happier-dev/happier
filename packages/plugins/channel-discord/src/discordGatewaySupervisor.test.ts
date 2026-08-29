@@ -96,6 +96,7 @@ function supervisorBackgroundHarness(input: Readonly<{
     actionInput: unknown,
     options?: Readonly<{ signal?: AbortSignal }>,
   ) => Promise<unknown>;
+  executeAutomation?: (action: string, actionInput: unknown) => Promise<unknown>;
   /** Exact current core result for tests that need a list/read race. */
   readConnection?: (connectionId: string) => Promise<ConversationProviderConnectionReconciliationSnapshotV1 | null>;
   signal?: AbortSignal;
@@ -107,10 +108,14 @@ function supervisorBackgroundHarness(input: Readonly<{
   let lastListedConnections: Record<string, ConversationProviderConnectionReconciliationSnapshotV1> = {};
   const actions = {
     execute: vi.fn(async (
-      action: Readonly<{ pluginId: string; localId: string }>,
+      action: Readonly<{ pluginId: string; localId: string }> | string,
       actionInput: unknown,
       options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<void | ProtocolJsonValue> => {
+      if (typeof action === 'string') {
+        if (input.executeAutomation === undefined) throw new Error(`Unexpected Automation Action ${action}`);
+        return await input.executeAutomation(action, actionInput) as void | ProtocolJsonValue;
+      }
       if (
         action.pluginId === 'happier.channel.discord'
         && action.localId === DISCORD_GATEWAY_WORKER_ATTEMPT_ACTION_ID
@@ -706,7 +711,8 @@ describe('Discord Gateway supervisor', () => {
       'worker:true',
     ]);
     const transportFactCall = actions.execute.mock.calls.find(
-      ([action]) => action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
+      ([action]) => typeof action !== 'string'
+        && action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.transportFactReport,
     );
     expect(transportFactCall?.[1]).toEqual({
       connectionId: current.connectionId,
@@ -715,6 +721,105 @@ describe('Discord Gateway supervisor', () => {
     });
     await supervisor.dispose();
     expect(second.worker.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects an idle Gateway READY and a history gap through exact current socket sources', async () => {
+    const current = snapshot();
+    const reports: unknown[] = [];
+    const workerFactory = vi.fn((input: Readonly<{ reportReadiness?: () => void | Promise<void> }>) => ({
+      result: (async () => {
+        await input.reportReadiness?.();
+        return { kind: 'historyGap' as const, reason: 'applicationAdmissionLost' as const };
+      })(),
+      stop: vi.fn(),
+    }));
+    const supervisor = createDiscordGatewaySupervisor({ workerFactory });
+    const { background } = supervisorBackgroundHarness({
+      supervisor,
+      connectedAccounts: {
+        materialize: vi.fn(async () => ({ kind: 'environment' as const, env: { DISCORD_BOT_TOKEN: 'bot-token' } })),
+      },
+      http: {
+        request: vi.fn(async (request: Readonly<{ url: string }>) => response(
+          request.url.endsWith('/oauth2/applications/@me')
+            ? { id: 'application-1', flags: 0, flags_new: '0' }
+            : { id: 'bot-1', username: 'Happier Bot', bot: true },
+        )),
+        openWebSocket: vi.fn(),
+      },
+      executeCore: async (action) => {
+        if (action.localId === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList) {
+          return { [current.connectionId]: current };
+        }
+        throw new Error(`Unexpected core Action ${action.localId}`);
+      },
+      executeAutomation: async (action, input) => {
+        if (action === 'automation.event.sources.list') {
+          return {
+            kind: 'page',
+            revision: '23',
+            definitions: [
+              {
+                automationId: '11111111-1111-4111-8111-111111111111',
+                triggerId: 'discord-current',
+                triggerRevision: 4,
+                eventRef: { pluginId: 'happier.channel.discord', localId: 'automation/channel-message-observed-v1' },
+                sourceInstanceId: 'discord:application:application-1:channel:123',
+                sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+                sourceContractVersion: 1,
+                sourceConfig: { v: 1 },
+                observationTransport: {
+                  kind: 'socket',
+                  watcherMaterializationRef: {
+                    pluginId: 'happier.channel.discord',
+                    machineId: 'machine-1',
+                    materializationId: 'materialization-1',
+                  },
+                },
+                filter: null,
+                maximumObservationAgeMs: null,
+              },
+              {
+                automationId: '33333333-3333-4333-8333-333333333333',
+                triggerId: 'discord-other-application',
+                triggerRevision: 4,
+                eventRef: { pluginId: 'happier.channel.discord', localId: 'automation/channel-message-observed-v1' },
+                sourceInstanceId: 'discord:application:application-2:channel:123',
+                sourceSelectorId: '44444444-4444-4444-8444-444444444444',
+                sourceContractVersion: 1,
+                sourceConfig: { v: 1 },
+                observationTransport: {
+                  kind: 'socket',
+                  watcherMaterializationRef: {
+                    pluginId: 'happier.channel.discord',
+                    machineId: 'machine-1',
+                    materializationId: 'materialization-1',
+                  },
+                },
+                filter: null,
+                maximumObservationAgeMs: null,
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        if (action === 'automation.event.source.status.report') {
+          reports.push(input);
+          return {};
+        }
+        throw new Error(`Unexpected Automation Action ${action}`);
+      },
+    });
+
+    await supervisor.reconcile(background);
+    await vi.waitFor(() => expect(reports).toHaveLength(4));
+    expect(reports).toEqual([
+      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'socket' }, observedRevision: '23' }),
+      expect.objectContaining({ kind: 'source', triggerId: 'discord-current', state: 'observing', code: 'none' }),
+      expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'socket' }, observedRevision: '23' }),
+      expect.objectContaining({ kind: 'source', triggerId: 'discord-current', state: 'attention', code: 'historyGap' }),
+    ]);
+    await supervisor.dispose();
   });
 
   it('reports a Developer Portal permission absence through the provider-neutral connection readiness owner', async () => {

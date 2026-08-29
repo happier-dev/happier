@@ -1200,13 +1200,30 @@ async function transitionGithubPullRequestState(
   );
   if (!current.ok) return Object.freeze({ kind: 'failed' as const, failure: current.failure });
 
-  if (current.facts.state === transition.target) return alreadySatisfied(current);
+  const isTarget = (facts: GithubPullRequestFactsV1): boolean =>
+    facts.state === transition.target
+    && (transition.target !== 'closed' || !facts.merged);
+
+  // Closing and merging both leave GitHub's coarse `state` at `closed`, but they
+  // are not the same outcome. A stale Close press that races with a merge must
+  // report that the state changed; calling it already satisfied would claim the
+  // requested non-merge transition happened when the pull request was actually
+  // merged. Reopen has no equivalent ambiguity because a merged pull request is
+  // never open.
+  if (isTarget(current.facts)) return alreadySatisfied(current);
+  if (current.facts.state === transition.target) {
+    return Object.freeze({
+      kind: 'refused' as const,
+      reason: 'state_changed' as const,
+      observation: current.observation,
+    });
+  }
   // A merged pull request has no reopen: the transition GitHub offers is
   // closed → open, and a merge is terminal. Refusing names why; writing would
   // produce a provider error the user cannot act on.
   const blocked = transition.target === 'open'
     ? current.facts.merged || current.facts.state !== 'closed'
-    : current.facts.state !== 'open';
+    : current.facts.merged || current.facts.state !== 'open';
   if (blocked) {
     return Object.freeze({
       kind: 'refused' as const,
@@ -1223,7 +1240,7 @@ async function transitionGithubPullRequestState(
   if (!written.ok) {
     return settle(
       await confirm(input.localRef, input.route, repositories, dependencies),
-      (facts) => facts.state === transition.target,
+      isTarget,
     );
   }
 
@@ -1231,7 +1248,7 @@ async function transitionGithubPullRequestState(
   if (isGithubWriteResponseAmbiguous(response)) {
     return settle(
       await confirm(input.localRef, input.route, repositories, dependencies),
-      (facts) => facts.state === transition.target,
+      isTarget,
     );
   }
   if (!isGithubSuccessStatus(response.status)) {
@@ -1242,7 +1259,7 @@ async function transitionGithubPullRequestState(
   }
   return settle(
     await confirm(input.localRef, input.route, repositories, dependencies),
-    (facts) => facts.state === transition.target,
+    isTarget,
   );
 }
 

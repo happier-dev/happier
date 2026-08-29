@@ -11,6 +11,7 @@ import type { PluginActionInputById, PluginActionResultById } from '@happier-dev
 import {
   normalizeGithubWebhookDelivery,
 } from './observations/githubWebhookNormalization.js';
+import { githubAutomationAdmissionCounterDeltas } from './observations/githubAutomationAdmissionAccounting.js';
 import {
   GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONTRACT_VERSION,
   GITHUB_PLUGIN_ID,
@@ -190,8 +191,7 @@ function sourceStatusReports(params: Readonly<{
   return params.definitions.map((definition, index) => {
     const result = params.results?.[index] ?? null;
     const settled = result?.checkpointSafe === true;
-    const admitted = settled && result.kind === 'admitted';
-    const skipped = settled && result.kind === 'skipped';
+    const counters = githubAutomationAdmissionCounterDeltas(result);
     return {
       kind: 'source',
       automationId: definition.automationId,
@@ -208,8 +208,8 @@ function sourceStatusReports(params: Readonly<{
       // multiply counters. Settled outcomes are mapped positionally to the
       // exact trigger definition that produced them.
       observedDelta: settled ? 1 : 0,
-      admittedDelta: admitted ? 1 : 0,
-      skippedDelta: skipped ? 1 : 0,
+      admittedDelta: counters.admittedDelta,
+      skippedDelta: counters.skippedDelta,
     };
   });
 }

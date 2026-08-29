@@ -1,6 +1,6 @@
 import {
+  areConversationEndpointIdentitiesEqual,
   MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
-  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationPairingResourceV1,
@@ -12,6 +12,7 @@ import {
   PluginError,
   type PluginMachineMaterializationRefV1,
 } from '@happier-dev/plugin-sdk';
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 
 import type { ConversationCommandClassification } from './commands.js';
@@ -19,6 +20,11 @@ import { renderConversationPairingDeepLink } from './pairingLink.js';
 
 export const CONVERSATION_PAIRING_EXPIRY_MS = 10 * 60 * 1_000;
 export const MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER = 5;
+/**
+ * Incumbent memory-safety bound, scoped to the one live connection challenge
+ * it protects so one Account's traffic cannot exhaust another Account's
+ * pairing state.
+ */
 export const MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS = 128;
 export const MAX_CONVERSATION_PAIRING_TOMBSTONES = MAX_CONVERSATION_BINDINGS_PER_ACCOUNT * 2;
 
@@ -38,6 +44,32 @@ function evictOldestBeyondTombstoneBudget(target: Readonly<{
   if (target.size <= MAX_CONVERSATION_PAIRING_TOMBSTONES) return;
   const oldest = target.keys().next().value;
   if (oldest !== undefined) target.delete(oldest);
+}
+
+/**
+ * Whether a repeated create matches the frozen content of the challenge its
+ * request key created: revision, materialization, destination label, selected
+ * endpoint, target, and the deep link rendered for this exact challenge
+ * token. Callers reach this comparison only after the request keys matched.
+ */
+function isSameChallengeRequest(
+  challenge: Challenge,
+  input: Readonly<{
+    expectedConnectionRevision: number;
+    materialization: PluginMachineMaterializationRefV1;
+    destinationLabel: string;
+    endpoint: ConversationResolvedEndpointV1;
+    target: ConversationBindingTargetV1;
+  }>,
+  requestedDeepLinkUrl: string | null,
+): boolean {
+  return challenge.expectedConnectionRevision === input.expectedConnectionRevision
+    && arePluginMachineMaterializationRefsEqual(challenge.materialization, input.materialization)
+    && challenge.destinationLabel === input.destinationLabel
+    && areConversationEndpointIdentitiesEqual(challenge.endpoint, input.endpoint)
+    && challenge.endpoint.label === input.endpoint.label
+    && challenge.deepLinkUrl === requestedDeepLinkUrl
+    && pluginJsonValuesEqual(challenge.target, input.target);
 }
 
 export type ConversationPairingBinding = ConversationBindingV1;
@@ -76,6 +108,8 @@ type Challenge = Readonly<{
   token: string;
   connectionId: string;
   expectedConnectionRevision: number;
+  /** The client-generated opaque create-request key this challenge answers. */
+  pairingRequestId: string;
   materialization: PluginMachineMaterializationRefV1;
   destinationLabel: string;
   expiresAt: number;
@@ -189,15 +223,17 @@ export function createConversationPairingManager(dependencies: Readonly<{
   const expiredProposalIds = new Set<string>();
   const consumedTokens = new Map<string, number>();
   const proposals = new Map<string, Proposal>();
-  const failedAttemptsByRequester = new Map<string, number>();
   /**
-   * A failed `/pair` is charged to its requester once per provider
-   * occurrence, never once per delivery. A checkpointed pull re-presents
-   * its whole page until the checkpoint advances, so charging per call let
-   * one unsettled batch silently burn a requester's whole budget on a single
-   * mistyped token. The census ID is that occurrence's immutable identity.
+   * Failed-requester budgets and charged-census replay keys scoped to exactly
+   * one connection's live challenge. Guesses are only matchable while that
+   * challenge lives, so this state is created with it and dropped whenever it
+   * expires, is superseded, is consumed by a proof, or is cancelled — never
+   * shared across connections and never left to outlive its challenge.
    */
-  const chargedFailureCensusIds = new Set<string>();
+  const failureStateByConnection = new Map<string, {
+    failedAttemptsByRequester: Map<string, number>;
+    chargedFailureCensusIds: Set<string>;
+  }>();
   const proposalByFinalizeKey = new Map<string, string>();
   const proposalByCensusId = new Map<string, string>();
   const listeners = new Set<() => void>();
@@ -233,12 +269,24 @@ export function createConversationPairingManager(dependencies: Readonly<{
     evictOldestBeyondTombstoneBudget(consumedTokens);
   }
 
-  function expireChallenge(challenge: Challenge): void {
+  /**
+   * Removes one challenge from every live index and drops its challenge-scoped
+   * failure accounting with it: failed-requester budgets and charged-census
+   * replay keys bound guesses against this connection's live challenge only.
+   * Every terminal transition (expiry, supersession, proof consumption,
+   * cancellation) funnels through here so no transition can strand the state.
+   */
+  function detachChallenge(challenge: Challenge): void {
     challengesById.delete(challenge.challengeId);
     challengeIdsByToken.delete(challenge.token);
     if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
       challengeIdByConnection.delete(challenge.connectionId);
     }
+    failureStateByConnection.delete(challenge.connectionId);
+  }
+
+  function expireChallenge(challenge: Challenge): void {
+    detachChallenge(challenge);
     recordTerminalChallenge(challenge.challengeId, 'expired');
   }
 
@@ -264,7 +312,6 @@ export function createConversationPairingManager(dependencies: Readonly<{
         }
       }
     }
-    if (challengesById.size === 0) failedAttemptsByRequester.clear();
     return changed;
   }
 
@@ -315,9 +362,24 @@ export function createConversationPairingManager(dependencies: Readonly<{
   }
 
   return {
+    /**
+     * Creates — or exactly rejoins — the one live pairing challenge for a
+     * connection. The caller supplies its own opaque `pairingRequestId`:
+     * repeating that key with a semantically identical request rejoins the
+     * active challenge and returns its unchanged handoff (the response-loss
+     * retry path); a different key intentionally supersedes the previous
+     * challenge by consuming its token. Repeating a key with different
+     * content is refused without superseding, because one request id must
+     * never come to represent two requests. There is deliberately no
+     * process-global challenge count here: one active challenge per
+     * connection, the ten-minute expiry, and the durable per-Account
+     * connection quota already bound this state, so an Account-named limit
+     * must never gate another Account's pairing.
+     */
     createChallenge(input: Readonly<{
       connectionId: string;
       expectedConnectionRevision: number;
+      pairingRequestId: string;
       materialization: PluginMachineMaterializationRefV1;
       destinationLabel: string;
       pairingDeepLinkTemplate?: string;
@@ -330,16 +392,41 @@ export function createConversationPairingManager(dependencies: Readonly<{
       const now = dependencies.now();
       pruneExpiredAndPublish(now);
       const previousChallengeId = challengeIdByConnection.get(input.connectionId);
-      if (previousChallengeId !== undefined) {
-        const previousChallenge = challengesById.get(previousChallengeId);
-        if (previousChallenge !== undefined) {
-          expireChallenge(previousChallenge);
-          recordTerminalChallenge(previousChallenge.challengeId, 'consumed');
-          recordConsumedToken(previousChallenge.token, previousChallenge.expiresAt);
+      const previousChallenge = previousChallengeId === undefined
+        ? undefined
+        : challengesById.get(previousChallengeId);
+      if (previousChallenge !== undefined) {
+        const requestedDeepLinkUrl = input.pairingDeepLinkTemplate === undefined
+          ? null
+          : renderConversationPairingDeepLink({
+            template: input.pairingDeepLinkTemplate,
+            normalizedToken: previousChallenge.token,
+          });
+        if (previousChallenge.pairingRequestId === input.pairingRequestId) {
+          if (!isSameChallengeRequest(previousChallenge, input, requestedDeepLinkUrl)) {
+            // One request id represents exactly one request. Repeating it
+            // with different content is a caller bug: refuse without
+            // rejoining, superseding, or disturbing the live challenge.
+            throw new Error('A pairing request id must not be reused for a different pairing request.');
+          }
+          // Response-loss retry of this exact request: rejoin the live
+          // challenge without minting a token, churning state, or letting a
+          // second device's superseding challenge be adopted.
+          return {
+            kind: 'created',
+            generationId: dependencies.generationId,
+            challengeId: previousChallenge.challengeId,
+            expiresAt: previousChallenge.expiresAt,
+            attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+            destinationLabel: previousChallenge.destinationLabel,
+            manualToken: previousChallenge.token,
+            deepLinkUrl: previousChallenge.deepLinkUrl,
+          } as const;
         }
-      }
-      if (challengesById.size >= MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT) {
-        throw new Error('The active pairing challenge limit has been reached.');
+        // A different request intentionally supersedes the live challenge.
+        detachChallenge(previousChallenge);
+        recordTerminalChallenge(previousChallenge.challengeId, 'consumed');
+        recordConsumedToken(previousChallenge.token, previousChallenge.expiresAt);
       }
       const token = createUniqueToken();
       const challengeId = dependencies.createId('challenge');
@@ -349,6 +436,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
         token,
         connectionId: input.connectionId,
         expectedConnectionRevision: input.expectedConnectionRevision,
+        pairingRequestId: input.pairingRequestId,
         materialization: input.materialization,
         destinationLabel: input.destinationLabel,
         expiresAt: now + CONVERSATION_PAIRING_EXPIRY_MS,
@@ -364,6 +452,10 @@ export function createConversationPairingManager(dependencies: Readonly<{
       challengesById.set(challengeId, challenge);
       challengeIdsByToken.set(token, challengeId);
       challengeIdByConnection.set(input.connectionId, challengeId);
+      failureStateByConnection.set(input.connectionId, {
+        failedAttemptsByRequester: new Map(),
+        chargedFailureCensusIds: new Set(),
+      });
       publishChange();
       return {
         kind: 'created',
@@ -438,8 +530,18 @@ export function createConversationPairingManager(dependencies: Readonly<{
         } as const satisfies ConversationPreBindingPairingReservation;
       }
 
-      const requesterKey = JSON.stringify([input.connectionId, input.actor.principalId]);
-      const requesterAttempts = failedAttemptsByRequester.get(requesterKey) ?? 0;
+      /**
+       * A failed `/pair` is charged to its requester once per provider
+       * occurrence, never once per delivery, against the budget of the live
+       * challenge on the connection where the attempt arrived. A checkpointed
+       * pull re-presents its whole page until the checkpoint advances, so
+       * charging per call let one unsettled batch silently burn a requester's
+       * whole budget on a single mistyped token; the census ID is that
+       * occurrence's immutable identity, and the challenge-scoped state dies
+       * with the challenge it protects.
+       */
+      const failureState = failureStateByConnection.get(input.connectionId);
+      const requesterAttempts = failureState?.failedAttemptsByRequester.get(input.actor.principalId) ?? 0;
       if (requesterAttempts >= MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER) {
         return {
           kind: 'silent',
@@ -454,15 +556,28 @@ export function createConversationPairingManager(dependencies: Readonly<{
         || challenge.connectionId !== input.connectionId
         || !arePluginMachineMaterializationRefsEqual(challenge.materialization, input.materialization)) {
         const ownerReason = consumedTokens.has(input.command.token) ? 'challengeConsumed' : 'tokenMismatch';
-        if (chargedFailureCensusIds.has(input.censusId)) {
+        if (failureState === undefined) {
+          // No live challenge on this connection: nothing is matchable here,
+          // so there is no budget to charge and none to report.
+          return {
+            kind: 'silent',
+            ownerReason,
+            attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
+          } as const;
+        }
+        if (failureState.chargedFailureCensusIds.has(input.censusId)) {
           return {
             kind: 'silent',
             ownerReason,
             attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER - requesterAttempts,
           } as const;
         }
-        if (requesterAttempts === 0
-          && failedAttemptsByRequester.size >= MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS) {
+        if (
+          requesterAttempts === 0
+          && !failureState.failedAttemptsByRequester.has(input.actor.principalId)
+          && failureState.failedAttemptsByRequester.size
+            >= MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS
+        ) {
           return {
             kind: 'silent',
             ownerReason: 'attemptCapacityReached',
@@ -470,8 +585,8 @@ export function createConversationPairingManager(dependencies: Readonly<{
           } as const;
         }
         const attempts = requesterAttempts + 1;
-        failedAttemptsByRequester.set(requesterKey, attempts);
-        addBoundedTombstone(chargedFailureCensusIds, input.censusId);
+        failureState.failedAttemptsByRequester.set(input.actor.principalId, attempts);
+        failureState.chargedFailureCensusIds.add(input.censusId);
         return {
           kind: 'silent',
           ownerReason,
@@ -479,9 +594,6 @@ export function createConversationPairingManager(dependencies: Readonly<{
         } as const;
       }
 
-      if (proposals.size >= MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
-        return { kind: 'silent', ownerReason: 'proposalCapacityReached' } as const;
-      }
       return {
         kind: 'reserved',
         censusId: input.censusId,
@@ -519,15 +631,13 @@ export function createConversationPairingManager(dependencies: Readonly<{
       ) {
         return { kind: 'silent', ownerReason: 'reservationUnavailable' } as const;
       }
-      if (proposals.size >= MAX_CONVERSATION_BINDINGS_PER_ACCOUNT) {
-        return { kind: 'silent', ownerReason: 'proposalCapacityReached' } as const;
-      }
 
-      challengesById.delete(challenge.challengeId);
-      challengeIdsByToken.delete(challenge.token);
-      if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
-        challengeIdByConnection.delete(challenge.connectionId);
-      }
+      /**
+       * The durable per-Account binding quota is enforced by the binding
+       * writer at finalize, so the in-memory proposal count must never gate
+       * one Account's proof because another Account holds proposals.
+       */
+      detachChallenge(challenge);
       recordTerminalChallenge(challenge.challengeId, 'consumed');
       recordConsumedToken(challenge.token, challenge.expiresAt);
       const proposalId = dependencies.createId('proposal');
@@ -589,11 +699,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
       pruneExpiredAndPublish(dependencies.now());
       const challenge = challengesById.get(input.challengeId);
       if (!challenge) return { kind: 'notCancelled', reason: 'unavailable' } as const;
-      challengesById.delete(challenge.challengeId);
-      challengeIdsByToken.delete(challenge.token);
-      if (challengeIdByConnection.get(challenge.connectionId) === challenge.challengeId) {
-        challengeIdByConnection.delete(challenge.connectionId);
-      }
+      detachChallenge(challenge);
       recordConsumedToken(challenge.token, challenge.expiresAt);
       publishChange();
       return { kind: 'cancelled' } as const;
@@ -723,6 +829,7 @@ export function createConversationPairingManager(dependencies: Readonly<{
           challengeId: challenge.challengeId,
           connectionId: challenge.connectionId,
           expectedConnectionRevision: challenge.expectedConnectionRevision,
+          pairingRequestId: challenge.pairingRequestId,
           expiresAt: challenge.expiresAt,
           attemptsRemaining: MAX_CONVERSATION_PAIRING_FAILED_ATTEMPTS_PER_REQUESTER,
           destinationLabel: challenge.destinationLabel,

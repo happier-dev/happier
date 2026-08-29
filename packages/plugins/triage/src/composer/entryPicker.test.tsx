@@ -38,6 +38,7 @@ import {
 import { refreshTriageListWindow } from '../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderPickerSurface } from './entryPicker.js';
+import { TRIAGE_UI_TRANSLATIONS } from '../ui/translations.js';
 
 /**
  * The mounted Composer entry picker (`core/COMPOSER.md` §2, §3).
@@ -290,7 +291,12 @@ async function openPicker(
     composer: unknown,
     viewId: string,
     /** The reader's own environment, when the case is about that environment. */
-    environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
+    environment: Readonly<{
+        direction?: 'ltr' | 'rtl';
+        textScale?: number;
+        locale?: string;
+        translations?: Readonly<Record<string, string>>;
+    }> = {},
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -326,7 +332,12 @@ async function mountPicker(
     harness: ReturnType<typeof createHarness>,
     composer: unknown,
     viewId: string,
-    environment: Readonly<{ direction?: 'ltr' | 'rtl'; textScale?: number }> = {},
+    environment: Readonly<{
+        direction?: 'ltr' | 'rtl';
+        textScale?: number;
+        locale?: string;
+        translations?: Readonly<Record<string, string>>;
+    }> = {},
 ): Promise<PluginUiTestkit> {
     const fixture = await openPicker(harness, composer, viewId, environment);
     await act(async () => {
@@ -641,5 +652,30 @@ describe('the mounted Composer entry picker', () => {
         // screen-reader order alike.
         expect(names.indexOf('Attach Replace the duplicated normalizer'))
             .toBeLessThan(names.indexOf('View details Replace the duplicated normalizer'));
+    });
+
+    it('localizes each row action’s complete accessible name instead of concatenating English word order', async () => {
+        const harness = createHarness();
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-ja-actions', {
+            locale: 'ja',
+            translations: TRIAGE_UI_TRANSLATIONS.ja,
+        });
+
+        await expect(picker.getByRole('button', {
+            name: '「Replace the duplicated normalizer」を添付',
+        })).resolves.toBeDefined();
+        await expect(picker.getByRole('button', {
+            name: '「Replace the duplicated normalizer」の詳細を表示',
+        })).resolves.toBeDefined();
+        await expect(picker.queryByRole('button', {
+            name: '添付 Replace the duplicated normalizer',
+        })).resolves.toBeUndefined();
+
+        await picker.press(await picker.getByRole('button', {
+            name: '「Replace the duplicated normalizer」を添付',
+        }));
+        await expect(picker.getByRole('button', {
+            name: '「Replace the duplicated normalizer」を削除',
+        })).resolves.toBeDefined();
     });
 });

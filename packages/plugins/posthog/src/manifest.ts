@@ -288,6 +288,8 @@ export const POSTHOG_PLUGIN = definePlugin({
         }, {
             locale: 'pt', messages: { ...POSTHOG_UI_TRANSLATIONS.pt, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PRs e problemas', 'plugins.posthog.settings.sources.subtitle': 'Escolha as organizações e os projetos PostHog apresentados em PRs e problemas.' },
         }, {
+            locale: 'de', messages: { ...POSTHOG_UI_TRANSLATIONS.de, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PRs & Tickets', 'plugins.posthog.settings.sources.subtitle': 'Wähle aus, welche PostHog-Organisationen und -Projekte unter PRs & Tickets angezeigt werden.' },
+        }, {
             locale: 'ca', messages: { ...POSTHOG_UI_TRANSLATIONS.ca, 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR i incidències', 'plugins.posthog.settings.sources.subtitle': 'Tria les organitzacions i els projectes de PostHog que es mostren a PR i incidències.' },
         }, {
             locale: 'zh-Hans', messages: { ...POSTHOG_UI_TRANSLATIONS['zh-Hans'], 'plugins.posthog.settings.group': 'PostHog', 'plugins.posthog.settings.sources': 'PR 和问题', 'plugins.posthog.settings.sources.subtitle': '选择要在 PR 和问题中显示的 PostHog 组织和项目。' },

@@ -22,12 +22,30 @@ import {
 type OpenCodeTranscriptPageCursorV1 = Readonly<{
   v: 1;
   kind: 'opencodeTranscriptPage';
-  before: string;
+  /** The vendor continuation this page resumes from; null resumes at the newest message. */
+  before: string | null;
   sessionCreatedAtMs: number;
+  /**
+   * When the previous page stopped inside one native message, its id plus the
+   * number of its newest semantic items already served. The next page re-reads
+   * that exact message at its own scope anchor and serves the older remainder.
+   * One OpenCode message can expand to more semantic items than a page allows,
+   * so this source-bound subitem identity keeps backward paging lossless.
+   */
+  messageId?: string;
+  subIndex?: number;
 }>;
 
 function encodeOpenCodeTranscriptPageCursor(value: OpenCodeTranscriptPageCursorV1): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  return Buffer.from(JSON.stringify({
+    v: value.v,
+    kind: value.kind,
+    before: value.before,
+    sessionCreatedAtMs: value.sessionCreatedAtMs,
+    ...(value.messageId !== undefined && value.subIndex !== undefined
+      ? { messageId: value.messageId, subIndex: value.subIndex }
+      : {}),
+  }), 'utf8').toString('base64url');
 }
 
 function decodeOpenCodeTranscriptPageCursor(raw: string): OpenCodeTranscriptPageCursorV1 | null {
@@ -36,19 +54,29 @@ function decodeOpenCodeTranscriptPageCursor(raw: string): OpenCodeTranscriptPage
     if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
     const before = Reflect.get(decoded, 'before');
     const sessionCreatedAtMs = Reflect.get(decoded, 'sessionCreatedAtMs');
+    const rawMessageId = Reflect.get(decoded, 'messageId');
+    const rawSubIndex = Reflect.get(decoded, 'subIndex');
+    const intraMessage = rawMessageId !== undefined || rawSubIndex !== undefined;
+    if (
+      (intraMessage && (typeof rawMessageId !== 'string' || rawMessageId.length === 0))
+      || (intraMessage
+        && (typeof rawSubIndex !== 'number' || !Number.isSafeInteger(rawSubIndex) || rawSubIndex < 1))
+    ) {
+      return null;
+    }
     return Reflect.get(decoded, 'v') === 1
       && Reflect.get(decoded, 'kind') === 'opencodeTranscriptPage'
-      && typeof before === 'string'
-      && before.length > 0
+      && (before === null || (typeof before === 'string' && before.length > 0))
       && typeof sessionCreatedAtMs === 'number'
       && Number.isSafeInteger(sessionCreatedAtMs)
       && sessionCreatedAtMs >= 0
       ? {
-          v: 1,
-          kind: 'opencodeTranscriptPage',
-          before,
-          sessionCreatedAtMs,
-        }
+        v: 1,
+        kind: 'opencodeTranscriptPage',
+        before,
+        sessionCreatedAtMs,
+        ...(intraMessage ? { messageId: rawMessageId as string, subIndex: rawSubIndex as number } : {}),
+      }
       : null;
   } catch {
     return null;
@@ -119,22 +147,38 @@ export async function pageOpenCodeTranscript(params: Readonly<{
     ) {
       return sourceChangedPage();
     }
+    const resumeMessageId = decodedCursor?.messageId ?? null;
+    const resumeSubIndex = decodedCursor?.subIndex ?? 0;
+    // A mid-message resume re-reads the exact boundary message at this page's
+    // own scope anchor. A boundary that no longer returns that message is a
+    // moved source, not a page: fail closed instead of guessing positions.
+    const intraMessageResume = resumeMessageId !== null && resumeSubIndex > 0;
     let pageResult = await client.sessionMessagesList({
       sessionId: params.providerSessionId,
-      limit: maxItems,
-      ...(decodedCursor ? { before: decodedCursor.before } : {}),
+      limit: intraMessageResume ? 1 : maxItems,
+      ...(decodedCursor?.before ? { before: decodedCursor.before } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
     let rawMessages = pageResult.items;
+    if (intraMessageResume
+      && (rawMessages.length !== 1 || readOpenCodeMessageId(rawMessages[0]) !== resumeMessageId)
+    ) {
+      return sourceChangedPage();
+    }
     const newestMessageId = params.cursor ? null : readOpenCodeMessageId(rawMessages.at(-1));
 
     let encounteredUnsupportedRecord = false;
-    const readPage = (messages: readonly unknown[], rawItemLimit: number) => readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
+    const readPage = (
+      messages: readonly unknown[],
+      rawItemLimit: number,
+      startSubIndex = 0,
+    ) => readOpenCodeTranscriptBackwardWindow<AgentExternalSessionTranscriptItem>({
       messages,
       endIndex: messages.length,
       maxBytes: params.maxBytes,
       maxItems,
       rawItemLimit,
+      ...(startSubIndex > 0 ? { startSubIndex } : {}),
       mapMessage: (message) => {
         const projection = projectOpenCodeExternalSessionMessage(message, params.providerSessionId);
         if (projection.disposition === 'unsupported') encounteredUnsupportedRecord = true;
@@ -142,12 +186,16 @@ export async function pageOpenCodeTranscript(params: Readonly<{
       },
       measureItemBytes: measureOpenCodeTranscriptItemBytes,
     });
-    let page = readPage(rawMessages, maxItems);
-    if (page.nextIndex > 0) {
+    let page = readPage(rawMessages, intraMessageResume ? 1 : maxItems, resumeSubIndex);
+    // A multi-message page whose window stopped early is re-scoped to exactly
+    // one aligned message, so the vendor continuation matches what was served.
+    // A single-message page (including intra-message resumes) is already
+    // aligned; its own vendor continuation addresses this exact message.
+    if (page.nextIndex > 0 && rawMessages.length > 1) {
       pageResult = await client.sessionMessagesList({
         sessionId: params.providerSessionId,
         limit: 1,
-        ...(decodedCursor ? { before: decodedCursor.before } : {}),
+        ...(decodedCursor?.before ? { before: decodedCursor.before } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       });
       rawMessages = pageResult.items;
@@ -170,9 +218,23 @@ export async function pageOpenCodeTranscript(params: Readonly<{
         sessionCreatedAtMs,
       })
       : null;
-    const nextCursor = pageResult.nextCursor === null
-      ? null
-      : encodeOpenCodeTranscriptPageCursor({
+    // When the window stopped inside the boundary message, the continuation
+    // anchors there instead of advancing the vendor cursor past unserved items.
+    const boundaryMessageId = page.nextSubIndex > 0
+      ? readOpenCodeMessageId(rawMessages.at(page.nextIndex - 1))
+      : null;
+    const nextCursor = boundaryMessageId !== null
+      ? encodeOpenCodeTranscriptPageCursor({
+        v: 1,
+        kind: 'opencodeTranscriptPage',
+        before: decodedCursor?.before ?? null,
+        sessionCreatedAtMs,
+        messageId: boundaryMessageId,
+        subIndex: page.nextSubIndex,
+      })
+      : pageResult.nextCursor === null
+        ? null
+        : encodeOpenCodeTranscriptPageCursor({
           v: 1,
           kind: 'opencodeTranscriptPage',
           before: pageResult.nextCursor,

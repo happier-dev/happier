@@ -316,6 +316,43 @@ describe('Telegram Automation Event source', () => {
     });
   });
 
+  it('rejects a Telegram channel that the checkpointed message poll cannot observe', async () => {
+    const http = {
+      request: vi.fn(async (input: Readonly<{ url: string }>) => response(
+        input.url.includes('/getMe')
+          ? botIdentity
+          : { ok: true, result: { id: -100456, type: 'channel', title: 'Announcements' } },
+      )),
+    };
+    const execute = vi.fn(async (action: unknown) => {
+      if (typeof action === 'object' && action !== null && 'localId' in action
+        && action.localId === 'provider/connections-list-v1') {
+        return {
+          'telegram-connection-1': {
+            v: 1,
+            connectionId: 'telegram-connection-1',
+            providerConnectionKey: 'telegram-bot:123',
+            providerConfigVersion: 1,
+            providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: true },
+            credentialRef: telegramAccount,
+            authorityEpoch: 1,
+            enabled: true,
+            deletionState: 'none',
+            requiresFullSharedMessageContent: false,
+          },
+        };
+      }
+      throw new Error('Unexpected Action');
+    });
+
+    await expect(setupTelegramChatEventSource(
+      { credentialRef: telegramAccount, chatId: '-100456' },
+      context(http, execute),
+    )).rejects.toMatchObject({
+      code: 'telegram_automation_chat_type_unsupported',
+    });
+  });
+
   it('rejects a source that has no current Channels connection for the selected bot', async () => {
     const http = {
       request: vi.fn(async (input: Readonly<{ url: string }>) => response(

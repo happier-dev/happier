@@ -36,11 +36,22 @@ export type GithubRepositoryMergeSettingsV1 = Readonly<{
   rebase: boolean | null;
 }>;
 
+export type GithubRepositoryViewerPermissionsV1 = Readonly<{
+  admin: boolean | null;
+  maintain: boolean | null;
+  push: boolean | null;
+  triage: boolean | null;
+  pull: boolean | null;
+}>;
+
 export type GithubRepositoryReadV1 =
   | Readonly<{
     kind: 'readable';
     repositoryId: string;
     mergeSettings: GithubRepositoryMergeSettingsV1;
+    archived: boolean | null;
+    hasIssues: boolean | null;
+    viewerPermissions: GithubRepositoryViewerPermissionsV1;
   }>
   | Readonly<{ kind: 'unreadable'; failure: GithubTriageFailureV1 }>;
 
@@ -62,6 +73,17 @@ function readMergeSettings(body: unknown): GithubRepositoryMergeSettingsV1 {
     merge: readDeclaredBoolean(raw.allow_merge_commit),
     squash: readDeclaredBoolean(raw.allow_squash_merge),
     rebase: readDeclaredBoolean(raw.allow_rebase_merge),
+  });
+}
+
+function readViewerPermissions(body: unknown): GithubRepositoryViewerPermissionsV1 {
+  const raw = isRecord(body) && isRecord(body.permissions) ? body.permissions : {};
+  return Object.freeze({
+    admin: readDeclaredBoolean(raw.admin),
+    maintain: readDeclaredBoolean(raw.maintain),
+    push: readDeclaredBoolean(raw.push),
+    triage: readDeclaredBoolean(raw.triage),
+    pull: readDeclaredBoolean(raw.pull),
   });
 }
 
@@ -115,6 +137,9 @@ export function createGithubRepositoryReader(input: Readonly<{
       kind: 'readable',
       repositoryId,
       mergeSettings: readMergeSettings(body),
+      archived: isRecord(body) ? readDeclaredBoolean(body.archived) : null,
+      hasIssues: isRecord(body) ? readDeclaredBoolean(body.has_issues) : null,
+      viewerPermissions: readViewerPermissions(body),
     });
   };
 

@@ -12,7 +12,7 @@ import {
     type TriageScanResultV1,
     type TriageSourceScanObservationV1,
 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     listTriageEntries,
@@ -327,6 +327,13 @@ describe('the mounted continuation row', () => {
         // which is what made entry 57 unreachable.
         await expect(shell.getByText('More entries may exist'))
             .resolves.toEqual({ content: 'More entries may exist' });
+        // The statement is a noninteractive grid row. Only its explicit
+        // continuation control is a button; List must not synthesize a dead
+        // primary action for an item with no entry/detail destination.
+        await expect(shell.getByRole('row', { name: 'More entries may exist' }))
+            .resolves.toBeDefined();
+        await expect(shell.queryByRole('button', { name: 'More entries may exist' }))
+            .resolves.toBeUndefined();
         await expect(shell.getByText('Change 1.0')).resolves.toEqual({ content: 'Change 1.0' });
         await expect(shell.queryByText('Change 2.0')).resolves.toBeUndefined();
 
@@ -335,7 +342,12 @@ describe('the mounted continuation row', () => {
         });
 
         // The next bounded window is on screen, and the first one is still there.
-        await expect(shell.getByText('Change 2.0')).resolves.toEqual({ content: 'Change 2.0' });
+        await act(async () => {
+            await vi.waitFor(async () => {
+                await expect(shell.getByText('Change 2.0'))
+                    .resolves.toEqual({ content: 'Change 2.0' });
+            });
+        });
         await expect(shell.getByText('Change 1.0')).resolves.toEqual({ content: 'Change 1.0' });
     });
 
@@ -360,7 +372,12 @@ describe('the mounted continuation row', () => {
             await shell.press(await shell.getByRole('button', { name: 'Try again' }));
         });
 
-        await expect(shell.getByText('Change 2.0')).resolves.toEqual({ content: 'Change 2.0' });
+        await act(async () => {
+            await vi.waitFor(async () => {
+                await expect(shell.getByText('Change 2.0'))
+                    .resolves.toEqual({ content: 'Change 2.0' });
+            });
+        });
     });
 
     it('reaches a pin past the bounded page, and lets the reader remove it', async () => {

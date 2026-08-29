@@ -116,6 +116,34 @@ describe('GitHub Automation Event checkpoint identity', () => {
     expect(isValidPluginJsonSchemaValue(validate, genericRow)).toBe(false);
   });
 
+  it('persists the first baseline of a fresh trigger at Protocol trigger revision zero', () => {
+    const validate = compilePluginJsonSchema(GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION.schema);
+    // The canonical trigger create writers mint revision 0 and edits increment
+    // from there, so a source's very first checkpoint must be persistable at
+    // exactly the revision its admitted definition carries.
+    for (const lastEvaluatedTriggerRevision of [0, 1]) {
+      const row = createGithubAutomationEventCheckpointRowV1({
+        checkpointRowId: checkpointRowId({}),
+        automationId: 'automation-a',
+        triggerId: 'trigger-a',
+        eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
+        sourceSelectorId: '00000000-0000-4000-8000-000000000001',
+        sourceInstanceId: 'github:repository:77',
+        sourceContractVersion: 1,
+        cursor: null,
+        lastContiguousOccurrenceId: null,
+        baseline: { kind: 'currentHead', establishedAt: 1_000 },
+        lastEvaluatedTriggerRevision,
+        continuity: { v: 1, endpointKind: 'repositoryEvents', repositoryId: '77' },
+      });
+
+      expect(isGithubAutomationEventCheckpointRowV1(row)).toBe(true);
+      expect(isValidPluginJsonSchemaValue(validate, row)).toBe(true);
+      expect(row[GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD.payload].lastEvaluatedTriggerRevision)
+        .toBe(lastEvaluatedTriggerRevision);
+    }
+  });
+
   it('declares the trigger/Event/source lookup within the Collection index ceiling', () => {
     expect(GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION.indexes).toEqual([{
       id: GITHUB_AUTOMATION_EVENT_CHECKPOINT_INDEX_ID.byAutomationEventSource,

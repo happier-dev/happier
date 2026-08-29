@@ -11,7 +11,7 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
  *
  * Every key this plugin's surfaces ask for is resolved against the mounting plugin's own
  * declared bundle, never a merged host catalogue. A key present in `en` and missing from
- * the other ten locales therefore renders the author's English fallback for those
+ * another locale therefore renders the author's English fallback for those
  * readers, and a key missing everywhere renders whatever fallback the call site happened
  * to inline — both silently. Nothing fails, no test notices, and the first report comes
  * from a reader who cannot read their own settings page.

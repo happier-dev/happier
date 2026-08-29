@@ -39,10 +39,9 @@ describe('Sentry plugin activation', () => {
       SENTRY_CONNECTED_ACCOUNT_ID,
       expect.objectContaining({ authentication: expect.any(Object) }),
     );
-    // The full allow-listed Sentry event projection currently exceeds the
-    // Composer reference-result contract. Until the evidence projection is
-    // explicitly amended, activation must fail closed with no resolver whose
-    // valid output can be rejected solely because of its size.
-    expect(registerComposerReference).not.toHaveBeenCalled();
+    expect(registerComposerReference).toHaveBeenCalledWith('sentry-evidence', {
+      search: expect.any(Function),
+      resolve: expect.any(Function),
+    });
   });
 });

@@ -1,5 +1,6 @@
 import {
   PluginError,
+  type JsonValue,
   type PluginInvocationContext,
   type TargetedContributionPointRef,
   type TargetedContributionSnapshot,
@@ -212,6 +213,16 @@ function createMutableConnectionStateCollection() {
   return {
     rows,
     get: async (rowId: string) => rows.get(rowId) ?? null,
+    async put(value: MutableStateValue, input: Readonly<{ expectedRevision: number | 'absent' }>) {
+      const current = rows.get(value.id);
+      const matches = input.expectedRevision === 'absent'
+        ? current === undefined
+        : current?.revision === input.expectedRevision;
+      if (!matches) throw new Error('collection conflict');
+      const row = { rowId: value.id, revision: (current?.revision ?? 0) + 1, value };
+      rows.set(value.id, row);
+      return row;
+    },
     async query(request: Readonly<{ index: string; prefix?: readonly unknown[]; limit?: number }>) {
       assertChannelsTestCollectionQueryLimit(request.limit);
       if (request.index !== CHANNEL_STATE_INDEX_ID.byKind) {
@@ -332,6 +343,135 @@ const connectionCreateInput = {
   maximumObservationAgeMs: 60_000,
 } as const;
 
+const DURABLE_PUSH_WEBHOOK_ENDPOINT_ID = 'wh_ep_AAECAwQFBgcICQoLDA0ODw';
+
+/**
+ * The durable-push create journey exercises the same public management owner
+ * with a setup that declares the generic webhook contribution. The captured
+ * connection-test input proves the preallocated final identity reached the
+ * provider effect before any endpoint or row existed.
+ */
+function durablePushCreateActionExecutor(input: Readonly<{
+  contributorPluginId?: string;
+}>): Readonly<{
+  executeAdmittedTargetedOperationWithExecutionOrigin: ReturnType<typeof vi.fn>;
+  connectionTestInputs: unknown[];
+}> {
+  const connectionTestInputs: unknown[] = [];
+  const contributorPluginId = input.contributorPluginId ?? providerSelection.contributor.pluginId;
+  const executionOrigin = {
+    serverIdentityId: 'srv-example',
+    materializationRef: {
+      pluginId: contributorPluginId,
+      machineId: 'machine-example',
+      materializationId: 'materialization-example',
+    },
+  } as const;
+  const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown) => {
+    if (action === setupAction) {
+      return {
+        result: {
+          v: 1,
+          credentialRef: null,
+          providerConnectionKey: 'example:connection',
+          providerConfigVersion: 1,
+          providerConfig: { opaque: true },
+          integrationPrincipal: { id: 'example-bot' },
+          supportedTransports: ['checkpointedPull', 'socket', 'durablePush'],
+          recommendedTransport: 'durablePush',
+          overlapSafety: 'safe',
+          replayContinuity: 'none',
+          outboundTextLimit: { maximum: 4_000, unit: 'unicodeCodePoints' },
+          webhookContributionRef: { pluginId: contributorPluginId, localId: 'webhook' },
+        },
+        executionOrigin,
+      };
+    }
+    if (action === connectionTestAction) {
+      connectionTestInputs.push(actionInput);
+      return {
+        result: {
+          kind: 'ready',
+          integrationPrincipal: { id: 'example-bot' },
+          providerConnectionKey: 'example:connection',
+        },
+        executionOrigin,
+      };
+    }
+    throw new Error('Expected only the selected setup and connection-test Actions.');
+  });
+  return { executeAdmittedTargetedOperationWithExecutionOrigin, connectionTestInputs };
+}
+
+function correspondenceReadyExecutor(input: Readonly<{
+  observed?: unknown[];
+  result?: unknown;
+}> = {}): ReturnType<typeof vi.fn> {
+  return vi.fn(async (_actionId: string, actionInput: unknown) => {
+    input.observed?.push(actionInput);
+    return input.result ?? {
+      kind: 'ready',
+      webhookEndpointId: (actionInput as Readonly<{ webhookEndpointId: string }>).webhookEndpointId,
+      revision: 4,
+    };
+  });
+}
+
+function durablePushCreateContext(input: Readonly<{
+  stateCollection: unknown;
+  contributorPluginId?: string;
+  correspondence?: ReturnType<typeof correspondenceReadyExecutor>;
+  signal?: AbortSignal;
+}>): Readonly<{
+  context: PluginInvocationContext;
+  executeAdmittedTargetedOperationWithExecutionOrigin: ReturnType<typeof vi.fn>;
+  connectionTestInputs: unknown[];
+  correspondenceInputs: unknown[];
+}> {
+  const correspondenceInputs: unknown[] = [];
+  const executor = durablePushCreateActionExecutor({ contributorPluginId: input.contributorPluginId });
+  const correspondence = input.correspondence ?? correspondenceReadyExecutor({ observed: correspondenceInputs });
+  return {
+    context: invocationContext({
+      actions: {
+        executeAdmittedTargetedOperationWithExecutionOrigin: executor.executeAdmittedTargetedOperationWithExecutionOrigin,
+        execute: correspondence,
+      } as unknown as ActionsService,
+      targetedContributions: targetedContributionsFixture({
+        contributorImmutableGenerationId: providerSelection.contributor.immutableGenerationId,
+        contributorPluginId: input.contributorPluginId,
+        operations: {
+          setup: setupAction,
+          connectionTest: connectionTestAction,
+          messageDeliver: messageDeliverAction,
+          connectionStop: connectionStopAction,
+        },
+      }),
+      stateCollection: input.stateCollection,
+      signal: input.signal,
+    }),
+    executeAdmittedTargetedOperationWithExecutionOrigin: executor.executeAdmittedTargetedOperationWithExecutionOrigin,
+    connectionTestInputs: executor.connectionTestInputs,
+    correspondenceInputs,
+  };
+}
+
+function durablePushCreateInput(input: Readonly<{
+  selectedTransport?: 'checkpointedPull' | 'socket' | 'durablePush';
+  providerSelection?: Record<string, JsonValue>;
+  endpointContinuation?: Readonly<{
+    connectionId: string;
+    webhookEndpointId: string;
+  }>;
+}> = {}): JsonValue {
+  return {
+    ...connectionCreateInput,
+    selectedTransport: input.selectedTransport ?? 'durablePush',
+    ...(input.providerSelection === undefined ? {} : { providerSelection: input.providerSelection }),
+    ...(input.endpointContinuation === undefined ? {} : { endpointContinuation: input.endpointContinuation }),
+  };
+}
+
 describe('prepareConversationConnectionForInvocation targeted provider selection', () => {
   it('resolves the selected admitted contributor and binds its exact selected account to the setup handle', async () => {
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (action: unknown, actionInput: unknown, options: unknown) => {
@@ -427,12 +567,12 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
       credentialRef: selectedCredentialRef,
     }, context)).resolves.toMatchObject({
       kind: 'ready',
-      supportedTransports: ['socket'],
-      recommendedTransport: 'socket',
+      supportedTransports: ['durablePush', 'socket'],
+      recommendedTransport: 'durablePush',
     });
   });
 
-  it('rejects preparation when a provider only supports durable push', async () => {
+  it('admits preparation when a provider only supports durable push', async () => {
     const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
       result: {
         v: 1,
@@ -468,7 +608,11 @@ describe('prepareConversationConnectionForInvocation targeted provider selection
       providerSelection,
       providerSetupInput: { source: 'durable-push-only' },
       credentialRef: selectedCredentialRef,
-    }, context)).rejects.toMatchObject({ code: 'channels_connection_transport_unavailable' });
+    }, context)).resolves.toMatchObject({
+      kind: 'ready',
+      supportedTransports: ['durablePush'],
+      recommendedTransport: 'durablePush',
+    });
   });
 
   it('returns provider-neutral remediation without creating or testing a connection', async () => {
@@ -2948,5 +3092,425 @@ describe('retestConversationConnectionForInvocation', () => {
     });
     expect(executeAdmittedTargetedOperationWithExecutionOrigin).not.toHaveBeenCalled();
     expect(fixture.batches).toHaveLength(0);
+  });
+});
+
+describe('durablePush connection create endpoint continuation', () => {
+  it('returns the preallocated final identity and exact core-minted ensure facts, persisting nothing', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const { context, connectionTestInputs, correspondenceInputs } = durablePushCreateContext({
+      stateCollection: collection,
+    });
+
+    const result = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      context,
+    );
+
+    expect(result).toMatchObject({ kind: 'endpointRequired' });
+    if (result.kind !== 'endpointRequired') return;
+    const sourceInstanceId = `channels.connection.${result.connectionId}`;
+    expect(result).toEqual({
+      kind: 'endpointRequired',
+      connectionId: expect.any(String),
+      webhookContribution: {
+        pluginId: providerSelection.contributor.pluginId,
+        localId: 'webhook',
+      },
+      targetMaterialization: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        materializationId: 'materialization-example',
+      },
+      sourceInstanceId,
+      webhookEndpointSetup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+      webhookEndpointIdempotencyKey: expect.stringMatching(/^[A-Za-z0-9._:-]{16,128}$/u),
+    });
+    // The generic ensure key is the one stable attempt identity; Channels
+    // publishes no parallel setup-attempt token.
+    // The preallocated final identity reached the provider connection test
+    // before any endpoint or row existed.
+    expect(connectionTestInputs).toHaveLength(1);
+    expect(connectionTestInputs[0]).toMatchObject({ connectionId: result.connectionId });
+    // The first call is observation-plus-identity only: no correspondence
+    // proof, no Account row, and no identity-key singleton yet.
+    expect(correspondenceInputs).toHaveLength(0);
+    expect(collection.rows.size).toBe(0);
+  });
+
+  it('rejoins an existing exact connection before the endpoint journey starts', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const incumbent = await createConversationConnectionForInvocation(
+      durablePushCreateInput({ selectedTransport: 'socket' }),
+      first.context,
+    );
+    if (incumbent.kind !== 'created') throw new Error('Expected the incumbent socket connection.');
+
+    const second = durablePushCreateContext({ stateCollection: collection });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      second.context,
+    )).resolves.toEqual({ kind: 'rejoined', connectionId: incumbent.connectionId });
+    expect(second.correspondenceInputs).toHaveLength(0);
+  });
+
+  it('continues with the returned identity, proves host correspondence, and persists the exact endpoint facts', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const endpointRequired = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      first.context,
+    );
+    if (endpointRequired.kind !== 'endpointRequired') {
+      throw new Error('Expected the endpointRequired arm.');
+    }
+    const continuation = {
+      connectionId: endpointRequired.connectionId,
+      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+    };
+
+    const second = durablePushCreateContext({ stateCollection: collection });
+    const created = await createConversationConnectionForInvocation(
+      durablePushCreateInput({ endpointContinuation: continuation }),
+      second.context,
+    );
+
+    expect(created).toEqual({ kind: 'created', connectionId: endpointRequired.connectionId });
+    // Correspondence is host-derived with the exact four facts; the core
+    // derives them, the continuation only relayed the endpoint identity.
+    expect(second.correspondenceInputs).toEqual([{
+      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+      webhookContribution: {
+        pluginId: providerSelection.contributor.pluginId,
+        localId: 'webhook',
+      },
+      targetMaterialization: {
+        pluginId: providerSelection.contributor.pluginId,
+        machineId: 'machine-example',
+        materializationId: 'materialization-example',
+      },
+      sourceInstanceId: `channels.connection.${endpointRequired.connectionId}`,
+      setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
+    }]);
+    // The persisted row is the preallocated identity with the exact durable
+    // endpoint facts, and the connection test reused the same identity.
+    expect(second.connectionTestInputs[0]).toMatchObject({
+      connectionId: endpointRequired.connectionId,
+    });
+    const row = collection.rows.get(endpointRequired.connectionId);
+    expect(row?.value).toMatchObject({
+      'record-kind': CHANNEL_STATE_RECORD_KIND.connection,
+      payload: {
+        transport: {
+          kind: 'durablePush',
+          webhookContributionRef: {
+            pluginId: providerSelection.contributor.pluginId,
+            localId: 'webhook',
+          },
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+          webhookSourceInstanceId: `channels.connection.${endpointRequired.connectionId}`,
+        },
+        overlapSafety: 'safe',
+        replayContinuity: 'none',
+      },
+    });
+    // One reservation guards the same immutable provider identity.
+    const reservation = [...collection.rows.values()].find((candidate) => (
+      candidate.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.connectionReservation
+    ));
+    expect(reservation).toBeDefined();
+  });
+
+  it('rejoins the exact committed connection and endpoint when a continuation response is lost', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const endpointRequired = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      first.context,
+    );
+    if (endpointRequired.kind !== 'endpointRequired') {
+      throw new Error('Expected the endpointRequired arm.');
+    }
+    const continuation = {
+      connectionId: endpointRequired.connectionId,
+      webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+    };
+    const second = durablePushCreateContext({ stateCollection: collection });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({ endpointContinuation: continuation }),
+      second.context,
+    )).resolves.toEqual({ kind: 'created', connectionId: endpointRequired.connectionId });
+
+    // The retried continuation runs setup/test and host-derived current
+    // correspondence again before it rejoins without an endpoint effect.
+    const retry = durablePushCreateContext({ stateCollection: collection });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({ endpointContinuation: continuation }),
+      retry.context,
+    )).resolves.toEqual({ kind: 'rejoined', connectionId: endpointRequired.connectionId });
+    expect(retry.correspondenceInputs).toHaveLength(1);
+  });
+
+  it('fails closed when correspondence is not a current ready result', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const endpointRequired = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      first.context,
+    );
+    if (endpointRequired.kind !== 'endpointRequired') {
+      throw new Error('Expected the endpointRequired arm.');
+    }
+    const second = durablePushCreateContext({
+      stateCollection: collection,
+      correspondence: correspondenceReadyExecutor({
+        result: { kind: 'unavailable', code: 'endpoint_not_found' },
+      }),
+    });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: endpointRequired.connectionId,
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        },
+      }),
+      second.context,
+    )).rejects.toMatchObject({
+      code: 'channels_connection_endpoint_correspondence_mismatch',
+    });
+    expect([...collection.rows.values()]).toHaveLength(0);
+  });
+
+  it('fails closed when a mismatched continuation names another attempt endpoint', async () => {
+    const collection = createMutableConnectionStateCollection();
+    // Two live attempts each hold their own preallocated identity and ensure
+    // key before either commits — the exact reachable overlap a retried or
+    // interleaved setup journey can produce.
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const firstAttempt = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      first.context,
+    );
+    if (firstAttempt.kind !== 'endpointRequired') throw new Error('Expected the first arm.');
+    const second = durablePushCreateContext({ stateCollection: collection });
+    const secondAttempt = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      second.context,
+    );
+    if (secondAttempt.kind !== 'endpointRequired') throw new Error('Expected the second arm.');
+    expect(secondAttempt.connectionId).not.toBe(firstAttempt.connectionId);
+    expect(secondAttempt.webhookEndpointIdempotencyKey)
+      .not.toBe(firstAttempt.webhookEndpointIdempotencyKey);
+
+    // The first attempt commits its connection with its own endpoint.
+    const commit = durablePushCreateContext({ stateCollection: collection });
+    await createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: firstAttempt.connectionId,
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        },
+      }),
+      commit.context,
+    );
+
+    // The interleaved second attempt's continuation names the retained
+    // connection's identity space with its own endpoint: current host-derived
+    // correspondence runs first, then incumbent identity mismatch fails
+    // closed without any write.
+    const interleaved = durablePushCreateContext({ stateCollection: collection });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: secondAttempt.connectionId,
+          webhookEndpointId: 'wh_ep_AQIDBAUGBwgJCgsMDQ4PEA',
+        },
+      }),
+      interleaved.context,
+    )).rejects.toMatchObject({
+      code: 'channels_connection_create_endpoint_mismatch',
+    });
+    expect(interleaved.correspondenceInputs).toHaveLength(1);
+  });
+
+  it('revalidates an incumbent endpoint that wins after the continuation pre-check', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({ stateCollection: collection });
+    const firstAttempt = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      first.context,
+    );
+    if (firstAttempt.kind !== 'endpointRequired') throw new Error('Expected the first arm.');
+    const second = durablePushCreateContext({ stateCollection: collection });
+    const secondAttempt = await createConversationConnectionForInvocation(
+      durablePushCreateInput(),
+      second.context,
+    );
+    if (secondAttempt.kind !== 'endpointRequired') throw new Error('Expected the second arm.');
+
+    const batchImplementation = collection.batch.getMockImplementation();
+    if (batchImplementation === undefined) throw new Error('Expected the mutable collection batch owner.');
+    let releaseFirstBatch: (() => void) | undefined;
+    const firstBatchReleased = new Promise<void>((resolve) => {
+      releaseFirstBatch = resolve;
+    });
+    let reportFirstBatchBlocked: (() => void) | undefined;
+    const firstBatchBlocked = new Promise<void>((resolve) => {
+      reportFirstBatchBlocked = resolve;
+    });
+    let holdFirstConnectionBatch = true;
+    collection.batch.mockImplementation(async (operations) => {
+      const isConnectionBatch = operations.some((operation) => (
+        operation.kind === 'put'
+        && operation.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.connection
+      ));
+      if (holdFirstConnectionBatch && isConnectionBatch) {
+        holdFirstConnectionBatch = false;
+        reportFirstBatchBlocked?.();
+        await firstBatchReleased;
+      }
+      return await batchImplementation(operations);
+    });
+
+    // The first continuation passes currentness/setup/test/correspondence and
+    // observes no incumbent, then pauses immediately before its atomic
+    // reservation-plus-connection batch.
+    const firstContinuation = durablePushCreateContext({ stateCollection: collection });
+    const firstOutcome = createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: firstAttempt.connectionId,
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        },
+      }),
+      firstContinuation.context,
+    );
+    await firstBatchBlocked;
+
+    // A second exact attempt wins the incumbent reservation with a different
+    // endpoint while the first caller is between its pre-check and batch.
+    const racedEndpointId = 'wh_ep_AQIDBAUGBwgJCgsMDQ4PEA';
+    const secondContinuation = durablePushCreateContext({ stateCollection: collection });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: secondAttempt.connectionId,
+          webhookEndpointId: racedEndpointId,
+        },
+      }),
+      secondContinuation.context,
+    )).resolves.toEqual({ kind: 'created', connectionId: secondAttempt.connectionId });
+
+    releaseFirstBatch?.();
+    await expect(firstOutcome).rejects.toMatchObject({
+      code: 'channels_connection_create_endpoint_mismatch',
+    });
+    expect(firstContinuation.correspondenceInputs).toHaveLength(1);
+    expect(secondContinuation.correspondenceInputs).toHaveLength(1);
+    expect(collection.rows.get(secondAttempt.connectionId)).toMatchObject({
+      value: {
+        payload: {
+          transport: {
+            kind: 'durablePush',
+            webhookEndpointId: racedEndpointId,
+            webhookSourceInstanceId: `channels.connection.${secondAttempt.connectionId}`,
+          },
+        },
+      },
+    });
+  });
+
+  it('cancellation leaves no partial connection row or endpoint proof', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const controller = new AbortController();
+    controller.abort();
+    const { context } = durablePushCreateContext({
+      stateCollection: collection,
+      signal: controller.signal,
+    });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        endpointContinuation: {
+          connectionId: 'connection-cancelled',
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        },
+      }),
+      context,
+    )).rejects.toMatchObject({ code: 'channels_connection_create_cancelled' });
+    expect([...collection.rows.values()]).toHaveLength(0);
+  });
+
+  it('keeps ordinary transports free of the endpoint journey and rejects a continuation without durable push', async () => {
+    const collection = createMutableConnectionStateCollection();
+    const socket = durablePushCreateContext({ stateCollection: collection });
+    const created = await createConversationConnectionForInvocation(
+      durablePushCreateInput({ selectedTransport: 'socket' }),
+      socket.context,
+    );
+    expect(created).toMatchObject({ kind: 'created' });
+    expect(socket.correspondenceInputs).toHaveLength(0);
+    const row = collection.rows.get((created as Readonly<{ connectionId: string }>).connectionId);
+    expect(row?.value).toMatchObject({
+      payload: { transport: { kind: 'socket' } },
+    });
+
+    const invalid = durablePushCreateContext({ stateCollection: createMutableConnectionStateCollection() });
+    await expect(createConversationConnectionForInvocation({
+      ...connectionCreateInput,
+      endpointContinuation: {
+        connectionId: 'connection-1',
+        webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+      },
+    }, invalid.context)).rejects.toMatchObject({
+      code: 'channels_connection_create_endpoint_continuation_invalid',
+    });
+  });
+
+  it('gives external contributor identities the identical endpoint journey', async () => {
+    const externalPluginId = 'external.channels.provider';
+    const externalContributor = {
+      ...providerSelection.contributor,
+      pluginId: externalPluginId,
+    } as const;
+    const externalProviderSelection = {
+      ...providerSelection,
+      contributor: externalContributor,
+    } as const satisfies PluginTargetedContributionSelectionV1;
+    const collection = createMutableConnectionStateCollection();
+    const first = durablePushCreateContext({
+      stateCollection: collection,
+      contributorPluginId: externalPluginId,
+    });
+    const endpointRequired = await createConversationConnectionForInvocation(
+      durablePushCreateInput({ providerSelection: externalProviderSelection }),
+      first.context,
+    );
+    if (endpointRequired.kind !== 'endpointRequired') {
+      throw new Error('Expected the endpointRequired arm.');
+    }
+    expect(endpointRequired.webhookContribution.pluginId).toBe(externalPluginId);
+    expect(endpointRequired.targetMaterialization.pluginId).toBe(externalPluginId);
+    expect(endpointRequired.sourceInstanceId).toBe(
+      `channels.connection.${endpointRequired.connectionId}`,
+    );
+    const second = durablePushCreateContext({
+      stateCollection: collection,
+      contributorPluginId: externalPluginId,
+    });
+    await expect(createConversationConnectionForInvocation(
+      durablePushCreateInput({
+        providerSelection: externalProviderSelection,
+        endpointContinuation: {
+          connectionId: endpointRequired.connectionId,
+          webhookEndpointId: DURABLE_PUSH_WEBHOOK_ENDPOINT_ID,
+        },
+      }),
+      second.context,
+    )).resolves.toEqual({ kind: 'created', connectionId: endpointRequired.connectionId });
+    expect(second.correspondenceInputs[0]).toMatchObject({
+      webhookContribution: { pluginId: externalPluginId },
+      targetMaterialization: { pluginId: externalPluginId },
+    });
   });
 });

@@ -18,7 +18,6 @@ import reviewPage from '../fixtures/pullRequestsReviewPage.json' with { type: 'j
 import repositoriesPage from '../fixtures/workspaceRepositoriesPage.json' with { type: 'json' };
 import workspacesPage from '../fixtures/userWorkspacesPage.json' with { type: 'json' };
 import { encodeBitbucketConfiguration } from '../instance.js';
-import { BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS } from '../apiClient.js';
 import { decodeBitbucketScanContinuation } from '../scanContinuation.js';
 import { scanBitbucketSourceAction } from './actions.js';
 import { projectBitbucketDetailOverview } from './detail.js';
@@ -204,7 +203,7 @@ describe('Bitbucket listInstances', () => {
 });
 
 describe('Bitbucket scan', () => {
-  it('uses one absolute deadline across successive provider requests', async () => {
+  it('uses the caller signal across successive provider requests without inventing a timeout', async () => {
     vi.useFakeTimers();
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
@@ -213,6 +212,7 @@ describe('Bitbucket scan', () => {
     const http = {
       async request(input: Parameters<HttpService['request']>[0], options?: Readonly<{ signal?: AbortSignal }>) {
         requests += 1;
+        expect(input.timeoutMs).toBeUndefined();
         return await new Promise<Awaited<ReturnType<HttpService['request']>>>((resolve, reject) => {
           const timer = setTimeout(() => {
             const body = input.url.includes('/2.0/user')
@@ -236,27 +236,24 @@ describe('Bitbucket scan', () => {
       },
     } as unknown as HttpService;
 
-    let settled = false;
+    const caller = new AbortController();
     const pending = scanBitbucketSourceAction(
       TriageScanInputV1Schema.parse({
         v: 1,
         instance: configuredInstance(),
         page: { kind: 'initial', limit: 32 },
       }),
-      createInvocationContext(connectedAccounts, http),
-    ).then((result) => {
-      settled = true;
-      return result;
-    });
+      createInvocationContext(connectedAccounts, http, caller.signal),
+    );
 
-    await vi.advanceTimersByTimeAsync(BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS);
-    expect(settled).toBe(true);
+    await vi.advanceTimersByTimeAsync(16_000);
+    expect(requests).toBe(2);
+    caller.abort(new DOMException('The caller stopped the scan.', 'AbortError'));
     const result = await pending;
     expect(result).toEqual({
       kind: 'failed',
-      failure: { class: 'transient', code: 'invocation-deadline-exceeded' },
+      failure: { class: 'transient', code: 'invocation-cancelled' },
     });
-    expect(requests).toBe(2);
   });
 
   it('projects the authored lane and reports unavailable native lanes as partial', async () => {

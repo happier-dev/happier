@@ -2,6 +2,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
 
 import { XAI_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+import { XAI_REALTIME_SETTINGS_SECTION } from './voiceSettingsPresentation.js';
 
 const XAI_API_KEY_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
 
@@ -32,6 +33,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
       },
       settings: {
         schemaVersion: 1,
+        presentation: JSON.parse(JSON.stringify(XAI_REALTIME_SETTINGS_SECTION)),
         fields: [
           {
             id: 'model',

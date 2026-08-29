@@ -430,12 +430,6 @@ export async function publishGitlabMergeRequestReview(
   if (revisions.base !== plan.baseRevision) return rejected('base_advanced', { observed: current.row });
   if (revisions.head !== plan.headRevision) return rejected('head_advanced', { observed: current.row });
   if (revisions.start === null) return rejected('start_advanced', { observed: current.row });
-  if (plan.verdict?.kind === 'requestChanges') {
-    // GitLab's /unapprove only removes this viewer's approval. The only REST
-    // operation that records requested_changes is bulk_publish, which would
-    // publish unrelated user drafts and is therefore forbidden.
-    return rejected('unsupported_verdict', { observed: current.row });
-  }
   const preclaimProjections = plan.entries.map((entry, index) => projectEntry(
     entry,
     plan,

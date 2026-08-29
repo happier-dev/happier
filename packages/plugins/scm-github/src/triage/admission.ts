@@ -11,7 +11,7 @@ import { GITHUB_ROUTE_BODY_MISMATCH_FAILURE } from './errors.js';
 import { buildGithubCollisionScope } from './identity.js';
 import { parseGithubRoutingToken, type GithubRepositoryRouteV1 } from './locator.js';
 import { openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
-import { createGithubRepositoryReader } from './repositories.js';
+import { createGithubRepositoryReader, type GithubRepositoryReadV1 } from './repositories.js';
 import type { GithubTriageEntryLocalRefV1, GithubTriageKindIdV1 } from './types.js';
 
 /**
@@ -55,13 +55,13 @@ export type GithubAdmittedInvocationV1 =
   }>
   | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
-/** One mounted GitHub detail read, including every provider call behind it. */
-export const GITHUB_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
+export type GithubAdmittedDetailInvocationV1 =
+  | (Extract<GithubAdmittedInvocationV1, { ok: true }> & Readonly<{
+    repository: Extract<GithubRepositoryReadV1, { kind: 'readable' }>;
+  }>)
+  | Readonly<{ ok: false; failure: TriageSourceFailureV1 }>;
 
-/** One exact GitHub mutation: preflight, one write, and confirmation together. */
-export const GITHUB_MUTATION_DEADLINE_MS = 45_000;
-
-async function admitGithubEntryInvocationWithinDeadline(
+export async function admitGithubEntryInvocation(
   input: Readonly<{
     instance: TriageConfiguredSourceInstanceV1;
     localRef: Readonly<{ kindId: string; collisionScope: string; entryId: string }>;
@@ -102,13 +102,6 @@ async function admitGithubEntryInvocationWithinDeadline(
   });
 }
 
-export async function admitGithubEntryInvocation(
-  input: Parameters<typeof admitGithubEntryInvocationWithinDeadline>[0],
-  context: PluginInvocationContext,
-): Promise<GithubAdmittedInvocationV1> {
-  return admitGithubEntryInvocationWithinDeadline(input, context);
-}
-
 /**
  * Detail-read admission adds the identity fact those collection endpoints do not
  * return themselves. `owner/name` is only a mutable route; the local reference is
@@ -122,8 +115,8 @@ export async function admitGithubEntryInvocation(
 export async function admitGithubDetailInvocation(
   input: Parameters<typeof admitGithubEntryInvocation>[0],
   context: PluginInvocationContext,
-): Promise<GithubAdmittedInvocationV1> {
-  const admitted = await admitGithubEntryInvocationWithinDeadline(input, context);
+): Promise<GithubAdmittedDetailInvocationV1> {
+  const admitted = await admitGithubEntryInvocation(input, context);
   if (!admitted.ok) return admitted;
 
   const repository = await createGithubRepositoryReader({
@@ -136,5 +129,5 @@ export async function admitGithubDetailInvocation(
   if (buildGithubCollisionScope(repository.repositoryId) !== admitted.localRef.collisionScope) {
     return Object.freeze({ ok: false as const, failure: GITHUB_ROUTE_BODY_MISMATCH_FAILURE });
   }
-  return admitted;
+  return Object.freeze({ ...admitted, repository });
 }

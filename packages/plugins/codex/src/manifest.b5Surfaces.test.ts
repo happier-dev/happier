@@ -17,11 +17,7 @@ describe('Codex B.5 surface declarations', () => {
     expect(backend.capabilities.surfaces).toEqual(['terminal', 'externalSessions']);
     expect(backend.capabilities.sessions.open).toEqual(['create', 'resume', 'fork']);
     expect(backend.capabilities.sessions.delivery).toEqual(['newTurn', 'steer']);
-    expect(backend.capabilities.executionRuns).toMatchObject({
-      open: ['create', 'resume'],
-      checkpoint: true,
-      stop: true,
-    });
+    expect(backend.capabilities).not.toHaveProperty('executionRuns');
     expect(backend.capabilities.sessions).toMatchObject({
       goals: {
         inactive: {

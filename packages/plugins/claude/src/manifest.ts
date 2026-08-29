@@ -2,10 +2,10 @@ import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sd
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import {
-  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import type {
   McpDiscoveredEndpoint as PluginMcpDiscoveredEndpoint,
@@ -362,7 +362,6 @@ export const CLAUDE_PLUGIN = definePlugin({
             runtimeActivitySnapshots: true,
             workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
           },
-          executionRuns: { open: ['create'], checkpoint: true, stop: true },
         }),
         providerRequirements: {
           acceptsProtocols: ['anthropic'],
@@ -460,7 +459,7 @@ export const CLAUDE_PLUGIN = definePlugin({
             ok: true,
             options: {
               ...command.options,
-              ...resolveClaudeSessionRuntimePreferences({ settings: input.settings }),
+              ...resolveClaudeSessionRuntimePreferences({ settings: input.pluginSettings.account ?? {} }),
             },
           };
         },

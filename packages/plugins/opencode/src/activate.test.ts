@@ -88,13 +88,14 @@ describe('activate', () => {
     try {
       const buildSessionOptions = activation.registration('agents', 'opencode')?.cliSessionCommand?.buildSessionOptions;
       expect(buildSessionOptions).toBeTypeOf('function');
-      expect(buildSessionOptions?.({
+      expect(await buildSessionOptions?.({
         isExplicitCliSubcommand: true,
         parsed: { agentArgs: [] },
-        settings: {
+        settings: {},
+        pluginSettings: { account: {
           opencodeBackendMode: 'server',
           opencodeServerBaseUrl: 'https://opencode.example.test',
-        },
+        } },
         environment: {},
         startOrigin: 'terminal',
       })).toEqual({

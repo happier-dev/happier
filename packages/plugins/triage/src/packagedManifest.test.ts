@@ -8,7 +8,6 @@ import {
     TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
     TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
 } from './actions/actionsCatalogProtocol.js';
-import { TRIAGE_ACTIONS_SETTING_ID_V1 } from './settings/actions.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1, TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1 } from './composer/openEntryDetails.js';
 import {
@@ -187,38 +186,14 @@ describe('packaged PRs & Issues manifest', () => {
             .toEqual([CORPUS_USER_MARKS_FIELD.markTag]);
     });
 
-    it('ships the configured-action Settings field and the two Actions that edit it', () => {
-        // The predecessor of this unit, `triage.agentSelection`, shipped a
-        // complete setting, a choices resolver and a settings contribution that
-        // the manifest never named. Every source test was green and the whole
-        // thing was dead for weeks, because nothing asserted the one fact that
-        // decides whether a contribution exists: what the HOST installs.
-        //
-        // The whole-artifact equality above cannot catch that on its own. A
-        // registration removed from `manifest.ts` and then regenerated is a
-        // matched pair of changes it agrees with. This case names the field and
-        // the two Action ids in the packaged bytes, so an unregistered
-        // contribution fails here no matter how faithfully it was regenerated.
+    it('ships Account-KV-backed catalog Actions without a competing Settings contribution', () => {
         const contributes = readPackagedManifest().contributes;
-        const fieldIds = contributes.settings
-            .flatMap((contribution) => contribution.fields)
-            .map((field) => field.id);
-
-        expect(fieldIds).toContain(TRIAGE_ACTIONS_SETTING_ID_V1);
+        expect(contributes.settings).toEqual([]);
         expect(contributes.actions.map((action) => action.id))
             .toEqual(expect.arrayContaining([
                 TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1,
                 TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1,
             ]));
-
-        // Hidden is a product decision, not an oversight: the declarative
-        // Settings form has no repeatable record editor, so presenting a
-        // catalog through it would mean handing a person raw JSON. Asserting it
-        // keeps a later lane from "fixing" the hidden flag and shipping that.
-        const declared = contributes.settings
-            .flatMap((contribution) => contribution.fields)
-            .find((field) => field.id === TRIAGE_ACTIONS_SETTING_ID_V1);
-        expect(declared?.presentation?.hidden).toBe(true);
     });
 
     it('remains the target of the source contribution point rather than a contributor to one', () => {

@@ -172,7 +172,7 @@ async function mountShell() {
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => {
-        await shell.press(await shell.getByRole('option', { name: ENTRY_TITLE }));
+        await shell.press(await shell.getByRole('button', { name: ENTRY_TITLE }));
     });
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });

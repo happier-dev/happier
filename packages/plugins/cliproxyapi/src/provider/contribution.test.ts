@@ -63,6 +63,23 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
           destination: { kind: 'httpHeader', name: 'Authorization', format: 'bearer' },
         }],
       },
+      managedRuntime: {
+        kind: 'managed',
+        connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+        connectedAccounts: [{
+          purpose: 'openai-upstream',
+          title: {
+            key: 'managedPurpose.openai.title',
+            fallback: 'Use OpenAI upstream account',
+          },
+        }, {
+          purpose: 'anthropic-upstream',
+          title: {
+            key: 'managedPurpose.anthropic.title',
+            fallback: 'Use Anthropic upstream account',
+          },
+        }],
+      },
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',

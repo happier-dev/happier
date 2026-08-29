@@ -3,7 +3,9 @@ import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
-import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
+import {
+  createBoundedInvocation,
+} from '@happier-dev/triage-sources/runtime';
 import { fitActionResultPageV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import { fitActionResultTextV1 } from '@happier-dev/triage-sources/projection/actionResultText';
 
@@ -68,8 +70,6 @@ export const BITBUCKET_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
 });
 
 /** One user-visible mounted detail operation, including account materialization and all reads. */
-export const BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
-
 const INVALID_INPUT = createBitbucketFailure('unsupportedContract', 'detail-input-invalid');
 const CONTINUATION_UNREADABLE = createBitbucketFailure(
   'unsupportedContract',
@@ -108,7 +108,6 @@ async function admitBitbucketDetailInvocation(
 ): Promise<AdmittedInvocation> {
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS,
   });
   const runtime = toBitbucketRuntime(context, bounded.signal);
   const admitted = await admitBitbucketEntryInvocation(input, runtime);

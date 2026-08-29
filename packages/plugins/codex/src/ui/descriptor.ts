@@ -70,7 +70,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
             keyPrefix: 'codex:connected-service',
             labelKey: 'externalSessions.browseSourceCodexConnectedServices',
             labelParams: { service: 'OpenAI Codex' },
-            detailSettingsKey: 'connectedServicesProfileLabelByKey',
+          detailSettingsKey: { scope: 'host', localId: 'connectedServicesProfileLabelByKey' },
             source: { kind: 'codexHome', home: 'connectedService' },
             serviceIdField: 'connectedServiceId',
             profileIdField: 'connectedServiceProfileId',
@@ -160,7 +160,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
           id: 'resumeAcp',
           when: {
             kind: 'settingEquals',
-            settingKey: 'codexBackendMode',
+            settingKey: { scope: 'account', localId: 'codexBackendMode' },
             value: 'acp',
             aliases: {
               mcp: 'mcp',
@@ -181,7 +181,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
                   any: [
                     {
                       kind: 'settingEquals',
-                      settingKey: 'codexBackendMode',
+                      settingKey: { scope: 'account', localId: 'codexBackendMode' },
                       value: 'acp',
                       aliases: {
                         mcp: 'mcp',
@@ -190,7 +190,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
                     },
                     {
                       kind: 'settingTrue',
-                      settingKey: 'experimentalCodexAcp',
+                      settingKey: { scope: 'account', localId: 'experimentalCodexAcp' },
                     },
                   ],
                 },
@@ -203,7 +203,7 @@ export const CODEX_UI_DESCRIPTOR = Object.freeze({
       sessionExtras: {
         outputKey: 'codexBackendMode',
         values: ['acp', 'appServer'],
-        settingKey: 'codexBackendMode',
+        settingKey: { scope: 'account', localId: 'codexBackendMode' },
         aliases: {
           mcp: 'mcp',
           mcp_resume: 'acp',

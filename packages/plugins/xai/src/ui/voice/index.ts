@@ -3,4 +3,3 @@ export * from './connection.js';
 export { activate } from './runtime.js';
 export * from './operations.js';
 export * from './protocol.js';
-export * from './settings.js';

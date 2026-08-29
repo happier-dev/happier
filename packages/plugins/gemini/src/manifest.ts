@@ -125,7 +125,6 @@ export const GEMINI_PLUGIN = definePlugin({
         }],
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           sessions: { open: ['create', 'resume'], delivery: ['newTurn', 'steer', 'followUp'], cancel: true },
-          executionRuns: { open: ['create'], checkpoint: true, stop: true },
         }),
       },
       factory: createGeminiAgentRuntime,

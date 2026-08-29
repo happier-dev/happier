@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginSettingsAdministrationActionInputSchemasV1 } from '@happier-dev/protocol';
-
-import { createTestkitAccountSettings } from './testkit/accountSettings.test-support.js';
+import { createTestkitAccountKv } from './testkit/accountKv.test-support.js';
 import {
     MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1,
-    MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1,
-    TRIAGE_ACTIONS_SETTING_ID_V1,
+    TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     TRIAGE_DEFAULT_ACTIONS_V1,
     mutateTriageAction,
     parseTriageActions,
@@ -95,11 +92,11 @@ describe('the Triage action record', () => {
     });
 
     it('refuses incoherent subjects and formal-review materialization at the one writer', async () => {
-        const testkit = createTestkitAccountSettings();
+        const testkit = createTestkitAccountKv();
 
-        const empty = await mutateTriageAction({ settings: testkit.settings, mintActionId: () => 'a' }, {
+        const empty = await mutateTriageAction({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'a' }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Nowhere',
             enabled: true,
             appliesTo: [],
@@ -109,9 +106,9 @@ describe('the Triage action record', () => {
         });
         expect(empty).toEqual({ status: 'rejected', reason: 'appliesTo' });
 
-        const duplicate = await mutateTriageAction({ settings: testkit.settings, mintActionId: () => 'a' }, {
+        const duplicate = await mutateTriageAction({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'a' }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Twice',
             enabled: true,
             appliesTo: ['issue', 'issue'],
@@ -122,11 +119,11 @@ describe('the Triage action record', () => {
         expect(duplicate).toEqual({ status: 'rejected', reason: 'duplicateSubject' });
 
         const wrongReviewMode = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'formal-review',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Formal review',
             enabled: true,
             appliesTo: ['pullRequest'],
@@ -137,11 +134,11 @@ describe('the Triage action record', () => {
         expect(wrongReviewMode).toEqual({ status: 'rejected', reason: 'workspaceMode' });
 
         const wrongReviewSubject = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'formal-review',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Formal review',
             enabled: true,
             appliesTo: ['issue'],
@@ -153,14 +150,14 @@ describe('the Triage action record', () => {
     });
 
     it('creates against the seed so the first user action does not delete Ask, Fix and Review', async () => {
-        const testkit = createTestkitAccountSettings();
+        const testkit = createTestkitAccountKv();
 
         const created = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'minted-1',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Explain',
             enabled: true,
             appliesTo: ['errorIssue'],
@@ -188,15 +185,15 @@ describe('the Triage action record', () => {
         });
     });
 
-    it('admits a long single-line label while the canonical Settings field still fits', async () => {
-        const testkit = createTestkitAccountSettings();
+    it('admits a long single-line label while the canonical Account KV value still fits', async () => {
+        const testkit = createTestkitAccountKv();
         const label = 'Explain '.repeat(512).trim();
         const created = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'long-label',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label,
             enabled: true,
             appliesTo: ['issue'],
@@ -212,12 +209,12 @@ describe('the Triage action record', () => {
     });
 
     it('renames, disables, deletes and reorders through the one writer', async () => {
-        const testkit = createTestkitAccountSettings();
-        const deps = { settings: testkit.settings, mintActionId: () => 'unused' };
+        const testkit = createTestkitAccountKv();
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' };
 
         const renamed = await mutateTriageAction(deps, {
             kind: 'update',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             actionId: ASK.actionId,
             label: 'Discuss',
             enabled: false,
@@ -233,7 +230,7 @@ describe('the Triage action record', () => {
 
         const reordered = await mutateTriageAction(deps, {
             kind: 'reorder',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             actionIds: [REVIEW.actionId, FIX.actionId, ASK.actionId],
         });
         expect(reordered.status).toBe('applied');
@@ -244,7 +241,7 @@ describe('the Triage action record', () => {
             ASK.actionId,
         ]);
 
-        const deleted = await mutateTriageAction(deps, { kind: 'delete', actionId: FIX.actionId, expectedRevision: testkit.revision() });
+        const deleted = await mutateTriageAction(deps, { kind: 'delete', actionId: FIX.actionId, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
         expect(deleted.status).toBe('applied');
         if (deleted.status !== 'applied') return;
         expect(deleted.value.actions.map((action) => action.actionId)).toEqual([
@@ -254,66 +251,68 @@ describe('the Triage action record', () => {
     });
 
     it('refuses a reorder that is not an exact permutation of the stored set', async () => {
-        const testkit = createTestkitAccountSettings();
-        const deps = { settings: testkit.settings, mintActionId: () => 'unused' };
+        const testkit = createTestkitAccountKv();
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' };
 
         // Dropping a member would delete it under the guise of reordering.
         expect(await mutateTriageAction(deps, {
             kind: 'reorder',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             actionIds: [ASK.actionId, FIX.actionId],
         })).toEqual({ status: 'rejected', reason: 'reorder' });
 
         expect(await mutateTriageAction(deps, {
             kind: 'reorder',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             actionIds: [ASK.actionId, ASK.actionId, FIX.actionId],
         })).toEqual({ status: 'rejected', reason: 'reorder' });
     });
 
     it('reports an unknown action rather than creating one', async () => {
-        const testkit = createTestkitAccountSettings();
+        const testkit = createTestkitAccountKv();
         expect(await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'unused',
-        }, { kind: 'delete', actionId: 'not-a-stored-action', expectedRevision: testkit.revision() })).toEqual({ status: 'unknownAction' });
+        }, { kind: 'delete', actionId: 'not-a-stored-action', expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })).toEqual({ status: 'unknownAction' });
     });
 
     it('declines to overwrite a stored value it cannot read', async () => {
-        const testkit = createTestkitAccountSettings();
-        testkit.seed(TRIAGE_ACTIONS_SETTING_ID_V1, { v: 9 });
+        const testkit = createTestkitAccountKv();
+        testkit.seed(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, { v: 9 });
 
         expect(await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'unused',
-        }, { kind: 'delete', actionId: ASK.actionId, expectedRevision: testkit.revision() })).toEqual({ status: 'unreadable' });
+        }, { kind: 'delete', actionId: ASK.actionId, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })).toEqual({ status: 'unreadable' });
     });
 
-    it('reports the host revision conflict as itself', async () => {
-        const testkit = createTestkitAccountSettings();
-        // Another device writes between this owner's read and its write.
+    it('does not conflict when an unrelated Account KV key changes', async () => {
+        const testkit = createTestkitAccountKv();
+        // Account KV versions are per key. Moving another key must not make
+        // this catalog inherit the old record-wide Settings conflict model.
         testkit.armConcurrentWrite('unrelated.key', { touched: true });
 
         expect(await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'unused',
-        }, { kind: 'delete', actionId: ASK.actionId, expectedRevision: testkit.revision() })).toEqual({ status: 'conflict' });
+        }, { kind: 'delete', actionId: ASK.actionId, expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) }))
+            .toMatchObject({ status: 'applied' });
     });
 
-    it('admits a thirty-third action when the serialized Settings value still fits', async () => {
-        const testkit = createTestkitAccountSettings();
+    it('admits a thirty-third action when the serialized Account KV value still fits', async () => {
+        const testkit = createTestkitAccountKv();
         const full: TriageActionV1[] = [];
         for (let index = 0; index < 32; index += 1) {
             full.push({ ...ASK, actionId: `seeded-${index}`, label: `Action ${index}` });
         }
-        testkit.seed(TRIAGE_ACTIONS_SETTING_ID_V1, storedFrom(full) as never);
+        testkit.seed(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, storedFrom(full) as never);
 
         expect(await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'thirty-third',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Thirty third',
             enabled: true,
             appliesTo: ['issue'],
@@ -321,14 +320,14 @@ describe('the Triage action record', () => {
             workspaceMode: 'repository',
             target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' },
         })).toMatchObject({ status: 'applied', actionId: 'thirty-third' });
-        expect((await readTriageActions({ settings: testkit.settings })).value.actions)
+        expect((await readTriageActions({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })).value.actions)
             .toHaveLength(33);
     });
 
-    it('refuses growth only when the complete serialized Settings value exceeds its byte bound', async () => {
-        const testkit = createTestkitAccountSettings();
+    it('refuses growth only when the complete serialized Account KV value exceeds its byte bound', async () => {
+        const testkit = createTestkitAccountKv();
         const deps = {
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: (() => {
                 let index = 0;
                 return () => `wide-action-${index++}`;
@@ -339,7 +338,7 @@ describe('the Triage action record', () => {
         for (let index = 0; index < 1_000; index += 1) {
             const result = await mutateTriageAction(deps, {
                 kind: 'create',
-                expectedRevision: testkit.revision(),
+                expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
                 label: `Action ${index}`,
                 enabled: true,
                 appliesTo: ['pullRequest', 'issue', 'errorIssue', 'other'],
@@ -354,19 +353,19 @@ describe('the Triage action record', () => {
         }
 
         expect(overflowed).toBe('valueTooLarge');
-        const serialized = JSON.stringify(testkit.read(TRIAGE_ACTIONS_SETTING_ID_V1));
+        const serialized = JSON.stringify(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1));
         expect(new TextEncoder().encode(serialized).byteLength)
             .toBeLessThanOrEqual(MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1);
     });
 
     it('round-trips every written value through its own reader', async () => {
-        const testkit = createTestkitAccountSettings();
+        const testkit = createTestkitAccountKv();
         const written = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'round-trip',
         }, {
             kind: 'create',
-            expectedRevision: testkit.revision(),
+            expectedRevision: testkit.revision(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             label: 'Review with agent',
             enabled: true,
             appliesTo: ['pullRequest'],
@@ -376,7 +375,7 @@ describe('the Triage action record', () => {
         });
         expect(written.status).toBe('applied');
 
-        const read = await readTriageActions({ settings: testkit.settings });
+        const read = await readTriageActions({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
         expect(read.kind).toBe('parsed');
         expect(read.value.actions.at(-1)).toEqual({
             actionId: 'round-trip',
@@ -399,12 +398,12 @@ describe('the caller-observed revision', () => {
      * host cannot see.
      */
     it('refuses a write formed against a catalog that has since moved', async () => {
-        const testkit = createTestkitAccountSettings();
-        const opened = await readTriageActions({ settings: testkit.settings });
+        const testkit = createTestkitAccountKv();
+        const opened = await readTriageActions({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
 
         // Another device configures the catalog while the editor is open.
         const other = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'other-device',
         }, {
             kind: 'create',
@@ -419,7 +418,7 @@ describe('the caller-observed revision', () => {
         expect(other.status).toBe('applied');
 
         const stale = await mutateTriageAction({
-            settings: testkit.settings,
+            catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1),
             mintActionId: () => 'stale',
         }, {
             kind: 'delete',
@@ -429,15 +428,15 @@ describe('the caller-observed revision', () => {
 
         expect(stale).toEqual({ status: 'conflict' });
         // Nothing was written, and the other device's action is still there.
-        const now = parseTriageActions(testkit.read(TRIAGE_ACTIONS_SETTING_ID_V1));
+        const now = parseTriageActions(testkit.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1));
         expect(now.value.actions.map((action) => action.label))
             .toEqual(['Ask', 'Fix', 'Review', 'Triage']);
     });
 
     it('returns the revision an applied write landed on, so a second edit can name it', async () => {
-        const testkit = createTestkitAccountSettings();
-        const opened = await readTriageActions({ settings: testkit.settings });
-        const deps = { settings: testkit.settings, mintActionId: () => 'unused' };
+        const testkit = createTestkitAccountKv();
+        const opened = await readTriageActions({ catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) });
+        const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'unused' };
 
         const first = await mutateTriageAction(deps, {
             kind: 'update',
@@ -464,37 +463,4 @@ describe('the caller-observed revision', () => {
         expect(second.status).toBe('applied');
     });
 
-    it('bounds the revision token at the canonical Settings-administration length', () => {
-        // Not a picked number: the same token on the incumbent settings
-        // administration Action is bounded by that owner, and this is a
-        // projection of it. If that owner moves, this fails rather than drifts.
-        const setSchema = PluginSettingsAdministrationActionInputSchemasV1['plugins.settings.set'];
-        const base = {
-            scope: { kind: 'account' as const },
-            target: { kind: 'account' as const },
-            pluginId: 'triage',
-            contributionId: 'actions',
-            fieldId: TRIAGE_ACTIONS_SETTING_ID_V1,
-            value: { v: 1 },
-        };
-        const atBound = setSchema.safeParse({
-            ...base,
-            expectedRevision: 'r'.repeat(MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1),
-        });
-        const overBound = setSchema.safeParse({
-            ...base,
-            expectedRevision: 'r'.repeat(MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1 + 1),
-        });
-
-        // The owner may refuse either payload for its own unrelated reasons, so
-        // the assertion is on the DIFFERENCE the length makes, not on success.
-        const atBoundRevisionIssue = atBound.success
-            ? false
-            : atBound.error.issues.some((issue) => issue.path[0] === 'expectedRevision');
-        const overBoundRevisionIssue = overBound.success
-            ? false
-            : overBound.error.issues.some((issue) => issue.path[0] === 'expectedRevision');
-        expect(atBoundRevisionIssue).toBe(false);
-        expect(overBoundRevisionIssue).toBe(true);
-    });
 });

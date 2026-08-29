@@ -109,7 +109,7 @@ describe('Conversation provider reconciliation', () => {
     }).success).toBe(false);
   });
 
-  it('returns only socket connection state for the exact host-stamped caller materialization', () => {
+  it('returns only connections for the exact host-stamped caller materialization across truthful transport kinds', () => {
     const exact = reconciliationConnectionState();
     const samePluginDifferentMaterialization = reconciliationConnectionState({
       connectionId: 'connection-other-install',
@@ -123,6 +123,21 @@ describe('Conversation provider reconciliation', () => {
     });
     const otherMaterialization = reconciliationConnectionState({
       connectionId: 'connection-telegram',
+      providerPluginId: 'happier.channel.telegram',
+      transportOrigin: {
+        materializationRef: {
+          machineId: 'machine-1',
+          materializationId: 'telegram-install-1',
+          pluginId: 'happier.channel.telegram',
+        },
+      },
+    });
+    const telegramCheckpointedPull = reconciliationConnectionState({
+      connectionId: 'connection-telegram-checkpointed',
+      transport: { kind: 'checkpointedPull' },
+      providerPluginId: 'happier.channel.telegram',
+      providerConnectionKey: 'telegram-bot:123',
+      providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: false },
       transportOrigin: {
         materializationRef: {
           machineId: 'machine-1',
@@ -149,7 +164,7 @@ describe('Conversation provider reconciliation', () => {
         pluginId: 'happier.channel.discord',
         materializationId: 'discord-install-1',
       }),
-      connections: [exact, samePluginDifferentMaterialization, otherMaterialization],
+      connections: [exact, samePluginDifferentMaterialization, otherMaterialization, telegramCheckpointedPull],
       bindingPolicies: [],
     });
 
@@ -172,6 +187,22 @@ describe('Conversation provider reconciliation', () => {
     expect(result[exact.connectionId]).not.toHaveProperty('providerPluginId');
     expect(result[exact.connectionId]).not.toHaveProperty('historyGap');
     expect(result[exact.connectionId]).not.toHaveProperty('checkpoint');
+
+    // A checkpointedPull connection is listable through the same caller gate:
+    // its owning provider install sees it, while every other materialization
+    // and plugin stays excluded exactly as before.
+    const telegramResult = listConversationProviderConnectionsForCaller({
+      caller: caller({
+        pluginId: 'happier.channel.telegram',
+        materializationId: 'telegram-install-1',
+      }),
+      connections: [exact, samePluginDifferentMaterialization, otherMaterialization, telegramCheckpointedPull],
+      bindingPolicies: [],
+    });
+    expect(Object.keys(telegramResult)).toEqual([
+      otherMaterialization.connectionId,
+      telegramCheckpointedPull.connectionId,
+    ]);
   });
 
   it('withholds only an unaccepted destructive transfer replacement until old-stop custody settles or is explicitly accepted', () => {

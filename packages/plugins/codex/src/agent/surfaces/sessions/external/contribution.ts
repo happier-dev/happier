@@ -162,7 +162,11 @@ function mapReadAfterPage(
   if (page.readAfterOutcome) return ok({ outcome: page.readAfterOutcome });
   const mapped = mapTranscriptPage(page);
   if (!mapped.ok) return ok({ outcome: 'read_failed' });
-  if (mapped.value.truncated) return ok({ outcome: 'gap_or_cursor_expired' });
+  // A bounded nonempty read is ordinary pagination: an item/byte budget that
+  // stopped before the source head leaves a valid continuation cursor, and the
+  // host follow owner resumes immediately from it. `readAfterOutcome` above
+  // remains the only gap/replacement voice; truncation alone never retroactively
+  // invalidates the cursor the source just built.
   if (mapped.value.items.length === 0) {
     if (!page.diagnostics?.length || !mapped.value.nextCursor) {
       return ok({ outcome: 'already_current' });
@@ -182,7 +186,7 @@ function mapReadAfterPage(
     items: mapped.value.items,
     nextCursor: mapped.value.nextCursor,
     boundary: mapped.value.items.at(-1)!.id,
-    hasMore: false,
+    hasMore: mapped.value.truncated === true,
     ...(page.diagnostics?.length ? { diagnostics: page.diagnostics } : {}),
   });
 }

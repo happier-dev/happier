@@ -633,7 +633,7 @@ describe('GitHub webhook Action', () => {
     }));
   });
 
-  it('maps rejoined and skipped result positions to their exact trigger health counters', async () => {
+  it('maps admitted, rejoined, and skipped result positions to their exact trigger health counters', async () => {
     const reports: unknown[] = [];
     const execute = vi.fn(async (actionId: string, actionInput: unknown) => {
       if (actionId === 'automation.event.sources.list') {
@@ -643,6 +643,7 @@ describe('GitHub webhook Action', () => {
           definitions: [
             sourceDefinition('automation-1', 'github:repository:77'),
             sourceDefinition('automation-2', 'github:repository:77'),
+            sourceDefinition('automation-3', 'github:repository:77'),
           ],
           nextCursor: null,
         };
@@ -650,7 +651,8 @@ describe('GitHub webhook Action', () => {
       if (actionId === 'automation.event.admit') {
         return {
           results: [
-            { kind: 'rejoined' as const, runId: 'run-1', checkpointSafe: true as const },
+            { kind: 'admitted' as const, runId: 'run-1', checkpointSafe: true as const },
+            { kind: 'rejoined' as const, runId: 'run-2', checkpointSafe: true as const },
             { kind: 'skipped' as const, reason: 'filtered' as const, checkpointSafe: true as const },
           ],
         };
@@ -670,12 +672,19 @@ describe('GitHub webhook Action', () => {
       kind: 'source',
       triggerId: 'trigger-automation-1',
       observedDelta: 1,
-      admittedDelta: 0,
+      admittedDelta: 1,
       skippedDelta: 0,
     }));
     expect(reports).toContainEqual(expect.objectContaining({
       kind: 'source',
       triggerId: 'trigger-automation-2',
+      observedDelta: 1,
+      admittedDelta: 0,
+      skippedDelta: 0,
+    }));
+    expect(reports).toContainEqual(expect.objectContaining({
+      kind: 'source',
+      triggerId: 'trigger-automation-3',
       observedDelta: 1,
       admittedDelta: 0,
       skippedDelta: 1,

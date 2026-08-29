@@ -21,12 +21,6 @@ import {
 
 export { BITBUCKET_CLOUD_API_BASE_URL, BITBUCKET_CLOUD_API_ORIGIN, readBitbucketApiUrl };
 
-/**
- * Private per-invocation deadline. Bitbucket publishes no request SLA, so this is the source's own
- * bound on a request that neither answers nor fails; it is not public ABI and not a host timer.
- */
-export const BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS = 20_000;
-
 export type BitbucketAuthorizationHeaders = Readonly<Record<string, string>>;
 
 /**
@@ -96,10 +90,8 @@ export function createBitbucketTriageApiClient(
     http: HttpService;
     authorize: (options: Readonly<{ signal?: AbortSignal }>) => Promise<BitbucketAuthorizationHeaders>;
     now: () => number;
-    requestTimeoutMs?: number;
   }>,
 ): BitbucketTriageApiClient {
-  const timeoutMs = input.requestTimeoutMs ?? BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS;
   let authorization: Promise<BitbucketAuthorizationHeaders> | null = null;
 
   const authorize = (signal?: AbortSignal): Promise<BitbucketAuthorizationHeaders> => {
@@ -159,7 +151,6 @@ export function createBitbucketTriageApiClient(
             // A JSON route that redirects is not a route this client follows: the raw-diff
             // redirect is a separate, explicitly origin-checked reader.
             redirect: 'error',
-            timeoutMs,
           },
           { ...(request.signal === undefined ? {} : { signal: request.signal }) },
         );
@@ -238,7 +229,6 @@ export function createBitbucketTriageApiClient(
         method: 'GET',
         headers: { Accept: 'text/plain', ...headers },
         redirect,
-        timeoutMs,
       }, { ...(request.signal === undefined ? {} : { signal: request.signal }) });
 
       let first: Awaited<ReturnType<typeof fetchRaw>>;

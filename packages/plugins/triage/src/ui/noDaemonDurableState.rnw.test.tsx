@@ -6,11 +6,10 @@ import type { PluginUiSemanticSurfaceAdapter, PluginUiTestkit } from '@happier-d
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { Button, defineUiSurface, Text, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import type { PluginUiAccountSettings, PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 import { TriageConfiguredSourceInstanceV1Schema } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
 import {
     CORPUS_SOURCE_INSTANCE_LIFECYCLE,
     CORPUS_USER_MARKS_FIELD,
@@ -28,11 +27,11 @@ import {
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
 import {
-    createTestkitAccountSettings,
-    type TestkitAccountSettings,
-} from '../settings/testkit/accountSettings.test-support.js';
-import { TRIAGE_ACTIONS_SETTING_ID_V1 } from '../settings/actions.js';
-import { TRIAGE_SAVED_VIEWS_SETTING_ID_V1 } from '../settings/savedViews.js';
+    createTestkitAccountKv,
+    type TestkitAccountKv,
+} from '../settings/testkit/accountKv.test-support.js';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import {
@@ -58,7 +57,7 @@ import { useTriageSavedViews } from './views/useTriageSavedViews.js';
  * what a mount with no reachable daemon sees.
  *
  * Nothing between the hook and the durable owner is stood in for. The Account
- * Collection store and the Account Settings record are replaced — those are the
+ * Collection store and Account KV are replaced — those are the
  * two genuine system boundaries — and the identity derivation, the codec, the
  * CAS decision, the bounds and the conflict verdicts underneath are all real.
  *
@@ -87,7 +86,7 @@ const DETAIL_SOURCE = Object.freeze({
 
 type DurableHarness = Readonly<{
     corpus: TestkitCorpusCollections;
-    accountSettings: TestkitAccountSettings;
+    accountKv: TestkitAccountKv;
     client: PluginUiDataClient;
     actionCalls: readonly string[];
 }>;
@@ -107,7 +106,7 @@ function createDurableHarness(options: Readonly<{
     sourceRemoveConflict?: boolean;
 }> = {}): DurableHarness {
     const corpus = createTestkitCorpusCollections();
-    const accountSettings = createTestkitAccountSettings();
+    const accountKv = createTestkitAccountKv();
     const actionCalls: string[] = [];
     const sourceInstances = options.sourceRemoveConflict !== true
         ? corpus.collections.sourceInstances
@@ -121,13 +120,6 @@ function createDurableHarness(options: Readonly<{
         ['user-marks', corpus.collections.userMarks],
     ]);
 
-    const settings: PluginUiAccountSettings = {
-        snapshot: (o) => accountSettings.settings.snapshot(o),
-        get: (id, o) => accountSettings.settings.get(id, o),
-        set: (id, value, o) => accountSettings.settings.set(id, value, o),
-        reset: (id, o) => accountSettings.settings.reset(id, o),
-    };
-
     const client = {
         collection(definition: Readonly<{ id: string }>) {
             const bound = byId.get(definition.id);
@@ -137,13 +129,12 @@ function createDurableHarness(options: Readonly<{
         async openCollectionQuery() {
             throw new Error('These surfaces open no declared UI query.');
         },
-        accountKv: createUnavailablePluginUiAccountKv(),
-        accountSettings: settings,
+        accountKv: accountKv.kv,
     } as unknown as PluginUiDataClient;
 
     return {
         corpus,
-        accountSettings,
+        accountKv,
         client: options.accountReachable === false ? (null as unknown as PluginUiDataClient) : client,
         actionCalls,
     };
@@ -360,7 +351,7 @@ describe('durable Account state with no daemon reachable', () => {
     it('reads pins, saved views and configured actions from the Account while every daemon Action fails', async () => {
         const harness = createDurableHarness();
         await seedPin(harness, 'Replace the duplicated normalizer');
-        harness.accountSettings.seed(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, {
+        harness.accountKv.seed(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, {
             v: 1,
             views: [{
                 viewId: '11111111-2222-4333-8444-555555555555',
@@ -371,7 +362,7 @@ describe('durable Account state with no daemon reachable', () => {
             }],
             selectedViewId: '11111111-2222-4333-8444-555555555555',
         });
-        harness.accountSettings.seed(TRIAGE_ACTIONS_SETTING_ID_V1, {
+        harness.accountKv.seed(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, {
             v: 1,
             actions: [{
                 actionId: 'action-1',

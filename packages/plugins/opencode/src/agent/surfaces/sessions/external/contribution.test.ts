@@ -178,7 +178,7 @@ describe('OpenCode public External Sessions contribution', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not split a supported tool call/result pair to satisfy a smaller item limit', async () => {
+  it('serves one semantic item per page when a smaller item limit meets one tool pair', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {
       const url = new URL(input);
       const body = url.pathname === '/session/session-1'
@@ -202,18 +202,39 @@ describe('OpenCode public External Sessions contribution', () => {
         headers: { 'content-type': 'application/json' },
       });
     }));
+    const contribution = createOpenCodeExternalSessionsContribution({ env });
 
-    await expect(createOpenCodeExternalSessionsContribution({ env }).pageTranscript({
+    // One native message holds both the call and its terminal result; a page
+    // smaller than the pair serves one item at a time and resumes inside the
+    // exact message instead of failing nonretryably.
+    const first = await contribution.pageTranscript({
       source,
       remoteSessionId: 'session-1',
       direction: 'older',
       maxItems: 1,
       ...invocation(),
-    })).resolves.toMatchObject({
-      ok: false,
-      code: 'agent_error',
-      retryable: false,
     });
+    expect(first).toMatchObject({ ok: true });
+    if (!first.ok) throw new Error('Expected a bounded tool page');
+    expect(first.value.items.map((item) => item.id)).toEqual([
+      'opencode:session-1:message-tools:tool-result:call-tools',
+    ]);
+    expect(first.value.hasMore).toBe(true);
+
+    const second = await contribution.pageTranscript({
+      source,
+      remoteSessionId: 'session-1',
+      direction: 'older',
+      cursor: first.value.nextCursor ?? undefined,
+      maxItems: 1,
+      ...invocation(),
+    });
+    expect(second).toMatchObject({ ok: true });
+    if (!second.ok) throw new Error('Expected the intra-message continuation page');
+    expect(second.value.items.map((item) => item.id)).toEqual([
+      'opencode:session-1:message-tools:tool-call:call-tools',
+    ]);
+    expect(second.value.hasMore).toBe(false);
   });
 
   it('uses bounded official list search and reports an honest incomplete top-N result', async () => {

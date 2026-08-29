@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ConversationBindingTargetV1 } from '@happier-dev/channels-protocol/v1';
+import {
+  MAX_CONVERSATION_BINDINGS_PER_ACCOUNT,
+  MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT,
+  type ConversationBindingTargetV1,
+} from '@happier-dev/channels-protocol/v1';
 
 import { classifyConversationCommand } from './commands.js';
 import {
   createConversationPairingManager,
+  MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS,
   MAX_CONVERSATION_PAIRING_TOMBSTONES,
   type ConversationPairingBinding,
   type ConversationPairingBindingWriter,
@@ -88,6 +93,7 @@ function createMatchedProposal(manager: ReturnType<typeof createConversationPair
   const challenge = manager.createChallenge({
     connectionId: 'connection-1',
     expectedConnectionRevision: 1,
+    pairingRequestId: 'pairing-request-1',
     materialization,
     destinationLabel: 'Telegram bot',
     endpoint: directEndpoint,
@@ -121,6 +127,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -162,6 +169,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -177,6 +185,7 @@ describe('Channels pre-binding pairing', () => {
         challengeId: 'challenge-1',
         connectionId: 'connection-1',
         expectedConnectionRevision: 1,
+        pairingRequestId: 'pairing-request-1',
         expiresAt: 601_000,
         attemptsRemaining: 5,
         destinationLabel: 'Telegram bot',
@@ -220,6 +229,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -280,6 +290,8 @@ describe('Channels pre-binding pairing', () => {
     // Distinct randomness per challenge: supersession retires the previous
     // token and a repeated one would exhaust the unique-token allocator.
     let nextTokenSeed = 0;
+    // Supersession requires a different request key per create below.
+    let terminalChallengeReasonProbe = 0;
     const manager = createConversationPairingManager({
       generationId: 'generation-1',
       now: () => now.value,
@@ -298,6 +310,7 @@ describe('Channels pre-binding pairing', () => {
     const supersede = () => manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: `pairing-request-${terminalChallengeReasonProbe += 1}`,
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -337,6 +350,7 @@ describe('Channels pre-binding pairing', () => {
     manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -377,6 +391,7 @@ describe('Channels pre-binding pairing', () => {
     manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -411,6 +426,7 @@ describe('Channels pre-binding pairing', () => {
     manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -444,6 +460,7 @@ describe('Channels pre-binding pairing', () => {
     manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -480,6 +497,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -520,6 +538,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -552,6 +571,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -589,6 +609,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -672,6 +693,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -711,6 +733,7 @@ describe('Channels pre-binding pairing', () => {
     const challenge = manager.createChallenge({
       connectionId: 'connection-1',
       expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
       materialization,
       destinationLabel: 'Telegram bot',
       endpoint: directEndpoint,
@@ -763,6 +786,7 @@ describe('Channels pre-binding pairing', () => {
       const challenge = manager.createChallenge({
         connectionId: 'connection-1',
         expectedConnectionRevision,
+        pairingRequestId: `pairing-request-r${expectedConnectionRevision}`,
         materialization,
         destinationLabel: 'Telegram bot',
         endpoint: directEndpoint,
@@ -819,5 +843,337 @@ describe('Channels pre-binding pairing', () => {
       expectedConnectionRevision: 2,
       finalizeIdempotencyKey: 'finalize-2',
     }, writeBinding)).resolves.toMatchObject({ kind: 'created', binding: { enabled: false } });
+  });
+
+  it('rejoins the exact same pairingRequestId create after a lost response', () => {
+    const now = { value: 1_000 };
+    const manager = createManager(now);
+    const create = () => manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-1',
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+    const first = create();
+    const retry = create();
+
+    // The retry rejoins the identical challenge: same id, token, and expiry,
+    // no supersession, no second live challenge.
+    expect(retry).toEqual(first);
+    expect(manager.readChallenge({
+      generationId: first.generationId,
+      challengeId: first.challengeId,
+    })).toMatchObject({ kind: 'active', manualToken: first.manualToken });
+    expect(manager.readManagementProjection().challenges).toHaveLength(1);
+  });
+
+  it('never lets a lost-response retry adopt another device’s superseding challenge', () => {
+    const now = { value: 1_000 };
+    let tokenSeed = 1;
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => now.value,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, tokenSeed++ & 0xff]),
+      createId: sequenceIds(),
+    });
+    const deviceRequest = (pairingRequestId: string) => manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      pairingRequestId,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    // Device A's create response is lost; device B intentionally supersedes
+    // with its own request on the same connection.
+    const deviceAFirst = deviceRequest('device-a-request');
+    const deviceB = deviceRequest('device-b-request');
+    expect(deviceB.challengeId).not.toBe(deviceAFirst.challengeId);
+    expect(manager.readChallenge({
+      generationId: deviceAFirst.generationId,
+      challengeId: deviceAFirst.challengeId,
+    })).toEqual({ kind: 'consumed' });
+
+    // Device A retries its own exact request: it must never receive device
+    // B's challenge — a fresh superseding challenge answers it instead.
+    const deviceARetry = deviceRequest('device-a-request');
+    expect(deviceARetry.challengeId).not.toBe(deviceB.challengeId);
+    expect(deviceARetry.manualToken).not.toBe(deviceB.manualToken);
+    expect(manager.readChallenge({
+      generationId: deviceB.generationId,
+      challengeId: deviceB.challengeId,
+    })).toEqual({ kind: 'consumed' });
+    expect(manager.readChallenge({
+      generationId: deviceARetry.generationId,
+      challengeId: deviceARetry.challengeId,
+    })).toMatchObject({ kind: 'active', manualToken: deviceARetry.manualToken });
+  });
+
+  it('supersedes on a different request and refuses changed content under the same key', () => {
+    const now = { value: 1_000 };
+    let tokenSeed = 1;
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => now.value,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, tokenSeed++ & 0xff]),
+      createId: sequenceIds(),
+    });
+    const automationTarget = {
+      kind: 'automation',
+      automationId: 'automation-1',
+      policy: { resultDelivery: 'none' },
+    } satisfies ConversationBindingTargetV1;
+    const create = (pairingRequestId: string, target: ConversationBindingTargetV1 = sessionTarget) =>
+      manager.createChallenge({
+        connectionId: 'connection-1',
+        expectedConnectionRevision: 1,
+        pairingRequestId,
+        materialization,
+        destinationLabel: 'Telegram bot',
+        endpoint: directEndpoint,
+        target,
+      });
+
+    const first = create('request-1');
+    const superseding = create('request-2');
+    expect(superseding.challengeId).not.toBe(first.challengeId);
+    expect(superseding.manualToken).not.toBe(first.manualToken);
+    expect(manager.readChallenge({
+      generationId: first.generationId,
+      challengeId: first.challengeId,
+    })).toEqual({ kind: 'consumed' });
+
+    // The same key with changed content never comes to represent a second
+    // request: the create is refused without rejoining or superseding, and
+    // the live challenge the key created stays intact.
+    expect(() => create('request-2', automationTarget)).toThrow(
+      'A pairing request id must not be reused for a different pairing request.',
+    );
+    expect(manager.readChallenge({
+      generationId: superseding.generationId,
+      challengeId: superseding.challengeId,
+    })).toMatchObject({ kind: 'active', manualToken: superseding.manualToken });
+    expect(manager.readManagementProjection().challenges).toHaveLength(1);
+  });
+
+  it('never lets one Account’s pairing activity exhaust or block another Account’s pairing', () => {
+    const now = { value: 1_000 };
+    let nextTokenSeed = 0;
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => now.value,
+      randomBytes: () => {
+        nextTokenSeed += 1;
+        return Uint8Array.from([
+          (nextTokenSeed >>> 32) & 0xff,
+          (nextTokenSeed >>> 24) & 0xff,
+          (nextTokenSeed >>> 16) & 0xff,
+          (nextTokenSeed >>> 8) & 0xff,
+          nextTokenSeed & 0xff,
+        ]);
+      },
+      createId: sequenceIds(),
+    });
+    const accountAConnection = (index: number) => `account-a-connection-${index}`;
+    const createAccountAChallenge = (index: number) => manager.createChallenge({
+      connectionId: accountAConnection(index),
+      expectedConnectionRevision: 1,
+      pairingRequestId: `pairing-request-a-${index}`,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    // Account A reaches its real durable connection ceiling without blocking
+    // a separately scoped Account B challenge in the same daemon process.
+    for (let index = 0; index < MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT; index += 1) {
+      createAccountAChallenge(index);
+    }
+    const accountBChallenge = manager.createChallenge({
+      connectionId: 'account-b-connection-1',
+      expectedConnectionRevision: 1,
+      pairingRequestId: 'pairing-request-b-1',
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    // Account A reaches its real durable binding ceiling, cycling across its
+    // valid connection set, without process-global proposal state blocking B.
+    for (let index = 0; index < MAX_CONVERSATION_BINDINGS_PER_ACCOUNT; index += 1) {
+      const connectionIndex = index % MAX_CONVERSATION_CONNECTIONS_PER_ACCOUNT;
+      const challenge = manager.createChallenge({
+        connectionId: accountAConnection(connectionIndex),
+        expectedConnectionRevision: 1,
+        pairingRequestId: `pairing-request-a-proposal-${index}`,
+        materialization,
+        destinationLabel: 'Telegram bot',
+        endpoint: directEndpoint,
+        target: sessionTarget,
+      });
+      expect(completePreBindingMessage(manager, {
+        connectionId: accountAConnection(connectionIndex),
+        materialization,
+        endpoint: directEndpoint,
+        actor: { principalId: 'person-a', kind: 'human', isIntegrationSelf: false },
+        contentProvenance: 'original',
+        command: classifyConversationCommand(`/pair ${challenge.manualToken}`),
+      })).toMatchObject({ kind: 'matched' });
+    }
+
+    // Account B's valid proof still commits: proposals are bounded by expiry
+    // and the durable binding quota at finalize, never by another Account's
+    // in-memory challenge or proposal count.
+    expect(completePreBindingMessage(manager, {
+      connectionId: 'account-b-connection-1',
+      materialization,
+      endpoint: directEndpoint,
+      actor: { principalId: 'person-b', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand(`/pair ${accountBChallenge.manualToken}`),
+    })).toMatchObject({ kind: 'matched' });
+  });
+
+  it('starts a fresh challenge-scoped requester budget when a challenge is superseded or expires', () => {
+    const now = { value: 1_000 };
+    let tokenSeed = 2;
+    const manager = createConversationPairingManager({
+      generationId: 'generation-1',
+      now: () => now.value,
+      randomBytes: () => Uint8Array.from([0, 0, 0, 0, tokenSeed++ & 0xff]),
+      createId: sequenceIds(),
+    });
+    let nextGuessCensus = 0;
+    const wrongGuess = (principalId: string, censusId = `guess-census-${++nextGuessCensus}`) =>
+      manager.preparePreBindingMessage({
+        censusId,
+        connectionId: 'connection-1',
+        materialization,
+        endpoint: directEndpoint,
+        actor: { principalId, kind: 'human', isIntegrationSelf: false },
+        contentProvenance: 'original',
+        command: classifyConversationCommand('/pair ZZZZZZZ9'),
+      });
+    const createConnectionChallenge = (pairingRequestId: string) => manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      pairingRequestId,
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    createConnectionChallenge('request-1');
+    for (let attemptsRemaining = 4; attemptsRemaining >= 0; attemptsRemaining -= 1) {
+      expect(wrongGuess('stranger-1')).toEqual({
+        kind: 'silent',
+        ownerReason: 'tokenMismatch',
+        attemptsRemaining,
+      });
+    }
+    expect(wrongGuess('stranger-1')).toEqual({
+      kind: 'silent',
+      ownerReason: 'attemptLimitReached',
+      attemptsRemaining: 0,
+    });
+
+    // The charged-census replay key is challenge-scoped too: one redelivered
+    // occurrence charges its requester's remaining budget exactly once.
+    expect(wrongGuess('stranger-2', 'census-redelivery')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 4,
+    });
+    expect(wrongGuess('stranger-2')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 3,
+    });
+    expect(wrongGuess('stranger-2', 'census-redelivery')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 3,
+    });
+
+    // A different request intentionally supersedes the challenge, and its
+    // challenge-scoped requester and charged-census state go with it.
+    const second = createConnectionChallenge('request-2');
+    expect(wrongGuess('stranger-1')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 4,
+    });
+    expect(wrongGuess('stranger-2', 'census-redelivery')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 4,
+    });
+
+    // Expiry clears the scoped state exactly like supersession.
+    now.value = second.expiresAt;
+    const third = createConnectionChallenge('request-3');
+    expect(wrongGuess('stranger-1')).toEqual({
+      kind: 'silent',
+      ownerReason: 'tokenMismatch',
+      attemptsRemaining: 4,
+    });
+
+    // Budget bookkeeping never touches matching.
+    expect(completePreBindingMessage(manager, {
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: directEndpoint,
+      actor: { principalId: 'person-1', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand(`/pair ${third.manualToken}`),
+    })).toMatchObject({ kind: 'matched' });
+  });
+
+  it('bounds failed-requester replay accounting inside each live challenge', () => {
+    const now = { value: 1_000 };
+    const manager = createManager(now);
+    manager.createChallenge({
+      connectionId: 'connection-1',
+      expectedConnectionRevision: 1,
+      pairingRequestId: 'request-1',
+      materialization,
+      destinationLabel: 'Telegram bot',
+      endpoint: directEndpoint,
+      target: sessionTarget,
+    });
+
+    for (let index = 0; index < MAX_CONVERSATION_PAIRING_TRACKED_REQUESTERS; index += 1) {
+      expect(manager.preparePreBindingMessage({
+        censusId: `census-${index}`,
+        connectionId: 'connection-1',
+        materialization,
+        endpoint: directEndpoint,
+        actor: { principalId: `stranger-${index}`, kind: 'human', isIntegrationSelf: false },
+        contentProvenance: 'original',
+        command: classifyConversationCommand('/pair ZZZZZZZ9'),
+      })).toMatchObject({ kind: 'silent', ownerReason: 'tokenMismatch' });
+    }
+
+    expect(manager.preparePreBindingMessage({
+      censusId: 'census-over-capacity',
+      connectionId: 'connection-1',
+      materialization,
+      endpoint: directEndpoint,
+      actor: { principalId: 'stranger-over-capacity', kind: 'human', isIntegrationSelf: false },
+      contentProvenance: 'original',
+      command: classifyConversationCommand('/pair ZZZZZZZ9'),
+    })).toEqual({
+      kind: 'silent',
+      ownerReason: 'attemptCapacityReached',
+      attemptsRemaining: 0,
+    });
   });
 });

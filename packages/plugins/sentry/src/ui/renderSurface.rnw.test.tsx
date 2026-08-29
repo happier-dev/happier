@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import React, { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import {
+  TriageEvidenceDisclosureProvider,
+  type TriageEvidenceCandidateV1,
+} from '@happier-dev/triage-sources/ui';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SENTRY_ACTION_IDS, SENTRY_PLUGIN_ID } from '../sentryContracts.js';
+import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
 
 import { renderSurface } from './renderSurface.js';
 import { SENTRY_UI_TRANSLATIONS } from './translations.js';
@@ -43,8 +48,16 @@ const INSTANCE = {
       accountId: 'account-1',
     },
   },
-  localInstanceKey: 'https://us.sentry.io42',
-  configuration: { v: 1, token: 'sentry-configuration-token-v1' },
+  localInstanceKey: 'https://us.sentry.io\u001f42',
+  configuration: {
+    v: 1,
+    token: encodeSentryInstanceConfiguration({
+      v: 1,
+      organizationId: '42',
+      projectScope: { kind: 'allAccessible' },
+      environmentScope: { kind: 'all' },
+    }),
+  },
   locator: { v: 1, displayLabel: 'acme-org' },
 } as const;
 
@@ -213,6 +226,11 @@ const mounted: PluginUiTestkit[] = [];
 async function mountDetail(
   harness: ReturnType<typeof createHarness>,
   surfaceContext = createSurfaceContextFixture(),
+  disclosure?: Readonly<{
+    available: boolean;
+    disclose(resolve: (signal: AbortSignal) => Promise<TriageEvidenceCandidateV1 | null>): Promise<unknown>;
+    confirm?: (input: Readonly<{ message: string; title?: string }>) => boolean | Promise<boolean>;
+  }>,
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -223,12 +241,19 @@ async function mountDetail(
         viewId: 'sentry-detail',
         generation: 'sentry-detail-mount',
       },
-      surface: renderSurface,
+      surface: disclosure === undefined
+        ? renderSurface
+        : (context) => (
+          <TriageEvidenceDisclosureProvider disclosure={disclosure}>
+            {renderSurface(context)}
+          </TriageEvidenceDisclosureProvider>
+        ),
       surfaceContext,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: DETAIL_INPUT as unknown as JsonValue,
       handlers: {
         executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+        ...(disclosure?.confirm === undefined ? {} : { confirm: disclosure.confirm }),
       },
     });
   });
@@ -386,6 +411,66 @@ describe('the mounted Sentry issue detail body', () => {
       .toMatchObject({ selector: { kind: 'event', eventId: 'b'.repeat(32) } });
   });
 
+  it('discloses the selected occurrence through Triage without Composer authority', async () => {
+    let candidate: TriageEvidenceCandidateV1 | null = null;
+    const confirm = vi.fn(async () => true);
+    const harness = createHarness();
+    const page = await mountDetail(harness, createSurfaceContextFixture(), {
+      available: true,
+      confirm,
+      async disclose(resolve) {
+        candidate = await resolve(new AbortController().signal);
+        return candidate === null ? { kind: 'cancelled' } : { kind: 'applied' };
+      },
+    });
+    await selectTab(page, 'Occurrences');
+    const rows = await page.getAllByRole('button');
+    const row = rows.find((entry) => entry.name?.startsWith('card was declined') === true);
+    expect(row).toBeDefined();
+    if (row === undefined) return;
+    await act(async () => { await page.press(row); });
+
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add selected occurrence to message',
+      }));
+    });
+
+    expect(candidate).toMatchObject({
+      reference: { pluginId: SENTRY_PLUGIN_ID, localId: 'sentry-evidence' },
+      candidate: { label: `Sentry occurrence ${'a'.repeat(32)}` },
+    });
+    expect(candidate?.candidate.id).not.toContain('https://us.sentry.io');
+    expect(candidate).not.toHaveProperty('composer');
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Add selected occurrence to message',
+      title: 'Selected occurrence',
+    }));
+  });
+
+  it('issues no selected-evidence candidate when disclosure confirmation is declined', async () => {
+    const disclose = vi.fn();
+    const harness = createHarness();
+    const page = await mountDetail(harness, createSurfaceContextFixture(), {
+      available: true,
+      confirm: async () => false,
+      disclose,
+    });
+    await selectTab(page, 'Occurrences');
+    const rows = await page.getAllByRole('button');
+    const row = rows.find((entry) => entry.name?.startsWith('card was declined') === true);
+    expect(row).toBeDefined();
+    if (row === undefined) return;
+    await act(async () => { await page.press(row); });
+    await act(async () => {
+      await page.press(await page.getByRole('button', {
+        name: 'Add selected occurrence to message',
+      }));
+    });
+
+    expect(disclose).not.toHaveBeenCalled();
+  });
+
   it('states when an oversized provider continuation made the occurrence walk stop short', async () => {
     const harness = createHarness({
       events: {
@@ -409,8 +494,8 @@ describe('the mounted Sentry issue detail body', () => {
 
   it('names its tab strip and every tab in the reader’s own locale', async () => {
     // The shared tab primitive takes plain strings and no keys, so an
-    // untranslated declaration renders English on ten of the eleven locales
-    // this plugin ships and NOTHING fails — the silent half of a missing
+    // untranslated declaration renders English in every locale missing its
+    // own entry and NOTHING fails — the silent half of a missing
     // translation, and worst of all on the strip's accessible name.
     const harness = createHarness();
     const page = await mountDetail(harness, createSurfaceContextFixture({

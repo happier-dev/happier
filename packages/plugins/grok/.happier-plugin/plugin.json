@@ -183,6 +183,15 @@
           }
         },
         {
+          "locale": "de",
+          "messages": {
+            "agentInput.agent.grok": "Grok",
+            "profiles.aiBackend.grokSubtitleExperimental": "Grok Build CLI (experimentell)",
+            "sessionInfo.grokSessionId": "Grok-Sitzungs-ID",
+            "sessionInfo.grokSessionIdCopied": "Grok-Sitzungs-ID kopiert"
+          }
+        },
+        {
           "locale": "ru",
           "messages": {
             "agentInput.agent.grok": "Grok",

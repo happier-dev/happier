@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/plugin-sdk/actions';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -28,6 +28,7 @@ import {
 } from './__fixtures__/githubResponses.js';
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import {
+  GithubCapabilitiesResultV1Schema,
   GithubChangedFilesResultV1Schema,
   GithubChecksResultV1Schema,
   GithubFeedbackResultV1Schema,
@@ -36,14 +37,13 @@ import {
 } from './detail/contracts.js';
 import { encodeGithubDetailContinuation } from './detail/continuation.js';
 import {
+  readGithubCapabilities,
   listGithubChangedFiles,
   readGithubFeedback,
   listGithubTimeline,
   readGithubChecks,
   readGithubReviews,
 } from './detailOperations.js';
-import { GITHUB_MOUNTED_DETAIL_DEADLINE_MS } from './admission.js';
-import { withGithubInvocationDeadline } from './invocation.js';
 import {
   createStubGithubTransport,
   readRecordedJsonBody,
@@ -88,29 +88,22 @@ const ISSUE_REF = Object.freeze({
   entryId: '1284',
 });
 
-it('bounds a never-settling mounted detail read with the source-owned invocation deadline', async () => {
-  vi.useFakeTimers();
-  try {
-    const stub = createStubGithubTransport({
-      respond: (request) => new URL(request.url).pathname.endsWith('/timeline')
-        ? new Promise<StubHttpResponse>(() => {})
-        : undefined,
-    });
-    const pending = withGithubInvocationDeadline(
-      GITHUB_MOUNTED_DETAIL_DEADLINE_MS,
-      listGithubTimeline,
-    )(planeInput(), stub.context);
+it('propagates the caller-owned invocation lifetime through a never-settling detail read', async () => {
+  const caller = new AbortController();
+  const stub = createStubGithubTransport({
+    signal: caller.signal,
+    respond: (request) => new URL(request.url).pathname.endsWith('/timeline')
+      ? new Promise<StubHttpResponse>(() => {})
+      : undefined,
+  });
+  const pending = listGithubTimeline(planeInput(), stub.context);
 
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(60_000);
+  caller.abort(new DOMException('The host invocation reached its deadline.', 'TimeoutError'));
 
-    await expect(pending).resolves.toEqual({
-      kind: 'unavailable',
-      failure: { class: 'transient', code: 'github_request_timed_out' },
-    });
-  } finally {
-    vi.useRealTimers();
-  }
+  await expect(pending).resolves.toEqual({
+    kind: 'unavailable',
+    failure: { class: 'transient', code: 'github_request_timed_out' },
+  });
 });
 
 function planeInput(overrides: Readonly<Record<string, unknown>> = {}) {
@@ -127,6 +120,38 @@ function planeInput(overrides: Readonly<Record<string, unknown>> = {}) {
 function jsonResponse(body: unknown, headers: Readonly<Record<string, string>> = {}): StubHttpResponse {
   return { status: 200, headers: { 'content-type': 'application/json', ...headers }, body };
 }
+
+describe('GitHub capability plane', () => {
+  it('projects repository facts from the admission read without a duplicate fetch', async () => {
+    const repositoryBody = {
+        id: 4210,
+        archived: false,
+        has_issues: true,
+        allow_merge_commit: true,
+        allow_squash_merge: false,
+        allow_rebase_merge: true,
+        permissions: { admin: false, maintain: false, push: true, triage: true, pull: true },
+    };
+    const stub = createStubGithubTransport({
+      respond: (request) => new URL(request.url).pathname
+        === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`
+        ? jsonResponse(repositoryBody)
+        : undefined,
+    });
+    const result = GithubCapabilitiesResultV1Schema.parse(await readGithubCapabilities({
+      v: 1,
+      instance: configuredInstance(),
+      localRef: PULL_REQUEST_REF,
+      routingToken: REPOSITORY_KEY,
+    }, stub.context));
+    expect(result.kind).toBe('capabilities');
+    if (result.kind !== 'capabilities') return;
+    expect(result.mergeMethods.squash).toEqual({ kind: 'unavailable', code: 'repository_unsupported' });
+    expect(stub.requests.filter((request) =>
+      new URL(request.url).pathname === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`))
+      .toHaveLength(1);
+  });
+});
 
 /* --------------------------------------------------------------------- timeline */
 

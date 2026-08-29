@@ -91,7 +91,11 @@ const CHECKPOINT_PAYLOAD_SCHEMA = {
       },
       required: ['kind', 'establishedAt'],
     },
-    lastEvaluatedTriggerRevision: POSITIVE_SAFE_INTEGER_SCHEMA,
+    // Protocol `AutomationTriggerRevisionSchema` is nonnegative and the
+    // canonical trigger create writers mint revision 0, so a first baseline
+    // must be persistable at exactly the revision its admitted definition
+    // carries.
+    lastEvaluatedTriggerRevision: NON_NEGATIVE_SAFE_INTEGER_SCHEMA,
     continuity: JSON_VALUE_SCHEMA,
   },
   required: [
@@ -231,7 +235,7 @@ export function isGithubAutomationEventCheckpointRowV1(value: unknown): value is
     || !isRecord(payload.baseline)
     || (payload.baseline.kind !== 'currentHead' && payload.baseline.kind !== 'boundedImport')
     || !isNonNegativeSafeInteger(payload.baseline.establishedAt)
-    || !isPositiveSafeInteger(payload.lastEvaluatedTriggerRevision)
+    || !isNonNegativeSafeInteger(payload.lastEvaluatedTriggerRevision)
   ) return false;
   return id === createGithubAutomationEventCheckpointRowId({
     automationId,

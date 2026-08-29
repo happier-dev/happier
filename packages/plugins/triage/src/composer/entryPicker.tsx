@@ -184,6 +184,23 @@ function TriagePickerRow(props: Readonly<{
     const attachmentLabel = attachedNow
         ? text('plugins.triage.picker.remove', 'Remove')
         : text('plugins.triage.picker.attach', 'Attach');
+    const attachmentAccessibilityLabel = attachedNow
+        ? text(
+            'plugins.triage.picker.removeEntryLabel',
+            'Remove {title}',
+            { title: row.title },
+        )
+        : text(
+            'plugins.triage.picker.attachEntryLabel',
+            'Attach {title}',
+            { title: row.title },
+        );
+    const viewDetailsLabel = text('plugins.triage.picker.viewDetails', 'View details');
+    const viewDetailsAccessibilityLabel = text(
+        'plugins.triage.picker.viewDetailsEntryLabel',
+        'View details {title}',
+        { title: row.title },
+    );
     const failure = state.attachment.kind === 'failed'
         ? state.attachment.reason
         : state.viewDetails.kind === 'failed' ? state.viewDetails.reason : null;
@@ -236,16 +253,16 @@ function TriagePickerRow(props: Readonly<{
                         focusTarget={attachmentFocus}
                         // A list of identical "Attach" controls is unusable by
                         // name alone, so each one names its own entry.
-                        accessibilityLabel={`${attachmentLabel} ${row.title}`}
+                        accessibilityLabel={attachmentAccessibilityLabel}
                         onPress={mutate}
                     />
                     <Button
-                        title={text('plugins.triage.picker.viewDetails', 'View details')}
+                        title={viewDetailsLabel}
                         variant="plain"
                         disabled={!viewDetailsAction.enabled}
                         busy={state.viewDetails.kind === 'pending'}
                         focusTarget={viewDetailsFocus}
-                        accessibilityLabel={`${text('plugins.triage.picker.viewDetails', 'View details')} ${row.title}`}
+                        accessibilityLabel={viewDetailsAccessibilityLabel}
                         onPress={openDetails}
                     />
                 </Row>

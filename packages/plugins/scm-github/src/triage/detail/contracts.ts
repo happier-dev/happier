@@ -29,7 +29,7 @@ import {
 } from '../feedback.js';
 
 /**
- * The five source-native detail Action contracts.
+ * The six source-native detail Action contracts.
  *
  * The detail body runs in a UI artifact that holds no credential and speaks no
  * HTTP, while `observations/githubApiClient.ts` is this source's sole credential
@@ -135,6 +135,66 @@ const GithubDetailUnavailableSchema = defineProtocolObject({
   kind: defineProtocolLiteral('unavailable'),
   failure: TriageSourceFailureV1Schema,
 }, { policy: 'closed' });
+
+/* ------------------------------------------------------------- capabilities */
+
+export const GithubCapabilitiesInputV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1),
+  instance: TriageConfiguredSourceInstanceV1Schema,
+  localRef: TriageSourceEntryLocalRefV1Schema,
+  routingToken: RoutingTokenSchema,
+}, { policy: 'closed' });
+
+const GithubCapabilityAvailabilitySchema = defineProtocolUnion([
+  defineProtocolObject({ kind: defineProtocolLiteral('available') }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('unavailable'),
+    code: defineProtocolUnion([
+      defineProtocolLiteral('api_not_exposed'),
+      defineProtocolLiteral('repository_unsupported'),
+    ]),
+  }, { policy: 'closed' }),
+  defineProtocolObject({
+    kind: defineProtocolLiteral('denied'),
+    code: defineProtocolUnion([
+      defineProtocolLiteral('repository_archived'),
+      defineProtocolLiteral('forbidden_by_forge'),
+    ]),
+  }, { policy: 'closed' }),
+]);
+
+export const GithubCapabilitiesResultV1Schema = defineProtocolUnion([
+  defineProtocolObject({
+    kind: defineProtocolLiteral('capabilities'),
+    operations: defineProtocolObject({
+      pullRequestMerge: GithubCapabilityAvailabilitySchema,
+      pullRequestSubmitReview: GithubCapabilityAvailabilitySchema,
+      pullRequestReviewCommentCreate: GithubCapabilityAvailabilitySchema,
+      pullRequestThreadReply: GithubCapabilityAvailabilitySchema,
+      pullRequestClose: GithubCapabilityAvailabilitySchema,
+      pullRequestReopen: GithubCapabilityAvailabilitySchema,
+      pullRequestMarkReady: GithubCapabilityAvailabilitySchema,
+      pullRequestUpdateBranch: GithubCapabilityAvailabilitySchema,
+      pullRequestAddReviewers: GithubCapabilityAvailabilitySchema,
+      pullRequestRemoveReviewers: GithubCapabilityAvailabilitySchema,
+      pullRequestThreadResolution: GithubCapabilityAvailabilitySchema,
+      issueClose: GithubCapabilityAvailabilitySchema,
+      issueReopen: GithubCapabilityAvailabilitySchema,
+      issueComment: GithubCapabilityAvailabilitySchema,
+      issueAssigneeAdd: GithubCapabilityAvailabilitySchema,
+      issueAssigneeRemove: GithubCapabilityAvailabilitySchema,
+      issueLabelAdd: GithubCapabilityAvailabilitySchema,
+      issueLabelRemove: GithubCapabilityAvailabilitySchema,
+    }, { policy: 'closed' }),
+    mergeMethods: defineProtocolObject({
+      merge: GithubCapabilityAvailabilitySchema,
+      squash: GithubCapabilityAvailabilitySchema,
+      rebase: GithubCapabilityAvailabilitySchema,
+    }, { policy: 'closed' }),
+  }, { policy: 'closed' }),
+  GithubDetailUnavailableSchema,
+]);
+export type GithubCapabilitiesResultV1 = ReturnType<typeof GithubCapabilitiesResultV1Schema.parse>;
 
 /* ------------------------------------------------------------------- timeline */
 

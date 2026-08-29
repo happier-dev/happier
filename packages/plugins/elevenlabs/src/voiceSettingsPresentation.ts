@@ -1,6 +1,5 @@
 export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
-  kind: 'voice.internal.conversation-settings.v1' as const,
-  providerId: 'happier.voice.elevenlabs/realtime-elevenlabs' as const,
+  kind: 'voice.provider-settings.v1' as const,
   modes: Object.freeze(['happier', 'byo'] as const),
   titleKey: 'settingsVoice.byo.title',
   footerKey: 'settingsVoice.byo.provisioningGroupFooter',
@@ -62,7 +61,3 @@ export const ELEVENLABS_SETTINGS_SECTION = Object.freeze({
       promptTitleKey: 'settingsVoice.byo.realtime.voiceSettings.speed.promptTitle', promptBodyKey: 'settingsVoice.byo.realtime.voiceSettings.speed.promptBody' }),
   ]),
 });
-
-export function createElevenLabsSettingsSection() {
-  return ELEVENLABS_SETTINGS_SECTION;
-}

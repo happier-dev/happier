@@ -111,7 +111,6 @@ export const ANTIGRAVITY_PLUGIN = definePlugin({
         capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
           surfaces: ['externalSessions'],
           sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true },
-          executionRuns: { open: ['create'], checkpoint: false, stop: true },
         }),
         surfaces: {
           externalSession: {

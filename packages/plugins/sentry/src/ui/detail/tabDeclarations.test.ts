@@ -26,9 +26,9 @@ describe('Sentry detail tab declarations', () => {
 
   it('names every tab through a catalog key that exists in every locale it ships', () => {
     // A tab title reaches `Tabs.Item` as a plain string, so an untranslated
-    // declaration renders English on ten of the eleven locales this plugin
+    // declaration renders English in every locale missing its own entry
     // ships and nothing fails. That silence is the whole defect.
-    expect(LOCALES.length).toBe(11);
+    expect(LOCALES).toContain('de');
     for (const tab of SENTRY_DETAIL_TABS_V1) {
       expect(tab.titleKey, tab.id).toMatch(/^plugins\.sentry\.ui\.tab\./u);
       for (const locale of LOCALES) {

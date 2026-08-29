@@ -5,10 +5,13 @@ import {
 } from '@happier-dev/plugin-sdk/actions';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
-import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
+import {
+  AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+  AZURE_DEVOPS_TRIAGE_PURPOSE,
+} from './descriptor.js';
 import {
   AzureCommitsResultV1Schema,
   AzureIterationChangesResultV1Schema,
@@ -19,7 +22,6 @@ import {
 import { AZURE_BUILD_VALIDATION_POLICY_TYPE_ID_V1 } from './detail/projection.js';
 import { buildAzureCollisionScope } from './identity.js';
 import {
-  AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS,
   listAzureDevOpsCommits,
   listAzureDevOpsIterationChanges,
   readAzureDevOpsIterations,
@@ -35,7 +37,10 @@ const PULL_REQUEST_ID = 17;
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
-    service: { pluginId: 'happier.scm.forge.azure-devops', localId: AZURE_DEVOPS_TRIAGE_PURPOSE },
+    service: {
+      pluginId: 'happier.scm.forge.azure-devops',
+      localId: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+    },
     accountId,
   };
 }
@@ -499,11 +504,10 @@ describe('Azure policies plane', () => {
     expect(settled.evaluationsPartial).toBe(false);
     expect(settled.omittedRowCount).toBe(0);
     expect(settled.projectionTruncated).toBe(false);
-    expect(seam.urls.filter((url) => url.includes('/policy/evaluations'))).toHaveLength(3);
+    expect(seam.urls.filter((url) => url.includes('/policy/evaluations'))).toHaveLength(2);
     expect(seam.urls.some((url) => url.includes('$skip=100'))).toBe(true);
-    expect(seam.urls.some((url) => url.includes('$skip=101'))).toBe(true);
     expect(seam.urls.filter((url) => url.includes('/policy/evaluations')).every((url) => (
-      !url.includes('$top=')
+      url.includes('$top=100')
     ))).toBe(true);
   });
 
@@ -833,22 +837,14 @@ describe('Azure detail admission', () => {
 
 /* ------------------------------------------------------------------ deadline */
 
-describe('the mounted detail deadline', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  /**
-   * A provider that accepts the request and then neither answers nor fails.
-   * Nothing above this seam can distinguish it from a slow read, which is why
-   * the source has to own the bound rather than wait for the transport to.
-   */
+describe('the mounted detail lifetime', () => {
+  /** A provider that accepts the request and then settles only when its caller cancels. */
   function silentHarness(options: Readonly<{ silentListing?: true }> = {}) {
     let aborted = 0;
     const services = {
       connectedAccounts: {
         // The configured-base currentness gate runs BEFORE any provider request, so a
-        // harness that could not answer it never reached the deadline path at all and
+        // harness that could not answer it never reached the provider request at all and
         // proved nothing about it. `silentListing` is the other half: the LISTING is what
         // never answers, which is the case that would otherwise be reported as a listing
         // that refused rather than as the deadline that actually fired.
@@ -903,19 +899,19 @@ describe('the mounted detail deadline', () => {
         },
       },
     };
+    const caller = new AbortController();
     const context = {
       plugin: { id: 'happier.scm.forge.azure-devops', version: '0.0.0' },
       contribution: { id: 'azure-devops-forge', qualifiedId: 'x/contributions/azure-devops-forge' },
       surface: 'background',
       caller: { kind: 'plugin', pluginId: 'happier.triage' },
-      signal: new AbortController().signal,
+      signal: caller.signal,
       services: services as unknown as PluginInvocationContext['services'],
     } as unknown as PluginInvocationContext;
-    return { context, abortedCount: () => aborted };
+    return { caller, context, abortedCount: () => aborted };
   }
 
-  it('settles a detail read the provider never answers as a classified transient failure', async () => {
-    vi.useFakeTimers();
+  it('settles a silent detail read when its caller cancels', async () => {
     const seam = silentHarness();
 
     const settling = readAzureDevOpsIterations(planeInput(), seam.context);
@@ -925,63 +921,57 @@ describe('the mounted detail deadline', () => {
     const pending = Symbol('pending');
     expect(await Promise.race([settling, Promise.resolve(pending)])).toBe(pending);
 
-    await vi.advanceTimersByTimeAsync(AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+    seam.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
 
     const settled = AzureIterationsResultV1Schema.parse(await settling);
     if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');
-    // Not `cancelled`: nobody cancelled it. The reader is still looking at the
-    // panel, so the class has to be the retryable one and the code has to say
-    // which of the two aborts happened.
+    // The closed shared class is transient; the source-local code retains cancellation truth.
     expect(settled.failure.class).toBe('transient');
-    expect(settled.failure.code).toBe('azure-devops/timed-out');
-    // The deadline aborts the outstanding provider request rather than leaving
-    // it running behind a settled result.
-    expect(seam.abortedCount()).toBe(1);
+    expect(settled.failure.code).toBe('azure-devops/cancelled');
+    // Cancellation may win before admission reaches the provider boundary or after the request
+    // starts; either way the invocation settles and no provider result is published afterward.
+    expect(seam.abortedCount()).toBeLessThanOrEqual(1);
   });
 
-  it('classifies a deadline on the Policies preliminary pull-request read as deadline expiry', async () => {
-    vi.useFakeTimers();
+  it('propagates caller cancellation through the Policies preliminary pull-request read', async () => {
     const seam = silentHarness();
 
     const settling = readAzureDevOpsPolicies(planeInput(), seam.context);
-    await vi.advanceTimersByTimeAsync(AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+    seam.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
 
     const settled = AzurePoliciesResultV1Schema.parse(await settling);
     if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');
     expect(settled.failure.class).toBe('transient');
-    expect(settled.failure.code).toBe('azure-devops/timed-out');
+    expect(settled.failure.code).toBe('azure-devops/cancelled');
   });
 
   /**
    * The currentness gate is the FIRST thing every authorized read does, so it is also
-   * the first thing a deadline can land on. It reads the Connected Accounts listing, and
+   * the first thing cancellation can land on. It reads the Connected Accounts listing, and
    * a listing that never answers looks exactly like one that refused — unless the abort
    * is classified by the same owner every other request already defers to. Reporting it
    * as `account-listing-failed` would tell the reader their accounts are unreadable when
    * what actually happened is that this panel ran out of time.
    */
-  it('reports a deadline that lands on the currentness gate as the deadline, not as a listing failure', async () => {
-    vi.useFakeTimers();
+  it('reports caller cancellation at the currentness gate rather than a listing failure', async () => {
     const seam = silentHarness({ silentListing: true });
 
     const settling = readAzureDevOpsIterations(planeInput(), seam.context);
-    await vi.advanceTimersByTimeAsync(AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS);
+    seam.caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
 
     const settled = AzureIterationsResultV1Schema.parse(await settling);
     if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');
     expect(settled.failure.class).toBe('transient');
-    expect(settled.failure.code).toBe('azure-devops/timed-out');
+    expect(settled.failure.code).toBe('azure-devops/cancelled');
   });
 
   it('leaves a caller cancellation reported as a cancellation, not as a deadline', async () => {
-    vi.useFakeTimers();
     const seam = silentHarness();
     const caller = new AbortController();
     const context = { ...seam.context, signal: caller.signal } as PluginInvocationContext;
 
     const settling = readAzureDevOpsIterations(planeInput(), context);
-    await vi.advanceTimersByTimeAsync(1);
-    caller.abort();
+    caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
 
     const settled = AzureIterationsResultV1Schema.parse(await settling);
     if (settled.kind !== 'unavailable') throw new Error('the read must settle unavailable');

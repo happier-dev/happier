@@ -70,7 +70,11 @@ type AzureDevOpsIdentityConfirmation =
     accountId: string;
   }>
   | Readonly<{
-    status: 'rejected' | 'unavailable';
+    status: 'rejected';
+    diagnostic: ReturnType<typeof diagnostic>;
+  }>
+  | Readonly<{
+    status: 'unavailable';
     diagnostic: ReturnType<typeof diagnostic>;
   }>;
 

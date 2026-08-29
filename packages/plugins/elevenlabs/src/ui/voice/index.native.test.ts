@@ -29,8 +29,7 @@ describe('ElevenLabs native voice entry', () => {
 
     expect(VOICE_PROVIDER_PRESENTATIONS[0]?.providerId)
       .toBe('happier.voice.elevenlabs/realtime-elevenlabs');
-    expect(VOICE_PROVIDER_PRESENTATIONS[0]?.legacySettingsMigration)
-      .toBeDefined();
+    expect(VOICE_PROVIDER_PRESENTATIONS[0]).not.toHaveProperty('legacySettingsMigration');
     expect(VOICE_PROVIDER_PRESENTATIONS[0]).not.toHaveProperty('declaration');
 
     const register = vi.fn();

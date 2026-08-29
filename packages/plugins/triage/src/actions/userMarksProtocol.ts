@@ -1,5 +1,6 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
+    ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolNumber,
@@ -14,7 +15,6 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
-import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 
 /**
  * The strict contract of the two user-mark Actions.
@@ -94,12 +94,10 @@ export const TriageSetEntryPinnedResultV1JsonSchema: PluginJsonSchema =
  *
  * The value is the Account Collection's own opaque cursor, passed back through
  * untouched: nothing here decodes it, orders by it, or derives anything from
- * it. The bound mirrors the host's published opaque-cursor contract
- * (`PluginCollectionOpaqueCursorV1Schema`) rather than inventing a narrower
- * one, because a cursor this schema refused would be a cursor the reader's own
- * pins could not be reached past — and it must be spelled here rather than
- * imported, since an Action's wire shape is declared through the
- * validator-neutral authoring surface.
+ * it. It is composed from the canonical Protocol cursor value through the
+ * validator-neutral authoring surface rather than re-declaring its bound,
+ * because a cursor the canonical schema refused would be a cursor the reader's
+ * own pins could not be reached past.
  */
 export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -109,7 +107,7 @@ export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
         maximum: MAX_TRIAGE_LIST_WINDOW_ROWS_V1,
     }),
     /** Absent asks for the newest page; present asks for the one after it. */
-    cursor: TriageCollectionCursorV1Schema.optional(),
+    cursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesInputV1 = ReturnType<typeof TriageListPinnedEntriesInputV1Schema.parse>;
 export const TriageListPinnedEntriesInputV1JsonSchema: PluginJsonSchema =
@@ -141,7 +139,7 @@ export const TriageListPinnedEntriesResultV1Schema = defineProtocolObject({
      * "Is there more" is derived from that absence rather than reported beside
      * it, so the page bound and the offer to pass it cannot disagree.
      */
-    nextCursor: TriageCollectionCursorV1Schema.optional(),
+    nextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesResultV1 = ReturnType<typeof TriageListPinnedEntriesResultV1Schema.parse>;
 export const TriageListPinnedEntriesResultV1JsonSchema: PluginJsonSchema =

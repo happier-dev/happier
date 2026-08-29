@@ -17,6 +17,24 @@ export const TELEGRAM_UI_TRANSLATIONS = Object.freeze({
     'channels.telegram.automation.setup.chat': 'Chat ID',
     'channels.telegram.automation.setup.chat.description': 'The numeric Telegram chat id, or an @channelusername the bot can reach.',
   }),
+  de: Object.freeze({
+    'channels.telegram.setup.title': 'Telegram-Channels einrichten',
+    'channels.telegram.setup.description': 'Wähle den Connected Account des Telegram-Bots aus, der verifiziert werden soll.',
+    'channels.telegram.setup.submit': 'Bot verifizieren',
+    'channels.telegram.setup.credential': 'Telegram-Bot-Account',
+    'channels.telegram.setup.credential.description': 'Wähle den vorhandenen Connected Account des Telegram-Bots aus; Bot-Token werden hier niemals eingegeben.',
+    'channels.telegram.remediation.title': 'Telegram-Webhook entfernen',
+    'channels.telegram.remediation.description': 'Wähle den Telegram-Bot aus, dessen Webhook du entfernen möchtest.',
+    'channels.telegram.remediation.submit': 'Weiter',
+    'channels.telegram.remediation.credential': 'Telegram-Bot-Account',
+    'channels.telegram.remediation.credential.description': 'Wähle den vorhandenen Connected Account des Telegram-Bots aus; Bot-Token werden hier niemals eingegeben.',
+    'channels.telegram.automation.setup.title': 'Zu beobachtenden Telegram-Chat auswählen',
+    'channels.telegram.automation.setup.description': 'Wähle den Telegram-Bot und den Chat aus, dessen Nachrichten diese Automation starten sollen.',
+    'channels.telegram.automation.setup.submit': 'Diesen Chat verwenden',
+    'channels.telegram.automation.setup.credential': 'Telegram-Bot-Account',
+    'channels.telegram.automation.setup.chat': 'Chat-ID',
+    'channels.telegram.automation.setup.chat.description': 'Die numerische ID des Telegram-Chats oder ein @channelusername, den der Bot erreichen kann.',
+  }),
   ru: Object.freeze({
     'channels.telegram.setup.title': 'Настроить каналы Telegram',
     'channels.telegram.setup.description': 'Выберите подключённую учётную запись бота Telegram для проверки.',
@@ -201,6 +219,7 @@ export const TELEGRAM_UI_TRANSLATIONS = Object.freeze({
 
 export const TELEGRAM_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: TELEGRAM_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: TELEGRAM_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: TELEGRAM_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: TELEGRAM_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: TELEGRAM_UI_TRANSLATIONS.es },

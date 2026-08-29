@@ -4,6 +4,11 @@ export const CODEX_UI_TRANSLATIONS = Object.freeze({
     'settingsVoice.mode.codexRealtime': 'Codex Realtime (Experimental)',
     'settingsVoice.mode.codexRealtimeSubtitle': 'Speak directly with the active Codex agent session.',
   }),
+  de: Object.freeze({
+    'agentInput.connectedServiceLabel.codex': 'OpenAI Codex',
+    'settingsVoice.mode.codexRealtime': 'Codex Realtime (experimentell)',
+    'settingsVoice.mode.codexRealtimeSubtitle': 'Sprich direkt mit der aktiven Codex-Agentensitzung.',
+  }),
   ru: Object.freeze({
     'agentInput.connectedServiceLabel.codex': 'OpenAI Codex',
     'settingsVoice.mode.codexRealtime': 'Codex Realtime (экспериментально)',
@@ -58,6 +63,7 @@ export const CODEX_UI_TRANSLATIONS = Object.freeze({
 
 export const CODEX_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: CODEX_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: CODEX_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: CODEX_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: CODEX_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: CODEX_UI_TRANSLATIONS.es },

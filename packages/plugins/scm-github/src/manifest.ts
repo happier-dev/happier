@@ -15,10 +15,6 @@ import type { ActionInputHints } from '@happier-dev/plugin-sdk/actions';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
 import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
-  GITHUB_MOUNTED_DETAIL_DEADLINE_MS,
-  GITHUB_MUTATION_DEADLINE_MS,
-} from './triage/admission.js';
-import {
   createPluginEventAutomationSetupResultV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
@@ -83,6 +79,8 @@ import {
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
 } from './triage/contribution.js';
 import {
+  GithubCapabilitiesInputV1Schema,
+  GithubCapabilitiesResultV1Schema,
   GithubChangedFilesInputV1Schema,
   GithubChangedFilesResultV1Schema,
   GithubChecksInputV1Schema,
@@ -95,13 +93,13 @@ import {
   GithubTimelineResultV1Schema,
 } from './triage/detail/contracts.js';
 import {
+  readGithubCapabilities,
   listGithubChangedFiles,
   listGithubTimeline,
   readGithubFeedback,
   readGithubChecks,
   readGithubReviews,
 } from './triage/detailOperations.js';
-import { withGithubInvocationDeadline } from './triage/invocation.js';
 import {
   GithubIssueAssigneeAddInputV1Schema,
   GithubIssueAssigneeRemoveInputV1Schema,
@@ -509,6 +507,7 @@ function createGithubPlugin() {
       { locale: 'zh-Hans', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hans"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 和问题', 'plugins.github.settings.sources.subtitle': '选择要在 PR 和问题中显示的 GitHub 帐户和仓库。', 'github.automation.historyGapReset.confirmation.title': '开始新的基准', 'github.automation.historyGapReset.confirmation.body': '不会重放历史缺口中的事件。' } },
       { locale: 'zh-Hant', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 與問題', 'plugins.github.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitHub 帳戶和儲存庫。', 'github.automation.historyGapReset.confirmation.title': '開始新的基準', 'github.automation.historyGapReset.confirmation.body': '不會重播歷史缺口中的事件。' } },
       { locale: 'ja', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ja"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR と課題', 'plugins.github.settings.sources.subtitle': 'PR と課題に表示する GitHub アカウントとリポジトリを選択します。', 'github.automation.historyGapReset.confirmation.title': '新しい基準点を開始', 'github.automation.historyGapReset.confirmation.body': '履歴の欠落区間にあるイベントは再実行されません。' } },
+      { locale: 'de', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["de"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["de"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs und Issues', 'plugins.github.settings.sources.subtitle': 'Wählen Sie aus, welche GitHub-Konten und -Repositorys unter PRs und Issues angezeigt werden.', 'github.automation.historyGapReset.confirmation.title': 'Neue Ausgangsbasis erstellen', 'github.automation.historyGapReset.confirmation.body': 'Ereignisse aus der Verlaufslücke werden nicht erneut abgespielt.' } },
     ],
   },
   actions: {
@@ -586,11 +585,25 @@ function createGithubPlugin() {
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
       run: verifyGithubTriageReviewWorkspace,
     },
-    // The five source-native detail planes. Only this source's own mounted
+    // The six source-native detail planes. Only this source's own mounted
     // detail body invokes them, through the mounted Plugin UI host — present
     // user authority — so they declare `ui` and nothing else, and the explicit
     // empty placement list keeps global discovery from offering them a
     // destination while the mounted invocation stays untouched.
+    [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities]: {
+      title: 'Read GitHub repository capabilities',
+      description: 'Reads authoritative repository write, issue, and merge-method availability.',
+      scopes: ['global'],
+      surfaces: ['ui'],
+      placementBindings: [],
+      dangerLevel: 'safe',
+      execution: { target: 'daemon' },
+      inputSchema: GithubCapabilitiesInputV1Schema.jsonSchema,
+      resultSchema: GithubCapabilitiesResultV1Schema.jsonSchema,
+      hostAccess: TRIAGE_READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
+      run: readGithubCapabilities,
+    },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
       title: 'Read a GitHub timeline page',
       description: 'Reads one bounded page of the event timeline of one pull request or issue.',
@@ -603,7 +616,7 @@ function createGithubPlugin() {
       resultSchema: GithubTimelineResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, listGithubTimeline),
+      run: listGithubTimeline,
     },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles]: {
       title: 'Read a GitHub changed-file page',
@@ -618,7 +631,7 @@ function createGithubPlugin() {
       resultSchema: GithubChangedFilesResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, listGithubChangedFiles),
+      run: listGithubChangedFiles,
     },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback]: {
       title: 'Read one GitHub feedback connection',
@@ -633,7 +646,7 @@ function createGithubPlugin() {
       resultSchema: GithubFeedbackResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, readGithubFeedback),
+      run: readGithubFeedback,
     },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks]: {
       title: 'Read the GitHub checks of a pull request',
@@ -648,7 +661,7 @@ function createGithubPlugin() {
       resultSchema: GithubChecksResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, readGithubChecks),
+      run: readGithubChecks,
     },
     [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readReviews]: {
       title: 'Read the GitHub reviews of a pull request',
@@ -663,7 +676,7 @@ function createGithubPlugin() {
       resultSchema: GithubReviewsResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MOUNTED_DETAIL_DEADLINE_MS, readGithubReviews),
+      run: readGithubReviews,
     },
     // The bound pull-request and issue mutations. Omitting `agent` and `mcp` is
     // the human gate: it makes them unreachable from an agent at all, which is a
@@ -704,7 +717,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestMergeResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, mergeGithubPullRequestAction),
+      run: mergeGithubPullRequestAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose]: {
       title: 'Close this pull request',
@@ -733,7 +746,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, closeGithubPullRequestAction),
+      run: closeGithubPullRequestAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen]: {
       title: 'Reopen this pull request',
@@ -761,7 +774,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, reopenGithubPullRequestAction),
+      run: reopenGithubPullRequestAction,
     },
     // Draft → ready and a reviewer request are `externalSideEffect` rather than
     // `writesRemote` because the effect a person feels is the NOTIFICATION
@@ -795,7 +808,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestMarkReadyResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, markGithubPullRequestReadyAction),
+      run: markGithubPullRequestReadyAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview]: {
       title: 'Submit this pull request review',
@@ -823,7 +836,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestReviewPublicationResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, publishGithubPullRequestReviewAction),
+      run: publishGithubPullRequestReviewAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate]: {
       title: 'Publish this pull request review comment',
@@ -842,7 +855,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestReviewCommentCreateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, createGithubPullRequestReviewCommentAction),
+      run: createGithubPullRequestReviewCommentAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadReply]: {
       title: 'Reply to this pull request review thread',
@@ -861,7 +874,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestThreadReplyResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, replyToGithubPullRequestThreadAction),
+      run: replyToGithubPullRequestThreadAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueComment]: {
       title: 'Comment on this GitHub issue',
@@ -880,7 +893,7 @@ function createGithubPlugin() {
       resultSchema: GithubIssueCommentResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, createGithubIssueCommentAction),
+      run: createGithubIssueCommentAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestUpdateBranch]: {
       title: 'Update this branch',
@@ -911,7 +924,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestUpdateBranchResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, updateGithubPullRequestBranchAction),
+      run: updateGithubPullRequestBranchAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestAddReviewers]: {
       title: 'Request review from people',
@@ -941,7 +954,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, addGithubPullRequestReviewersAction),
+      run: addGithubPullRequestReviewersAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers]: {
       title: 'Withdraw review requests',
@@ -971,7 +984,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestReviewersResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, removeGithubPullRequestReviewersAction),
+      run: removeGithubPullRequestReviewersAction,
     },
     // Review-thread resolution is `writesRemote`, not `externalSideEffect`: it
     // moves state everyone watching the pull request can see and summons nobody.
@@ -1014,7 +1027,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestThreadResolutionResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, setGithubPullRequestThreadResolutionAction),
+      run: setGithubPullRequestThreadResolutionAction,
     },
     // The issue writes. Each is `writesRemote`: it moves remote state, summons
     // nobody, and is reversible through the Action that undoes it. Every one of
@@ -1046,7 +1059,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, closeGithubIssueAction),
+      run: closeGithubIssueAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen]: {
       title: 'Reopen this issue',
@@ -1074,7 +1087,7 @@ function createGithubPlugin() {
       resultSchema: GithubPullRequestStateResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, reopenGithubIssueAction),
+      run: reopenGithubIssueAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeAdd]: {
       title: 'Assign people to this issue',
@@ -1102,7 +1115,7 @@ function createGithubPlugin() {
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, addGithubIssueAssigneesAction),
+      run: addGithubIssueAssigneesAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove]: {
       title: 'Unassign people from this issue',
@@ -1130,7 +1143,7 @@ function createGithubPlugin() {
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, removeGithubIssueAssigneesAction),
+      run: removeGithubIssueAssigneesAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelAdd]: {
       title: 'Add labels to this issue',
@@ -1158,7 +1171,7 @@ function createGithubPlugin() {
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, addGithubIssueLabelsAction),
+      run: addGithubIssueLabelsAction,
     },
     [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove]: {
       title: 'Remove a label from this issue',
@@ -1186,7 +1199,7 @@ function createGithubPlugin() {
       resultSchema: GithubIssueDeltaResultV1Schema.jsonSchema,
       hostAccess: TRIAGE_READ_HOST_ACCESS,
       connectedAccountPurposeBindings: TRIAGE_INSTANCE_ACCOUNT_BINDINGS,
-      run: withGithubInvocationDeadline(GITHUB_MUTATION_DEADLINE_MS, removeGithubIssueLabelAction),
+      run: removeGithubIssueLabelAction,
     },
     [GITHUB_AUTOMATION_REPOSITORY_SOURCE_ATTEMPT_ACTION_ID]: {
       title: 'Run GitHub repository Event source attempt',

@@ -25,7 +25,7 @@ describe('CODEX_UI_DESCRIPTOR context window fallback', () => {
     expect(CODEX_UI_DESCRIPTOR.behavior.payload.sessionExtras).toEqual({
       outputKey: 'codexBackendMode',
       values: ['acp', 'appServer'],
-      settingKey: 'codexBackendMode',
+      settingKey: { scope: 'account', localId: 'codexBackendMode' },
       aliases: {
         mcp: 'mcp',
         mcp_resume: 'acp',

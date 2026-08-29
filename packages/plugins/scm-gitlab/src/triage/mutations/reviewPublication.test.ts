@@ -207,7 +207,7 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.some((request) => request.url.includes('bulk_publish'))).toBe(false);
   });
 
-  it('reports every preexisting draft before claim and rejects requestChanges with zero writes', async () => {
+  it('reports every preexisting draft before claim and rejects unadvertised requestChanges at admission', async () => {
     const drafts = createTransport((request) => {
       if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
       if (request.method === 'GET' && request.url === DRAFTS_LIST_URL) {
@@ -223,15 +223,13 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(drafts.claimCount()).toBe(0);
     expect(drafts.requests.some((request) => request.method !== 'GET')).toBe(false);
 
-    const unsupported = createTransport((request) => request.method === 'GET' && request.url === ITEM_URL
-      ? { status: 200, body: mergeRequestBody() }
-      : undefined);
+    const unsupported = createTransport(() => undefined);
     const result = await publishGitlabMergeRequestReview(actionInput({
       publicationPlan: plan({ verdict: { kind: 'requestChanges', body: 'Please revise.' } }),
     }), unsupported.context);
-    expect(result).toMatchObject({ kind: 'rejected', reason: 'unsupported_verdict' });
+    expect(result).toMatchObject({ kind: 'rejected', reason: 'invalid_input' });
     expect(unsupported.claimCount()).toBe(0);
-    expect(unsupported.requests).toHaveLength(1);
+    expect(unsupported.requests).toHaveLength(0);
   });
 
   it('folds a diff-less entry into the explicit verdict summary without losing cardinality', async () => {

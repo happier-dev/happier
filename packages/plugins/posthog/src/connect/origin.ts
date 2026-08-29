@@ -1,7 +1,7 @@
 /**
  * Normalization and validation of the PostHog API origin.
  *
- * The materialized `posthog.api` Connected Account is the only authority for this
+ * The materialized `posthog-api` Connected Account is the only authority for this
  * value. This module never derives an origin from a configuration token, a provider
  * response, or a `next` URL; it only normalizes and validates what the connection
  * already supplies, and it decides whether a follow-up URL still points at that exact

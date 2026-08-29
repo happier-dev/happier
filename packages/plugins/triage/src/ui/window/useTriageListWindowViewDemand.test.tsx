@@ -44,6 +44,21 @@ function render(initial: Props): Readonly<{
 }
 
 describe('the mounted Triage list view-demand producer', () => {
+  it('does not demand while first mounted or retained inactive, including callback replacement', async () => {
+    const first = vi.fn(async () => {});
+    const second = vi.fn(async () => {});
+    const harness = render({ active: false, demand: first });
+
+    expect(first).not.toHaveBeenCalled();
+
+    await harness.update({ active: false, demand: second });
+    expect(first).not.toHaveBeenCalled();
+    expect(second).not.toHaveBeenCalled();
+
+    await harness.update({ active: true, demand: second });
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+
   it('emits one mount demand plus each later host-active regain, leaving burst coalescing to the existing window owner', async () => {
     const demand = vi.fn(async () => {});
     const harness = render({ active: true, demand });

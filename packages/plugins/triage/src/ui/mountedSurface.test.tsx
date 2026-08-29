@@ -49,7 +49,9 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../corpus/collections/rowCodec.js';
 import type { CorpusSourceInstanceRowV1 } from '../corpus/collections/rows.js';
 import { createTestkitCorpusCollections } from '../corpus/testkit/corpusCollections.test-support.js';
-import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
+import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../settings/actions.js';
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
 import {
     testkitLocator,
     testkitSnapshot,
@@ -235,7 +237,7 @@ function createHarness() {
     const actionCalls: string[] = [];
     const unroutedActions: string[] = [];
     const publishedContexts: (PluginUiContextEnrichmentV1 | null)[] = [];
-    const accountSettings = createTestkitAccountSettings();
+    const accountKv = createTestkitAccountKv();
 
     /**
      * The host's Action dispatcher. It admits the surface's request through the
@@ -253,19 +255,19 @@ function createHarness() {
             );
         }
         // The shell also reads the reader's saved views. It is Account
-        // Settings rather than a Collection, and it reaches no source either.
+        // Account KV rather than a Collection, and it reaches no source either.
         if (String(request.action) === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
             return await readTriageSavedViewsForSurface(
                 TriageReadSavedViewsInputV1Schema.parse(request.input),
-                { settings: accountSettings.settings, mintViewId: () => 'unused' },
+                { catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: () => 'unused' },
             );
         }
         // The shell also reads the reader's configured action catalogue. It is
-        // Account Settings, and it reaches no source either.
+        // Account KV, and it reaches no source either.
         if (String(request.action) === TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1) {
             return await readTriageActionsForSurface(
                 TriageReadActionsInputV1Schema.parse(request.input),
-                { settings: accountSettings.settings },
+                { catalog: accountKv.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) },
             );
         }
         if (String(request.action) !== TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {

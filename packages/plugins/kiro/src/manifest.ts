@@ -67,7 +67,6 @@ export const KIRO_PLUGIN = definePlugin({
             delivery: ['newTurn', 'steer', 'followUp'],
             cancel: true,
           },
-          executionRuns: { open: ['create'], checkpoint: false, stop: true },
         }),
       },
       cliAuth: {

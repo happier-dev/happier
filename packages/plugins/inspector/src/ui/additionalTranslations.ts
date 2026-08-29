@@ -11,6 +11,18 @@ export const INSPECTOR_ADDITIONAL_UI_TRANSLATIONS = Object.freeze({
     "plugins.inspector.surface.openInspector": "Open inspector page",
     "plugins.inspector.surface.inventory": "Installed plugins",
   }),
+  "de": Object.freeze({
+    "plugins.inspector.surface.refresh": "Plugin-Inventar aktualisieren",
+    "plugins.inspector.surface.copyReload": "Details zum Neuladen kopieren",
+    "plugins.inspector.surface.quickActions": "Schnellaktionen von Inspector",
+    "plugins.inspector.surface.inventoryActions": "Inventaraktionen",
+    "plugins.inspector.surface.refreshHint": "Liest die aktuelle Liste zugelassener Plugins",
+    "plugins.inspector.surface.copyInventory": "Plugin-Inventar kopieren",
+    "plugins.inspector.surface.navigationActions": "Navigation in Inspector",
+    "plugins.inspector.surface.openDocumentation": "Plugin-Dokumentation öffnen",
+    "plugins.inspector.surface.openInspector": "Inspector-Seite öffnen",
+    "plugins.inspector.surface.inventory": "Installierte Plugins",
+  }),
   "ru": Object.freeze({
     "plugins.inspector.surface.refresh": "Перезагрузите инвентарь плагинов",
     "plugins.inspector.surface.copyReload": "Скопировать сведения о перезагрузке",
@@ -132,4 +144,3 @@ export const INSPECTOR_ADDITIONAL_UI_TRANSLATIONS = Object.freeze({
     "plugins.inspector.surface.inventory": "インストール済みのプラグイン",
   }),
 });
-

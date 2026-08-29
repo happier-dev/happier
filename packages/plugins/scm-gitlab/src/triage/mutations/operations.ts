@@ -13,10 +13,6 @@
  * reach.
  */
 
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-
-import { GITLAB_MUTATION_DEADLINE_MS } from '../admission.js';
-import { withGitlabInvocationDeadline } from '../invocationDeadline.js';
 import { mergeGitlabMergeRequest as mergeGitlabMergeRequestUnbounded } from './mergeRequestMerge.js';
 import { markGitlabMergeRequestReady as markGitlabMergeRequestReadyUnbounded } from './mergeRequestDraft.js';
 import {
@@ -38,25 +34,17 @@ import {
   publishGitlabMergeRequestThreadReply as publishGitlabMergeRequestThreadReplyUnbounded,
 } from './reviewPublication.js';
 
-const boundMutation = <TInput, TResult>(
-  run: (input: TInput, context: PluginInvocationContext) => Promise<TResult>,
-) => withGitlabInvocationDeadline(GITLAB_MUTATION_DEADLINE_MS, run);
-
-export const mergeGitlabMergeRequest = boundMutation(mergeGitlabMergeRequestUnbounded);
-export const markGitlabMergeRequestReady = boundMutation(markGitlabMergeRequestReadyUnbounded);
-export const closeGitlabMergeRequest = boundMutation(closeGitlabMergeRequestUnbounded);
-export const reopenGitlabMergeRequest = boundMutation(reopenGitlabMergeRequestUnbounded);
-export const closeGitlabIssue = boundMutation(closeGitlabIssueUnbounded);
-export const reopenGitlabIssue = boundMutation(reopenGitlabIssueUnbounded);
-export const changeGitlabMergeRequestReviewers = boundMutation(changeGitlabMergeRequestReviewersUnbounded);
-export const resolveGitlabMergeRequestDiscussion = boundMutation(resolveGitlabMergeRequestDiscussionUnbounded);
-export const assignGitlabIssue = boundMutation(assignGitlabIssueUnbounded);
-export const changeGitlabIssueLabels = boundMutation(changeGitlabIssueLabelsUnbounded);
-export const publishGitlabMergeRequestReview = boundMutation(publishGitlabMergeRequestReviewUnbounded);
-export const publishGitlabMergeRequestReviewComment = boundMutation(
-  publishGitlabMergeRequestReviewCommentUnbounded,
-);
-export const publishGitlabMergeRequestThreadReply = boundMutation(
-  publishGitlabMergeRequestThreadReplyUnbounded,
-);
-export const publishGitlabIssueComment = boundMutation(publishGitlabIssueCommentUnbounded);
+export const mergeGitlabMergeRequest = mergeGitlabMergeRequestUnbounded;
+export const markGitlabMergeRequestReady = markGitlabMergeRequestReadyUnbounded;
+export const closeGitlabMergeRequest = closeGitlabMergeRequestUnbounded;
+export const reopenGitlabMergeRequest = reopenGitlabMergeRequestUnbounded;
+export const closeGitlabIssue = closeGitlabIssueUnbounded;
+export const reopenGitlabIssue = reopenGitlabIssueUnbounded;
+export const changeGitlabMergeRequestReviewers = changeGitlabMergeRequestReviewersUnbounded;
+export const resolveGitlabMergeRequestDiscussion = resolveGitlabMergeRequestDiscussionUnbounded;
+export const assignGitlabIssue = assignGitlabIssueUnbounded;
+export const changeGitlabIssueLabels = changeGitlabIssueLabelsUnbounded;
+export const publishGitlabMergeRequestReview = publishGitlabMergeRequestReviewUnbounded;
+export const publishGitlabMergeRequestReviewComment = publishGitlabMergeRequestReviewCommentUnbounded;
+export const publishGitlabMergeRequestThreadReply = publishGitlabMergeRequestThreadReplyUnbounded;
+export const publishGitlabIssueComment = publishGitlabIssueCommentUnbounded;

@@ -10,6 +10,15 @@ export const SENTRY_UI_TRANSLATIONS = Object.freeze({
     'plugins.sentry.auth.cloud.title': 'Sentry Cloud token', 'plugins.sentry.auth.selfHosted.title': 'Self-hosted Sentry token',
     'plugins.sentry.detail.fallback.body': 'Sentry issue details are unavailable on this surface.',
   }),
+  de: Object.freeze({
+    ...SENTRY_RENDER_UI_TRANSLATIONS.de,
+    'plugins.sentry.account.title': 'Sentry-Konto', 'plugins.sentry.account.description': 'Sentry-Bereitstellung und Authentifizierungstoken zum Lesen von Organisationen und Problemen.',
+    'plugins.sentry.auth.region.title': 'Sentry-Cloud-Region', 'plugins.sentry.auth.region.description': 'Wählen Sie die Region aus, in der die Daten dieser Organisation gespeichert werden.',
+    'plugins.sentry.auth.origin.title': 'Sentry-URL', 'plugins.sentry.auth.origin.description': 'Der Ursprung Ihrer selbst gehosteten Sentry-Instanz, zum Beispiel https://sentry.example.com.',
+    'plugins.sentry.auth.token.title': 'Sentry-Authentifizierungstoken', 'plugins.sentry.auth.token.description': 'Ein Token für eine interne Integration oder ein persönliches Token mit org:read und event:read.',
+    'plugins.sentry.auth.cloud.title': 'Sentry-Cloud-Token', 'plugins.sentry.auth.selfHosted.title': 'Token für selbst gehostetes Sentry',
+    'plugins.sentry.detail.fallback.body': 'Details zum Sentry-Problem sind in dieser Ansicht nicht verfügbar.',
+  }),
   ru: Object.freeze({
     ...SENTRY_RENDER_UI_TRANSLATIONS.ru,
     'plugins.sentry.account.title': 'Учетная запись Sentry', 'plugins.sentry.account.description': 'Развертывание Sentry и токен авторизации для чтения организаций и проблем.',

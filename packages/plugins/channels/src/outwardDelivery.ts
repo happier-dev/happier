@@ -40,7 +40,7 @@ import type {
 } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
-  isPluginActionHandlerInvocationKnownNotStarted,
+  isPluginActionHandlerInvocationNotStartedAdvisory,
   type AdmittedTargetedOperationExecutionHandle,
   type ActionsService,
   type PluginMachineExecutionOriginV1,
@@ -380,7 +380,7 @@ type ChannelStateCollection = Pick<
 >;
 type ChannelDeliveriesCollection = Pick<
   PluginAccountCollectionForDefinition<ConversationCollectionsModule['CHANNEL_DELIVERIES_COLLECTION']>,
-  'delete' | 'get' | 'put' | 'query'
+  'delete' | 'forget' | 'get' | 'put' | 'query'
 >;
 
 /**
@@ -518,7 +518,7 @@ export type ConversationOutwardDeliveryConnectionAttention = Readonly<{
 }>;
 
 export type ConversationOutwardDeliveryConnectionAttentionReaderInput = Readonly<{
-  deliveriesCollection: ChannelDeliveriesCollection;
+  deliveriesCollection: Pick<ChannelDeliveriesCollection, 'query'>;
   signal: AbortSignal;
   connectionIds: readonly string[];
 }>;
@@ -1364,8 +1364,15 @@ export function createConversationOutwardDeliveryCollectionStore(
     async retire(retireInput) {
       if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
       try {
-        await input.deliveriesCollection.delete(retireInput.custodyId, {
+        const deleted = await input.deliveriesCollection.delete(retireInput.custodyId, {
           expectedRevision: retireInput.expectedRevision,
+          signal: input.signal,
+        });
+        // The supervisor reaches this path only from its admitted terminal
+        // retention scan; that scan owns the existing outward horizon. Physical
+        // forgetting is a distinct exact-revision step, never Collection GC.
+        await input.deliveriesCollection.forget(deleted.rowId, {
+          expectedRevision: deleted.revision,
           signal: input.signal,
         });
         return { kind: 'retired' };
@@ -2120,39 +2127,35 @@ async function compactConversationOutwardDeliveryObligation(input: Readonly<{
 }
 
 function readBindingFacts(input: Readonly<{
-  collections: ConversationCollectionsModule;
+  accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   row: StoredCollectionRow;
   bindingId: string;
 }>): ConversationOutwardDeliveryBindingFacts | null {
-  const { collections, row, bindingId } = input;
-  if (!isJsonRecord(row.value)
-    || row.value[collections.CHANNEL_STATE_FIELD.recordKind]
-      !== collections.CHANNEL_STATE_RECORD_KIND.binding
-    || row.value[collections.CHANNEL_STATE_FIELD.id] !== bindingId
-    || row.value[collections.CHANNEL_STATE_FIELD.bindingId] !== bindingId
-    || typeof row.value[collections.CHANNEL_STATE_FIELD.connectionId] !== 'string'
-    || !isJsonRecord(row.value.payload)) return null;
-  const authorityEpoch = row.value.payload.authorityEpoch;
-  const enabled = row.value.payload.enabled;
-  const deletionState = row.value.payload.deletionState;
-  const endpoint = ConversationResolvedEndpointV1Schema.safeParse(row.value.payload.endpoint);
-  const linkPreviewPolicy = row.value.payload.linkPreviewPolicy;
-  if (!isNonNegativeSafeInteger(authorityEpoch)
-    || authorityEpoch < 1
-    || typeof enabled !== 'boolean'
-    || (deletionState !== 'none' && deletionState !== 'finalizingDelete')
-    || !endpoint.success) return null;
+  const value = input.row.value;
+  if (!isJsonRecord(value)) return null;
+  let current: ReturnType<ConversationAccountLocalBindingPolicyModule['readConversationBindingUpdateRow']>;
+  try {
+    current = input.accountLocalBindingPolicy.readConversationBindingUpdateRow({
+      row: {
+        rowId: input.row.rowId,
+        revision: input.row.revision,
+        value,
+      },
+      bindingId: input.bindingId,
+    });
+  } catch {
+    return null;
+  }
+  const { binding } = current;
   return {
-    revision: row.revision,
-    connectionId: row.value[collections.CHANNEL_STATE_FIELD.connectionId] as string,
-    authorityEpoch,
-    enabled,
-    deletionState,
-    endpoint: endpoint.data,
-    target: row.value.payload.target,
-    linkPreviewPolicy: linkPreviewPolicy === 'suppress' || linkPreviewPolicy === 'providerDefault'
-      ? linkPreviewPolicy
-      : undefined,
+    revision: input.row.revision,
+    connectionId: binding.connectionId,
+    authorityEpoch: binding.authorityEpoch,
+    enabled: binding.enabled,
+    deletionState: binding.deletionState,
+    endpoint: binding.endpoint,
+    target: binding.target,
+    linkPreviewPolicy: binding.linkPreviewPolicy,
   };
 }
 
@@ -2208,12 +2211,6 @@ async function checkConversationOutwardDeliveryRouteCurrentness(input: Readonly<
   requireBindingRevision: boolean;
 }>): Promise<ConversationOutwardDeliveryRouteCurrentness> {
   if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
-  let collections: ConversationCollectionsModule;
-  try {
-    collections = await loadConversationCollectionsModule();
-  } catch {
-    return { kind: 'unavailable', reason: 'stateUnavailable' };
-  }
   let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   try {
     accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
@@ -2274,7 +2271,7 @@ async function checkConversationOutwardDeliveryRouteCurrentness(input: Readonly<
   }
   if (bindingRow === null) return { kind: 'suppressed', reason: 'bindingUnavailable' };
   const binding = readBindingFacts({
-    collections,
+    accountLocalBindingPolicy,
     row: bindingRow,
     bindingId: input.obligation.bindingId,
   });
@@ -2378,12 +2375,6 @@ async function readCurrentConversationPermissionWaitMediationSource(input: Reado
   signal: AbortSignal;
 }>): Promise<CurrentConversationPermissionWaitMediationSourceReadResult> {
   if (input.signal.aborted) return { kind: 'unavailable', reason: 'cancelled' };
-  let collections: ConversationCollectionsModule;
-  try {
-    collections = await loadConversationCollectionsModule();
-  } catch {
-    return { kind: 'unavailable', reason: 'stateUnavailable' };
-  }
   let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   try {
     accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
@@ -2403,7 +2394,7 @@ async function readCurrentConversationPermissionWaitMediationSource(input: Reado
   }
   if (bindingRow === null) return { kind: 'notEligible' };
   const binding = readBindingFacts({
-    collections,
+    accountLocalBindingPolicy,
     row: bindingRow,
     bindingId: input.bindingId,
   });
@@ -3295,7 +3286,10 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
           },
         );
       } catch (error) {
-        if (isPluginActionHandlerInvocationKnownNotStarted(error)) {
+        // This call is the canonical admitted Action transport. The advisory
+        // marker is retry-safe here only because it arrived through this host
+        // boundary; a standalone structural PluginError is not provenance.
+        if (isPluginActionHandlerInvocationNotStartedAdvisory(error)) {
           return { kind: 'notDelivered', retry: 'safe' };
         }
         throw error;
@@ -3416,12 +3410,6 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   signal: AbortSignal;
 }>): Promise<ConversationOutwardDeliveryResult> {
   if (input.signal.aborted) return { kind: 'notAttempted', reason: 'cancelled' };
-  let collections: ConversationCollectionsModule;
-  try {
-    collections = await loadConversationCollectionsModule();
-  } catch {
-    return { kind: 'notAttempted', reason: 'custodyUnavailable' };
-  }
   let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   try {
     accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
@@ -3441,7 +3429,7 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   }
   if (bindingRow === null) return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
   const binding = readBindingFacts({
-    collections,
+    accountLocalBindingPolicy,
     row: bindingRow,
     bindingId: input.binding.bindingId,
   });

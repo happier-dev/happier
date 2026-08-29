@@ -2450,7 +2450,7 @@
             },
             "sourceContractVersion": 1,
             "supportedObservationTransports": [
-              "checkpointedPull"
+              "socket"
             ]
           },
           "v": 1
@@ -2623,6 +2623,23 @@
             "discord.automation.messageSource.setup.description": "Choose the Discord bot and the channel whose messages should start this Automation.",
             "discord.automation.messageSource.setup.submit": "Watch channel",
             "discord.automation.messageSource.setup.title": "Watch a Discord channel"
+          }
+        },
+        {
+          "locale": "de",
+          "messages": {
+            "channels.discord.setup.credential": "Discord-Bot-Account",
+            "channels.discord.setup.credential.description": "Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.",
+            "channels.discord.setup.description": "Wähle den Connected Account des Discord-Bots aus, der verifiziert werden soll.",
+            "channels.discord.setup.submit": "Bot verifizieren",
+            "channels.discord.setup.title": "Discord-Channels einrichten",
+            "discord.automation.messageSource.setup.channel": "Kanal-ID",
+            "discord.automation.messageSource.setup.channel.description": "Gib die ID des Discord-Kanals ein, den der Bot bereits lesen kann.",
+            "discord.automation.messageSource.setup.credential": "Discord-Bot-Account",
+            "discord.automation.messageSource.setup.credential.description": "Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.",
+            "discord.automation.messageSource.setup.description": "Wähle den Discord-Bot und den Kanal aus, dessen Nachrichten diese Automation starten sollen.",
+            "discord.automation.messageSource.setup.submit": "Kanal beobachten",
+            "discord.automation.messageSource.setup.title": "Discord-Kanal beobachten"
           }
         },
         {

@@ -26,7 +26,7 @@ describe('the Triage UI catalog', () => {
         // from `en` ENTIRELY is invisible to it: absent everywhere reads as
         // agreement. That is not hypothetical — five `surface.session.*` keys
         // shipped referenced-but-undefined and would have rendered untranslated
-        // on all ten non-English locales, and no existing test failed.
+        // on every non-English locale, and no existing test failed.
         //
         // So the keys are read from the source that asks for them, not from a
         // hand-kept list that drifts the same way the catalog did.

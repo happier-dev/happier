@@ -12,7 +12,6 @@ import pullRequestSelf from '../fixtures/pullRequestSelf.json' with { type: 'jso
 import { encodeBitbucketConfiguration } from '../instance.js';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './descriptor.js';
 import {
-  BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS,
   listBitbucketActivity,
   listBitbucketBuilds,
   listBitbucketComments,
@@ -92,9 +91,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('the mounted Bitbucket detail deadline', () => {
-  it('bounds account materialization as part of the whole operation', async () => {
-    vi.useFakeTimers();
+describe('the mounted Bitbucket detail lifetime', () => {
+  it('propagates caller cancellation through account materialization', async () => {
     const { connectedAccounts: baseAccounts } = createConnectedAccountsStub({
       accounts: [{ accountId: 'account-1' }],
     });
@@ -112,19 +110,19 @@ describe('the mounted Bitbucket detail deadline', () => {
       },
     } as typeof baseAccounts;
     const { http } = createHttpStub(() => undefined);
+    const caller = new AbortController();
     const settling = readBitbucketOverview(
       planeInput(),
-      createInvocationContext(connectedAccounts, http),
+      createInvocationContext(connectedAccounts, http, caller.signal),
     );
-
-    await vi.advanceTimersByTimeAsync(BITBUCKET_MOUNTED_DETAIL_DEADLINE_MS);
+    caller.abort(new DOMException('The mounted reader was closed.', 'AbortError'));
 
     const settled = BitbucketOverviewResultV1Schema.parse(await settling);
     expect(settled.kind).toBe('unavailable');
     if (settled.kind !== 'unavailable') return;
     expect(settled.failure).toMatchObject({
       class: 'transient',
-      code: 'invocation-deadline-exceeded',
+      code: 'invocation-cancelled',
     });
   });
 });

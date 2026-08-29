@@ -15,18 +15,26 @@ export type OpenCodeIndexCursorV1 =
 export type OpenCodeForwardTranscriptWindowV1<TItem> = Readonly<{
   items: readonly TItem[];
   nextIndex: number;
+  /**
+   * When the budget stopped inside a native message, the semantic item position
+   * within that exact message where the next window must resume; 0 when the
+   * position is at a whole-message boundary (`nextIndex`).
+   */
+  nextSubIndex: number;
   truncated: boolean;
 }>;
 
 export type OpenCodeBackwardTranscriptWindowV1<TItem> = Readonly<{
   items: readonly TItem[];
   nextIndex: number;
+  /**
+   * Same intra-message identity as the forward window, counted from the NEWEST
+   * semantic item of the boundary message (`nextIndex - 1`): the number of that
+   * message's newest items already served. 0 at a whole-message boundary.
+   */
+  nextSubIndex: number;
   truncated: boolean;
-}>;
-
-export class OpenCodeTranscriptItemLimitError extends Error {
-  readonly name = 'OpenCodeTranscriptItemLimitError';
-}
+}>;;
 
 export type OpenCodeTranscriptProjectionOptions = Readonly<{
   isHappierAuthoredProviderUserMessageId?: (messageId: string) => boolean;
@@ -220,6 +228,8 @@ export function createOpenCodeTranscriptProjectionMapper(params: Readonly<{
 export function readOpenCodeTranscriptForwardWindow<TItem>(params: Readonly<{
   messages: readonly unknown[];
   startIndex: number;
+  /** Resume inside the message at `startIndex` from this semantic item position. */
+  startSubIndex?: number;
   maxItems: number;
   maxBytes: number;
   mapMessage: (message: unknown, index: number) => TItem | readonly TItem[] | null;
@@ -229,46 +239,51 @@ export function readOpenCodeTranscriptForwardWindow<TItem>(params: Readonly<{
   const maxItems = Math.max(1, Math.trunc(params.maxItems));
   let remainingBytes = Math.max(1, Math.trunc(params.maxBytes));
   let nextIndex = Math.max(0, Math.trunc(params.startIndex));
+  let pendingSubIndex = Math.max(0, Math.trunc(params.startSubIndex ?? 0));
+  let nextSubIndex = 0;
   let truncated = false;
 
   for (let index = nextIndex; index < params.messages.length; index += 1) {
     const mapped = params.mapMessage(params.messages[index], index);
     nextIndex = index + 1;
+    nextSubIndex = 0;
     if (mapped === null) continue;
     const mappedItems = Array.isArray(mapped) ? mapped : [mapped];
-    if (mappedItems.length === 0) continue;
-    if (mappedItems.length > maxItems) {
-      throw new OpenCodeTranscriptItemLimitError(
-        'OpenCode source message contains more semantic items than the requested transcript page allows.',
-      );
-    }
-
-    const itemBytes = mappedItems.reduce(
+    // One native message may expand to several semantic items, so a
+    // continuation anchors at (message, subIndex) — the same source-bound
+    // subitem identity the Codex rollout cursor carries. Slicing also removes
+    // the old all-or-nothing failure when a single message exceeded the page.
+    const baseSubIndex = pendingSubIndex;
+    pendingSubIndex = 0;
+    const remainingItems = baseSubIndex > 0 ? mappedItems.slice(baseSubIndex) : mappedItems;
+    if (remainingItems.length === 0) continue;
+    let fit = remainingItems.length;
+    if (items.length + fit > maxItems) fit = maxItems - items.length;
+    const fitting = fit > 0 ? remainingItems.slice(0, fit) : [];
+    const fittingBytes = fitting.reduce(
       (total, item) => total + params.measureItemBytes(item),
       0,
     );
-    if (items.length + mappedItems.length > maxItems) {
+    if (fit <= 0 || (fittingBytes > remainingBytes && items.length > 0)) {
       nextIndex = index;
+      nextSubIndex = baseSubIndex;
       truncated = true;
       break;
     }
-    if (itemBytes > remainingBytes && items.length === 0) {
-      items.push(...mappedItems);
-      truncated = true;
-      break;
-    }
-    if (itemBytes > remainingBytes && items.length > 0) {
+    items.push(...fitting);
+    remainingBytes = Math.max(0, remainingBytes - fittingBytes);
+    if (fit < remainingItems.length) {
       nextIndex = index;
+      nextSubIndex = baseSubIndex + fit;
       truncated = true;
       break;
     }
-    items.push(...mappedItems);
-    remainingBytes = Math.max(0, remainingBytes - itemBytes);
   }
 
   return {
     items,
     nextIndex,
+    nextSubIndex,
     truncated: truncated || nextIndex < params.messages.length,
   };
 }
@@ -279,6 +294,11 @@ export function readOpenCodeTranscriptBackwardWindow<TItem>(params: Readonly<{
   maxItems: number;
   maxBytes: number;
   rawItemLimit?: number;
+  /**
+   * Number of the boundary message's newest semantic items already served; the
+   * window walks only the older remainder.
+   */
+  startSubIndex?: number;
   mapMessage: (message: unknown, index: number) => TItem | readonly TItem[] | null;
   measureItemBytes: (item: TItem) => number;
 }>): OpenCodeBackwardTranscriptWindowV1<TItem> {
@@ -290,46 +310,53 @@ export function readOpenCodeTranscriptBackwardWindow<TItem>(params: Readonly<{
     ? Math.max(1, Math.trunc(params.rawItemLimit))
     : null;
   const lowerBound = rawItemLimit === null ? 0 : Math.max(0, nextIndex - rawItemLimit);
+  let pendingSubIndex = Math.max(0, Math.trunc(params.startSubIndex ?? 0));
+  let nextSubIndex = 0;
   let truncated = false;
 
   for (let index = nextIndex - 1; index >= lowerBound; index -= 1) {
     const mapped = params.mapMessage(params.messages[index], index);
     nextIndex = index;
+    nextSubIndex = 0;
     if (mapped === null) continue;
     const mappedItems = Array.isArray(mapped) ? mapped : [mapped];
-    if (mappedItems.length === 0) continue;
-    if (mappedItems.length > maxItems) {
-      throw new OpenCodeTranscriptItemLimitError(
-        'OpenCode source message contains more semantic items than the requested transcript page allows.',
-      );
-    }
-
-    const itemBytes = mappedItems.reduce(
+    // The boundary message — the first one this window visits — resumes at the
+    // intra-message position the page cursor carried; slicing its already-served
+    // newest items away keeps backward paging lossless when one native message
+    // expands to more semantic items than a page allows.
+    const baseSubIndex = pendingSubIndex;
+    pendingSubIndex = 0;
+    const availableItems = baseSubIndex > 0
+      ? mappedItems.slice(0, Math.max(0, mappedItems.length - baseSubIndex))
+      : mappedItems;
+    if (availableItems.length === 0) continue;
+    let fit = availableItems.length;
+    if (reversedItems.length + fit > maxItems) fit = maxItems - reversedItems.length;
+    const fitting = fit > 0 ? availableItems.slice(availableItems.length - fit) : [];
+    const fittingBytes = fitting.reduce(
       (total, item) => total + params.measureItemBytes(item),
       0,
     );
-    if (reversedItems.length + mappedItems.length > maxItems) {
+    if (fit <= 0 || (fittingBytes > remainingBytes && reversedItems.length > 0)) {
       nextIndex = index + 1;
+      nextSubIndex = baseSubIndex;
       truncated = true;
       break;
     }
-    if (itemBytes > remainingBytes && reversedItems.length === 0) {
-      reversedItems.push(...[...mappedItems].reverse());
-      truncated = true;
-      break;
-    }
-    if (itemBytes > remainingBytes && reversedItems.length > 0) {
+    reversedItems.push(...[...fitting].reverse());
+    remainingBytes = Math.max(0, remainingBytes - fittingBytes);
+    if (fit < availableItems.length) {
       nextIndex = index + 1;
+      nextSubIndex = baseSubIndex + fit;
       truncated = true;
       break;
     }
-    reversedItems.push(...[...mappedItems].reverse());
-    remainingBytes = Math.max(0, remainingBytes - itemBytes);
   }
 
   return {
     items: reversedItems.reverse(),
     nextIndex,
+    nextSubIndex,
     truncated,
   };
 }

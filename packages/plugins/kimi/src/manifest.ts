@@ -92,7 +92,7 @@ export const KIMI_PLUGIN = definePlugin({
         buildSessionOptions: (input) => ({
           ok: true,
           options: resolveKimiSessionRuntimePreferences({
-            settings: input.settings,
+            settings: input.pluginSettings.account ?? {},
             environment: input.environment,
           }),
         }),

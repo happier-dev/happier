@@ -10,7 +10,9 @@ import { QualifiedConnectedAccountRefJsonSchema } from '@happier-dev/plugin-sdk/
 import {
   admitCheckpointedPluginEventObservationV1,
   createPluginEventAutomationSetupResultV1JsonSchema,
+  projectPluginEventSourceConnectionStatusV1,
   PluginEventAutomationSetupResultV1Schema,
+  type PluginEventSourceConnectionStatusV1,
   type PluginEventAutomationSetupResultV1,
 } from '@happier-dev/plugin-sdk/events';
 
@@ -117,6 +119,20 @@ type TelegramAutomationSourceConfig = Readonly<{ botId: string; chatId: string }
 
 export function buildTelegramAutomationSourceInstanceId(input: TelegramAutomationSourceConfig): string {
   return `telegram:chat:${input.botId}:${input.chatId}`;
+}
+
+/** The checkpoint poller owns the fact; Automations owns persisted status. */
+export async function projectTelegramAutomationSourceConnectionStatus(input: Readonly<{
+  botId: string;
+  status: PluginEventSourceConnectionStatusV1;
+}>, context: PluginInvocationContext): Promise<void> {
+  await projectPluginEventSourceConnectionStatusV1({
+    eventRef: { pluginId: 'happier.channel.telegram', localId: TELEGRAM_AUTOMATION_MESSAGE_EVENT_ID },
+    sourceContractVersion: TELEGRAM_AUTOMATION_MESSAGE_SOURCE_CONTRACT_VERSION,
+    sourceInstanceIdPrefix: `telegram:chat:${input.botId}:`,
+    scope: { kind: 'checkpointedPull' },
+    status: input.status,
+  }, context);
 }
 
 /**

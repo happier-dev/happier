@@ -5,6 +5,7 @@ import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import {
     mutateTriageAction,
     readTriageActions,
+    TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
     type TriageActionCommandV1,
     type TriageActionV1,
     type TriageActionsDepsV1,
@@ -15,9 +16,11 @@ import type {
     TriageReadActionsInputV1,
     TriageReadActionsResultV1,
 } from './actionsCatalogProtocol.js';
+import { createTriageAccountKvCatalogStore } from '../settings/accountKvCatalogStore.js';
+import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 
 /**
- * The two action-catalog Actions: the Settings editor's only path to the one
+ * The two action-catalog Actions: the mounted editor's daemon path to the one
  * `triage.actions` CAS owner.
  *
  * Neither is a second authority. `settings/actions.ts` still mints the action
@@ -28,7 +31,7 @@ import type {
  */
 
 export type TriageActionsCatalogDepsV1 = Readonly<{
-    settings: TriageActionsDepsV1['settings'];
+    catalog: TriageActionsDepsV1['catalog'];
     mintActionId: () => string;
     signal?: AbortSignal;
 }>;
@@ -55,10 +58,10 @@ function projectActions(
 
 export async function readTriageActionsForSurface(
     _input: TriageReadActionsInputV1,
-    deps: Pick<TriageActionsCatalogDepsV1, 'settings' | 'signal'>,
+    deps: Pick<TriageActionsCatalogDepsV1, 'catalog' | 'signal'>,
 ): Promise<TriageReadActionsResultV1> {
     const read = await readTriageActions({
-        settings: deps.settings,
+        catalog: deps.catalog,
         ...(deps.signal ? { signal: deps.signal } : {}),
     });
     return {
@@ -107,7 +110,7 @@ export async function administerTriageAction(
     deps: TriageActionsCatalogDepsV1,
 ): Promise<TriageAdministerActionResultV1> {
     const result = await mutateTriageAction({
-        settings: deps.settings,
+        catalog: deps.catalog,
         mintActionId: deps.mintActionId,
         ...(deps.signal ? { signal: deps.signal } : {}),
     }, commandFrom(input));
@@ -130,7 +133,10 @@ export function createTriageReadActionsActionHandler(): ActionHandler<
     TriageReadActionsResultV1
 > {
     return async (input, context: PluginInvocationContext) => await readTriageActionsForSurface(input, {
-        settings: context.services.settings.forScope({ kind: 'account' }),
+        catalog: createTriageAccountKvCatalogStore(
+            requireTriageAccountStorage(context).kv,
+            TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
+        ),
         signal: context.signal,
     });
 }
@@ -140,7 +146,10 @@ export function createTriageAdministerActionActionHandler(): ActionHandler<
     TriageAdministerActionResultV1
 > {
     return async (input, context: PluginInvocationContext) => await administerTriageAction(input, {
-        settings: context.services.settings.forScope({ kind: 'account' }),
+        catalog: createTriageAccountKvCatalogStore(
+            requireTriageAccountStorage(context).kv,
+            TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
+        ),
         // Minted at the writer, never by a caller: a client-chosen id would let
         // two devices claim one action.
         mintActionId: () => mintTriageOpaqueIdV1(),

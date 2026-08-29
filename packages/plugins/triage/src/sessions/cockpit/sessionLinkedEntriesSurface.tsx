@@ -24,6 +24,7 @@ import {
     type TriageUnlinkTransportV1,
 } from './unlinkLinkedEntry.js';
 import { useTriageSessionLinkedEntries } from './useSessionLinkedEntries.js';
+import { openTriageLinkedEntry } from '../../ui/navigation/openLinkedEntry.js';
 
 /**
  * The Session-targeted linked-entries surface.
@@ -102,8 +103,20 @@ function LinkedEntryRow(props: Readonly<{
         [durable.collections, host],
     );
     const [phase, setPhase] = React.useState<'idle' | 'removing' | 'failed'>('idle');
+    const [opening, setOpening] = React.useState(false);
+    const [openFailed, setOpenFailed] = React.useState(false);
     const presentation = row.presentation;
     const entryRef = presentation.kind === 'linked' ? presentation.entryRef : null;
+
+    const open = React.useCallback(() => {
+        if (entryRef === null || opening) return;
+        setOpening(true);
+        setOpenFailed(false);
+        void openTriageLinkedEntry(host, entryRef).then((result) => {
+            setOpening(false);
+            setOpenFailed(result.kind === 'refused');
+        });
+    }, [entryRef, host, opening]);
 
     const unlink = React.useCallback(() => {
         if (entryRef === null) return;
@@ -131,9 +144,16 @@ function LinkedEntryRow(props: Readonly<{
     return (
         <List.Item
             title={rowTitle(row, text)}
-            tone={phase === 'failed' ? 'warning' : rowTone(row)}
-            busy={row.presentation.kind === 'reading' || phase === 'removing'}
-            {...(phase === 'failed'
+            tone={phase === 'failed' || openFailed ? 'warning' : rowTone(row)}
+            busy={row.presentation.kind === 'reading' || phase === 'removing' || opening}
+            {...(openFailed
+                ? {
+                    detail: text(
+                        'plugins.triage.picker.openFailed',
+                        'This entry could not be opened.',
+                    ),
+                }
+                : phase === 'failed'
                 ? {
                     detail: text(
                         'plugins.triage.sessionLinks.unlinkFailed',
@@ -141,6 +161,7 @@ function LinkedEntryRow(props: Readonly<{
                     ),
                 }
                 : {})}
+            {...(entryRef === null ? {} : { onPress: open })}
             accessoryOutsidePressable
             accessory={entryRef === null ? undefined : (
                 <Button

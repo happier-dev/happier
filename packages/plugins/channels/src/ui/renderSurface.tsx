@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { pluginUiTargetedContributionOperationKey } from '@happier-dev/plugin-sdk/ui';
 import type { AgentPermissionIntentV1 } from '@happier-dev/plugin-sdk/sessions';
+import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiTargetedContributionsV1,
@@ -89,6 +90,7 @@ import {
   type ConversationBindingTargetV1,
   type ConversationBindingV1,
   type ConversationConnectionCreateInputV1,
+  type ConversationConnectionEndpointRequiredResultV1,
   type ConversationPairingResourceV1,
 } from '@happier-dev/channels-protocol/v1';
 
@@ -272,6 +274,18 @@ type ProviderSetupFormDraft = Readonly<{
   operationKey: string;
   input: SubmittedProviderSetupSelection['input'];
 }>;
+/**
+ * The durable-push continuation the mounted surface relays between the two
+ * `connection/create-v1` calls. Every field is core-minted; the surface only
+ * passes the generic ensure facts to the existing host Action and echoes the
+ * returned endpoint ID and attempt identity back to the core, which re-proves
+ * correspondence itself.
+ */
+type ConnectionEndpointContinuation = Readonly<{
+  connectionId: string;
+  webhookEndpointId?: string;
+  endpointEnsureInput: PluginActionInputById['plugin.webhook.endpoint.ensure'];
+}>;
 type ProviderSetupFeedback =
   | 'ready'
   | 'requiresRemediation'
@@ -283,7 +297,9 @@ type ProviderSetupFeedback =
   | 'preparationOutcomeUnknown'
   | 'creationUnavailable'
   | 'creationFailed'
-  | 'creationOutcomeUnknown';
+  | 'creationOutcomeUnknown'
+  | 'endpointEnsureOutcomeUnknown'
+  | 'endpointEnsureFailed';
 
 /**
  * The mounted host snapshot is the only provider-discovery owner. In
@@ -397,7 +413,6 @@ type BindingPolicyOperation = Readonly<{
 type BindingEnablementFailure = Readonly<{
   bindingId: string;
   code: string;
-  message: string;
 }>;
 type BindingDeleteInput = Readonly<{
   bindingId: string;
@@ -2257,14 +2272,12 @@ function BindingEnablementFailureNotice(props: Readonly<{
       description={quotaIncompatible
         ? props.t(
           'plugins.channels.surface.bindingEnableQuotaIncompatibleDescription',
-          'This binding could not be enabled because the Account collection quota is incompatible (collection_quota_incompatible). Ask an administrator to make the Account collection quota compatible, then refresh and try again.',
+          'This binding could not be enabled because the Account collection quota is incompatible. Ask an administrator to make the Account collection quota compatible, then refresh and try again.',
         )
-        : props.failure.message
-          + ' (' + props.failure.code + '). '
-          + props.t(
-            'plugins.channels.surface.bindingEnableFailedDescription',
-            'Refresh binding details before trying again.',
-          )}
+        : props.t(
+          'plugins.channels.surface.bindingEnableFailedDescription',
+          'Refresh binding details before trying again.',
+        )}
     />
   );
 }
@@ -2599,6 +2612,7 @@ type BindingCreatePairingContext = Readonly<{
 type BindingCreatePairingRequest = Readonly<{
   connectionId: string;
   expectedConnectionRevision: number;
+  pairingRequestId: string;
 }>;
 type BindingCreateFeedback =
   | 'resolverUnavailable'
@@ -3173,14 +3187,42 @@ function usePairingExpiryCountdown(input: Readonly<{
 }
 
 /**
+ * One client-generated opaque create-request key per pairing attempt. The
+ * daemon rejoins the exact challenge this key created after a response loss,
+ * and unknown-outcome recovery matches it exactly, so a second device's
+ * superseding challenge can never be adopted by this device. The 128-bit
+ * random identity uses the same platform capability as the daemon-side
+ * pairing helpers; when it is unavailable the create is refused instead of
+ * degrading to a guessable or colliding key.
+ */
+const PAIRING_REQUEST_ID_RANDOM_BYTES = 16;
+function createPairingRequestId(): string | null {
+  const cryptoRef = globalThis.crypto;
+  if (cryptoRef?.getRandomValues === undefined) return null;
+  try {
+    const bytes = new Uint8Array(PAIRING_REQUEST_ID_RANDOM_BYTES);
+    cryptoRef.getRandomValues(bytes);
+    let identity = '';
+    for (const byte of bytes) identity += byte.toString(16).padStart(2, '0');
+    return `pairing-request-${identity}`;
+  } catch {
+    // A present-but-unavailable runtime entropy source is the same typed
+    // unavailability as an absent one; never fall back to time/counters.
+    return null;
+  }
+}
+
+/**
  * An ambiguous create is resolved only through a fresh manager projection.
- * A pairing manager allows one active challenge per connection, so the exact
- * connection/revision match can restore the challenge handoff without making
- * a binding decision or accepting a proposal automatically.
+ * Recovery matches the exact client-generated request key this create sent —
+ * never merely a connection and revision — so the challenge this request
+ * created is restored without adopting a challenge another device's create
+ * superseded it with, and without making a binding decision or accepting a
+ * proposal automatically.
  */
 function BindingCreatePairingRecovery(props: Readonly<{
   connectionId: string;
-  expectedConnectionRevision: number;
+  pairingRequestId: string;
   onRecovered: (pairing: BindingCreatePairingContext) => void;
   onNotFound: () => void;
   t: Translate;
@@ -3193,7 +3235,7 @@ function BindingCreatePairingRecovery(props: Readonly<{
   const pairing = parsedResource?.kind === 'ready' ? parsedResource.pairing : undefined;
   const matchingChallenge = pairing?.challenges.find((challenge) => (
     challenge.connectionId === props.connectionId
-    && challenge.expectedConnectionRevision === props.expectedConnectionRevision
+    && challenge.pairingRequestId === props.pairingRequestId
   ));
   const recoveryStartedRef = React.useRef(false);
   const onReconciled = React.useCallback(() => {
@@ -4163,9 +4205,18 @@ function BindingCreateJourney(props: Readonly<{
       || props.signal.aborted) {
       return;
     }
+    const pairingRequestId = createPairingRequestId();
+    if (pairingRequestId === null) {
+      setFeedback('createUnavailable');
+      return;
+    }
     const parsedInput = ConversationPairingCreateInputV1Schema.safeParse({
       connectionId: currentConnection.connectionId,
       expectedConnectionRevision: currentConnection.revision,
+      // The daemon rejoins this exact key after a response loss, and recovery
+      // matches it instead of connection+revision, so a second device's
+      // superseding challenge can never be adopted here.
+      pairingRequestId,
       // Pairing proves the person through a private message, but it binds the
       // conversation this person chose here.
       endpointSelection,
@@ -4178,6 +4229,7 @@ function BindingCreateJourney(props: Readonly<{
     setPairingCreateRequest({
       connectionId: parsedInput.data.connectionId,
       expectedConnectionRevision: parsedInput.data.expectedConnectionRevision,
+      pairingRequestId: parsedInput.data.pairingRequestId,
     });
     setFeedback(undefined);
     const settled = await pairingAction.execute(parsedInput.data);
@@ -4667,7 +4719,7 @@ function BindingCreateJourney(props: Readonly<{
             && pairingCreateRequest !== undefined ? (
               <BindingCreatePairingRecovery
                 connectionId={pairingCreateRequest.connectionId}
-                expectedConnectionRevision={pairingCreateRequest.expectedConnectionRevision}
+                pairingRequestId={pairingCreateRequest.pairingRequestId}
                 onRecovered={onPairingCreateRecovered}
                 onNotFound={onPairingCreateNotFound}
                 t={props.t}
@@ -5554,7 +5606,7 @@ function BindingEditJourney(props: Readonly<{
           title={props.t('plugins.channels.surface.bindingEditQuotaIncompatibleTitle', 'Could not save this binding')}
           description={props.t(
             'plugins.channels.surface.bindingEditQuotaIncompatibleDescription',
-            'The Account collection quota is incompatible (collection_quota_incompatible). Ask an administrator to make the Account collection quota compatible, then reload this binding and try again.',
+            'The Account collection quota is incompatible. Ask an administrator to make the Account collection quota compatible, then reload this binding and try again.',
           )}
           action={<Action.Refresh title={props.t('plugins.channels.surface.reload', 'Reload')} onRefresh={requestReload} />}
         />
@@ -6137,7 +6189,6 @@ function BindingsContent(props: BindingsContentProps): React.ReactElement {
       setEnablementFailure({
         bindingId: binding.bindingId,
         code: settled.code,
-        message: settled.message,
       });
     }
     if (settled.status !== 'pending') {
@@ -9368,12 +9419,20 @@ function ProviderSetupPicker(props: Readonly<{
   const surface = useSurfaceContext();
   const prepareAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionPrepare);
   const createAction = useExecutePluginAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate);
+  // The incumbent generic present-user endpoint Action. The surface only
+  // relays core-minted facts to it; the core re-proves correspondence itself
+  // in the continuation, so no UI-asserted endpoint fact is ever authority.
+  const ensureEndpointAction = useExecutePluginAction('plugin.webhook.endpoint.ensure');
   const [selectionPending, setSelectionPending] = React.useState(false);
   const [remediationSelectionPending, setRemediationSelectionPending] = React.useState(false);
   const [activeOperationKey, setActiveOperationKey] = React.useState<string | undefined>();
   const [feedback, setFeedback] = React.useState<ProviderSetupFeedback | undefined>();
   const [preparedConnection, setPreparedConnection] = React.useState<PreparedConnectionSetup | undefined>();
   const [providerSetupDraft, setProviderSetupDraft] = React.useState<ProviderSetupFormDraft | undefined>();
+  const [endpointContinuation, setEndpointContinuation] = React.useState<
+    ConnectionEndpointContinuation | undefined
+  >();
+  const [endpointEnsurePending, setEndpointEnsurePending] = React.useState(false);
   const [remediationSetupOperation, setRemediationSetupOperation] = React.useState<
     ProviderSetupOperation | undefined
   >();
@@ -9413,7 +9472,8 @@ function ProviderSetupPicker(props: Readonly<{
     || prepareAction.execution.status === 'pending'
     || prepareOutcomeUnknown
     || createAction.execution.status === 'pending'
-    || createOutcomeUnknown
+    || (createOutcomeUnknown && endpointContinuation === undefined)
+    || endpointEnsurePending
     || feedback === 'remediationOutcomeUnknown';
 
   const onPrepareOutcomeReconciled = React.useCallback(() => {
@@ -9422,6 +9482,7 @@ function ProviderSetupPicker(props: Readonly<{
     setCreateValidationIssue(undefined);
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
+    setEndpointContinuation(undefined);
     setFeedback(undefined);
   }, [prepareAction.reset]);
   const requestPrepareOutcomeReread = useExplicitFreshRereadAfterUnknownOutcome({
@@ -9436,6 +9497,7 @@ function ProviderSetupPicker(props: Readonly<{
     setCreateValidationIssue(undefined);
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
+    setEndpointContinuation(undefined);
     setFeedback(undefined);
   }, [createAction.reset]);
   const requestCreateOutcomeReread = useExplicitFreshRereadAfterUnknownOutcome({
@@ -9473,6 +9535,7 @@ function ProviderSetupPicker(props: Readonly<{
       setPreparedConnection(undefined);
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
+      setEndpointContinuation(undefined);
       setFeedback('selectionUnavailable');
       return;
     }
@@ -9482,6 +9545,7 @@ function ProviderSetupPicker(props: Readonly<{
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
       setPreparedConnection(undefined);
+      setEndpointContinuation(undefined);
       setFeedback('selectionUnavailable');
     }
   }, [operations, remediationSetupOperation]);
@@ -9519,11 +9583,13 @@ function ProviderSetupPicker(props: Readonly<{
       const prepared = ConversationConnectionPrepareResultV1Schema.safeParse(settled.result);
       if (!prepared.success) {
         setRemediationSetupOperation(undefined);
+        setEndpointContinuation(undefined);
         setFeedback('preparationUnavailable');
       } else if (prepared.data.kind === 'requiresRemediation') {
         setPreparedConnection(undefined);
         setRemediationSelection(undefined);
         setRemediationSetupOperation(operation);
+        setEndpointContinuation(undefined);
         setFeedback('requiresRemediation');
       } else {
         const {
@@ -9567,7 +9633,7 @@ function ProviderSetupPicker(props: Readonly<{
       || prepareAction.execution.status === 'pending'
       || prepareOutcomeUnknown
       || createAction.execution.status === 'pending'
-      || createAction.execution.status === 'outcomeUnknown'
+      || (createAction.execution.status === 'outcomeUnknown' && endpointContinuation === undefined)
       || feedback === 'remediationOutcomeUnknown') {
       return;
     }
@@ -9586,6 +9652,7 @@ function ProviderSetupPicker(props: Readonly<{
       setCreateValidationIssue(undefined);
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
+      setEndpointContinuation(undefined);
       createAction.reset();
     }
     try {
@@ -9747,7 +9814,8 @@ function ProviderSetupPicker(props: Readonly<{
       || prepareAction.execution.status === 'pending'
       || prepareOutcomeUnknown
       || createAction.execution.status === 'pending'
-      || createAction.execution.status === 'outcomeUnknown') {
+      || (createAction.execution.status === 'outcomeUnknown' && endpointContinuation === undefined)
+      || endpointEnsurePending) {
       return;
     }
     const maximumObservationAgeMs = validObservationAge(preparedConnection.maximumObservationAgeMs);
@@ -9765,6 +9833,109 @@ function ProviderSetupPicker(props: Readonly<{
       return;
     }
     setCreateValidationIssue(undefined);
+    const readSettledCreateResult = (
+      settled: Extract<PluginActionExecution, Readonly<{ status: 'success' }>>,
+    ): Readonly<{ kind: 'created' | 'rejoined'; connectionId: string }>
+      | Readonly<{ kind: 'endpointRequired'; result: ConversationConnectionEndpointRequiredResultV1 }>
+      | undefined => {
+      const created = ConversationConnectionCreateResultV1Schema.safeParse(settled.result);
+      if (!created.success) return undefined;
+      if (created.data.kind === 'created' || created.data.kind === 'rejoined') {
+        return { kind: created.data.kind, connectionId: created.data.connectionId };
+      }
+      if (created.data.kind === 'endpointRequired') {
+        return { kind: 'endpointRequired', result: created.data };
+      }
+      return undefined;
+    };
+    const completeConnectionCreation = (outcome: Readonly<{ kind: 'created' | 'rejoined'; connectionId: string }>) => {
+      setEndpointContinuation(undefined);
+      setPreparedConnection(undefined);
+      setProviderSetupDraft(undefined);
+      setFeedback(undefined);
+      props.onConnectionCreated(outcome.connectionId);
+    };
+
+    // A durable-push attempt that already ensured its endpoint continues that
+    // exact attempt: the same core-minted ensure key rejoins the same generic
+    // endpoint, and the continuation rejoins or creates under the same
+    // preallocated connection identity. No second endpoint is ever ensured
+    // for one visible attempt.
+    if (endpointContinuation !== undefined) {
+      let continuedDraft = endpointContinuation;
+      if (continuedDraft.webhookEndpointId === undefined) {
+        setEndpointEnsurePending(true);
+        try {
+          if (ensureEndpointAction.execution.status === 'outcomeUnknown') {
+            // This retry is licensed by the exact retained idempotency key;
+            // reset only the controller presentation, never the attempt.
+            ensureEndpointAction.reset();
+          }
+          const ensured = await ensureEndpointAction.execute(continuedDraft.endpointEnsureInput, {
+            signal: props.signal,
+          });
+          if (!mountedRef.current || props.signal.aborted) return;
+          if (ensured.status === 'outcomeUnknown') {
+            // Keep every byte of the exact core-minted ensure input. Retrying
+            // uses the same generic idempotency key, so the endpoint owner can
+            // rejoin the original effect instead of creating a second one.
+            setEndpointContinuation(continuedDraft);
+            setFeedback('endpointEnsureOutcomeUnknown');
+            return;
+          }
+          if (ensured.status !== 'success') {
+            setEndpointContinuation(continuedDraft);
+            setFeedback('endpointEnsureFailed');
+            return;
+          }
+          continuedDraft = {
+            ...continuedDraft,
+            webhookEndpointId: ensured.result.webhookEndpointId,
+          };
+          setEndpointContinuation(continuedDraft);
+        } finally {
+          if (mountedRef.current && !props.signal.aborted) setEndpointEnsurePending(false);
+        }
+      }
+      const webhookEndpointId = continuedDraft.webhookEndpointId;
+      if (webhookEndpointId === undefined) return;
+      if (createAction.execution.status === 'outcomeUnknown') {
+        // The continuation is itself idempotent at the preallocated
+        // connection/endpoint pair. Reset the controller outcome before
+        // dispatching those exact same bytes again.
+        createAction.reset();
+      }
+      const settled = await createAction.execute({
+        providerSelection: preparedConnection.providerSelection,
+        providerSetupInput: preparedConnection.providerSetupInput,
+        credentialRef: preparedConnection.credentialRef,
+        selectedTransport: preparedConnection.selectedTransport,
+        maximumObservationAgeMs,
+        endpointContinuation: {
+          connectionId: continuedDraft.connectionId,
+          webhookEndpointId,
+        },
+      }, { signal: props.signal });
+      if (!mountedRef.current || props.signal.aborted) return;
+      if (settled.status === 'success') {
+        const outcome = readSettledCreateResult(settled);
+        if (outcome !== undefined && outcome.kind !== 'endpointRequired') {
+          completeConnectionCreation(outcome);
+          return;
+        }
+        setFeedback('creationFailed');
+        return;
+      }
+      if (settled.status === 'outcomeUnknown') {
+        setFeedback('creationOutcomeUnknown');
+        return;
+      }
+      // A definite continuation failure keeps the exact attempt: retrying
+      // continues it instead of ensuring another endpoint.
+      setFeedback('creationFailed');
+      return;
+    }
+
     const selectedActionInput = selectedProviderSetupActionInputRef.current;
     if (selectedActionInput === undefined
       || pluginUiTargetedContributionOperationKey(selectedActionInput.operation) !== preparedConnection.operationKey) {
@@ -9776,6 +9947,13 @@ function ProviderSetupPicker(props: Readonly<{
     // before dispatch: its host-retained counterpart is synchronously consumed
     // by the mounted Host API, whatever outcome the provider setup observes.
     selectedProviderSetupActionInputRef.current = undefined;
+    const createInput = {
+      providerSelection: preparedConnection.providerSelection,
+      providerSetupInput: preparedConnection.providerSetupInput,
+      credentialRef: preparedConnection.credentialRef,
+      selectedTransport: preparedConnection.selectedTransport,
+      maximumObservationAgeMs,
+    } as const;
     const terminalExecutionOptions = {
       signal: props.signal,
       selectedActionInput,
@@ -9783,25 +9961,87 @@ function ProviderSetupPicker(props: Readonly<{
       // public PluginUiActionExecutionOptions author contract.
       consumeSelectedActionInput: true as const,
     };
-    const settled = await createAction.execute({
-      providerSelection: preparedConnection.providerSelection,
-      providerSetupInput: preparedConnection.providerSetupInput,
-      credentialRef: preparedConnection.credentialRef,
-      selectedTransport: preparedConnection.selectedTransport,
-      maximumObservationAgeMs,
-    }, terminalExecutionOptions);
+    const settled = await createAction.execute(createInput, terminalExecutionOptions);
     if (!mountedRef.current || props.signal.aborted) return;
     if (settled.status === 'success') {
-      const created = ConversationConnectionCreateResultV1Schema.safeParse(settled.result);
-      if (!created.success || (created.data.kind !== 'created' && created.data.kind !== 'rejoined')) {
+      const outcome = readSettledCreateResult(settled);
+      if (outcome === undefined) {
         setFeedback('creationFailed');
         return;
       }
-      setPreparedConnection(undefined);
-      setProviderSetupDraft(undefined);
+      if (outcome.kind !== 'endpointRequired') {
+        completeConnectionCreation(outcome);
+        return;
+      }
+      // Durable push: relay the exact core-minted ensure facts through the
+      // incumbent generic present-user Action, then continue the same create
+      // journey with the returned endpoint identity. The core — not this
+      // surface — proves the endpoint correspondence.
+      const draft: ConnectionEndpointContinuation = {
+        connectionId: outcome.result.connectionId,
+        endpointEnsureInput: {
+          webhookContribution: { ...outcome.result.webhookContribution },
+          targetMaterialization: { ...outcome.result.targetMaterialization },
+          sourceInstanceId: outcome.result.sourceInstanceId,
+          setup: { ...outcome.result.webhookEndpointSetup },
+          idempotencyKey: outcome.result.webhookEndpointIdempotencyKey,
+        },
+      };
+      setEndpointContinuation(draft);
+      setCreateValidationIssue(undefined);
       setFeedback(undefined);
-      props.onConnectionCreated(created.data.connectionId);
-      return;
+      setEndpointEnsurePending(true);
+      try {
+        const ensured = await ensureEndpointAction.execute(draft.endpointEnsureInput, {
+          signal: props.signal,
+        });
+        if (!mountedRef.current || props.signal.aborted) return;
+        if (ensured.status === 'outcomeUnknown') {
+          // The endpoint may already exist. Preserve the exact stable ensure
+          // input so the next press retries through the generic owner's one
+          // idempotency system and rejoins instead of guessing or minting a
+          // second endpoint attempt.
+          setEndpointContinuation(draft);
+          setFeedback('endpointEnsureOutcomeUnknown');
+          return;
+        }
+        if (ensured.status !== 'success') {
+          setEndpointContinuation(draft);
+          setFeedback('endpointEnsureFailed');
+          return;
+        }
+        const webhookEndpointId = ensured.result.webhookEndpointId;
+        const continuedDraft: ConnectionEndpointContinuation = {
+          ...draft,
+          webhookEndpointId,
+        };
+        setEndpointContinuation(continuedDraft);
+        const continuationSettled = await createAction.execute({
+          ...createInput,
+          endpointContinuation: {
+            connectionId: continuedDraft.connectionId,
+            webhookEndpointId,
+          },
+        }, { signal: props.signal });
+        if (!mountedRef.current || props.signal.aborted) return;
+        if (continuationSettled.status === 'success') {
+          const continuationOutcome = readSettledCreateResult(continuationSettled);
+          if (continuationOutcome !== undefined && continuationOutcome.kind !== 'endpointRequired') {
+            completeConnectionCreation(continuationOutcome);
+            return;
+          }
+          setFeedback('creationFailed');
+          return;
+        }
+        if (continuationSettled.status === 'outcomeUnknown') {
+          setFeedback('creationOutcomeUnknown');
+          return;
+        }
+        setFeedback('creationFailed');
+        return;
+      } finally {
+        if (mountedRef.current && !props.signal.aborted) setEndpointEnsurePending(false);
+      }
     }
     if (settled.status === 'outcomeUnknown') {
       setFeedback('creationOutcomeUnknown');
@@ -9810,7 +10050,16 @@ function ProviderSetupPicker(props: Readonly<{
     if (settled.status === 'error') {
       setFeedback('creationFailed');
     }
-  }, [createAction, prepareAction.execution.status, prepareOutcomeUnknown, preparedConnection, props]);
+  }, [
+    createAction,
+    endpointContinuation,
+    endpointEnsurePending,
+    ensureEndpointAction,
+    prepareAction.execution.status,
+    prepareOutcomeUnknown,
+    preparedConnection,
+    props,
+  ]);
 
   // Zero admitted providers is a reachable Account state, not an error: a fresh
   // Account, a machine with no integration plugin enabled, or a host that
@@ -10097,22 +10346,55 @@ function ProviderSetupPicker(props: Readonly<{
           )}
         />
       ) : null}
+      {feedback === 'endpointEnsureFailed' ? (
+        <Banner
+          testID="channels-provider-setup-endpoint-ensure-failed"
+          tone="warning"
+          title={props.t(
+            'plugins.channels.surface.providerEndpointEnsureFailedTitle',
+            'Could not prepare the webhook endpoint',
+          )}
+          description={props.t(
+            'plugins.channels.surface.providerEndpointEnsureFailedDescription',
+            'Durable push needs a webhook endpoint before the connection can be saved. Try creating the connection again.',
+          )}
+        />
+      ) : null}
+      {feedback === 'endpointEnsureOutcomeUnknown' ? (
+        <Banner
+          testID="channels-provider-setup-endpoint-ensure-outcome-unknown"
+          tone="warning"
+          title={props.t(
+            'plugins.channels.surface.providerEndpointEnsureUnknownTitle',
+            'Could not confirm the webhook endpoint',
+          )}
+          description={props.t(
+            'plugins.channels.surface.providerEndpointEnsureUnknownDescription',
+            'The endpoint may already exist. Retry Create connection to rejoin this exact setup attempt.',
+          )}
+        />
+      ) : null}
       {feedback === 'creationOutcomeUnknown' ? (
         <Banner
           testID="channels-provider-setup-creation-outcome-unknown"
           tone="warning"
           title={props.t('plugins.channels.surface.providerCreationUnknownTitle', 'Could not confirm connection creation')}
-          description={props.t(
-            'plugins.channels.surface.providerCreationUnknownDescription',
-            'A connection may already be saved. Refresh connection details before trying again.',
-          )}
-          action={(
+          description={endpointContinuation === undefined
+            ? props.t(
+              'plugins.channels.surface.providerCreationUnknownDescription',
+              'A connection may already be saved. Refresh connection details before trying again.',
+            )
+            : props.t(
+              'plugins.channels.surface.providerCreationRetryUnknownDescription',
+              'The connection may already be saved. Retry Create connection to rejoin this exact setup attempt.',
+            )}
+          action={endpointContinuation === undefined ? (
             <Action.Refresh
               testID="channels-provider-setup-creation-outcome-unknown-reconcile"
               title={props.t('plugins.channels.surface.refresh', 'Refresh')}
               onRefresh={requestCreateOutcomeReread}
             />
-          )}
+          ) : undefined}
         />
       ) : null}
       {feedback === 'preparationOutcomeUnknown' ? (

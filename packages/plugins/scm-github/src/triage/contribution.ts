@@ -39,6 +39,7 @@ export const GITHUB_TRIAGE_ACTION_IDS_V1 = Object.freeze({
  * own detail renderer does.
  */
 export const GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 = Object.freeze({
+  readCapabilities: 'triage/read-github-capabilities',
   listTimeline: 'triage/list-github-timeline',
   listChangedFiles: 'triage/list-github-changed-files',
   readFeedback: 'triage/read-github-feedback',

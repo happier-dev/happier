@@ -9,6 +9,7 @@ import {
     type TriageEntryRefV1,
     type TriageGetInputV1,
     type TriageGetResultV1,
+    type TriageRowFactV1,
     type TriageSourceEntrySnapshotV1,
     type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -87,9 +88,6 @@ export type TriageEntryDispatchDepsV1 = Readonly<{
     getDeadlineMs?: number;
 }>;
 
-/** Private per-invocation deadline; owner tests inject a short duration. */
-const TRIAGE_DISPATCH_GET_DEADLINE_MS = 10_000;
-
 /** One attached record as the canonical resolve request carries it. */
 export type TriageEntryDispatchAttachmentV1 = Readonly<{
     instanceId: string;
@@ -118,11 +116,15 @@ export type TriageEntryDispatchResultV1 = Readonly<{
  * The Tier-A projection one resolved entry contributes.
  *
  * Facts only: what the entry is, where it lives, what state it is in and what
- * it says about itself. No prompt framing, delimiter fence or instruction
- * wrapper — the host owns escaping and framing, and a resolver that writes its
- * own makes two owners of it. No locator either: a web URL or routing token is
- * mutable routing, not an identity or status fact, and the attachment value
- * deliberately carries neither.
+ * it says about itself. The snapshot's bounded row facts are the last half of
+ * that — a pull request's failing-checks fact is exactly the context a press
+ * like "fix CI" needs the model to have, and it arrives resolved fresh at
+ * dispatch rather than stringified into a prompt by a launch path. No prompt
+ * framing, delimiter fence or instruction wrapper — the host owns escaping and
+ * framing, and a resolver that writes its own makes two owners of it. No
+ * locator either: a web URL or routing token is mutable routing, not an
+ * identity or status fact, and the attachment value deliberately carries
+ * neither.
  */
 export function projectTriageDispatchContext(input: Readonly<{
     entryRef: TriageEntryRefV1;
@@ -135,6 +137,10 @@ export function projectTriageDispatchContext(input: Readonly<{
         `state: ${state}`,
         `title: ${snapshot.title}`,
         ...(snapshot.summary === undefined ? [] : [`summary: ${snapshot.summary}`]),
+        ...snapshot.facts.flatMap((fact: TriageRowFactV1): string[] => {
+            const line = projectTriageRowFactLine(fact);
+            return line === null ? [] : [line];
+        }),
     ];
     // Provider text is already single-line by contract, but this resolver is the
     // last hop before model-visible text and normalizing is cheap insurance
@@ -142,6 +148,35 @@ export function projectTriageDispatchContext(input: Readonly<{
     const projected = lines.map(normalizeTriageSingleLineV1).join('\n');
     return projected;
 }
+
+function projectTriageRowFactLine(fact: TriageRowFactV1): string | null {
+    switch (fact.value.kind) {
+        case 'text':
+        case 'actor':
+        case 'status':
+            return `${fact.id}: ${fact.value.value}`;
+        case 'number':
+            // An approximate count stays approximate: a `~` is the source's own
+            // word, and dropping it would present a sampled number as a total.
+            return `${fact.id}: ${fact.value.approximate === true ? '~' : ''}${fact.value.value}`;
+        case 'timestamp':
+            // Absolute and locale-free. A relative label computed at read time
+            // would already be stale by the time the model read it. Protocol
+            // admits every safe integer while Date has a narrower range, so
+            // preserve the bounded source number instead of throwing there.
+            {
+                const date = new Date(fact.value.atMs);
+                return `${fact.id}: ${Number.isNaN(date.getTime())
+                    ? String(fact.value.atMs)
+                    : date.toISOString()}`;
+            }
+        // The source's own statement that this fact is loaded only in its
+        // detail surface; projecting it here would contradict the arm.
+        case 'detailOnly':
+            return null;
+    }
+}
+
 function blocked(
     instanceId: string,
     status: 'unavailable' | 'notFound' | 'invalid' | 'failed',
@@ -220,10 +255,14 @@ export async function resolveTriageEntryForDispatch(
         }
         return { attachments };
     })();
-    const settled = await raceWithTimeout(
-        invocation,
-        deps.getDeadlineMs ?? TRIAGE_DISPATCH_GET_DEADLINE_MS,
-    );
+    if (deps.getDeadlineMs === undefined) {
+        try {
+            return await invocation;
+        } finally {
+            deadline.abort();
+        }
+    }
+    const settled = await raceWithTimeout(invocation, deps.getDeadlineMs);
     deadline.abort();
     throwIfAborted(deps.signal);
     if (settled.type === 'resolved') return settled.value;

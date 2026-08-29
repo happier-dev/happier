@@ -46,10 +46,11 @@ describe('activate', () => {
     try {
       const buildSessionOptions = activation.registration('agents', 'codex')?.cliSessionCommand?.buildSessionOptions;
       expect(buildSessionOptions).toBeTypeOf('function');
-      expect(buildSessionOptions?.({
+      expect(await buildSessionOptions?.({
         isExplicitCliSubcommand: true,
         parsed: { agentArgs: [] },
         settings: { codexBackendMode: 'acp' },
+        pluginSettings: { account: { codexBackendMode: 'acp' } },
         environment: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' },
         startOrigin: 'daemon',
       })).toEqual({

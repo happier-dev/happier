@@ -38,9 +38,11 @@ import {
  * (`core/SURFACE.md` §4.2). The public `List` publishes no `onEndReached` and
  * no per-section footer, and that turns out to be the better shape for this
  * product: an invisible scroll trigger *implies* a limit, while a labelled row
- * states it, is reachable by the same roving keys as every other row, and is
- * announced. A section that is genuinely exhausted simply has no such row, so
- * its absence is the honest claim of completeness rather than a silence.
+ * states and announces it. Its explicit Load more control is keyboard-reachable;
+ * the statement itself is deliberately skipped by the primary-entry cursor
+ * because it has no detail destination. A section that is genuinely exhausted
+ * simply has no such row, so its absence is the honest claim of completeness
+ * rather than a silence.
  */
 
 /**
@@ -60,20 +62,19 @@ export type TriageListSectionItemV1 =
 export type TriageListSectionV1 = ListSectionData<TriageListSectionItemV1>;
 
 /**
- * Which section items may join a keyed bulk set.
+ * Which section items name a provider entry.
  *
  * A module constant rather than an inline lambda for the same reason
  * `readTriageListSectionItemKey` is: the shared `List` memoizes its selectable
  * roving entries on this identity, and a new function each render rebuilds them
  * for the whole window on every shell render.
  *
- * A continuation row names no entry, so it stays readable, focusable and
- * openable while never joining a set — the same rule selection, activation and
- * the reducer's visible order already follow. A range extension steps OVER it
- * rather than stopping on it, which is why the shared owner asks the predicate
- * instead of reading the disabled rows.
+ * This one fact drives both primary activation and bulk eligibility. A
+ * continuation row names no entry, so it stays a readable grid row whose
+ * visible Load more button is reachable, while List neither invents a dead
+ * primary action nor admits it into a bulk set. Entry rows retain both.
  */
-export function isTriageListSectionItemSelectable(item: TriageListSectionItemV1): boolean {
+export function isTriageListSectionItemEntry(item: TriageListSectionItemV1): boolean {
   return item.kind === 'entry';
 }
 

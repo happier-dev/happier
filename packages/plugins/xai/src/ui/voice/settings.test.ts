@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createXaiRealtimeSettingsSection } from './settings.js';
+import { XAI_REALTIME_SETTINGS_SECTION } from '../../voiceSettingsPresentation.js';
 import { XAI_SUPPORTED_LANGUAGE_HINTS } from '../../protocol/voice/settings.js';
 
 describe('xAI Realtime settings section', () => {
   it('projects explicit pinned and moving-alias model choices for the generic renderer', () => {
-    const section = createXaiRealtimeSettingsSection();
+    const section = XAI_REALTIME_SETTINGS_SECTION;
     const model = section.fields.find((field) => field.kind === 'model');
     expect(model).toMatchObject({
       kind: 'model',
@@ -19,9 +19,10 @@ describe('xAI Realtime settings section', () => {
   });
 
   it('provides presentation keys for every shipping field and credential action', () => {
-    const section = createXaiRealtimeSettingsSection();
+    const section = XAI_REALTIME_SETTINGS_SECTION;
     expect(section).toMatchObject({
-      providerId: 'happier.voice.xai/realtime-grok',
+      kind: 'voice.provider-settings.v1',
+      modes: ['byo'],
       titleKey: 'settingsVoice.realtimeProviders.setup.title',
       footerKey: 'settingsVoice.realtimeProviders.xai.setup.footer',
       credential: {
@@ -60,7 +61,7 @@ describe('xAI Realtime settings section', () => {
   });
 
   it('projects documented language and server-VAD option metadata without host provider branches', () => {
-    const section = createXaiRealtimeSettingsSection();
+    const section = XAI_REALTIME_SETTINGS_SECTION;
     const language = section.fields.find((field) => field.path === 'transcription.languageHint');
     expect(language).toMatchObject({ options: [...XAI_SUPPORTED_LANGUAGE_HINTS] });
     const vad = section.fields.find((field) => field.path === 'turnDetection');

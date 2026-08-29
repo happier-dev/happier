@@ -43,7 +43,6 @@ describe('Triage plugin manifest', () => {
       'composerAttachments',
       'composerControls',
       'pluginContributionPoints',
-      'settings',
       'ui',
     ]);
   });

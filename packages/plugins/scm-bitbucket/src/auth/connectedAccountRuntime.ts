@@ -75,7 +75,11 @@ async function readStoredCredentials(
 type BitbucketAccountConfirmation =
   | Readonly<{ status: 'confirmed'; accountUuid: string; label: string }>
   | Readonly<{
-    status: 'rejected' | 'unavailable';
+    status: 'rejected';
+    diagnostic: ReturnType<typeof diagnostic>;
+  }>
+  | Readonly<{
+    status: 'unavailable';
     diagnostic: ReturnType<typeof diagnostic>;
   }>;
 

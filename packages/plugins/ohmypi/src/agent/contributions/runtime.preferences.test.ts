@@ -10,10 +10,11 @@ describe('Oh My Pi session runtime preferences', () => {
     try {
       const buildSessionOptions = activation.registration('agents', 'ohmypi')?.cliSessionCommand?.buildSessionOptions;
       expect(buildSessionOptions).toBeTypeOf('function');
-      expect(buildSessionOptions?.({
+      expect(await buildSessionOptions?.({
         isExplicitCliSubcommand: true,
         parsed: { agentArgs: [] },
-        settings: { ohMyPiAgentDir: '~/isolated/omp' },
+        settings: { ohMyPiAgentDir: '/wrong/global' },
+        pluginSettings: { account: { ohMyPiAgentDir: '~/isolated/omp' } },
         environment: {
           HOME: '/home/alice',
           PI_CODING_AGENT_DIR: '/ambient/shared',

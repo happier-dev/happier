@@ -13,6 +13,7 @@ import {
 } from './collections.js';
 import {
   asChannelStateRow as asStoredCollectionRow,
+  readConversationBindingUpdateRow,
   type ChannelStateRow as StoredCollectionRow,
 } from './accountLocalBindingPolicy.js';
 import { isConversationDeliveryAutomaticTerminal } from './deliveryCustody.js';
@@ -222,29 +223,22 @@ function readProjectionBinding(input: Readonly<{
   row: StoredCollectionRow;
   bindingId: string;
 }>): ConversationSessionProjectionBinding | null {
-  const { row, bindingId } = input;
-  const connectionId = isJsonRecord(row.value)
-    ? row.value[CHANNEL_STATE_FIELD.connectionId]
-    : undefined;
-  if (!isJsonRecord(row.value)
-    || row.rowId !== bindingId
-    || row.value[CHANNEL_STATE_FIELD.id] !== bindingId
-    || row.value[CHANNEL_STATE_FIELD.recordKind] !== CHANNEL_STATE_RECORD_KIND.binding
-    || row.value[CHANNEL_STATE_FIELD.bindingId] !== bindingId
-    || typeof connectionId !== 'string'
-    || !isPositiveSafeInteger(row.revision)
-    || !isJsonRecord(row.value.payload)) return null;
-  if (row.value.payload.enabled !== true || row.value.payload.deletionState !== 'none') return null;
-  const target = row.value.payload.target;
-  if (!isJsonRecord(target) || target.kind !== 'session' || typeof target.sessionId !== 'string'
-    || target.sessionId.length === 0 || !isJsonRecord(target.policy)) return null;
-  const deliveryMode = target.policy.deliveryMode;
-  if (deliveryMode !== 'repliesOnly' && deliveryMode !== 'mirrorSession') return null;
+  if (!isPositiveSafeInteger(input.row.revision)) return null;
+  let binding: ReturnType<typeof readConversationBindingUpdateRow>['binding'];
+  try {
+    binding = readConversationBindingUpdateRow(input).binding;
+  } catch {
+    return null;
+  }
+  if (binding.enabled !== true || binding.deletionState !== 'none' || binding.target.kind !== 'session') return null;
   return {
-    bindingId,
-    revision: row.revision,
-    connectionId,
-    target: { sessionId: target.sessionId, deliveryMode },
+    bindingId: input.bindingId,
+    revision: input.row.revision,
+    connectionId: binding.connectionId,
+    target: {
+      sessionId: binding.target.sessionId,
+      deliveryMode: binding.target.policy.deliveryMode,
+    },
   };
 }
 

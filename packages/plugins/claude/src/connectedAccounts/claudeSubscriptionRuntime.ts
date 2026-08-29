@@ -1,5 +1,5 @@
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 import {
-  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   type ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
   type ConnectedAccountRuntime as PluginConnectedAccountRuntime,
@@ -144,7 +144,8 @@ async function exchangeTokens(
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<
   | Readonly<{ status: 'success'; tokens: ClaudeTokens }>
-  | Readonly<{ status: 'rejected' | 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
+  | Readonly<{ status: 'rejected'; diagnostic: ReturnType<typeof diagnostic> }>
+  | Readonly<{ status: 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
 > {
   const signal = options?.signal ?? context.signal;
   let response: Awaited<ReturnType<typeof context.services.http.request>>;

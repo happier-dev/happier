@@ -120,7 +120,10 @@ function PageFailureBanner({
       title="Showing what was read so far"
       titleKey="plugins.azureDevops.ui.partial"
       description={state.failure === null
-        ? 'Azure DevOps returned a next-page position that could not be carried safely, so this walk stopped here.'
+        ? text(
+          'plugins.azureDevops.ui.pagePositionUnsafe',
+          'Azure DevOps returned a next-page position that could not be carried safely, so this walk stopped here.',
+        )
         : failureDescription(
           state.failure,
           text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.'),

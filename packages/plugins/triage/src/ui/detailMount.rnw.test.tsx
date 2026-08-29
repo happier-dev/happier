@@ -569,7 +569,7 @@ async function mountShell(
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => {
-        await shell.press(await shell.getByRole('option', {
+        await shell.press(await shell.getByRole('button', {
             name: 'Replace the duplicated normalizer',
         }));
     });
@@ -732,7 +732,7 @@ describe('opening a row into the source detail', () => {
         const releaseDetailRead = harness.blockNextDetailRead();
 
         await act(async () => {
-            await shell.press(await shell.getByRole('option', { name: LONG_REF_ROW_TITLE }));
+            await shell.press(await shell.getByRole('button', { name: LONG_REF_ROW_TITLE }));
         });
         await act(async () => { await Promise.resolve(); });
 
@@ -819,7 +819,7 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.updatePageLocation(backLocation as string); });
 
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
-        await expect(shell.getByRole('option', {
+        await expect(shell.getByRole('button', {
             name: 'Replace the duplicated normalizer',
         })).resolves.toBeDefined();
     });
@@ -882,7 +882,7 @@ describe('opening a row into the source detail', () => {
 
         const shell = await mountShell({ subPath: openedAt });
         await act(async () => {
-            await shell.press(await shell.getByRole('option', { name: LONG_REF_ROW_TITLE }));
+            await shell.press(await shell.getByRole('button', { name: LONG_REF_ROW_TITLE }));
         });
         await act(async () => { await Promise.resolve(); });
 
@@ -890,7 +890,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText('That entry could not be opened')).resolves.toBeDefined();
         // The prior effective lens survives: the row is still listed under the
         // same query the page was opened at.
-        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE }))
+        await expect(shell.getByRole('button', { name: LONG_REF_ROW_TITLE }))
             .resolves.toBeDefined();
         // And the host was never asked, so no location moved either.
         expect(lastPageLocation).toBeNull();
@@ -952,7 +952,7 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await Promise.resolve(); });
 
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
-        await expect(shell.getByRole('option', {
+        await expect(shell.getByRole('button', {
             name: 'Replace the duplicated normalizer',
         })).resolves.toBeDefined();
     });
@@ -1088,7 +1088,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText('Close')).resolves.toBeUndefined();
         // The prior effective lens survives: the row is still listed under the
         // query the page was opened at.
-        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
         // And the host was never asked, so no location moved either.
         expect(lastPageLocation).toBeNull();
     });
@@ -1143,8 +1143,8 @@ describe('opening a row into the source detail', () => {
         await act(async () => {
             await shell.press(await shell.getByRole('button', { name: 'Close' }));
         });
-        await expect(shell.getByRole('option', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
-        await expect(shell.queryByRole('option', {
+        await expect(shell.getByRole('button', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
+        await expect(shell.queryByRole('button', {
             name: 'Replace the duplicated normalizer',
         })).resolves.toBeUndefined();
     });

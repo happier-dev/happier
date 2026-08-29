@@ -33,10 +33,15 @@ type ConfirmedGithubIdentity = Readonly<{
   email?: string;
   scopes: readonly string[];
 }>;
-type GithubIdentityFailure = Readonly<{
-  status: 'rejected' | 'unavailable';
-  diagnostic: ReturnType<typeof diagnostic>;
-}>;
+type GithubIdentityFailure =
+  | Readonly<{
+      status: 'rejected';
+      diagnostic: ReturnType<typeof diagnostic>;
+    }>
+  | Readonly<{
+      status: 'unavailable';
+      diagnostic: ReturnType<typeof diagnostic>;
+    }>;
 type GithubConnectedAccountReadContext = Parameters<
   PluginConnectedAccountRuntime['status']
 >[0];

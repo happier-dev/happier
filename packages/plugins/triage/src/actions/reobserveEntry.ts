@@ -60,9 +60,6 @@ export type TriageReobserveEntryDepsV1 = Readonly<{
   getDeadlineMs?: number;
 }>;
 
-/** Private per-invocation deadline; owner tests inject a short duration. */
-const TRIAGE_REOBSERVE_GET_DEADLINE_MS = 10_000;
-
 function sameSource(
   configured: TriageConfiguredSourceInstanceV1,
   entryRef: TriageEntryRefV1,
@@ -129,10 +126,14 @@ export async function reobserveTriageEntry(
       ? { kind: 'observed', observation: qualified.observation }
       : { kind: 'rejected', reason: qualified.reason };
   })();
-  const settled = await raceWithTimeout(
-    invocation,
-    deps.getDeadlineMs ?? TRIAGE_REOBSERVE_GET_DEADLINE_MS,
-  );
+  if (deps.getDeadlineMs === undefined) {
+    try {
+      return await invocation;
+    } finally {
+      deadline.abort();
+    }
+  }
+  const settled = await raceWithTimeout(invocation, deps.getDeadlineMs);
   deadline.abort();
   throwIfAborted(deps.signal);
   if (settled.type === 'timeout') return { kind: 'unavailable' };

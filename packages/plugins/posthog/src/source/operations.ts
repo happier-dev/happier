@@ -282,9 +282,7 @@ function isForwardDirectoryContinuation(requestedUrl: string, nextUrl: string): 
     }
 }
 
-/** One source-owned deadline for independently mounted UI reads. */
-export const POSTHOG_INTERACTIVE_READ_DEADLINE_MS = 20_000;
-
+/** Factory seam for tests or a caller that supplies a real external deadline. */
 export type PosthogConfigurationDirectoryReader = (
     input: unknown,
     context: PluginInvocationContext,
@@ -292,7 +290,7 @@ export type PosthogConfigurationDirectoryReader = (
 
 /** One explicitly requested page of the mounted PostHog configuration browser. */
 export function createPosthogConfigurationDirectoryReader(
-    deadlineMs: number,
+    deadlineMs?: number,
 ): PosthogConfigurationDirectoryReader {
   return async function readConfigurationDirectory(
     input: unknown,
@@ -447,7 +445,7 @@ export function createPosthogConfigurationDirectoryReader(
 }
 
 export const readPosthogConfigurationDirectory: PosthogConfigurationDirectoryReader
-    = createPosthogConfigurationDirectoryReader(POSTHOG_INTERACTIVE_READ_DEADLINE_MS);
+    = createPosthogConfigurationDirectoryReader();
 
 /**
  * Automatic discovery of non-durable Settings candidates.
@@ -1058,7 +1056,7 @@ export type PosthogSourceEntryReader = (
 ) => Promise<TriageGetResultV1>;
 
 export function createPosthogSourceEntryReader(
-    deadlineMs: number,
+    deadlineMs?: number,
 ): PosthogSourceEntryReader {
     return async (input, context) => await runPosthogBoundedInvocation(
         context,
@@ -1071,24 +1069,20 @@ export const getPosthogSourceEntry: PosthogSourceEntryReader = async (input, con
     isMountedPosthogUiRead(context)
         ? await runPosthogBoundedInvocation(
             context,
-            POSTHOG_INTERACTIVE_READ_DEADLINE_MS,
+            undefined,
             async (signal) => await readPosthogSourceEntry(input, context, signal),
         )
         : await readPosthogSourceEntry(input, context, context.signal)
 );
 
 /**
- * The private deadline for a mounted-detail sampled read.
+ * Mounted-detail sampled reads inherit the host-stamped caller lifetime.
  *
  * `listInstances`, `scan`, and aggregate-owned `get` calls use the caller's deadline
  * unchanged; a second timer over them would make two owners of one cancellation. A
- * mounted source-detail read has no aggregate deadline of its own, so that invocation
- * and the sampled-detail paths below supply one —
- * and it is injected rather than read from a module constant at the request site, so a
- * test can prove the timeout without waiting for it.
+ * mounted source-detail reads likewise use their Action signal. The factories below accept an
+ * explicit test/external bound without creating a production latency policy.
  */
-export const POSTHOG_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
-
 type PosthogIssueScope =
     | Readonly<{
         ok: true;
@@ -1172,7 +1166,7 @@ export type PosthogCodeVariablesReader = (
 ) => Promise<PosthogCodeVariablesResultV1>;
 
 export function createPosthogCodeVariablesReader(
-    deadlineMs: number,
+    deadlineMs?: number,
 ): PosthogCodeVariablesReader {
     return async (input, context) => await runPosthogBoundedInvocation(
         context,
@@ -1224,7 +1218,7 @@ export function createPosthogCodeVariablesReader(
 }
 
 export const readPosthogCodeVariablesForIssue: PosthogCodeVariablesReader
-    = createPosthogCodeVariablesReader(POSTHOG_MOUNTED_DETAIL_DEADLINE_MS);
+    = createPosthogCodeVariablesReader();
 
 export type PosthogSampledEventsReader = (
     input: unknown,
@@ -1243,7 +1237,7 @@ export type PosthogSampledEventsReader = (
  * nothing.
  */
 export function createPosthogSampledEventsReader(
-    deadlineMs: number,
+    deadlineMs?: number,
 ): PosthogSampledEventsReader {
     return async function readSampledEvents(
         input: unknown,
@@ -1331,7 +1325,7 @@ export function createPosthogSampledEventsReader(
 
 /** The bound reader the manifest declares. */
 export const readPosthogSampledEvents: PosthogSampledEventsReader
-    = createPosthogSampledEventsReader(POSTHOG_MOUNTED_DETAIL_DEADLINE_MS);
+    = createPosthogSampledEventsReader();
 
 export type PosthogIssueActivityReader = (
     input: unknown,
@@ -1353,7 +1347,7 @@ export type PosthogIssueActivityReader = (
  * characterized, so this operation never reinterprets that status as an empty page.
  */
 export function createPosthogIssueActivityReader(
-    deadlineMs: number,
+    deadlineMs?: number,
 ): PosthogIssueActivityReader {
     return async function readIssueActivity(
         input: unknown,
@@ -1424,4 +1418,4 @@ export function createPosthogIssueActivityReader(
 
 /** The bound reader the manifest declares. */
 export const readPosthogActivity: PosthogIssueActivityReader
-    = createPosthogIssueActivityReader(POSTHOG_MOUNTED_DETAIL_DEADLINE_MS);
+    = createPosthogIssueActivityReader();

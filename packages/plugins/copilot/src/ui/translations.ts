@@ -2,6 +2,7 @@ export const COPILOT_UI_TRANSLATIONS = Object.freeze({
   en: Object.freeze({
     'agentInput.connectedServiceLabel.copilot': 'GitHub Copilot',
   }),
+  de: Object.freeze({ 'agentInput.connectedServiceLabel.copilot': 'GitHub Copilot' }),
   ru: Object.freeze({ 'agentInput.connectedServiceLabel.copilot': 'GitHub Copilot' }),
   pl: Object.freeze({ 'agentInput.connectedServiceLabel.copilot': 'GitHub Copilot' }),
   es: Object.freeze({ 'agentInput.connectedServiceLabel.copilot': 'GitHub Copilot' }),
@@ -16,6 +17,7 @@ export const COPILOT_UI_TRANSLATIONS = Object.freeze({
 
 export const COPILOT_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: COPILOT_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: COPILOT_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: COPILOT_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: COPILOT_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: COPILOT_UI_TRANSLATIONS.es },

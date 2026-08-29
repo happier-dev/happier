@@ -39,8 +39,8 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { TRIAGE_SAVED_VIEWS_SETTING_ID_V1 } from '../settings/savedViews.js';
-import { createTestkitAccountSettings } from '../settings/testkit/accountSettings.test-support.js';
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from '../settings/savedViews.js';
+import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
 import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
@@ -49,11 +49,11 @@ import { renderSurface as renderShellSurface } from './surface.js';
  * The saved-view lens a reader can actually reach.
  *
  * `core/CORPUS.md` §6.3 makes `triage.savedViews` durable user policy and
- * `core/SURFACE.md` §6.5 makes selecting one an explicit Settings mutation whose
+ * `core/SURFACE.md` §6.5 makes selecting one an explicit Account KV mutation whose
  * re-read projection becomes the reducer lens. These cases fail whenever the
  * saved set has no consumer, when selecting applies only part of a view, when
  * an ordinary lens edit silently rewrites the saved view, or when a route lens
- * touches Settings at all.
+ * touches Account KV at all.
  */
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -106,8 +106,8 @@ function storedSetting(selectedViewId: string | null) {
 function createHarness(selectedViewId: string | null, gateViewsRead?: Promise<void>) {
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
-    const settings = createTestkitAccountSettings();
-    settings.seed(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, storedSetting(selectedViewId));
+    const accountKv = createTestkitAccountKv();
+    accountKv.seed(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, storedSetting(selectedViewId));
 
     const admitted = [{
         contributor: {
@@ -144,7 +144,7 @@ function createHarness(selectedViewId: string | null, gateViewsRead?: Promise<vo
 
     let minted = 0;
     const viewDeps = {
-        settings: settings.settings,
+        catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         mintViewId: () => {
             minted += 1;
             return `0000000b-0000-4000-8000-${String(minted).padStart(12, '0')}`;
@@ -183,7 +183,7 @@ function createHarness(selectedViewId: string | null, gateViewsRead?: Promise<vo
         });
     }
 
-    return { executeAction, settings };
+    return { executeAction, accountKv };
 }
 
 const mounted: PluginUiTestkit[] = [];
@@ -195,7 +195,7 @@ async function mountShell(options: Readonly<{
 }> = {}): Promise<Readonly<{
     shell: PluginUiTestkit;
     locations: readonly string[];
-    settings: ReturnType<typeof createTestkitAccountSettings>;
+    accountKv: ReturnType<typeof createTestkitAccountKv>;
 }>> {
     const harness = createHarness(options.selectedViewId ?? null, options.gateViewsRead);
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
@@ -229,11 +229,11 @@ async function mountShell(options: Readonly<{
     });
     // Let the saved-view read settle before anything is asserted about it.
     await act(async () => { await Promise.resolve(); });
-    return { shell: fixture, locations, settings: harness.settings };
+    return { shell: fixture, locations, accountKv: harness.accountKv };
 }
 
-function storedValue(settings: ReturnType<typeof createTestkitAccountSettings>) {
-    return settings.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1) as {
+function storedValue(accountKv: ReturnType<typeof createTestkitAccountKv>) {
+    return accountKv.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) as {
         views: readonly {
             viewId: string;
             label: string;
@@ -270,11 +270,11 @@ describe('the PRs & Issues saved-view lens', () => {
     });
 
     it('marks the lens modified after an edit without writing the saved view', async () => {
-        const { shell, settings } = await mountShell();
+        const { shell, accountKv } = await mountShell();
 
         const option = await shell.getByRole('radio', { name: VIEW_LABEL });
         await act(async () => { await shell.press(option); });
-        const writesAfterSelect = settings.setCallCount();
+        const writesAfterSelect = accountKv.setCallCount();
 
         const openFacet = await shell.getByRole('checkbox', { name: 'Open' });
         await act(async () => { await shell.press(openFacet); });
@@ -284,12 +284,12 @@ describe('the PRs & Issues saved-view lens', () => {
         // that saved on every edit would silently overwrite the lens they
         // started from.
         await expect(shell.queryByText('Modified')).resolves.toBeTruthy();
-        expect(settings.setCallCount()).toBe(writesAfterSelect);
-        expect(storedValue(settings).views[0]?.filters.states).toEqual(['done']);
+        expect(accountKv.setCallCount()).toBe(writesAfterSelect);
+        expect(storedValue(accountKv).views[0]?.filters.states).toEqual(['done']);
     });
 
     it('writes the edited lens into the saved view only on an explicit Update', async () => {
-        const { shell, settings } = await mountShell();
+        const { shell, accountKv } = await mountShell();
 
         const option = await shell.getByRole('radio', { name: VIEW_LABEL });
         await act(async () => { await shell.press(option); });
@@ -300,21 +300,21 @@ describe('the PRs & Issues saved-view lens', () => {
         await act(async () => { await shell.press(update); });
         await act(async () => { await Promise.resolve(); });
 
-        expect([...(storedValue(settings).views[0]?.filters.states ?? [])].sort())
+        expect([...(storedValue(accountKv).views[0]?.filters.states ?? [])].sort())
             .toEqual(['done', 'open']);
         // The label is the reader's, not the lens's: Update saves what they are
         // looking at under the name they already gave it.
-        expect(storedValue(settings).views[0]?.label).toBe(VIEW_LABEL);
+        expect(storedValue(accountKv).views[0]?.label).toBe(VIEW_LABEL);
     });
 
     it('refuses a stale full-view update, re-reads, and shows the conflict', async () => {
-        const { shell, settings } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv } = await mountShell({ selectedViewId: VIEW_ID });
         const openFacet = await shell.getByRole('checkbox', { name: 'Open' });
         await act(async () => { await shell.press(openFacet); });
 
         // Another device renames the view after this mount read it. The local
         // Update still carries the old full draft, including the old label.
-        settings.seed(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, {
+        accountKv.seed(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, {
             ...storedSetting(VIEW_ID),
             views: [{ ...storedSetting(VIEW_ID).views[0], label: 'Renamed elsewhere' }],
         });
@@ -329,7 +329,7 @@ describe('the PRs & Issues saved-view lens', () => {
         await expect(shell.getByText(
             'Your saved views changed somewhere else, so nothing was changed here. Try again.',
         )).resolves.toBeTruthy();
-        expect(storedValue(settings).views[0]).toMatchObject({
+        expect(storedValue(accountKv).views[0]).toMatchObject({
             label: 'Renamed elsewhere',
             filters: { states: ['done'] },
         });
@@ -337,19 +337,19 @@ describe('the PRs & Issues saved-view lens', () => {
     });
 
     it('clears the selected view id when the view is deleted', async () => {
-        const { shell, settings, locations } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv, locations } = await mountShell({ selectedViewId: VIEW_ID });
 
         const remove = await shell.getByRole('button', { name: 'Delete' });
         await act(async () => { await shell.press(remove); });
         await act(async () => { await Promise.resolve(); });
 
-        expect(storedValue(settings).views).toEqual([]);
-        expect(storedValue(settings).selectedViewId).toBeNull();
+        expect(storedValue(accountKv).views).toEqual([]);
+        expect(storedValue(accountKv).selectedViewId).toBeNull();
         expect(locations[locations.length - 1] ?? '').not.toContain('sv,');
     });
 
     it('restores the selected view exactly when the location carries no lens', async () => {
-        const { shell, settings } = await mountShell({ selectedViewId: VIEW_ID });
+        const { shell, accountKv } = await mountShell({ selectedViewId: VIEW_ID });
 
         // Durable account preference, applied on restart without a write.
         await expect(shell.getByRole('checkbox', {
@@ -360,11 +360,11 @@ describe('the PRs & Issues saved-view lens', () => {
             name: VIEW_LABEL,
             state: { checked: true },
         })).resolves.toBeTruthy();
-        expect(settings.setCallCount()).toBe(0);
+        expect(accountKv.setCallCount()).toBe(0);
     });
 
     it('clears a view id the stored set does not answer to while its route lens survives', async () => {
-        const { shell, settings, locations } = await mountShell({
+        const { shell, accountKv, locations } = await mountShell({
             selectedViewId: VIEW_ID,
             // Deleted on another device, or minted under another Account: the
             // id names nothing here, but the lens beside it is still what the
@@ -380,13 +380,13 @@ describe('the PRs & Issues saved-view lens', () => {
         expect(written).toContain('fst,open');
         expect(written).not.toContain('sv,');
         // Clearing a dangling id is a statement about this page, never a write.
-        expect(settings.setCallCount()).toBe(0);
+        expect(accountKv.setCallCount()).toBe(0);
     });
 
     it('does not restore a view over an edit the reader made while the read was in flight', async () => {
         let release!: () => void;
         const gateViewsRead = new Promise<void>((resolve) => { release = resolve; });
-        const { shell, settings } = await mountShell({
+        const { shell, accountKv } = await mountShell({
             selectedViewId: VIEW_ID,
             gateViewsRead,
         });
@@ -411,11 +411,11 @@ describe('the PRs & Issues saved-view lens', () => {
             name: 'Done',
             state: { checked: false },
         })).resolves.toBeTruthy();
-        expect(settings.setCallCount()).toBe(0);
+        expect(accountKv.setCallCount()).toBe(0);
     });
 
-    it('lets an explicit route lens win without mutating Settings', async () => {
-        const { shell, settings } = await mountShell({
+    it('lets an explicit route lens win without mutating Account KV', async () => {
+        const { shell, accountKv } = await mountShell({
             selectedViewId: VIEW_ID,
             subPath: 'fst,open',
         });
@@ -431,6 +431,6 @@ describe('the PRs & Issues saved-view lens', () => {
             name: 'Done',
             state: { checked: false },
         })).resolves.toBeTruthy();
-        expect(settings.setCallCount()).toBe(0);
+        expect(accountKv.setCallCount()).toBe(0);
     });
 });

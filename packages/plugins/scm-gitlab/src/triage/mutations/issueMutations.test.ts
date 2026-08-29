@@ -22,7 +22,6 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { GITLAB_MUTATION_DEADLINE_MS } from '../admission.js';
 import {
   createStubGitlabTransport,
   gitlabTestConfiguredInstance,
@@ -67,7 +66,12 @@ type ScriptedGitlabAnswer =
   | typeof ANSWER_LOST
   | typeof GITLAB_STUB_NEVER_ANSWERS;
 
-function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>) {
+const TEST_CALLER_DEADLINE_MS = 25;
+
+function scriptedTransport(
+  script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>,
+  signal?: AbortSignal,
+) {
   const cursors = new Map<string, number>();
   return createStubGitlabTransport({
     respond: (request: RecordedGitlabRequest) => {
@@ -80,6 +84,7 @@ function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitl
       if (answer === ANSWER_LOST) throw new Error('socket hang up');
       return answer;
     },
+    ...(signal === undefined ? {} : { signal }),
   });
 }
 
@@ -367,7 +372,7 @@ describe('an issue write whose answer this source’s deadline took', () => {
   async function pastMutationDeadline<TResult>(start: () => Promise<TResult>): Promise<TResult> {
     vi.useFakeTimers();
     const pending = start();
-    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(TEST_CALLER_DEADLINE_MS + 1);
     return pending;
   }
 
@@ -378,7 +383,7 @@ describe('an issue write whose answer this source’s deadline took', () => {
         { status: 200, body: issueBody({ state: 'closed' }) },
       ],
       [`PUT ${ISSUE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => closeGitlabIssue(issueInput(), transport.context),
@@ -398,7 +403,7 @@ describe('an issue write whose answer this source’s deadline took', () => {
         { status: 200, body: issueBody({ state: 'opened' }) },
       ],
       [`PUT ${ISSUE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => reopenGitlabIssue(issueInput(), transport.context),

@@ -7,7 +7,10 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { encodeAzureSourceConfiguration } from './configuration.js';
-import { AZURE_DEVOPS_TRIAGE_PURPOSE } from './descriptor.js';
+import {
+  AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+  AZURE_DEVOPS_TRIAGE_PURPOSE,
+} from './descriptor.js';
 import { buildAzureCollisionScope } from './identity.js';
 import {
   abandonAzureDevOpsPullRequest,
@@ -45,7 +48,10 @@ const MERGE_COMMIT = '5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d';
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
   return {
-    service: { pluginId: 'happier.scm.forge.azure-devops', localId: AZURE_DEVOPS_TRIAGE_PURPOSE },
+    service: {
+      pluginId: 'happier.scm.forge.azure-devops',
+      localId: AZURE_DEVOPS_CONNECTED_ACCOUNT_ID,
+    },
     accountId,
   };
 }

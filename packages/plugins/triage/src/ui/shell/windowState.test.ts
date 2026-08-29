@@ -101,8 +101,8 @@ describe('resolveTriageListShellState', () => {
       'en-US',
     );
 
-    // SURFACE §6.1 requires the source-owned deadline to reach the reader. The
-    // shell must present that value, not re-derive another retry estimate.
+    // SURFACE §6.1 requires the provider/source retry evidence to reach the reader. The shell
+    // must present that exact time, not re-derive another retry estimate.
     expect(notice.description).toContain(
       formatTriageTimestampV1('en-US', retryAtMs, 'absolute', retryAtMs),
     );

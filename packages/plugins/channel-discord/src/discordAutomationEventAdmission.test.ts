@@ -20,7 +20,7 @@ function sourceDefinition(overrides: Readonly<Record<string, unknown>> = {}) {
     sourceSelectorId: SOURCE_SELECTOR_ID,
     sourceContractVersion: 1,
     sourceConfig: { v: 1, applicationId: '123', channelId: '4242' },
-    observationTransport: { kind: 'checkpointedPull' },
+    observationTransport: { kind: 'socket' },
     filter: null,
     maximumObservationAgeMs: null,
     ...overrides,
@@ -86,8 +86,10 @@ describe('Discord Automation Event admission bridge', () => {
   it('admits a frozen Channels Event obligation to the exact current source', async () => {
     const admitted: unknown[] = [];
     const statuses: unknown[] = [];
+    const listed: unknown[] = [];
     const execute = vi.fn(async (actionId: string, input: unknown) => {
       if (actionId === 'automation.event.sources.list') {
+        listed.push(input);
         return {
           kind: 'page',
           revision: '7',
@@ -126,6 +128,7 @@ describe('Discord Automation Event admission bridge', () => {
     const outcome = await admitDiscordAutomationEvent(admissionInput(), createContext(execute));
 
     expect(admitted).toHaveLength(1);
+    expect(listed).toEqual([{ transport: { kind: 'socket' } }]);
     expect(admitted[0]).toEqual({
       eventRef: EVENT_REF,
       occurrenceId: 'discord:message:9001',
@@ -150,7 +153,7 @@ describe('Discord Automation Event admission bridge', () => {
     expect(statuses).toEqual([
       {
         kind: 'catalogReconciliation',
-        scope: { kind: 'checkpointedPull' },
+        scope: { kind: 'socket' },
         observedRevision: '7',
         adoptedRevision: '7',
         state: 'current',

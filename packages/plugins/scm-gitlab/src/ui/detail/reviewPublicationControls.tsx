@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { ReviewCommentPublicationVerdictV1 } from '@happier-dev/plugin-sdk/reviews';
 import {
   Banner,
   Button,
@@ -29,11 +28,13 @@ import {
   GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from '../../triage/contribution.js';
 import {
+  GITLAB_REVIEW_VERDICT_KINDS_V1,
   GitlabIssueCommentInputV1Schema,
   GitlabMergeRequestReviewCommentCreateInputV1Schema,
   GitlabMergeRequestReviewPublicationInputV1Schema,
   GitlabMergeRequestThreadReplyInputV1Schema,
   GitlabReviewPublicationResultV1Schema,
+  type GitlabMergeRequestReviewPublicationInputV1,
   type GitlabReviewPublicationResultV1,
 } from '../../triage/mutations/contracts.js';
 import { GITLAB_CURRENT_INTENT_REJECTED_CODE } from './mutations.js';
@@ -87,7 +88,7 @@ function mutationTargetOf(input: TriageDetailSurfaceInputV1) {
 export function buildGitlabMergeRequestReviewPublicationInputV1(
   input: TriageDetailSurfaceInputV1,
   proposals: readonly GitlabStringReviewProposalV1[],
-  verdict: ReviewCommentPublicationVerdictV1 | null,
+  verdict: GitlabMergeRequestReviewPublicationInputV1['publicationPlan']['verdict'],
   acknowledgedPreexistingDraftIds?: readonly string[],
 ) {
   const revision = input.observation.snapshot.reviewRevision;
@@ -204,12 +205,7 @@ function PublicationResult({ result, text }: Readonly<{
             'plugins.gitlab.ui.publication.anchorUnsupported',
             'GitLab cannot place one of these comments safely',
           )
-          : result.reason === 'unsupported_verdict'
-            ? text(
-              'plugins.gitlab.ui.publication.verdictUnsupported',
-              'GitLab does not support this review verdict safely',
-            )
-            : text(
+          : text(
               'plugins.gitlab.ui.publication.rejected',
               'Nothing was published because the review no longer passed its preflight checks',
             );
@@ -350,7 +346,10 @@ function ProposalReadState({ read }: Readonly<{
   return null;
 }
 
-const GITLAB_VERDICT_CHOICES = Object.freeze(['none', 'comment', 'approve'] as const);
+const GITLAB_VERDICT_CHOICES = Object.freeze([
+  'none',
+  ...GITLAB_REVIEW_VERDICT_KINDS_V1,
+] as const);
 type GitlabVerdictChoice = (typeof GITLAB_VERDICT_CHOICES)[number];
 
 export function GitlabMergeRequestPublicationControls({
@@ -389,7 +388,7 @@ export function GitlabMergeRequestPublicationControls({
 
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const summaryBody = summary.trim();
-  const verdictValue: ReviewCommentPublicationVerdictV1 | null = verdict === 'none'
+  const verdictValue: GitlabMergeRequestReviewPublicationInputV1['publicationPlan']['verdict'] = verdict === 'none'
     ? null
     : summaryBody === ''
       ? null

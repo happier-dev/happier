@@ -53,7 +53,6 @@ export {
 
 export {
     POSTHOG_FAILURE_CODES,
-    POSTHOG_MOUNTED_DETAIL_DEADLINE_MS,
     createPosthogSampledEventsReader,
     getPosthogSourceEntry,
     listPosthogInstances,

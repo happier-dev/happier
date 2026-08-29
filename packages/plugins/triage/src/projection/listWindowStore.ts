@@ -2,6 +2,7 @@ import type { Disposable, PluginCancellationOptions } from '@happier-dev/plugin-
 import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
+import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { laneObservationsFromWire } from './listWindowWire.js';
 import {
     createTriageRefreshCoordinator,
@@ -163,15 +164,14 @@ export type TriageListWindowStoreV1 = Readonly<{
     /** The only way a consumer causes provider work. */
     refresh(trigger: TriageRefreshTriggerV1): Promise<void>;
     /**
-     * Query/facet changes rebuild from the retained page. Order/Smart-policy
-     * changes also reacquire the provider cut once under the new ranking.
+     * Rebuild immediately from the retained page, then reacquire one neutral
+     * first page for the new lens generation. Every lens change invalidates the
+     * preceding per-lane frontiers; keeping them would let Load More resume the
+     * new lens at an old lens's depth.
      *
-     * It deliberately does **not** mark the window stale. That marking existed
-     * because the read carried the lens, so a new lens really did leave the
-     * retained rows unable to answer it; the read is neutral now, the retained
-     * page is exactly as fresh as the cycle that fetched it, and saying
-     * otherwise would ask the reader to refresh away a filter they had just
-     * applied.
+     * It deliberately does **not** mark the retained page stale while that
+     * replacement is pending. The provider read remains neutral, so the rows
+     * already held are exactly as fresh as the cycle that fetched them.
      */
     setLens(lens: TriageListLensV1): void;
     /**
@@ -223,6 +223,46 @@ function sameConfiguredSourceIdentitySet(
         && [...leftSourceInstanceIds].every((sourceInstanceId) => rightSourceInstanceIds.has(sourceInstanceId));
 }
 
+function sameMemberSet<T>(
+    left: readonly T[],
+    right: readonly T[],
+    same: (leftMember: T, rightMember: T) => boolean,
+): boolean {
+    return left.length === right.length
+        && left.every((member) => right.some((candidate) => same(member, candidate)));
+}
+
+function sameFilterSelection(
+    left: TriageListLensV1['filters'],
+    right: TriageListLensV1['filters'],
+): boolean {
+    // Facets are sets: press order changes no query and therefore must not mint
+    // a new paging generation. Duplicate values are rejected by the reducer
+    // and saved-view owner before a lens reaches this store.
+    return sameMemberSet(left.sources, right.sources, (a, b) => (
+        sameTriageSourceIdentity(a.source, b.source)
+    ))
+        && sameMemberSet(left.types, right.types, (a, b) => (
+            a.kindId === b.kindId && sameTriageSourceIdentity(a.source, b.source)
+        ))
+        && sameMemberSet(left.scopes, right.scopes, (a, b) => (
+            a.collisionScope === b.collisionScope
+            && sameTriageSourceIdentity(a.source, b.source)
+        ))
+        && sameMemberSet(left.states, right.states, (a, b) => a === b)
+        && sameMemberSet(left.attention, right.attention, (a, b) => a === b);
+}
+
+function sameAcquisitionLens(left: TriageListLensV1, right: TriageListLensV1): boolean {
+    return left.order === right.order
+        && left.smartPolicy.v === right.smartPolicy.v
+        && left.smartPolicy.precedence[0] === right.smartPolicy.precedence[0]
+        && left.smartPolicy.precedence[1] === right.smartPolicy.precedence[1]
+        && left.query === right.query
+        && left.limit === right.limit
+        && sameFilterSelection(left.filters, right.filters);
+}
+
 function errorFrom(cause: unknown): TriageListWindowErrorV1 {
     if (cause instanceof Error) {
         return { code: 'plugin_action_failed', message: cause.message };
@@ -272,7 +312,7 @@ export function createTriageListWindowStore(deps: Readonly<{
      * at one window with no frontier, which is `INV-03` holding.
      */
     let windowsRequested = 1;
-    /** A refresh/order-generation change resets depth at the next cycle boundary. */
+    /** A refresh/lens-generation change resets depth at the next cycle boundary. */
     let pagingResetPending = false;
     /** An acquisition-generation change keeps replacing the old cut until a reset read succeeds. */
     let generationReplacementPending = false;
@@ -1231,10 +1271,14 @@ export function createTriageListWindowStore(deps: Readonly<{
             return scheduler.flush();
         },
         setLens(next) {
-            const acquisitionChanged = lens.order !== next.order
-                || lens.smartPolicy.v !== next.smartPolicy.v
-                || lens.smartPolicy.precedence[0] !== next.smartPolicy.precedence[0]
-                || lens.smartPolicy.precedence[1] !== next.smartPolicy.precedence[1];
+            // A continuation belongs to the complete mounted lens generation
+            // that produced it. Query/facet changes are projected locally, but
+            // retaining their predecessor frontier would let Load More resume
+            // the new lens at the old lens's depth. Reacquire one neutral first
+            // page and mint a fresh frontier set instead. This remains the same
+            // store, coordinator and coalesced scheduler; no search-owned reader
+            // or cursor state is introduced.
+            const acquisitionChanged = !sameAcquisitionLens(lens, next);
             lens = next;
             if (window !== null) rebuild();
             publish();

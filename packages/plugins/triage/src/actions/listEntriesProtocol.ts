@@ -1,5 +1,6 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
+    ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolNumber,
@@ -25,7 +26,6 @@ import {
     TriageSourceViewerFactsV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
-import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 import { MAX_TRIAGE_LIST_WINDOW_ROWS_V1 } from '../projection/listWindow.js';
 
 /**
@@ -83,7 +83,7 @@ const triageText = defineProtocolUtf8String({
  * One filter facet on the wire.
  *
  * It has no independent member-count ceiling. The saved-view form remains
- * bounded by its local 64 KiB serialized Settings value. Adding another count here
+ * bounded by its Account KV value boundary. Adding another count here
  * would make a valid lens behave differently depending on whether it was live,
  * routed, or saved.
  */
@@ -151,7 +151,7 @@ const TriageListSourceSelectionV1Schema = defineProtocolUnion([
     defineProtocolObject({
         kind: defineProtocolLiteral('allConfigured'),
         /** Opaque Collection continuation for the next configured-source batch. */
-        cursor: TriageCollectionCursorV1Schema.optional(),
+        cursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('selected'),
@@ -423,7 +423,7 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
         defineProtocolLiteral('truncated'),
     ]),
     /** The opaque Collection cursor for the next configured-source batch. */
-    configuredSourcesNextCursor: TriageCollectionCursorV1Schema.optional(),
+    configuredSourcesNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
     window: defineProtocolObject({
         v: defineProtocolLiteral(1),
         rows: defineProtocolArray(TriageListRowV1Schema, {

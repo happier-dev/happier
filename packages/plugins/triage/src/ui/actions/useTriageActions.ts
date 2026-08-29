@@ -77,14 +77,14 @@ export function useTriageActions(): TriageMountedActionsV1 {
   const hostApi = usePluginHostApi();
   const durable = useTriageDurableAccount();
   const text = usePluginTranslation();
-  // One owner, two transports. Direct Account Settings when this mount can
+  // One owner, two transports. Direct Account KV when this mount can
   // reach the Account — which is what keeps the configured actions readable and
   // editable while no daemon is — and the published Actions otherwise.
   const transport = useMemo<TriageActionsTransportV1>(
-    () => durable.settings
-      ? createDirectTriageActionsTransport(durable.settings)
+    () => durable.actions
+      ? createDirectTriageActionsTransport(durable.actions)
       : createActionTriageActionsTransport(hostApi),
-    [durable.settings, hostApi],
+    [durable.actions, hostApi],
   );
   const [read, setRead] = useState<TriageActionsReadV1>(TRIAGE_UNREAD_ACTIONS_V1);
   const [revision, setRevision] = useState<string | null>(null);

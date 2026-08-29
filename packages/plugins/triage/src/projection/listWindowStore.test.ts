@@ -1130,7 +1130,7 @@ describe('the mounted PRs & Issues window store', () => {
         store.dispose();
     });
 
-    it('reacquires once when order or Smart policy changes, while query stays local', async () => {
+    it('reacquires from page one when query, order, or Smart policy changes', async () => {
         const harness = createHarness({ configureSourceB: false });
         harness.state.sourceAOverDelivers = true;
         const store = createTriageListWindowStore({
@@ -1144,12 +1144,30 @@ describe('the mounted PRs & Issues window store', () => {
         );
         const afterInitial = providerReads().length;
 
-        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'older' });
+        // A React rebind may copy the lens and its arrays without changing the
+        // reader's request. That is not a new generation and must not spend a
+        // provider read merely because object identity changed.
+        store.setLens({
+            ...TRIAGE_LIST_DEFAULT_LENS_V1,
+            filters: {
+                sources: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.sources],
+                types: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.types],
+                scopes: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.scopes],
+                states: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.states],
+                attention: [...TRIAGE_LIST_DEFAULT_LENS_V1.filters.attention],
+            },
+        });
         expect(providerReads()).toHaveLength(afterInitial);
+
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'older' });
+        await vi.waitFor(() => {
+            expect(providerReads()).toHaveLength(afterInitial + 1);
+        });
+        expect(providerReads().at(-1)?.resume).toBeUndefined();
 
         store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, order: 'oldest' });
         await vi.waitFor(() => {
-            expect(providerReads()).toHaveLength(afterInitial + 1);
+            expect(providerReads()).toHaveLength(afterInitial + 2);
         });
         expect(providerReads().at(-1)?.order).toBe('oldest');
         expect(store.getSnapshot().window?.rows[0]?.entryRef.entryId).toBe('first-0');
@@ -1160,12 +1178,43 @@ describe('the mounted PRs & Issues window store', () => {
             smartPolicy: { v: 1, precedence: ['activity', 'attention'] },
         });
         await vi.waitFor(() => {
-            expect(providerReads()).toHaveLength(afterInitial + 2);
+            expect(providerReads()).toHaveLength(afterInitial + 3);
         });
         expect(providerReads().at(-1)?.smartPolicy).toEqual({
             v: 1,
             precedence: ['activity', 'attention'],
         });
+
+        store.dispose();
+    });
+
+    it('discards the old frontier when a filter changes after Load More', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        await store.loadMore();
+
+        store.setLens({
+            ...TRIAGE_LIST_DEFAULT_LENS_V1,
+            filters: {
+                ...TRIAGE_LIST_DEFAULT_LENS_V1.filters,
+                states: ['open'],
+            },
+        });
+
+        const providerReads = () => harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        await vi.waitFor(() => {
+            expect(providerReads()).toHaveLength(3);
+        });
+        expect(providerReads().at(-1)?.resume).toBeUndefined();
+        expect(store.getSnapshot().window?.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
 
         store.dispose();
     });

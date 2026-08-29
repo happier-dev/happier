@@ -19,7 +19,13 @@ import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
+import { CHANNEL_STATE_COLLECTION } from './collections.js';
 import { CHANNELS_PROVIDER_POINT_REF, PLUGIN_MANIFEST } from './manifest.js';
+import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
+import {
+  createCurrentConversationConnectionFixture,
+  type ConversationConnectionFixtureAuthority,
+} from './testkit/currentConnectionFixture.js';
 
 /**
  * These compositions cross only the credential-materialization and HTTP
@@ -300,5 +306,166 @@ describe('Channels first-party provider composition', () => {
       await githubCore.dispose();
       await github.dispose();
     }
+  });
+
+  describe('Telegram Automation Event source setup through the real connections-list Action', () => {
+    const TELEGRAM_SETUP_ACTION_ID = 'telegram/setup-chat-event-source';
+
+    function telegramSetupComposition(input: Readonly<{
+      connectionMaterializationId: string;
+    }>) {
+      const telegramCredential = {
+        service: { pluginId: 'happier.channel.telegram', localId: 'telegram-bot' },
+        accountId: 'bot:123',
+      } as const;
+      // The persisted connection's owning provider materialization; the
+      // Telegram testkit's host-stamped caller resolver replays this exact
+      // provenance when its setup Action calls the core.
+      const callerMaterialization = {
+        pluginId: 'happier.channel.telegram',
+        machineId: 'machine-composed',
+        materializationId: 'telegram-install-composed',
+      } as const;
+      // The persisted authority Telegram's own setup owner mints:
+      // `telegram-bot:${getMe id}` plus the authenticated bot facts.
+      const authority = {
+        providerPluginId: 'happier.channel.telegram',
+        providerContributionSelection: {
+          contributionId: 'telegram-provider',
+          immutableGenerationId: 'composed-generation',
+        },
+        providerSetupInput: { credentialRef: telegramCredential },
+        credentialRef: telegramCredential,
+        transportOrigin: {
+          serverIdentityId: 'srv_plugin_testkit',
+          materializationRef: {
+            pluginId: 'happier.channel.telegram',
+            machineId: 'machine-composed',
+            materializationId: input.connectionMaterializationId,
+          },
+        },
+        providerConnectionKey: 'telegram-bot:123',
+        providerConfig: { botUsername: 'HappierBot', canReadAllGroupMessages: false },
+        routingIdentityKey: 'f'.repeat(43),
+        integrationPrincipal: { id: '123', label: 'Happier Bot' },
+        authorityEpoch: 1,
+      } as const satisfies ConversationConnectionFixtureAuthority;
+      const connection = createCurrentConversationConnectionFixture({
+        connectionId: 'telegram-connection-composed',
+        authority,
+        transport: { kind: 'checkpointedPull' },
+        replayContinuity: 'checkpointed',
+      });
+      const stateRows = [{ rowId: connection.id, revision: 1, value: connection }];
+      const stateCollection = {
+        async query(request: Readonly<{
+          prefix?: readonly unknown[];
+          limit?: number;
+        }>) {
+          assertChannelsTestCollectionQueryLimit(request.limit);
+          const kind = request.prefix?.[0];
+          return {
+            rows: kind === undefined
+              ? stateRows
+              : stateRows.filter((row) => row.value['record-kind'] === kind),
+            changeCursor: 1,
+          };
+        },
+      };
+      const storage = {
+        account: {
+          collection(definition: Readonly<{ id: string }>) {
+            return definition.id === CHANNEL_STATE_COLLECTION.id
+              ? stateCollection
+              : { async query() { return { rows: [], changeCursor: 0 }; } };
+          },
+        },
+      } as unknown as PluginServices['storage'];
+      return { telegramCredential, callerMaterialization, storage };
+    }
+
+    async function createTelegramSetupTestkit(input: Readonly<{
+      storage: PluginServices['storage'];
+      callerMaterialization: Readonly<{
+        pluginId: string;
+        machineId: string;
+        materializationId: string;
+      }>;
+    }>) {
+      const accounts = connectedAccountsStub(vi.fn(async () => ({
+        kind: 'environment' as const,
+        env: { TELEGRAM_BOT_TOKEN: '123:bot-token' },
+      })));
+      const http = httpStub(vi.fn(async (request: Readonly<{ url: string }>) => jsonResponse(
+        request.url.includes('/getMe')
+          ? {
+            ok: true,
+            result: { id: 123, is_bot: true, first_name: 'Happier Bot', username: 'HappierBot' },
+          }
+          : { ok: true, result: { id: -100456, type: 'supergroup', title: 'Deploys' } },
+        request.url,
+      )));
+      const core = await createPluginTestkit({
+        manifest: PLUGIN_MANIFEST,
+        module: { activate },
+        services: { storage: input.storage },
+      });
+      const telegram = await createPluginTestkit({
+        manifest: TELEGRAM_PLUGIN_MANIFEST,
+        module: { activate: activateTelegram },
+        services: { connectedAccounts: accounts, http },
+        resolveCurrentPluginMaterializationRef: () => input.callerMaterialization,
+        actionTargets: [core],
+      });
+      return { core, telegram };
+    }
+
+    it('resolves chat source facts when the caller owns the current checkpointedPull connection', async () => {
+      const composition = telegramSetupComposition({
+        connectionMaterializationId: 'telegram-install-composed',
+      });
+      const { core, telegram } = await createTelegramSetupTestkit({
+        storage: composition.storage,
+        callerMaterialization: composition.callerMaterialization,
+      });
+
+      try {
+        await expect(telegram.invokeAction(TELEGRAM_SETUP_ACTION_ID, {
+          credentialRef: composition.telegramCredential,
+          chatId: '-100456',
+        })).resolves.toMatchObject({
+          v: 1,
+          sourceInstanceId: 'telegram:chat:123:-100456',
+          sourceContractVersion: 1,
+          sourceConfig: { v: 1, botId: '123', chatId: '-100456' },
+          displayLabel: 'Deploys',
+        });
+      } finally {
+        await core.dispose();
+        await telegram.dispose();
+      }
+    });
+
+    it('keeps a checkpointedPull connection owned by another provider materialization excluded', async () => {
+      const composition = telegramSetupComposition({
+        connectionMaterializationId: 'telegram-install-other',
+      });
+      const { core, telegram } = await createTelegramSetupTestkit({
+        storage: composition.storage,
+        callerMaterialization: composition.callerMaterialization,
+      });
+
+      try {
+        await expect(telegram.invokeAction(TELEGRAM_SETUP_ACTION_ID, {
+          credentialRef: composition.telegramCredential,
+          chatId: '-100456',
+        })).rejects.toMatchObject({
+          code: 'telegram_automation_channels_connection_required',
+        });
+      } finally {
+        await core.dispose();
+        await telegram.dispose();
+      }
+    });
   });
 });

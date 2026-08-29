@@ -116,6 +116,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
   });
   let activeConnection: VoiceRealtimeConnection | null = null;
   let activeHandle: ReturnType<typeof createElevenLabsConversationHandle> | null = null;
+  let inputMuted = false;
   let disposed = false;
   const settingsOperations: RealtimeVoiceProviderSettingsOperations = Object.freeze({
     async listCatalog({ catalog, credentials, signal }) {
@@ -230,7 +231,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
     // owns the canonical audio-mode lease and the only Voice session lifecycle.
     microphoneMode: 'provider_managed',
     outputLevelMeter: 'unavailable',
-    async createConnection({ session, mic, media, tools, execution, interruption }) {
+    async createConnection({ session, media, tools, execution, interruption }) {
       if (disposed) throw new Error('elevenlabs_runtime_disposed');
       if (execution.kind !== 'direct_media') {
         throw new Error('elevenlabs_direct_media_authority_required');
@@ -252,7 +253,10 @@ RealtimeVoiceProviderRuntime & Readonly<{
         createSdkHandleConnection: media.createSdkHandleConnection,
         handle,
         startConfig: session.config,
-        initialMuted: mic.isMuted(),
+        // Read at connection startup rather than construction: an interruption
+        // can change the runtime-owned desired mute between those boundaries.
+        // Once startup begins, the handle retains every later update itself.
+        initialMuted: () => inputMuted,
         duckGain: interruption.duckGain,
         onSessionIdentity(conversationId) {
           if (controlSessionId) provider.handleSessionIdentity({ controlSessionId, conversationId });
@@ -263,6 +267,7 @@ RealtimeVoiceProviderRuntime & Readonly<{
       return connection;
     },
     setInputMuted(muted) {
+      inputMuted = muted;
       activeHandle?.setMicMuted(muted);
     },
     // ElevenLabs executes host-owned attempt tools inside the SDK handle and

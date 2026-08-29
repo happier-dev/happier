@@ -42,6 +42,8 @@ import {
 import {
     TriageStartEntrySessionInputV1Schema,
     TriageStartEntrySessionResultV1Schema,
+    TriageStartPullRequestReviewInputV1Schema,
+    TriageStartPullRequestReviewResultV1Schema,
     TriageUnlinkEntryFromSessionActionInputV1Schema,
     TriageUnlinkEntryFromSessionActionResultV1Schema,
 } from './entrySessionProtocol.js';
@@ -105,6 +107,7 @@ const structurallyBoundedSchemas = {
     linkEntryToSessionResult: TriageLinkEntryToSessionActionResultV1Schema,
     unlinkEntryFromSessionInput: TriageUnlinkEntryFromSessionActionInputV1Schema,
     unlinkEntryFromSessionResult: TriageUnlinkEntryFromSessionActionResultV1Schema,
+    startPullRequestReviewResult: TriageStartPullRequestReviewResultV1Schema,
     readSavedViewsInput: TriageReadSavedViewsInputV1Schema,
     readActionsInput: TriageReadActionsInputV1Schema,
     // The two caller-bound source Actions are declared by this manifest, so
@@ -155,6 +158,10 @@ const ownerBoundedSchemas = {
 const structurallyUnboundedSchemas = {
     startEntrySessionInput: TriageStartEntrySessionInputV1Schema,
     startEntrySessionResult: TriageStartEntrySessionResultV1Schema,
+    // The review request deliberately carries an unbounded engine selection
+    // and provider-owned pull-request JSON. Its result remains structurally
+    // bounded and is measured above.
+    startPullRequestReviewInput: TriageStartPullRequestReviewInputV1Schema,
     listEntriesInput: TriageListEntriesInputV1Schema,
     administerSavedViewInput: TriageAdministerSavedViewInputV1Schema,
     administerActionInput: TriageAdministerActionInputV1Schema,
@@ -234,6 +241,31 @@ function admits(value: unknown): boolean {
     return AgentRuntimeJsonValueV1Schema.safeParse(value).success;
 }
 
+/**
+ * Gives intentionally unconstrained JSON members a finite value for witness
+ * construction. This is not a maximum: an empty JSON Schema has none. `null`
+ * is merely admitted by that owner while the prompt bound remains the only
+ * member this regression is widening.
+ */
+function finiteOpaqueJsonWitness(fragment: PluginJsonSchema): PluginJsonSchema {
+    if (Object.keys(fragment).length === 0) return { const: null };
+    return {
+        ...fragment,
+        ...(fragment.anyOf === undefined
+            ? {}
+            : { anyOf: fragment.anyOf.map(finiteOpaqueJsonWitness) }),
+        ...(fragment.properties === undefined
+            ? {}
+            : {
+                properties: Object.fromEntries(Object.entries(fragment.properties)
+                    .map(([key, child]) => [key, finiteOpaqueJsonWitness(child)])),
+            }),
+        ...(fragment.items === undefined
+            ? {}
+            : { items: finiteOpaqueJsonWitness(fragment.items) }),
+    };
+}
+
 describe('aggregate Action value shapes', () => {
     /**
      * The measured set has to be the declared set, or an Action added later
@@ -272,11 +304,14 @@ describe('aggregate Action value shapes', () => {
     }, 120_000);
 
     it('admits a valid resolved prompt beyond the removed aggregate ceiling', () => {
-        const wider = structuredClone(TriageStartEntrySessionInputV1Schema.jsonSchema);
+        const wider = finiteOpaqueJsonWitness(
+            structuredClone(TriageStartEntrySessionInputV1Schema.jsonSchema),
+        );
         const delivery = wider.properties?.delivery;
         const text = delivery?.properties?.text;
         if (!text) throw new Error('start input delivery no longer carries a prompt body');
         text.maxLength = 200_000;
+
         const value = buildMaximalSchemaValue(wider, 'wideStartInput');
 
         expect(encodedJsonBytes(value)).toBeGreaterThan(1_024 * 1_024);
@@ -325,7 +360,7 @@ describe('aggregate Action value shapes', () => {
      * actually decides how large the stored set can be — leaves this result
      * comfortably inside the gate.
      */
-    it('keeps Settings-bounded catalog results inside the gate at their real ceilings', () => {
+    it('keeps Account-KV-bounded catalog results inside the gate at their real ceilings', () => {
         // The stored set is all either result carries beyond a handful of small
         // constant members, so a value of the ceiling's size plus a kilobyte of
         // room for them is the widest either Action can return. It is a byte

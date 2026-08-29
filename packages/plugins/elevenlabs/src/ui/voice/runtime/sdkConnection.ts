@@ -34,7 +34,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
   }> }>) => VoiceRealtimeConnection;
   handle: ElevenLabsConversationHandle;
   startConfig: unknown;
-  initialMuted?: boolean;
+  initialMuted?: boolean | (() => boolean);
   duckGain: number;
   onSessionIdentity?(conversationId: string): void;
   onSessionEnded?(): Promise<void> | void;
@@ -130,6 +130,20 @@ export function createElevenLabsSdkConnection(input: Readonly<{
         }
         activeHandle = handle;
         unsubscribe = handle.subscribe(onEvent);
+        const textOnly = input.startConfig !== null
+          && typeof input.startConfig === 'object'
+          && !Array.isArray(input.startConfig)
+          && (input.startConfig as Readonly<{ textOnly?: unknown }>).textOnly === true;
+        // Seed the wrapper before SDK negotiation. Later mute changes update
+        // that same attempt-owned desired value and therefore win over this
+        // initial value when the provider conversation eventually resolves.
+        if (!textOnly) {
+          handle.setMicMuted(
+            typeof input.initialMuted === 'function'
+              ? input.initialMuted()
+              : input.initialMuted === true,
+          );
+        }
         const sessionId = await handle.startSession(input.startConfig);
         if (signal.aborted || closed) {
           await endActiveSession();
@@ -142,11 +156,6 @@ export function createElevenLabsSdkConnection(input: Readonly<{
           ? sessionId
           : '';
         if (!normalizedSessionId) throw new Error('elevenlabs_missing_conversation_id');
-        const textOnly = input.startConfig !== null
-          && typeof input.startConfig === 'object'
-          && !Array.isArray(input.startConfig)
-          && (input.startConfig as Readonly<{ textOnly?: unknown }>).textOnly === true;
-        if (!textOnly) handle.setMicMuted(input.initialMuted === true);
         input.onSessionIdentity?.(normalizedSessionId);
         onTransport({ type: 'session_identity', sessionId: normalizedSessionId });
       },

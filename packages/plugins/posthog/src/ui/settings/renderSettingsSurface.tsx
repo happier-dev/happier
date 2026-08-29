@@ -181,8 +181,13 @@ function PosthogDraftEditor({
   const [scanWindow, setScanWindow] = React.useState(() => windowDraft(decoded?.scanWindowPolicy));
   const [detailWindow, setDetailWindow] = React.useState(() => windowDraft(decoded?.detailWindowPolicy));
   const [message, setMessage] = React.useState<string | null>(null);
+  const [directoryMessages, setDirectoryMessages] = React.useState<Readonly<Record<
+    PosthogConfigurationDirectoryInputV1['kind'],
+    string | null
+  >>>({ organizations: null, environments: null });
   const [loading, setLoading] = React.useState(false);
   const mountedGeneration = React.useRef(0);
+  const pendingOrganizationDirectory = React.useRef<AbortController | null>(null);
   const environmentDirectoryGeneration = React.useRef(0);
   const pendingEnvironmentDirectory = React.useRef<AbortController | null>(null);
 
@@ -190,6 +195,8 @@ function PosthogDraftEditor({
     mountedGeneration.current += 1;
     return () => {
       mountedGeneration.current += 1;
+      pendingOrganizationDirectory.current?.abort();
+      pendingOrganizationDirectory.current = null;
       environmentDirectoryGeneration.current += 1;
       pendingEnvironmentDirectory.current?.abort();
       pendingEnvironmentDirectory.current = null;
@@ -199,45 +206,60 @@ function PosthogDraftEditor({
   const execute = directory.execute;
   const readPage = React.useCallback(async (
     input: PosthogConfigurationDirectoryInputV1,
-    current?: Readonly<{
+    current: Readonly<{
       signal: AbortSignal;
       isCurrent: () => boolean;
     }>,
   ): Promise<PosthogConfigurationDirectoryResultV1 | null> => {
-    setLoading(true);
-    try {
-      const execution = current === undefined
-        ? await execute(input)
-        : await execute(input, { signal: current.signal });
-      if (current !== undefined && !current.isCurrent()) return null;
-      if (execution.status !== 'success') {
-        setMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
-        return null;
-      }
-      const parsed = PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result);
-      if (!parsed.success || parsed.data.kind === 'unavailable') {
-        setMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
-        return null;
-      }
-      setMessage(parsed.data.incomplete === true
-        ? text('plugins.posthog.ui.settings.partial', 'Some provider rows or paging information could not be read; the visible choices remain usable.')
-        : null);
-      return parsed.data;
-    } finally {
-      if (current === undefined || current.isCurrent()) setLoading(false);
+    const setDirectoryMessage = (value: string | null): void => {
+      setDirectoryMessages((previous) => ({ ...previous, [input.kind]: value }));
+    };
+    const execution = await execute(input, { signal: current.signal });
+    if (!current.isCurrent()) return null;
+    if (execution.status !== 'success') {
+      setDirectoryMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
+      return null;
     }
+    const parsed = PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result);
+    if (!parsed.success || parsed.data.kind === 'unavailable') {
+      setDirectoryMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
+      return null;
+    }
+    setDirectoryMessage(parsed.data.incomplete === true
+      ? text('plugins.posthog.ui.settings.partial', 'Some provider rows or paging information could not be read; the visible choices remain usable.')
+      : null);
+    return parsed.data;
   }, [execute, text]);
 
   const loadOrganizations = React.useCallback(async (next: string | null) => {
-    const result = await readPage({
-      v: 1,
-      kind: 'organizations',
-      binding: draft.binding,
-      page: next === null ? { kind: 'initial' } : { kind: 'continuation', next },
-    });
-    if (result?.kind !== 'organizations') return;
-    setOrganizations((previous) => next === null ? result.rows : [...previous, ...result.rows]);
-    setOrganizationNext(result.next ?? null);
+    pendingOrganizationDirectory.current?.abort();
+    const controller = new AbortController();
+    pendingOrganizationDirectory.current = controller;
+    const mountGeneration = mountedGeneration.current;
+    const isCurrent = () => (
+      !controller.signal.aborted
+      && pendingOrganizationDirectory.current === controller
+      && mountedGeneration.current === mountGeneration
+    );
+    setLoading(true);
+    try {
+      const result = await readPage({
+        v: 1,
+        kind: 'organizations',
+        binding: draft.binding,
+        page: next === null ? { kind: 'initial' } : { kind: 'continuation', next },
+      }, { signal: controller.signal, isCurrent });
+      if (!isCurrent() || result?.kind !== 'organizations') return;
+      setOrganizations((previous) => next === null ? result.rows : [...previous, ...result.rows]);
+      setOrganizationNext(result.next ?? null);
+    } finally {
+      if (pendingOrganizationDirectory.current === controller) {
+        pendingOrganizationDirectory.current = null;
+        if (mountedGeneration.current === mountGeneration) {
+          setLoading(pendingEnvironmentDirectory.current !== null);
+        }
+      }
+    }
   }, [draft.binding, readPage]);
 
   const loadEnvironments = React.useCallback(async (uuid: string, next: string | null) => {
@@ -253,6 +275,7 @@ function PosthogDraftEditor({
       && mountedGeneration.current === mountGeneration
       && environmentDirectoryGeneration.current === generation
     );
+    setLoading(true);
     try {
       const result = await readPage({
         v: 1,
@@ -265,7 +288,12 @@ function PosthogDraftEditor({
       setEnvironments((previous) => mergeEnvironments(previous, result.rows));
       setEnvironmentNext(result.next ?? null);
     } finally {
-      if (pendingEnvironmentDirectory.current === controller) pendingEnvironmentDirectory.current = null;
+      if (pendingEnvironmentDirectory.current === controller) {
+        pendingEnvironmentDirectory.current = null;
+        if (mountedGeneration.current === mountGeneration) {
+          setLoading(pendingOrganizationDirectory.current !== null);
+        }
+      }
     }
   }, [draft.binding, readPage]);
 
@@ -351,11 +379,15 @@ function PosthogDraftEditor({
     setMessage(null);
   }, [detailWindow, environments, organizationUuid, scanWindow, selectedEnvironments, text]);
 
+  const visibleMessage = message
+    ?? directoryMessages.organizations
+    ?? directoryMessages.environments;
+
   return (
     <Stack gap="medium">
       <Heading level={3} valueKey="plugins.posthog.ui.settings.heading" fallback="Choose PostHog environments" />
       <Text valueKey="plugins.posthog.ui.settings.description" fallback="Choose an organization, any non-empty subset of its environments, and the scan and detail windows." />
-      {message === null ? null : <Banner tone="warning" title="Configuration needs attention" titleKey="plugins.posthog.ui.settings.attention" description={message} />}
+      {visibleMessage === null ? null : <Banner tone="warning" title="Configuration needs attention" titleKey="plugins.posthog.ui.settings.attention" description={visibleMessage} />}
       <Form.Select
         label={text('plugins.posthog.ui.settings.organization', 'Organization')}
         options={organizations.map((organization) => ({

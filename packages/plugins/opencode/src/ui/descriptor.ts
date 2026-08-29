@@ -65,7 +65,7 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
       environmentVariables: {
         backendMode: {
           envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
-          settingKey: 'opencodeBackendMode',
+          settingKey: { scope: 'account', localId: 'opencodeBackendMode' },
           legacyMetadataKey: 'opencodeBackendMode',
           runtimeDescriptorField: 'backendMode',
           defaultValue: 'server',
@@ -74,8 +74,8 @@ export const OPENCODE_UI_DESCRIPTOR = Object.freeze({
         serverBaseUrl: {
           envKey: 'HAPPIER_OPENCODE_SERVER_URL',
           explicitEnvKey: 'HAPPIER_OPENCODE_SERVER_URL_EXPLICIT',
-          settingKey: 'opencodeServerBaseUrl',
-          byServerIdSettingKey: 'opencodeServerBaseUrlByServerIdV1',
+          settingKey: { scope: 'account', localId: 'opencodeServerBaseUrl' },
+          byServerIdSettingKey: { scope: 'account', localId: 'opencodeServerBaseUrlByServerIdV1' },
           legacyMetadataKey: 'opencodeServerBaseUrl',
           legacyExplicitMetadataKey: 'opencodeServerBaseUrlExplicit',
           runtimeDescriptorField: 'serverBaseUrl',

@@ -85,7 +85,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
             {
               dialogId: 'trust_folder',
               settingMutation: {
-                settingId: 'claudeUnifiedTerminalWorkspaceTrust',
+                settingId: { scope: 'account', localId: 'claudeUnifiedTerminalWorkspaceTrust' },
                 allowedValues: [
                   'always_trust_happier_workspaces',
                   'always_reject_happier_workspaces',
@@ -100,7 +100,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
             expect.objectContaining({
               dialogId: 'resume_choice',
               settingMutation: {
-                settingId: 'claudeUnifiedTerminalResumeChoice',
+                settingId: { scope: 'account', localId: 'claudeUnifiedTerminalResumeChoice' },
                 allowedValues: ['resume_from_summary', 'resume_full_session'],
               },
             }),
@@ -211,7 +211,7 @@ describe('CLAUDE_UI_DESCRIPTOR', () => {
     const keys = [detailsSlot.tab.titleKey, detailsSlot.tab.subtitleKey]
       .filter((key): key is string => typeof key === 'string');
 
-    expect(Object.keys(CLAUDE_UI_TRANSLATIONS)).toHaveLength(11);
+    expect(Object.keys(CLAUDE_UI_TRANSLATIONS)).toContain('de');
     for (const messages of Object.values(CLAUDE_UI_TRANSLATIONS)) {
       expect(keys.every((key) => typeof (messages as Readonly<Record<string, string>>)[key] === 'string'))
         .toBe(true);

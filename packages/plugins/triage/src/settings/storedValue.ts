@@ -1,12 +1,12 @@
 /**
- * The one structural rule every Triage Account Settings parser applies before
+ * The one structural rule every Triage Account KV catalog parser applies before
  * it looks at a single member.
  *
  * A stored value carrying a key this build does not know belongs to a newer
  * writer. Every Triage settings owner refuses it whole rather than reading the
  * members it recognizes, because a partial read is exactly how the next
  * ordinary write destroys durable user state another client can still read. It
- * lives here so the two owners cannot drift into two different ideas of "a
+ * lives here so the two catalogs cannot drift into two different ideas of "a
  * shape this build understands".
  */
 export function readExactKeys(

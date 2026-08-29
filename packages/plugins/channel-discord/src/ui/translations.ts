@@ -13,6 +13,20 @@ export const DISCORD_UI_TRANSLATIONS = Object.freeze({
     'channels.discord.setup.credential': 'Discord bot account',
     'channels.discord.setup.credential.description': 'Choose the existing Discord bot Connected Account; bot tokens are never entered here.',
   }),
+  de: Object.freeze({
+    'discord.automation.messageSource.setup.title': 'Discord-Kanal beobachten',
+    'discord.automation.messageSource.setup.description': 'Wähle den Discord-Bot und den Kanal aus, dessen Nachrichten diese Automation starten sollen.',
+    'discord.automation.messageSource.setup.submit': 'Kanal beobachten',
+    'discord.automation.messageSource.setup.credential': 'Discord-Bot-Account',
+    'discord.automation.messageSource.setup.credential.description': 'Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.',
+    'discord.automation.messageSource.setup.channel': 'Kanal-ID',
+    'discord.automation.messageSource.setup.channel.description': 'Gib die ID des Discord-Kanals ein, den der Bot bereits lesen kann.',
+    'channels.discord.setup.title': 'Discord-Channels einrichten',
+    'channels.discord.setup.description': 'Wähle den Connected Account des Discord-Bots aus, der verifiziert werden soll.',
+    'channels.discord.setup.submit': 'Bot verifizieren',
+    'channels.discord.setup.credential': 'Discord-Bot-Account',
+    'channels.discord.setup.credential.description': 'Wähle den vorhandenen Connected Account des Discord-Bots aus; Bot-Token werden hier niemals eingegeben.',
+  }),
   ru: Object.freeze({
     'discord.automation.messageSource.setup.title': 'Отслеживать канал Discord',
     'discord.automation.messageSource.setup.description': 'Выберите бота Discord и канал, сообщения которого должны запускать эту автоматизацию.',
@@ -157,6 +171,7 @@ export const DISCORD_UI_TRANSLATIONS = Object.freeze({
 
 export const DISCORD_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: DISCORD_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: DISCORD_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: DISCORD_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: DISCORD_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: DISCORD_UI_TRANSLATIONS.es },

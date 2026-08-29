@@ -544,6 +544,28 @@ describe('PostHog Triage source operations', () => {
         expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
     });
 
+    it('reads an exact configured issue even when discovery returned no candidates', async () => {
+        const host = context([crudIssueRead, queryIssueDetail]);
+        host.listAccounts.mockResolvedValueOnce({ status: 'complete', accounts: [] });
+
+        const discovered = await listPosthogInstances({ v: 1 }, host.value);
+        expect(discovered).toEqual({ kind: 'complete', candidates: [], failures: [] });
+
+        const result = await getPosthogSourceEntry({
+            v: 1,
+            instance: configuredInstance(),
+            localRef: {
+                kindId: 'error-issue',
+                collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1',
+                entryId: '00000000-0000-4000-8000-000000000001',
+            },
+        }, host.value);
+
+        expect(result).toMatchObject({ kind: 'present', snapshot: { title: 'TypeError' } });
+        expect(host.listAccounts).toHaveBeenCalledTimes(1);
+        expect(host.request.mock.calls.map(([input]) => input.method)).toEqual(['GET', 'POST']);
+    });
+
     it('reads one bounded sampled page and pages it only through its own continuation', async () => {
         const host = context([queryIssueEventsPage, { ...queryIssueEventsPage, hasMore: false }]);
         const instance = configuredInstance();

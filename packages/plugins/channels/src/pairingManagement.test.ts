@@ -420,6 +420,7 @@ describe('Channels pairing management writer', () => {
     const result = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target,
     }, context);
@@ -454,6 +455,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target: finalResultAutomationTarget,
     }, context);
@@ -627,6 +629,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target: newSessionPrincipalOutsidePairingAllowlistTarget,
     }, context);
@@ -675,6 +678,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target,
     }, ownerContext);
@@ -722,6 +726,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target: approvalEnabledTarget,
     }, context);
@@ -789,6 +794,7 @@ describe('Channels pairing management writer', () => {
     const createInput = {
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target,
     } as const;
@@ -854,6 +860,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: endpointSelectionFor(sharedDestinationEndpoint),
       target,
     }, context);
@@ -935,6 +942,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target,
     }, context);
@@ -1025,6 +1033,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target: automationTarget,
     }, context);
@@ -1089,6 +1098,7 @@ describe('Channels pairing management writer', () => {
     const challenge = await handlers.create({
       connectionId: 'connection-1',
       expectedConnectionRevision: 4,
+      pairingRequestId: 'pairing-request-1',
       endpointSelection: directEndpointSelection,
       target: automationTarget,
     }, context);

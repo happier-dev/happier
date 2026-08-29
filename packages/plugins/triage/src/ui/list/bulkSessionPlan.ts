@@ -5,11 +5,11 @@ import type {
 
 import type { TriageEntrySessionStartRequestV1 } from '../../sessions/entrySessionOrchestrator.js';
 import { isHostCancellation } from '../../hostCancellation.js';
+import { triageEntryRowKey } from '../../projection/listWindow.js';
 import {
     planTriageOfferedActionsV1,
     type TriageActionV1,
 } from '../../settings/actions.js';
-import { sameTriageEntryRefV1 } from '../state/surface.js';
 
 /**
  * How one bulk action over a multi-selection becomes Sessions, and nothing else
@@ -119,20 +119,19 @@ export type TriageBulkSessionPlanV1<TEntry = TriageBulkEntrySelectionV1> =
 /**
  * Selection order, first occurrence wins.
  *
- * Identity is the canonical component-wise predicate rather than a joined key:
- * `collisionScope` and `entryId` are bounded provider strings that admit any
- * byte, so a delimiter join reads two contract-valid distinct entries as one
- * (`core/CORPUS.md` §6) — and here that would drop a Session the user asked for.
- *
- * The scan is quadratic because a selection is bounded by what the list has
- * rendered; the window ceiling is the Action response bound, currently 56 rows.
+ * The list projection's canonical JSON-array key is already collision-safe for
+ * every contract-valid component. Reusing it keeps selection and bulk fan-out
+ * on one identity owner and avoids making large loaded selections quadratic.
  */
 function distinctInSelectionOrder<TEntry extends TriageBulkEntryIdentityV1>(
     selection: readonly TEntry[],
 ): readonly TEntry[] {
     const kept: TEntry[] = [];
+    const seen = new Set<string>();
     for (const candidate of selection) {
-        if (kept.some((held) => sameTriageEntryRefV1(held.entryRef, candidate.entryRef))) continue;
+        const key = triageEntryRowKey(candidate.entryRef);
+        if (seen.has(key)) continue;
+        seen.add(key);
         kept.push(candidate);
     }
     return kept;

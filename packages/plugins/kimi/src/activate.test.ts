@@ -50,10 +50,11 @@ describe('activate', () => {
     try {
       const buildSessionOptions = activation.registration('agents', 'kimi')?.cliSessionCommand?.buildSessionOptions;
       expect(buildSessionOptions).toBeTypeOf('function');
-      expect(buildSessionOptions?.({
+      expect(await buildSessionOptions?.({
         isExplicitCliSubcommand: true,
         parsed: { agentArgs: [] },
         settings: { kimiAcpPythonSelector: 'poll' },
+        pluginSettings: { account: { kimiAcpPythonSelector: 'poll' } },
         environment: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' },
         startOrigin: 'terminal',
       })).toEqual({

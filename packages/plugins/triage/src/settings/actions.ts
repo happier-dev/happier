@@ -1,6 +1,6 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import type { JsonValue, PluginSettingsMutationResult } from '@happier-dev/plugin-sdk';
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -8,10 +8,6 @@ import {
     defineProtocolString,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
-import {
-    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1,
-    type ScopedSettingsService,
-} from '@happier-dev/plugin-sdk/settings';
 import {
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
@@ -26,6 +22,7 @@ import {
     type TriageWorkspaceModeV1,
 } from '../sessions/entrySessionWorkspace.js';
 import { readExactKeys } from './storedValue.js';
+import type { TriageCatalogStoreV1 } from './accountKvCatalogStore.js';
 
 /**
  * The sole `triage.actions` owner: the configurable set of things a reader can
@@ -65,8 +62,8 @@ import { readExactKeys } from './storedValue.js';
  * runs.
  */
 
-/** The one versioned Account Settings key this document owns. */
-export const TRIAGE_ACTIONS_SETTING_ID_V1 = 'triage.actions';
+/** The one versioned Account KV key this document owns. */
+export const TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 = 'triage.actions';
 
 /**
  * `LaunchProfileV2.id` is bounded at 256 characters
@@ -77,31 +74,19 @@ export const MAX_TRIAGE_ACTION_PROFILE_ID_LENGTH_V1 = 256;
 /**
  * The whole serialized `triage.actions` value, measured over the complete value
  * rather than per member, because a set of individually valid actions is exactly
- * how a Settings record overflows. Settings owns this boundary; Triage aliases the
- * public field limit instead of maintaining a second 64-KiB ledger.
+ * how an Account KV value overflows. Account Data owns this boundary; Triage
+ * aliases it instead of maintaining a second 64-KiB ledger.
  */
 export const MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1 =
-    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFieldEncodedBytes;
+    PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes;
 
 /**
- * The opaque Settings revision token, bounded by the owner that already bounds
- * one on a host Action boundary.
- *
- * The value is minted by the host Settings record and is never interpreted
- * here: Triage compares it and echoes it, and reading a number out of it would
- * make this a second opinion about what a revision means. But it has to cross
- * an Action wire, so the wire needs a length — and picking one would be exactly
- * the sanity number this program keeps removing.
- *
- * `packages/protocol/src/plugins/settingsAdministration.ts` already answers the
- * same question for the same kind of token: the `expectedRevision` a settings
- * administration Action carries is `z.string().trim().min(1).max(512)`. That is
- * the canonical bound on a plugin-visible Settings revision at an Action
- * boundary, so it is the one used here rather than a Triage invention, and
- * `actions.test.ts` pins it against that owner's own schema so a change there
- * fails here.
+ * The Account KV adapter transports either the literal `absent` or the decimal
+ * spelling of the owner's non-negative safe-integer version. This wire bound is
+ * therefore derived from that real host boundary rather than inherited from
+ * the unrelated Account Settings revision grammar.
  */
-export const MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1 = 512;
+export const MAX_TRIAGE_ACCOUNT_KV_REVISION_TOKEN_LENGTH_V1 = String(Number.MAX_SAFE_INTEGER).length;
 
 /**
  * What a start needs materialized, in the orchestrator's own three pairings.
@@ -175,7 +160,7 @@ export type TriageActionV1 = Readonly<{
     target: TriageActionTargetV1;
 }>;
 
-export type TriageActionsSettingV1 = Readonly<{
+export type TriageActionsCatalogV1 = Readonly<{
     v: 1;
     /** Array order is display order; reordering is a first-class write. */
     actions: readonly TriageActionV1[];
@@ -185,33 +170,26 @@ const ALL_SUBJECTS: readonly TriageSourceWorkflowSubjectV1[] =
     Object.freeze([...TRIAGE_SOURCE_WORKFLOW_SUBJECTS_V1]);
 
 /**
- * THE action grammar — one declaration, three projections.
+ * THE action grammar — one declaration, two projections.
  *
  * An action record is expressed in exactly one place and then PROJECTED to
- * everywhere a boundary needs to state it: the declared Account Settings field
- * (`settings/actionsContribution.ts`), the two catalog Actions' wire contracts
- * (`actions/actionsCatalogProtocol.ts`), and the schema-derived size inventory.
+ * everywhere a boundary needs to state it: the two catalog Actions' wire
+ * contracts (`actions/actionsCatalogProtocol.ts`) and the schema-derived size
+ * inventory.
  *
  * It exists because the alternative was tried and failed. The declaration used
  * to be a hand-written JSON Schema that spelled the same members a second time,
  * and it drifted: it declared `reviewStart` as a CLOSED object of `{ kind }`
  * alone while this owner's record — and the wire, and the seed shipped in this
- * very file — carry `promptInvocationId` on that arm. The host compiles the
- * declaration with `compilePluginJsonSchema` and REFUSES a `set` whose value
- * fails it, so the divergence was not a documentation gap: the "Run code
- * review" action Happier ships could not be written back, and every catalog
- * containing one was unstorable with a perfectly valid record in front of the
- * person. Nothing caught it because no test crossed that validator.
- *
- * A projection cannot drift from its source. That is the whole reason the
- * second and third spellings are gone rather than merely corrected.
+ * very file — carry `promptInvocationId` on that arm. Projecting the Action wire
+ * grammar from this owner makes that second spelling unrepresentable.
  *
  * It is a grammar, not the authority. The rules a JSON Schema cannot state —
  * single-line normalization, UTF-8 byte bounds measured after trimming, the
  * refusal of a repeated subject, the whole-value ceiling and the CAS decision —
  * stay with the reader and writer below, which are strictly stricter than this
  * shape. Every member here is a reference or a closed vocabulary, so there is
- * nowhere on any of the three boundaries to express a condition, a step, a
+ * nowhere on either boundary to express a condition, a step, a
  * retry, a variable, a branch or a hook.
  */
 
@@ -307,10 +285,10 @@ export const TRIAGE_ACTION_DRAFT_MEMBERS_V1 = {
 
 export const TriageActionIdV1Schema = triageActionIdSchema;
 
-/** The opaque host revision, carried across the wire and never interpreted. */
-export const TriageSettingsRevisionV1Schema = defineProtocolString({
+/** The Account KV version token, carried across the Action wire as decimal text. */
+export const TriageAccountKvRevisionV1Schema = defineProtocolString({
     minLength: 1,
-    maxLength: MAX_TRIAGE_SETTINGS_REVISION_TOKEN_LENGTH_V1,
+    maxLength: MAX_TRIAGE_ACCOUNT_KV_REVISION_TOKEN_LENGTH_V1,
 });
 
 export const TriageActionRecordV1Schema = defineProtocolObject({
@@ -321,26 +299,10 @@ export const TriageActionRecordV1Schema = defineProtocolObject({
 export const TriageActionRecordsV1Schema = defineProtocolArray(TriageActionRecordV1Schema);
 
 /** The stored `triage.actions` value, exactly as `toStoredValue` emits it. */
-export const TriageActionsSettingValueV1Schema = defineProtocolObject({
+export const TriageActionsCatalogValueV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     actions: TriageActionRecordsV1Schema,
 }, { policy: 'closed' });
-
-/**
- * The stored value's grammar as the declarative Settings field states it.
- *
- * The projection drops the draft marker the Action-facing JSON Schema carries:
- * `PluginSettingFieldSchemaV2Schema` is a strict grammar with no `$schema`
- * member, so the marker that makes an Action schema self-describing is exactly
- * what a Settings declaration must not carry. Nothing else is altered — the
- * members, bounds, closed vocabularies and `additionalProperties: false` are
- * the source's own.
- */
-export function triageActionsSettingFieldJsonSchemaV1(): PluginJsonSchema {
-    const { $schema: _draftMarker, ...fieldSchema } = TriageActionsSettingValueV1Schema
-        .jsonSchema as PluginJsonSchema & Readonly<{ $schema?: string }>;
-    return fieldSchema;
-}
 
 /**
  * The shipped seed.
@@ -474,7 +436,7 @@ export function readTriageActionTitleKeyV1(action: TriageActionV1): string | nul
 }
 
 /** The parsed absence: the seed, which needs no write to exist. */
-export const TRIAGE_SEEDED_ACTIONS_V1: TriageActionsSettingV1 = Object.freeze({
+export const TRIAGE_SEEDED_ACTIONS_V1: TriageActionsCatalogV1 = Object.freeze({
     v: 1,
     actions: TRIAGE_DEFAULT_ACTIONS_V1,
 });
@@ -489,7 +451,7 @@ export const TRIAGE_SEEDED_ACTIONS_V1: TriageActionsSettingV1 = Object.freeze({
  */
 export type TriageActionsReadV1 = Readonly<{
     kind: 'absent' | 'parsed' | 'unreadable';
-    value: TriageActionsSettingV1;
+    value: TriageActionsCatalogV1;
 }>;
 
 export type TriageActionsRejectionV1 =
@@ -510,7 +472,7 @@ export type TriageActionsMutationResultV1 =
     | Readonly<{
         status: 'applied';
         actionId: string | null;
-        value: TriageActionsSettingV1;
+        value: TriageActionsCatalogV1;
         /**
          * The revision the applied value now sits at, so the caller can make a
          * second edit without a round trip — and, more importantly, cannot make
@@ -562,7 +524,7 @@ export type TriageActionCommandV1 = TriageActionCommandBaseV1 & (
 );
 
 export type TriageActionsDepsV1 = Readonly<{
-    settings: Pick<ScopedSettingsService, 'snapshot' | 'set'>;
+    catalog: TriageCatalogStoreV1;
     /** The opaque action id is minted only here, and only for a create. */
     mintActionId: () => string;
     signal?: AbortSignal;
@@ -672,7 +634,7 @@ function readAction(actionId: string, draft: Readonly<{
     workspaceMode: unknown;
     target: unknown;
 }>): Outcome<TriageActionV1> {
-    // The enclosing Account Settings field owns the real byte boundary. A
+    // The enclosing Account KV value owns the real byte boundary. A
     // second per-label ceiling would reject otherwise valid user configuration.
     const label = readSingleLineString(draft.label);
     if (label === null) return { ok: false, reason: 'label' };
@@ -724,7 +686,7 @@ export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
     const unreadable: TriageActionsReadV1 = { kind: 'unreadable', value: { v: 1, actions: [] } };
     if (typeof raw !== 'object') return unreadable;
     // The local whole-value bound is read back as well as written so the reader
-    // and writer agree about which Settings documents this implementation owns.
+    // and writer agree about which Account KV values this implementation owns.
     if (utf8ByteLength(JSON.stringify(raw)) > MAX_TRIAGE_ACTIONS_SERIALIZED_UTF8_BYTES_V1) {
         return unreadable;
     }
@@ -768,7 +730,7 @@ export function parseTriageActions(raw: unknown): TriageActionsReadV1 {
  * The value is rebuilt member by member rather than passed through, so nothing
  * the validator did not admit can ride into durable Account state.
  */
-function toStoredValue(value: TriageActionsSettingV1): JsonValue {
+function toStoredValue(value: TriageActionsCatalogV1): JsonValue {
     return {
         v: 1,
         actions: value.actions.map((action): JsonValue => ({
@@ -790,21 +752,21 @@ function toStoredValue(value: TriageActionsSettingV1): JsonValue {
 }
 
 export async function readTriageActions(deps: Readonly<{
-    settings: Pick<ScopedSettingsService, 'snapshot'>;
+    catalog: Pick<TriageCatalogStoreV1, 'read'>;
     signal?: AbortSignal;
 }>): Promise<TriageActionsReadV1 & Readonly<{ revision: string }>> {
-    const snapshot = await deps.settings.snapshot(deps.signal ? { signal: deps.signal } : undefined);
-    const read = parseTriageActions(snapshot.values[TRIAGE_ACTIONS_SETTING_ID_V1]);
+    const snapshot = await deps.catalog.read(deps.signal ? { signal: deps.signal } : undefined);
+    const read = parseTriageActions(snapshot.value);
     return { ...read, revision: snapshot.revision };
 }
 
 /** The verdict before the write: identical to the public one, minus the revision only a settled write can state. */
 type TriageActionsAppliedPlanV1 =
-    | Readonly<{ status: 'applied'; actionId: string | null; value: TriageActionsSettingV1 }>
+    | Readonly<{ status: 'applied'; actionId: string | null; value: TriageActionsCatalogV1 }>
     | Exclude<TriageActionsMutationResultV1, Readonly<{ status: 'applied' }>>;
 
 function applyCommand(
-    current: TriageActionsSettingV1,
+    current: TriageActionsCatalogV1,
     command: TriageActionCommandV1,
     mintActionId: () => string,
 ): TriageActionsAppliedPlanV1 {
@@ -886,7 +848,7 @@ function applyCommand(
  * user first expressed an opinion about it.
  *
  * `conflict` means exactly one thing — the host refused this write because
- * another writer moved the revision. Every other refusal the Settings service
+ * another writer moved the revision. Every other refusal the Account KV service
  * raises, and an abort or a store failure, surfaces as itself.
  */
 export async function mutateTriageAction(
@@ -894,14 +856,14 @@ export async function mutateTriageAction(
     command: TriageActionCommandV1,
 ): Promise<TriageActionsMutationResultV1> {
     const options = deps.signal ? { signal: deps.signal } : undefined;
-    const snapshot = await deps.settings.snapshot(options);
+    const snapshot = await deps.catalog.read(options);
     // The caller's own revision, compared BEFORE anything is computed. A write
     // aimed at a catalogue that has since moved is refused whether or not the
     // final `set` would have raced: the person is looking at a set that no
     // longer exists, and applying their intent to a different one is the
     // silent overwrite this comparison exists to prevent.
     if (snapshot.revision !== command.expectedRevision) return { status: 'conflict' };
-    const read = parseTriageActions(snapshot.values[TRIAGE_ACTIONS_SETTING_ID_V1]);
+    const read = parseTriageActions(snapshot.value);
     // Refusing here is what keeps a newer client's catalogue alive: this build
     // cannot merge into a value it cannot read, so it declines rather than
     // replacing it with its own idea of the set.
@@ -915,17 +877,17 @@ export async function mutateTriageAction(
         return { status: 'rejected', reason: 'valueTooLarge' };
     }
 
-    let mutation: PluginSettingsMutationResult;
+    let mutation: Readonly<{ revision: string }>;
     try {
         // The same revision goes to the host, so a writer that lands between
         // this read and this write still loses. The caller comparison above
         // covers the window the host cannot see; this covers the one it can.
-        mutation = await deps.settings.set(TRIAGE_ACTIONS_SETTING_ID_V1, stored, {
+        mutation = await deps.catalog.write(stored, {
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
     } catch (error) {
-        if (isPluginError(error) && error.code === 'plugin_settings_revision_conflict') {
+        if (isPluginError(error) && error.code === 'plugin_account_kv_conflict') {
             return { status: 'conflict' };
         }
         throw error;

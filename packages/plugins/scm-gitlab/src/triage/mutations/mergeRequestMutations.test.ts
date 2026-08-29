@@ -10,7 +10,6 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { GITLAB_MUTATION_DEADLINE_MS } from '../admission.js';
 import {
   createStubGitlabTransport,
   gitlabTestConfiguredInstance,
@@ -78,7 +77,12 @@ type ScriptedGitlabAnswer =
   | typeof ANSWER_LOST
   | typeof GITLAB_STUB_NEVER_ANSWERS;
 
-function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>) {
+const TEST_CALLER_DEADLINE_MS = 25;
+
+function scriptedTransport(
+  script: Readonly<Record<string, readonly ScriptedGitlabAnswer[]>>,
+  signal?: AbortSignal,
+) {
   const cursors = new Map<string, number>();
   return createStubGitlabTransport({
     respond: (request: RecordedGitlabRequest) => {
@@ -94,6 +98,7 @@ function scriptedTransport(script: Readonly<Record<string, readonly ScriptedGitl
       // answering does to a real `HttpService`.
       return answer;
     },
+    ...(signal === undefined ? {} : { signal }),
   });
 }
 
@@ -833,25 +838,21 @@ describe('gitlab/merge-request/reopen', () => {
 });
 
 
-/**
- * The source-owned deadline on an exact GitLab mutation.
- *
- * `CONTRACT.md` §5.2 gives the SOURCE the deadline for each exact provider Action, its
- * confirmation and its poll, and says Triage supplies none. It is the same bound as a detail
- * read's in mechanism and a different one in duration, because it covers a currentness read, a
- * write and a confirming read that are one press of one button.
- */
-describe('the GitLab mutation deadline', () => {
+/** An explicit caller deadline covers the complete exact mutation, not each subrequest anew. */
+describe('the GitLab mutation caller deadline', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
   it('gives up on a merge-request write whose provider never answers, before any effect', async () => {
     vi.useFakeTimers();
-    const transport = createStubGitlabTransport({ respond: () => GITLAB_STUB_NEVER_ANSWERS });
+    const transport = createStubGitlabTransport({
+      respond: () => GITLAB_STUB_NEVER_ANSWERS,
+      signal: AbortSignal.timeout(TEST_CALLER_DEADLINE_MS),
+    });
 
     const pending = mergeGitlabMergeRequest(mergeInput(), transport.context);
-    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(TEST_CALLER_DEADLINE_MS + 1);
     const result = await pending;
 
     // The currentness read is what hung, so nothing was written and the Action says so with the
@@ -883,7 +884,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
   async function pastMutationDeadline<TResult>(start: () => Promise<TResult>): Promise<TResult> {
     vi.useFakeTimers();
     const pending = start();
-    await vi.advanceTimersByTimeAsync(GITLAB_MUTATION_DEADLINE_MS + 1);
+    await vi.advanceTimersByTimeAsync(TEST_CALLER_DEADLINE_MS + 1);
     return pending;
   }
 
@@ -894,7 +895,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
         { status: 200, body: mergeRequestBody({ state: 'merged', merged_at: '2026-08-12T09:05:00.000Z' }) },
       ],
       [`PUT ${MERGE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => mergeGitlabMergeRequest(mergeInput(), transport.context),
@@ -915,7 +916,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
         { status: 200, body: mergeRequestBody({ draft: false }) },
       ],
       [`POST ${GRAPHQL_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => markGitlabMergeRequestReady(mergeInput(), transport.context),
@@ -935,7 +936,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
         { status: 200, body: mergeRequestBody({ state: 'closed' }) },
       ],
       [`PUT ${ITEM_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => closeGitlabMergeRequest(closeInput(), transport.context),
@@ -954,7 +955,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
         { status: 200, body: mergeRequestBody({ state: 'opened' }) },
       ],
       [`PUT ${ITEM_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => reopenGitlabMergeRequest(closeInput(), transport.context),
@@ -975,7 +976,7 @@ describe('a mutation write whose answer this source’s deadline took', () => {
         { status: 200, body: mergeRequestBody({ state: 'opened' }) },
       ],
       [`PUT ${MERGE_URL}`]: [GITLAB_STUB_NEVER_ANSWERS],
-    });
+    }, AbortSignal.timeout(TEST_CALLER_DEADLINE_MS));
 
     const result = await pastMutationDeadline(
       () => mergeGitlabMergeRequest(mergeInput(), transport.context),

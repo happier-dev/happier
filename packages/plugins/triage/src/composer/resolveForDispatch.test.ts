@@ -194,6 +194,56 @@ describe('resolving an attached Triage entry for dispatch', () => {
         expect(context).toContain(`summary: ${'s'.repeat(512)}`);
     });
 
+    it('projects the snapshot\'s bounded row facts, and never a detail-only one', () => {
+        // The row facts are the source's own bounded account of what the entry
+        // says about itself — the failing-checks fact on a pull request is the
+        // canonical example. They travel here, resolved fresh at dispatch, so
+        // no launch path ever needs to stringify provider prose into a prompt.
+        const context = projectTriageDispatchContext({
+            entryRef: ENTRY_REF,
+            snapshot: testkitSnapshot({
+                facts: [
+                    {
+                        id: 'example/checks',
+                        importance: 'primary',
+                        value: { kind: 'status', value: '2 failing', tone: 'danger' },
+                    },
+                    {
+                        id: 'example/comments',
+                        importance: 'secondary',
+                        value: { kind: 'number', value: 12, format: 'plain' },
+                    },
+                    {
+                        id: 'example/diff',
+                        importance: 'secondary',
+                        value: { kind: 'detailOnly' },
+                    },
+                ],
+            }),
+        });
+
+        expect(context).toContain('example/checks: 2 failing');
+        expect(context).toContain('example/comments: 12');
+        // `detailOnly` is the source's own statement that this fact is loaded
+        // only in its detail surface; projecting it would contradict the arm.
+        expect(context).not.toContain('example/diff');
+    });
+
+    it('keeps a schema-valid out-of-range timestamp bounded without throwing', () => {
+        const context = projectTriageDispatchContext({
+            entryRef: ENTRY_REF,
+            snapshot: testkitSnapshot({
+                facts: [{
+                    id: 'example/observed',
+                    importance: 'secondary',
+                    value: { kind: 'timestamp', atMs: Number.MAX_SAFE_INTEGER, format: 'relative' },
+                }],
+            }),
+        });
+
+        expect(context).toContain(`example/observed: ${Number.MAX_SAFE_INTEGER}`);
+    });
+
     it('reads the entry through the attached connection and returns Tier-A facts', async () => {
         const harness = createHarness();
 

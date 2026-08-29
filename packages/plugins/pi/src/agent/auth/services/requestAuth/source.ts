@@ -1,4 +1,4 @@
-import { PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { PI_REQUEST_AUTH_PRODUCER_VERSION_ENV } from './env.js';

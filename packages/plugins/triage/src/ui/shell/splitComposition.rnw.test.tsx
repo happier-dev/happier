@@ -197,7 +197,7 @@ async function measureFillRegion(width: number): Promise<void> {
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => {
-        await shell.press(await shell.getByRole('option', { name: ENTRY_TITLE }));
+        await shell.press(await shell.getByRole('button', { name: ENTRY_TITLE }));
     });
     await act(async () => { await Promise.resolve(); });
     await act(async () => { await Promise.resolve(); });
@@ -223,7 +223,7 @@ function fillRegionNode(): HTMLElement {
 
 /** The virtualized collection's own host element — the thing a remount replaces. */
 function collectionNode(): Element | null {
-    return document.querySelector('[role="listbox"]');
+    return document.querySelector('[role="grid"]');
 }
 
 async function closeTheDetail(shell: PluginUiTestkit): Promise<void> {
@@ -274,7 +274,7 @@ describe('the Triage shell composition under its own measurement', () => {
         // ...and the list it was opened FROM is still on screen and still
         // selectable. Replacing the page at this width loses the reader's scroll
         // position and their place in the queue they were working through.
-        await expect(shell.getByRole('option', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: ENTRY_TITLE })).resolves.toBeDefined();
     });
 
     it('stacks — replacing the list — when the measured region cannot honour both minima', async () => {
@@ -286,7 +286,7 @@ describe('the Triage shell composition under its own measurement', () => {
         await expect(shell.getByRole('button', { name: 'Close' })).resolves.toBeDefined();
         // §2.1's stacked rule: the selection replaces the list rather than
         // appearing beside it, and the list is not duplicated underneath.
-        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
     });
 
     it('stacks until it has actually been measured, rather than guessing a desktop width', async () => {
@@ -298,7 +298,7 @@ describe('the Triage shell composition under its own measurement', () => {
         await openTheRow(shell);
 
         await expect(shell.getByRole('button', { name: 'Close' })).resolves.toBeDefined();
-        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
     });
 
     it('crosses back to stacked on accessibility text alone, at one unchanged measured width', async () => {
@@ -310,7 +310,7 @@ describe('the Triage shell composition under its own measurement', () => {
         await openTheRow(shell);
 
         await expect(shell.getByRole('button', { name: 'Close' })).resolves.toBeDefined();
-        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
     });
 
     it('keeps the stacked list MOUNTED rather than tearing it out of the tree', async () => {
@@ -330,14 +330,14 @@ describe('the Triage shell composition under its own measurement', () => {
         expect(listRegionNode().style.display).toBe('none');
         expect(collectionNode()).toBe(collection);
         // Hidden is hidden: no announcement, no tab stop, nothing to press.
-        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
 
         await closeTheDetail(shell);
 
         // The reader comes back to the list they left, not a rebuilt one.
         expect(collectionNode()).toBe(collection);
         expect(listRegionNode().style.display).toBe('');
-        await expect(shell.getByRole('option', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: ENTRY_TITLE })).resolves.toBeDefined();
     });
 
     it('brings the list back beside an already-open entry when the region grows', async () => {
@@ -345,7 +345,7 @@ describe('the Triage shell composition under its own measurement', () => {
         await measureFillRegion(STACK_WIDTH);
         await openTheRow(shell);
         // Stacked: the entry has the whole region.
-        await expect(shell.queryByRole('option', { name: ENTRY_TITLE })).resolves.toBeUndefined();
+        await expect(shell.queryByRole('button', { name: ENTRY_TITLE })).resolves.toBeUndefined();
 
         // The window is widened — a resize, a rotation, or the reader closing a
         // sidebar — with the entry still open.
@@ -355,6 +355,6 @@ describe('the Triage shell composition under its own measurement', () => {
         // open. Recomputing the composition must not clear the selection, and
         // the list has to come back beside it rather than instead of it.
         await expect(shell.getByRole('button', { name: 'Close' })).resolves.toBeDefined();
-        await expect(shell.getByRole('option', { name: ENTRY_TITLE })).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: ENTRY_TITLE })).resolves.toBeDefined();
     });
 });

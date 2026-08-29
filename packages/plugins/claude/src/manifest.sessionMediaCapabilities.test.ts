@@ -26,7 +26,7 @@ describe('Claude plugin AgentRuntime capabilities', () => {
     expect(agent && 'agentCliRuntime' in agent).toBe(false);
   });
 
-  it('declares native session and execution-run operations explicitly', () => {
+  it('declares native Session operations and leaves finite Runs host-derived', () => {
     const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
 
     expect(agent?.capabilities?.sessions).toEqual({
@@ -49,11 +49,7 @@ describe('Claude plugin AgentRuntime capabilities', () => {
       runtimeActivitySnapshots: true,
       workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
     });
-    expect(agent?.capabilities?.executionRuns).toEqual({
-      open: ['create'],
-      checkpoint: true,
-      stop: true,
-    });
+    expect(agent?.capabilities).not.toHaveProperty('executionRuns');
   });
 
   it('declares terminal and current-session host access through V2 hostAccess grants', () => {

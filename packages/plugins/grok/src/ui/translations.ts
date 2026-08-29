@@ -5,6 +5,12 @@ export const GROK_UI_TRANSLATIONS = Object.freeze({
     'sessionInfo.grokSessionId': 'Grok session ID',
     'sessionInfo.grokSessionIdCopied': 'Grok session ID copied',
   }),
+  de: Object.freeze({
+    'agentInput.agent.grok': 'Grok',
+    'profiles.aiBackend.grokSubtitleExperimental': 'Grok Build CLI (experimentell)',
+    'sessionInfo.grokSessionId': 'Grok-Sitzungs-ID',
+    'sessionInfo.grokSessionIdCopied': 'Grok-Sitzungs-ID kopiert',
+  }),
   ru: Object.freeze({
     'agentInput.agent.grok': 'Grok',
     'profiles.aiBackend.grokSubtitleExperimental': 'Grok Build CLI (экспериментально)',
@@ -69,6 +75,7 @@ export const GROK_UI_TRANSLATIONS = Object.freeze({
 
 export const GROK_UI_TRANSLATION_BUNDLES = Object.freeze([
   { locale: 'en', messages: GROK_UI_TRANSLATIONS.en },
+  { locale: 'de', messages: GROK_UI_TRANSLATIONS.de },
   { locale: 'ru', messages: GROK_UI_TRANSLATIONS.ru },
   { locale: 'pl', messages: GROK_UI_TRANSLATIONS.pl },
   { locale: 'es', messages: GROK_UI_TRANSLATIONS.es },

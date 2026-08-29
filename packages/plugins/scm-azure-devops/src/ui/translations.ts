@@ -15,6 +15,18 @@ export const AZURE_DEVOPS_UI_TRANSLATIONS = Object.freeze({
     'plugins.azureDevops.auth.token.description': 'Use Code (read) to browse. Actions that change Azure DevOps require Code (read & write).',
     'plugins.azureDevops.auth.manual.title': 'Azure DevOps personal access token',
   }),
+  de: Object.freeze({
+    ...AZURE_DEVOPS_RENDER_UI_TRANSLATIONS.de,
+    ...AZURE_DEVOPS_ADDITIONAL_UI_TRANSLATIONS.de,
+    ...AZURE_DEVOPS_PUBLICATION_UI_TRANSLATIONS.de,
+    'plugins.azureDevops.account.title': 'Azure DevOps-Konto',
+    'plugins.azureDevops.account.description': 'Azure DevOps-Bereitstellung und persönliches Zugriffstoken zum Lesen von Pull Requests.',
+    'plugins.azureDevops.auth.base.title': 'Azure DevOps-URL',
+    'plugins.azureDevops.auth.base.description': 'https://dev.azure.com/ihre-organisation für Azure DevOps Services oder die URL Ihrer Azure DevOps Server-Sammlung.',
+    'plugins.azureDevops.auth.token.title': 'Persönliches Zugriffstoken',
+    'plugins.azureDevops.auth.token.description': 'Verwenden Sie Code (Lesen) zum Durchsuchen. Aktionen, die Azure DevOps ändern, erfordern Code (Lesen und Schreiben).',
+    'plugins.azureDevops.auth.manual.title': 'Persönliches Azure DevOps-Zugriffstoken',
+  }),
   ru: Object.freeze({
     ...AZURE_DEVOPS_RENDER_UI_TRANSLATIONS.ru,
     ...AZURE_DEVOPS_ADDITIONAL_UI_TRANSLATIONS.ru,

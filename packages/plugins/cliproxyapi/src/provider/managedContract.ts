@@ -43,7 +43,10 @@ export const CLIPROXYAPI_MANAGED_CATALOG_SOURCE_REGISTRY_VERSION =
 export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
   Object.freeze({
     purpose: 'openai-upstream',
-    title: 'Use OpenAI upstream account',
+    title: Object.freeze({
+      key: 'managedPurpose.openai.title',
+      fallback: 'Use OpenAI upstream account',
+    }),
     authEntry: Object.freeze({ id: 'codex', provider: 'codex' }),
     protocols: Object.freeze(['openai-chat', 'openai-responses']),
     endpointTemplateIds: Object.freeze([
@@ -71,7 +74,10 @@ export const CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES = Object.freeze([
   }),
   Object.freeze({
     purpose: 'anthropic-upstream',
-    title: 'Use Anthropic upstream account',
+    title: Object.freeze({
+      key: 'managedPurpose.anthropic.title',
+      fallback: 'Use Anthropic upstream account',
+    }),
     authEntry: Object.freeze({ id: 'claude', provider: 'claude' }),
     protocols: Object.freeze(['anthropic']),
     endpointTemplateIds: Object.freeze(['cliproxyapi-anthropic']),

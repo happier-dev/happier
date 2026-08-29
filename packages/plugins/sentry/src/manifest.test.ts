@@ -64,13 +64,14 @@ describe('Sentry plugin manifest', () => {
     });
   });
 
-  it('omits selected evidence until its full projection fits the Composer contract', () => {
+  it('declares only the compact selected-evidence Composer reference', () => {
     const contributes = PLUGIN_MANIFEST.contributes as Readonly<Record<string, unknown>>;
-    // The current maximum allow-listed event projection exceeds the Composer
-    // reference context contract. Publishing a smaller source-private excerpt
-    // would silently change the approved evidence semantics, so this source
-    // fails closed pending the explicit evidence-projection amendment.
-    for (const family of ['composerReferences', 'composerAttachments', 'composerControls']) {
+    expect(contributes.composerReferences).toEqual([{
+      id: 'sentry-evidence',
+      title: 'Sentry occurrence',
+      icon: 'error',
+    }]);
+    for (const family of ['composerAttachments', 'composerControls', 'composerRegions']) {
       expect(contributes[family] ?? []).toEqual([]);
     }
     const [contribution] = PLUGIN_MANIFEST.contributes.targetedPluginContributions;

@@ -513,8 +513,8 @@ describe('the mounted Azure DevOps review publication', () => {
   it('mounts review and one-comment publication against the frozen comparison', async () => {
     const detail = await mountDetail(REVIEW_INPUT);
 
-    await expect(detail.getByRole('option', { name: 'Please keep this branch explicit.' }))
-      .resolves.toMatchObject({ state: { selected: true } });
+    await expect(detail.getByRole('checkbox', { name: 'Please keep this branch explicit.' }))
+      .resolves.toMatchObject({ state: { checked: true } });
     await detail.press(await detail.getByRole('button', { name: 'Publish as new thread' }));
 
     const revision = FIXTURE.detailInput.observation.snapshot.reviewRevision;
@@ -558,7 +558,7 @@ describe('the mounted Azure DevOps review publication', () => {
 
     await detail.press(await detail.getByRole('tab', { name: 'Threads' }));
     await detail.press(await detail.getByRole('button', { name: 'Reply to thread 7' }));
-    await detail.press(await detail.getByRole('option', { name: 'Please keep this branch explicit.' }));
+    await detail.press(await detail.getByRole('radio', { name: 'Please keep this branch explicit.' }));
     await detail.press(await detail.getByRole('button', { name: 'Publish reply' }));
 
     expect(recordedWrites().at(-1)).toMatchObject({
@@ -755,7 +755,7 @@ describe('the mounted Azure DevOps detail read presentation', () => {
     }));
 
     await expect(detail.queryByText('approved · required')).resolves.toBeDefined();
-    await expect(detail.queryByText('Showing what was read so far'))
+    await expect(detail.queryByText('Showing the last details Azure DevOps returned'))
       .resolves.toBeDefined();
   });
 

@@ -91,8 +91,18 @@ export const GitlabObservedHeadShaV1Schema = defineProtocolUtf8String({
   pattern: '^[0-9a-f]{7,64}$',
 });
 
+/** Review verdicts whose complete provider semantics GitLab V1 can publish safely. */
+export const GITLAB_REVIEW_VERDICT_KINDS_V1 = Object.freeze(['approve', 'comment'] as const);
+const GitlabReviewVerdictKindV1Schema = defineProtocolUnion([
+  defineProtocolLiteral(GITLAB_REVIEW_VERDICT_KINDS_V1[0]),
+  defineProtocolLiteral(GITLAB_REVIEW_VERDICT_KINDS_V1[1]),
+]);
+
 const GitlabReviewPublicationPlanV1Schema =
-  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(GitlabObservedHeadShaV1Schema);
+  defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema(
+    GitlabObservedHeadShaV1Schema,
+    GitlabReviewVerdictKindV1Schema,
+  );
 const GitlabSingleReviewCommentPublicationPlanV1Schema =
   defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema(GitlabObservedHeadShaV1Schema);
 
@@ -223,7 +233,6 @@ export const GitlabReviewPublicationResultV1Schema = defineProtocolUnion([
       defineProtocolLiteral('start_advanced'),
       defineProtocolLiteral('state_changed'),
       defineProtocolLiteral('unsupported_anchor'),
-      defineProtocolLiteral('unsupported_verdict'),
       defineProtocolLiteral('dispatch_claim_failed'),
       defineProtocolLiteral('preexisting_drafts'),
     ]),

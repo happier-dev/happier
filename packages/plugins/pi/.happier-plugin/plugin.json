@@ -5,13 +5,6 @@
     "agents": [
       {
         "capabilities": {
-          "executionRuns": {
-            "checkpoint": false,
-            "open": [
-              "create"
-            ],
-            "stop": true
-          },
           "sessions": {
             "cancel": true,
             "compaction": {
@@ -321,6 +314,16 @@
             "settingsAgents.plugins.pi.fields.piAgentDir.title": "Agent directory",
             "settingsAgents.plugins.pi.sections.storage.footer": "This directory is used only for Pi sessions started or discovered by Happier.",
             "settingsAgents.plugins.pi.sections.storage.title": "Storage",
+            "settingsAgents.plugins.pi.title": "Pi"
+          }
+        },
+        {
+          "locale": "de",
+          "messages": {
+            "settingsAgents.plugins.pi.fields.piAgentDir.subtitle": "Optionales Stammverzeichnis für Pi-Daten. Leer lassen, um ~/.pi/agent zu verwenden.",
+            "settingsAgents.plugins.pi.fields.piAgentDir.title": "Agentenverzeichnis",
+            "settingsAgents.plugins.pi.sections.storage.footer": "Dieses Verzeichnis wird nur für Pi-Sitzungen verwendet, die von Happier gestartet oder erkannt wurden.",
+            "settingsAgents.plugins.pi.sections.storage.title": "Speicher",
             "settingsAgents.plugins.pi.title": "Pi"
           }
         },

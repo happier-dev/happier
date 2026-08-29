@@ -21,7 +21,6 @@ import {
 } from '../posthogContracts.js';
 import { readPosthogSampledIssueEvents } from '../source/detail/issueEvents.js';
 import { runPosthogBoundedInvocation } from '../source/invocationDeadline.js';
-import { POSTHOG_MOUNTED_DETAIL_DEADLINE_MS } from '../source/operations.js';
 import type { PosthogProjectedIssueEvent } from '../ui/detail/issueEventProjection.js';
 
 import {
@@ -108,7 +107,7 @@ export async function resolvePosthogEvidenceReference(
     }, origin.origin);
     const read = await runPosthogBoundedInvocation(
         context,
-        POSTHOG_MOUNTED_DETAIL_DEADLINE_MS,
+        undefined,
         async (signal) => await readPosthogSampledIssueEvents(client, {
             teamRouteId: candidate.teamPathId,
             issueId: candidate.entryId,

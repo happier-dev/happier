@@ -93,8 +93,6 @@ export const AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
  * Triage supplies none and there is no public override. It covers the currentness read, the write
  * and the completion poll together, because what it protects is one person waiting on one button.
  */
-export const AZURE_DEVOPS_MUTATION_DEADLINE_MS = 45_000;
-
 /**
  * How long this source waits on a completion Azure queued rather than finished.
  *
@@ -193,7 +191,6 @@ export async function admitAzureMutation(
 
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: AZURE_DEVOPS_MUTATION_DEADLINE_MS,
   });
   const opened = await openClient({
     services: {

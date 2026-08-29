@@ -11,7 +11,10 @@ import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-source
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
-import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
+import {
+  GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
+} from '../../triage/contribution.js';
 
 import { renderSurface } from '../renderSurface.js';
 
@@ -110,6 +113,12 @@ let nextResult: JsonValue = { kind: 'applied', effect: 'changed', observation: A
 let nextActionGate: Promise<JsonValue> | null = null;
 let nextActionError: unknown | null = null;
 let completedMutations = 0;
+let nextCapabilities: JsonValue = {
+  kind: 'capabilities',
+  operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+    .map((key) => [key, { kind: 'available' }])),
+  mergeMethods: { merge: { kind: 'available' }, squash: { kind: 'available' }, rebase: { kind: 'available' } },
+};
 
 async function mountDetail(
   state: Readonly<{ presentation: string; nativeLabel: string }>,
@@ -138,6 +147,11 @@ async function mountDetail(
       launchInput: launchInput(state, kindId, linkedSessions),
       handlers: {
         executeAction: async ({ action, input }) => {
+          if (typeof action === 'object' && action !== null
+            && 'localId' in action
+            && action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities) {
+            return nextCapabilities;
+          }
           recorded.push({ action, input });
           if (nextActionError !== null) throw nextActionError;
           if (action === 'reviews.comments.list') {
@@ -192,6 +206,9 @@ async function mountDetail(
       },
     }) as PluginUiTestkit;
   });
+  await vi.waitFor(async () => {
+    expect(await fixture.queryByText('Checking repository permissions…')).toBeUndefined();
+  });
   mounted.push(fixture);
   return fixture;
 }
@@ -223,6 +240,12 @@ async function waitForPublicationProposalRead(
 afterEach(async () => {
   recorded.splice(0);
   completedMutations = 0;
+  nextCapabilities = {
+    kind: 'capabilities',
+    operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+      .map((key) => [key, { kind: 'available' }])),
+    mergeMethods: { merge: { kind: 'available' }, squash: { kind: 'available' }, rebase: { kind: 'available' } },
+  };
   nextResult = { kind: 'applied', effect: 'changed', observation: APPLIED_OBSERVATION };
   nextActionGate = null;
   nextActionError = null;
@@ -243,6 +266,56 @@ afterEach(async () => {
  * active here.
  */
 describe('the mounted GitHub write controls', () => {
+  it('fails writes closed with a reason and renders only GitHub-enabled merge methods', async () => {
+    nextCapabilities = {
+      kind: 'capabilities',
+      operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+        .map((key) => [key, { kind: 'available' }])),
+      mergeMethods: {
+        merge: { kind: 'available' },
+        squash: { kind: 'unavailable', code: 'repository_unsupported' },
+        rebase: { kind: 'unavailable', code: 'api_not_exposed' },
+      },
+    };
+    const enabled = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await vi.waitFor(async () => {
+      expect(await enabled.queryByRole('radio', { name: 'Create a merge commit' })).toBeDefined();
+    });
+    expect(await enabled.queryByRole('radio', { name: 'Squash and merge' })).toBeUndefined();
+
+    nextCapabilities = {
+      kind: 'capabilities',
+      operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+        .map((key) => [key, { kind: 'available' }])),
+      mergeMethods: {
+        merge: { kind: 'unavailable', code: 'repository_unsupported' },
+        squash: { kind: 'unavailable', code: 'repository_unsupported' },
+        rebase: { kind: 'unavailable', code: 'repository_unsupported' },
+      },
+    };
+    const noMergeMethod = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    expect((await noMergeMethod.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+      .toBe(true);
+    expect(await noMergeMethod.queryByText('This repository does not support this change.'))
+      .toBeDefined();
+
+    nextCapabilities = {
+      kind: 'capabilities',
+      operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+        .map((key) => [key, { kind: 'denied', code: 'repository_archived' }])),
+      mergeMethods: {
+        merge: { kind: 'denied', code: 'repository_archived' },
+        squash: { kind: 'denied', code: 'repository_archived' },
+        rebase: { kind: 'denied', code: 'repository_archived' },
+      },
+    };
+    const denied = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+    await vi.waitFor(async () => {
+      expect((await denied.getByRole('button', { name: 'Changes unavailable' })).state?.disabled)
+        .toBe(true);
+    });
+    expect(await denied.queryByText('This repository is archived.')).toBeDefined();
+  });
   it('keeps the lifecycle glyph static while merge is pending or refused', async () => {
     let settle!: (value: JsonValue) => void;
     const animation = vi.spyOn(Animated, 'timing');
@@ -346,10 +419,18 @@ describe('the mounted GitHub write controls', () => {
         surfaceContext: createSurfaceContextFixture({ reducedMotion: true }),
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
         launchInput: launchInput({ presentation: 'active', nativeLabel: 'Open' }),
-        handlers: { executeAction: async () => nextResult },
+        handlers: { executeAction: async ({ action }) => (
+          typeof action === 'object' && action !== null && 'localId' in action
+            && action.localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities
+            ? nextCapabilities
+            : nextResult
+        ) },
       }) as PluginUiTestkit;
     });
     mounted.push(fixture);
+    await vi.waitFor(async () => {
+      expect(await fixture.queryByText('Checking repository permissions…')).toBeUndefined();
+    });
     await act(async () => {
       await fixture.press(await fixture.getByRole('radio', { name: 'Create a merge commit' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Merge pull request' }));

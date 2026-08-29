@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { mintTriageOpaqueIdV1 } from './opaqueId.js';
 import {
-    TRIAGE_SAVED_VIEWS_SETTING_ID_V1,
+    TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
     mutateTriageSavedViews,
     readTriageSavedViews,
 } from './settings/savedViews.js';
-import { createTestkitAccountSettings } from './settings/testkit/accountSettings.test-support.js';
+import { createTestkitAccountKv } from './settings/testkit/accountKv.test-support.js';
 
 /**
  * The one opaque-id owner, proved where its shape is load-bearing.
@@ -48,15 +48,15 @@ describe('the Triage opaque-id owner', () => {
     });
 
     it('mints a saved view that the saved-views owner can read back on a runtime with no WebCrypto', async () => {
-        const accountSettings = createTestkitAccountSettings();
+        const accountKv = createTestkitAccountKv();
         const deps = {
-            settings: accountSettings.settings,
+            catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             mintViewId: () => withoutWebCrypto(() => mintTriageOpaqueIdV1()),
         };
 
         const written = await mutateTriageSavedViews(deps, {
             kind: 'create',
-            expectedRevision: accountSettings.revision(),
+            expectedRevision: accountKv.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Needs me',
             ...LENS,
             select: true,
@@ -66,10 +66,10 @@ describe('the Triage opaque-id owner', () => {
         // The deciding assertion: the value this build wrote is a value this
         // build can read. `unreadable` here would mean the reader has silently
         // lost every saved view they had.
-        const read = await readTriageSavedViews({ settings: accountSettings.settings });
+        const read = await readTriageSavedViews({ catalog: accountKv.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(read.kind).toBe('parsed');
         expect(read.value.views.map((view) => view.label)).toEqual(['Needs me']);
         expect(read.value.selectedViewId).toBe(read.value.views[0]?.viewId);
-        expect(accountSettings.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1)).toBeDefined();
+        expect(accountKv.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toBeDefined();
     });
 });

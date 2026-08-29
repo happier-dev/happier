@@ -130,6 +130,9 @@
         "id": "cliproxyapi",
         "kind": "aggregator",
         "managedRuntime": {
+          "connectedAccountPurposeBindingPolicy": {
+            "minimumBound": 1
+          },
           "connectedAccounts": [
             {
               "materializationKinds": [
@@ -141,7 +144,10 @@
                 "localId": "openai-codex",
                 "pluginId": "happier.agent.codex"
               },
-              "title": "Use OpenAI upstream account"
+              "title": {
+                "fallback": "Use OpenAI upstream account",
+                "key": "managedPurpose.openai.title"
+              }
             },
             {
               "materializationKinds": [
@@ -153,7 +159,10 @@
                 "localId": "claude-subscription",
                 "pluginId": "happier.agent.claude"
               },
-              "title": "Use Anthropic upstream account"
+              "title": {
+                "fallback": "Use Anthropic upstream account",
+                "key": "managedPurpose.anthropic.title"
+              }
             }
           ],
           "endpointTemplateIds": [
@@ -206,7 +215,92 @@
       "renderers": [],
       "settingsGroups": [],
       "settingsPages": [],
-      "translations": [],
+      "translations": [
+        {
+          "locale": "en",
+          "messages": {
+            "managedPurpose.anthropic.title": "Use Anthropic upstream account",
+            "managedPurpose.openai.title": "Use OpenAI upstream account"
+          }
+        },
+        {
+          "locale": "de",
+          "messages": {
+            "managedPurpose.anthropic.title": "Anthropic-Upstream-Konto verwenden",
+            "managedPurpose.openai.title": "OpenAI-Upstream-Konto verwenden"
+          }
+        },
+        {
+          "locale": "ru",
+          "messages": {
+            "managedPurpose.anthropic.title": "Использовать вышестоящую учётную запись Anthropic",
+            "managedPurpose.openai.title": "Использовать вышестоящую учётную запись OpenAI"
+          }
+        },
+        {
+          "locale": "pl",
+          "messages": {
+            "managedPurpose.anthropic.title": "Użyj nadrzędnego konta Anthropic",
+            "managedPurpose.openai.title": "Użyj nadrzędnego konta OpenAI"
+          }
+        },
+        {
+          "locale": "es",
+          "messages": {
+            "managedPurpose.anthropic.title": "Usar la cuenta de Anthropic de origen",
+            "managedPurpose.openai.title": "Usar la cuenta de OpenAI de origen"
+          }
+        },
+        {
+          "locale": "fr",
+          "messages": {
+            "managedPurpose.anthropic.title": "Utiliser le compte Anthropic en amont",
+            "managedPurpose.openai.title": "Utiliser le compte OpenAI en amont"
+          }
+        },
+        {
+          "locale": "it",
+          "messages": {
+            "managedPurpose.anthropic.title": "Usa l’account Anthropic upstream",
+            "managedPurpose.openai.title": "Usa l’account OpenAI upstream"
+          }
+        },
+        {
+          "locale": "pt",
+          "messages": {
+            "managedPurpose.anthropic.title": "Usar a conta Anthropic de origem",
+            "managedPurpose.openai.title": "Usar a conta OpenAI de origem"
+          }
+        },
+        {
+          "locale": "ca",
+          "messages": {
+            "managedPurpose.anthropic.title": "Utilitza el compte Anthropic d’origen",
+            "managedPurpose.openai.title": "Utilitza el compte OpenAI d’origen"
+          }
+        },
+        {
+          "locale": "zh-Hans",
+          "messages": {
+            "managedPurpose.anthropic.title": "使用上游 Anthropic 帐户",
+            "managedPurpose.openai.title": "使用上游 OpenAI 帐户"
+          }
+        },
+        {
+          "locale": "zh-Hant",
+          "messages": {
+            "managedPurpose.anthropic.title": "使用上游 Anthropic 帳戶",
+            "managedPurpose.openai.title": "使用上游 OpenAI 帳戶"
+          }
+        },
+        {
+          "locale": "ja",
+          "messages": {
+            "managedPurpose.anthropic.title": "上流の Anthropic アカウントを使用",
+            "managedPurpose.openai.title": "上流の OpenAI アカウントを使用"
+          }
+        }
+      ],
       "views": []
     },
     "voiceModelPacks": [],

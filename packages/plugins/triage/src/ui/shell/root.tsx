@@ -48,7 +48,7 @@ import { TriageFilterRail } from '../filters/rail.js';
 import { planTriageFilterFacetsV1 } from '../filters/plan.js';
 import {
   TRIAGE_PINNED_SECTION_KEY,
-  isTriageListSectionItemSelectable,
+  isTriageListSectionItemEntry,
   planTriageListSections,
   type TriageListSectionItemV1,
 } from '../list/sections.js';
@@ -588,7 +588,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   );
   /**
    * The stored view the REDUCER names, resolved through the one read-side
-   * owner. The reducer's id is used rather than the Settings one because a
+   * owner. The reducer's id is used rather than the Account KV one because a
    * copied location can name a view this Account has not selected, and the
    * control has to name the lens on screen rather than the durable preference
    * behind it.
@@ -1442,10 +1442,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
 
         {/*
           The configured actions, edited where they are pressed.
-          `triage.actions` is a hidden Settings field because the declarative
-          Settings form has no repeatable record editor — so this is the editor
-          the declaration points at, and it is the ONLY writer of that key on
-          this page.
+          `triage.actions` is an Account KV catalog because the declarative
+          Settings form is not a repeatable record editor. This is the only
+          writer of that catalog on this page.
         */}
         {editingActions ? (
           <TriageActionsEditor
@@ -1633,6 +1632,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               style={TRIAGE_LIST_STYLE_V1}
               accessibilityLabel={TRIAGE_DISPLAY_NAME}
               density="compact"
+              accessibilityPattern="grid"
               sections={sections}
               /*
                 The shared `List`'s own search input, not a Triage one. Without it
@@ -1656,18 +1656,22 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               }}
               keyForItem={readTriageListSectionItemKey}
               renderItem={renderRow}
-              // The shared owner of activation, roving focus, the tab stop and the
-              // option semantics. Without it every row rendered as inert text and a
-              // reader had no way to open anything.
+              // The shared owner of activation, roving focus, the tab stop and
+              // grid row/cell semantics. Without it every row rendered as inert
+              // text and a reader had no way to open anything.
               selection={{
                 selectedKey,
                 onSelectedKeyChange: activateRow,
                 onFocusedKeyChange: focusRow,
                 focusRequest: listFocusRequest,
+                // A continuation statement owns no entry/detail destination.
+                // Its visible Load more button remains a sibling grid action;
+                // the shared List must not invent a dead primary row button.
+                isItemActivatable: isTriageListSectionItemEntry,
                 // The bulk set beside the detail cursor, never instead of it.
                 multiple: {
                   store: bulkSelection,
-                  isItemSelectable: isTriageListSectionItemSelectable,
+                  isItemSelectable: isTriageListSectionItemEntry,
                   // The rows this page narrowed away are HIDDEN, not gone. The
                   // shared owner cannot tell the difference on its own here,
                   // because the narrowing happened before a row ever reached it.
@@ -1916,7 +1920,7 @@ function useTriageSettledLocation(input: Readonly<{
  * Bind the durable saved-view state to this page's lens.
  *
  * It owns exactly the two rules `core/SURFACE.md` §6.5 states about a page that
- * is starting or has drifted, and neither of them writes Settings:
+ * is starting or has drifted, and neither of them writes Account KV:
  *
  * - **Restore.** On the first authoritative answer, a page whose location
  *   carried no lens of its own applies the selected view's exact facets, order

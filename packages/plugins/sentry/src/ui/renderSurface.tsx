@@ -45,6 +45,7 @@ import {
   Tabs,
   Text,
   defineUiSurface,
+  usePluginHostApi,
   usePluginTranslation,
   useSurfaceContext,
   useTabPanelActivity,
@@ -55,6 +56,7 @@ import {
   type TriageDetailSurfaceInputV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { useTriageEvidenceDisclosure } from '@happier-dev/triage-sources/ui';
 // The presentation rules used below are projections of the Triage contract's own
 // closed fact and failure vocabularies, so they are consumed from the one published
 // owner rather than re-spelled here: six copies is how one declared `compact` number
@@ -77,6 +79,7 @@ import type {
   SentryFrameV1,
 } from '../privacy/sentryEventProjection.js';
 import { sentryProjectionHasTrace } from '../privacy/sentryEventProjection.js';
+import { createSentryEvidenceCandidate } from '../composer/candidate.js';
 
 import {
   projectSentryDetailOverview,
@@ -845,9 +848,14 @@ function OccurrencesFooter({
  * happen (`SENTRY.md` §7.2b).
  */
 function ActivatedOccurrenceDetail({
+  input,
   controller,
-}: Readonly<{ controller: SentrySelectedEventControllerV1 }>): React.ReactElement | null {
+}: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  controller: SentrySelectedEventControllerV1;
+}>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const disclosure = useTriageEvidenceDisclosure();
   const [revealUser, setRevealUser] = React.useState(false);
   const { active } = useTabPanelActivity();
   const { read, selected } = controller;
@@ -896,6 +904,12 @@ function ActivatedOccurrenceDetail({
         : <Text variant="label" value={projection.title} />}
       <SelectedEventRefreshNotice read={read} />
       <RedactionNotice projection={projection} />
+      <SelectedOccurrenceEvidenceAction
+        key={projection.eventId}
+        input={input}
+        projection={projection}
+        disclosure={disclosure}
+      />
       {projection.tags.length === 0
         ? null
         : (
@@ -923,6 +937,81 @@ function ActivatedOccurrenceDetail({
         )}
       <Divider />
     </Stack>
+  );
+}
+
+/**
+ * Confirms the exact visible occurrence before issuing its identity-only
+ * candidate. The source owns this per-item disclosure decision; Triage still
+ * owns the one Composer transaction and never receives provider bytes here.
+ */
+function SelectedOccurrenceEvidenceAction({
+  input,
+  projection,
+  disclosure,
+}: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  projection: SentryEventProjectionV1;
+  disclosure: ReturnType<typeof useTriageEvidenceDisclosure>;
+}>): React.ReactElement | null {
+  const hostApi = usePluginHostApi();
+  const text = usePluginTranslation();
+  const [busy, setBusy] = React.useState(false);
+  const attempt = React.useRef<AbortController | null>(null);
+
+  React.useEffect(() => () => {
+    attempt.current?.abort();
+    attempt.current = null;
+  }, []);
+
+  if (!disclosure.available) return null;
+  const title = text('plugins.sentry.ui.selectedOccurrence', 'Selected occurrence');
+  const action = text(
+    'plugins.sentry.ui.addSelectedOccurrence',
+    'Add selected occurrence to message',
+  );
+
+  return (
+    <Button
+      title={action}
+      variant="secondary"
+      busy={busy}
+      onPress={async () => {
+        attempt.current?.abort();
+        const controller = new AbortController();
+        attempt.current = controller;
+        setBusy(true);
+        try {
+          // The selected projection and its redaction notice are visible in
+          // this exact panel. Confirmation happens before candidate issuance;
+          // a selection change or unmount aborts the host dialog.
+          const confirmed = await hostApi.confirm(action, {
+            title,
+            signal: controller.signal,
+          });
+          if (!confirmed || controller.signal.aborted || attempt.current !== controller) return;
+          await disclosure.disclose(async (signal) => {
+            if (signal.aborted || controller.signal.aborted || attempt.current !== controller) {
+              return null;
+            }
+            return createSentryEvidenceCandidate({
+              instance: input.instance,
+              localRef: {
+                kindId: input.observation.entryRef.kindId,
+                collisionScope: input.observation.entryRef.collisionScope,
+                entryId: input.observation.entryRef.entryId,
+              },
+              selected: projection,
+            });
+          });
+        } finally {
+          if (attempt.current === controller) {
+            attempt.current = null;
+            setBusy(false);
+          }
+        }
+      }}
+    />
   );
 }
 
@@ -984,7 +1073,7 @@ function OccurrencesPanel({
                 )}
               />
             )}
-          <ActivatedOccurrenceDetail controller={selectedEvent} />
+          <ActivatedOccurrenceDetail input={input} controller={selectedEvent} />
         </Stack>
       )}
       empty={(

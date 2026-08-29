@@ -33,7 +33,10 @@ export function useTriageListWindowViewDemand(
     // remaining inactive is intentionally silent.
     const mountOrScopeChanged = preceding === null || preceding.refresh !== refresh;
     const regainedActivity = preceding !== null && !preceding.active && active;
-    if (!mountOrScopeChanged && !regainedActivity) return;
+    // A retained inactive surface must stay demand-silent. The host's active
+    // fact is the sole gate; the first active mount and each inactive -> active
+    // edge are the only named demand producers.
+    if (!active || (!mountOrScopeChanged && !regainedActivity)) return;
 
     void refresh('view');
   }, [active, refresh]);

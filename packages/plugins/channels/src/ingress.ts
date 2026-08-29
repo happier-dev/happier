@@ -4441,6 +4441,41 @@ async function matchesIngressCensus(input: Readonly<{
 }
 
 /**
+ * The connection-scoped conflict index is the one durable latch for
+ * contradictory ingress. Pull eligibility and direct socket/durable-push
+ * admission consume this same fact instead of accumulating another conflict
+ * census for every later provider occurrence.
+ */
+async function readConversationIngressConflictCensus(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+}>): Promise<'conflict' | 'invalid' | undefined> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const page = await collection.query({
+    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+    prefix: [
+      input.connectionId,
+      null,
+      CHANNEL_STATE_RECORD_KIND.ingressCensus,
+      true,
+    ],
+    order: 'asc',
+    limit: 1,
+  }, { signal: input.context.signal });
+  assertNotAborted(input.context.signal);
+  if (page.rows.length === 0) return undefined;
+  const conflict = asIngressCensus(readStateRow(page.rows[0]) ?? null);
+  return (
+    conflict === undefined
+    || conflict.value['connection-id'] !== input.connectionId
+    || !conflict.value.attention
+    || conflict.value.payload.conflict?.kind !== 'occurrenceEvidenceMismatch'
+  )
+    ? 'invalid'
+    : 'conflict';
+}
+
+/**
  * The sole core ingress owner for provider observations. It writes the
  * immutable census first, prepares its per-binding units in bounded batches,
  * and admits only after the census is durably marked prepared. Those units—
@@ -4470,6 +4505,27 @@ async function ingestConversationObservationForInvocation(
     source,
     observation: shell,
   });
+  const existingConflict = (
+    source.kind === 'providerObservation'
+    && connectionState.value.payload.transport.kind !== 'checkpointedPull'
+  )
+    ? await readConversationIngressConflictCensus({
+      context,
+      connectionId: connectionState.value.id,
+    })
+    : undefined;
+  if (existingConflict === 'invalid') {
+    throw pluginError(
+      'channels_ingress_conflict_invalid',
+      'The retained Channel conflict index row is not a canonical ingress census conflict.',
+    );
+  }
+  if (existingConflict === 'conflict') {
+    throw pluginError(
+      'channels_ingress_occurrence_conflict',
+      'The Channel connection has unresolved contradictory ingress evidence.',
+    );
+  }
   if (
     entry.eventCandidate !== null
     && (
@@ -5113,6 +5169,8 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
   candidate: IngressRetentionCandidate;
 }>): Promise<boolean> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  // This caller has already proved the replay/checkpoint horizon in
+  // readSettledIngressUnit before deleting any retained identity.
   // The in-force batch-row limit, not the protocol ceiling: an operator can
   // lower it, and the ingress preparation packer already plans against the
   // published value. A retention delete sized to the ceiling would be rejected
@@ -5131,6 +5189,17 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
       expectedRevision: obligation.row.revision,
     })), { signal: input.context.signal });
     if (result.status === 'conflict') return false;
+    for (const entry of result.results) {
+      if (!entry.deleted) return false;
+      try {
+        await collection.forget(entry.rowId, {
+        expectedRevision: entry.revision,
+        signal: input.context.signal,
+        });
+      } catch {
+        return false;
+      }
+    }
   }
   assertNotAborted(input.context.signal);
   const result = await collection.batch([{
@@ -5138,7 +5207,18 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
     rowId: input.candidate.census.row.rowId,
     expectedRevision: input.candidate.census.row.revision,
   }], { signal: input.context.signal });
-  return result.status === 'updated';
+  if (result.status !== 'updated') return false;
+  const census = result.results[0];
+  if (!census?.deleted) return false;
+  try {
+    await collection.forget(census.rowId, {
+      expectedRevision: census.revision,
+      signal: input.context.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -6870,32 +6950,19 @@ async function readEligibleCheckpointedPollConnection(input: Readonly<{
   }
   if (!isEligibleCheckpointedPollConnection(connection)) return undefined;
 
-  const conflictPage = await collection.query({
-    index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
-    prefix: [
-      input.connectionId,
-      null,
-      CHANNEL_STATE_RECORD_KIND.ingressCensus,
-      true,
-    ],
-    order: 'asc',
-    limit: 1,
-  }, { signal: input.context.signal });
-  assertNotAborted(input.context.signal);
-  if (conflictPage.rows.length === 0) return connection;
-  const conflict = asIngressCensus(readStateRow(conflictPage.rows[0]) ?? null);
-  if (
-    conflict === undefined
-    || conflict.value['connection-id'] !== input.connectionId
-    || !conflict.value.attention
-    || conflict.value.payload.conflict?.kind !== 'occurrenceEvidenceMismatch'
-  ) {
+  const conflict = await readConversationIngressConflictCensus({
+    context: input.context,
+    connectionId: input.connectionId,
+  });
+  if (conflict === 'invalid') {
     throw pluginError(
       'channels_checkpointed_poll_connection_corrupt',
       'The retained Channel conflict index row is not a canonical ingress census conflict.',
     );
   }
-  return undefined;
+  return conflict === undefined
+    ? connection
+    : undefined;
 }
 
 function createCurrentCheckpointedPollInput(input: Readonly<{

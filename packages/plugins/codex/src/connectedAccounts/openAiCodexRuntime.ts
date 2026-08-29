@@ -117,7 +117,9 @@ async function exchangeTokens(
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<
   | Readonly<{ status: 'success'; tokens: CodexTokens }>
-  | Readonly<{ status: 'rejected' | 'unavailable' | 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
+  | Readonly<{ status: 'rejected'; diagnostic: ReturnType<typeof diagnostic> }>
+  | Readonly<{ status: 'unavailable'; diagnostic: ReturnType<typeof diagnostic> }>
+  | Readonly<{ status: 'outcomeUnknown'; diagnostic: ReturnType<typeof diagnostic> }>
 > {
   const signal = options?.signal ?? context.signal;
   let response: Awaited<ReturnType<typeof context.services.http.request>>;

@@ -14,13 +14,9 @@ describe('PLUGIN_MANIFEST MCP contribution', () => {
     ]);
   });
 
-  it('advertises the canonical execution-run operations', () => {
+  it('keeps finite Runs host-derived from the Session declaration', () => {
     const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'opencode');
 
-    expect(agent?.capabilities?.executionRuns).toEqual({
-      open: ['create'],
-      checkpoint: true,
-      stop: true,
-    });
+    expect(agent?.capabilities).not.toHaveProperty('executionRuns');
   });
 });

@@ -1,7 +1,8 @@
 import {
   classifyProviderLimitEvidence,
-  type ProviderLimitCategory as RuntimeLimitCategory,
-} from '@happier-dev/plugin-sdk/connected-accounts';
+} from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+
+type RuntimeLimitCategory = ReturnType<typeof classifyProviderLimitEvidence>['category'];
 import type {
   AgentConnectedAccountRuntimeAuthAdapterV1,
   AgentConnectedAccountRuntimeFailureClassificationV1,

@@ -355,9 +355,23 @@ async function transitionGithubIssueState(
   );
   if (!current.ok) return Object.freeze({ kind: 'failed' as const, failure: current.failure });
 
+  const isTarget = (facts: GithubIssueFactsV1): boolean =>
+    facts.state === transition.target
+    && (transition.target !== 'closed'
+      || transition.stateReason === undefined
+      || facts.stateReason === transition.stateReason);
+
   // Converging on the state GitHub already holds is answered from the read with no
-  // request at all. A second close does not create a second closure.
-  if (current.facts.state === transition.target) return alreadySatisfied(current);
+  // request at all. The close classification is part of that state: completed and
+  // not-planned are distinct provider claims, so one must not satisfy the other.
+  if (isTarget(current.facts)) return alreadySatisfied(current);
+  if (current.facts.state === transition.target) {
+    return Object.freeze({
+      kind: 'refused' as const,
+      reason: 'state_changed' as const,
+      observation: current.observation,
+    });
+  }
   const expected = transition.target === 'closed' ? 'open' : 'closed';
   if (current.facts.state !== expected) {
     return Object.freeze({
@@ -378,13 +392,13 @@ async function transitionGithubIssueState(
   if (!written.ok) {
     return settle(
       await confirm(input.localRef, input.route, repositories, dependencies),
-      (facts) => facts.state === transition.target,
+      isTarget,
     );
   }
   if (isGithubWriteResponseAmbiguous(written.response)) {
     return settle(
       await confirm(input.localRef, input.route, repositories, dependencies),
-      (facts) => facts.state === transition.target,
+      isTarget,
     );
   }
   if (!isGithubSuccessStatus(written.response.status)) {
@@ -399,7 +413,7 @@ async function transitionGithubIssueState(
   // The PATCH response body is not the claim: the confirming read is.
   return settle(
     await confirm(input.localRef, input.route, repositories, dependencies),
-    (facts) => facts.state === transition.target,
+    isTarget,
   );
 }
 

@@ -22,7 +22,16 @@ const (
 	ConnectedAccountRequestAuthFailurePath      = "/connected-accounts/request-auth/auth-failure"
 	ConnectedAccountRequestAuthQuotaFailurePath = "/connected-accounts/request-auth/quota-failure"
 	ConnectedAccountCapabilityHeader            = "x-happier-connected-account-capability"
-	requestAuthBrokerTransportTimeout           = 30 * time.Second
+	// Ordinary lookup and quota operations keep the bounded request-auth
+	// transport lifetime.
+	requestAuthBrokerTransportTimeout = 30 * time.Second
+	// An authentication-failure report may trigger the daemon's canonical
+	// request-auth recovery, which owns a 300-second ceiling (bounded OAuth
+	// rotation plus account projection). This report is a recovery transport,
+	// not an ordinary operation: it waits out that recovery window with the
+	// same slightly-larger 310-second transport ceiling the generated daemon
+	// clients use. Caller cancellation still terminates it early.
+	requestAuthRecoveryReportTimeout = 310 * time.Second
 )
 
 type HTTPBrokerConfig struct {
@@ -57,7 +66,6 @@ func NewHTTPBroker(config HTTPBrokerConfig) (*HTTPBroker, error) {
 	return &HTTPBroker{
 		config: config,
 		client: &http.Client{
-			Timeout: requestAuthBrokerTransportTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errors.New("request-auth broker redirects are not allowed")
 			},
@@ -72,7 +80,7 @@ func (b *HTTPBroker) LookupRequestAuth(ctx context.Context, purpose QualifiedPur
 	var lease OAuthBearerLease
 	err := b.post(ctx, ConnectedAccountRequestAuthLookupPath, struct {
 		Purpose QualifiedPurpose `json:"purpose"`
-	}{Purpose: purpose}, &lease)
+	}{Purpose: purpose}, &lease, requestAuthBrokerTransportTimeout)
 	if err != nil {
 		return OAuthBearerLease{}, err
 	}
@@ -87,7 +95,7 @@ func (b *HTTPBroker) ReportAuthFailure(ctx context.Context, request ConnectedAcc
 		return RequestAuthFailureOutcome{}, fmt.Errorf("auth-failure report must use authentication class")
 	}
 	var outcome RequestAuthFailureOutcome
-	if err := b.post(ctx, ConnectedAccountRequestAuthFailurePath, request, &outcome); err != nil {
+	if err := b.post(ctx, ConnectedAccountRequestAuthFailurePath, request, &outcome, requestAuthRecoveryReportTimeout); err != nil {
 		return RequestAuthFailureOutcome{}, err
 	}
 	if !validFailureStatus(outcome.Status) {
@@ -101,7 +109,7 @@ func (b *HTTPBroker) ReportQuotaFailure(ctx context.Context, request ConnectedAc
 		return RequestAuthFailureOutcome{}, fmt.Errorf("quota-failure report must use quota class")
 	}
 	var outcome RequestAuthFailureOutcome
-	if err := b.post(ctx, ConnectedAccountRequestAuthQuotaFailurePath, request, &outcome); err != nil {
+	if err := b.post(ctx, ConnectedAccountRequestAuthQuotaFailurePath, request, &outcome, requestAuthBrokerTransportTimeout); err != nil {
 		return RequestAuthFailureOutcome{}, err
 	}
 	if !validFailureStatus(outcome.Status) {
@@ -110,7 +118,7 @@ func (b *HTTPBroker) ReportQuotaFailure(ctx context.Context, request ConnectedAc
 	return outcome, nil
 }
 
-func (b *HTTPBroker) post(ctx context.Context, path string, input, output any) error {
+func (b *HTTPBroker) post(ctx context.Context, path string, input, output any, operationTimeout time.Duration) error {
 	if b == nil || b.client == nil {
 		return fmt.Errorf("request-auth broker is not initialized")
 	}
@@ -127,7 +135,11 @@ func (b *HTTPBroker) post(ctx context.Context, path string, input, output any) e
 		Host:   fmt.Sprintf("127.0.0.1:%d", transport.daemonHTTPPort),
 		Path:   path,
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	// The deadline is per operation and derives from the caller's context, so
+	// a caller's own cancellation or shorter deadline always wins.
+	operationCtx, cancelOperation := context.WithTimeout(ctx, operationTimeout)
+	defer cancelOperation()
+	request, err := http.NewRequestWithContext(operationCtx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request-auth broker request: %w", err)
 	}

@@ -1,5 +1,6 @@
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
+    ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
     defineProtocolLiteral,
     defineProtocolObject,
@@ -12,7 +13,6 @@ import {
     TriageLinkedSessionProjectionV1Schema,
     TriageSourceInstanceIdV1Schema,
 } from '@happier-dev/triage-protocol/v1';
-import { TriageCollectionCursorV1Schema } from './collectionCursorProtocol.js';
 
 /**
  * The durable half of one mounted detail input.
@@ -43,7 +43,7 @@ export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
      */
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
     /** Absent reads the first linked-Session page; present continues it opaquely. */
-    linkedSessionsCursor: TriageCollectionCursorV1Schema.optional(),
+    linkedSessionsCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReadEntryDetailInputV1 = ReturnType<
     typeof TriageReadEntryDetailInputV1Schema.parse
@@ -79,7 +79,7 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
             maxItems: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
         }),
         /** The Collection owner's opaque continuation; absent means this page completed the relation. */
-        linkedSessionsNextCursor: TriageCollectionCursorV1Schema.optional(),
+        linkedSessionsNextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('unavailable'),

@@ -1186,10 +1186,11 @@ describe('activate', () => {
     try {
       const buildSessionOptions = activation.registration('agents', 'pi')?.cliSessionCommand?.buildSessionOptions;
       expect(buildSessionOptions).toBeTypeOf('function');
-      const result = buildSessionOptions?.({
+      const result = await buildSessionOptions?.({
         isExplicitCliSubcommand: true,
         parsed: { agentArgs: [] },
         settings: {},
+        pluginSettings: {},
         environment: {
         OPENAI_API_KEY: 'fixture-openai-key',
         ANTHROPIC_API_KEY: undefined,

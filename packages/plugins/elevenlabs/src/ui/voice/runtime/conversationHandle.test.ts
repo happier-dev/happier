@@ -104,6 +104,30 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(conversation.setVolume).toHaveBeenLastCalledWith({ volume: 0.18 });
   });
 
+  it('applies the latest microphone mute before a late SDK conversation becomes active', async () => {
+    let resolveStart!: (conversation: TestConversation) => void;
+    const pendingStart = new Promise<TestConversation>((resolve) => { resolveStart = resolve; });
+    const conversation = {
+      getId: vi.fn(() => 'conversation-muted'),
+      endSession: vi.fn(async () => undefined),
+      sendUserMessage: vi.fn(),
+      sendContextualUpdate: vi.fn(),
+      setMicMuted: vi.fn(),
+      setVolume: vi.fn(),
+    };
+    startSession.mockImplementationOnce(async () => await pendingStart);
+    const handle = createHandle();
+
+    const started = handle.startSession({});
+    handle.setMicMuted(true);
+    resolveStart(conversation);
+
+    await expect(started).resolves.toBe('conversation-muted');
+    expect(conversation.setMicMuted).toHaveBeenCalledTimes(1);
+    expect(conversation.setMicMuted).toHaveBeenCalledWith(true);
+    expect(handle.getId()).toBe('conversation-muted');
+  });
+
   it('ends a superseded late SDK conversation and suppresses all callbacks from the stale start', async () => {
     let resolveFirst!: (conversation: TestConversation) => void;
     let resolveSecond!: (conversation: TestConversation) => void;

@@ -38,7 +38,7 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
           capability: 'network',
           scope: expect.objectContaining({
             targets: [{ kind: 'scmProviderOrigin', provider: 'azure-devops' }],
-            methods: ['GET', 'PATCH', 'POST'],
+            methods: ['GET', 'PATCH', 'POST', 'PUT'],
           }),
         }),
         expect.objectContaining({
@@ -46,14 +46,26 @@ describe('bundled Azure DevOps SCM hosting provider plugin', () => {
           capability: 'network',
           scope: expect.objectContaining({
             targets: [{ kind: 'connectedAccountOrigin', service: 'azure-devops-account' }],
-            methods: ['GET', 'PATCH', 'POST'],
+            methods: ['GET', 'PATCH', 'POST', 'PUT'],
             privateNetwork: true,
+          }),
+        }),
+        expect.objectContaining({
+          id: 'azure-devops-account-use',
+          capability: 'connectedAccounts',
+          scope: expect.objectContaining({
+            serviceRefs: ['azure-devops-account'],
+            operations: ['use'],
+            materializationKinds: ['httpHeaders'],
           }),
         }),
         expect.objectContaining({
           id: 'azure-cli-process',
           capability: 'process',
-          scope: expect.objectContaining({ executables: [{ kind: 'systemTool', id: 'azure-cli' }] }),
+          scope: expect.objectContaining({
+            executables: [{ kind: 'systemTool', id: 'azure-cli' }],
+            envKeys: ['AZURE_CORE_NO_COLOR', 'AZURE_CORE_ONLY_SHOW_ERRORS'],
+          }),
         }),
       ]), optional: [] },
       contributes: {

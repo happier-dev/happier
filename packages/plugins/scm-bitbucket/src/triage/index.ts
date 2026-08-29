@@ -13,7 +13,6 @@
 export {
   BITBUCKET_CLOUD_API_BASE_URL,
   BITBUCKET_CLOUD_API_ORIGIN,
-  BITBUCKET_TRIAGE_REQUEST_TIMEOUT_MS,
   createBitbucketTriageApiClient,
   readBitbucketApiUrl,
   type BitbucketAuthorizationHeaders,

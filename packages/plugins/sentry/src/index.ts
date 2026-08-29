@@ -5,9 +5,9 @@
  * Triage source operations, the four source-native detail reads behind its own
  * detail body, the Connected Account runtime, the API client, route templates,
  * deployment-origin resolution, configured-instance codecs, scan pagination and
- * issue mapping. Selected Tier-B Composer evidence remains fail-closed at the
- * manifest until its full allow-listed projection has an approved representation
- * within the public reference-result contract.
+ * issue mapping, and the explicit selected-occurrence Composer evidence path.
+ * Agent evidence is derived only from the canonical redacted event projection
+ * and admits whole semantic items through the public reference-result schema.
  */
 
 export * from './sentryContracts.js';

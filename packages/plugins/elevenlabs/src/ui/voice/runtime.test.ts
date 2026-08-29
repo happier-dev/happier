@@ -620,6 +620,10 @@ describe('ElevenLabs public Voice provider leaf', () => {
     if (prepared.kind !== 'prepared') throw new Error('expected_prepared');
     expect(prepared.session.safeMetadata).not.toHaveProperty('token');
 
+    // Native interruption can arrive before the provider SDK handle exists.
+    // The provider runtime must retain that exact desired mute and seed the
+    // eventual handle rather than treating it as a successful no-op.
+    await runtime.setInputMuted?.(true);
     const publicSdkHandleConnection = vi.fn(createSdkHandleConnection);
     const connection = await runtime.createConnection({
       session: prepared.session,

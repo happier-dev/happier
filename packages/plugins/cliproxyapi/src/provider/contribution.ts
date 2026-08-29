@@ -98,6 +98,7 @@ export const CLIPROXYAPI_PROVIDER_CONTRIBUTION = {
   },
   managedRuntime: {
     kind: 'managed',
+    connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
     connectedAccounts: CLIPROXYAPI_MANAGED_CONNECTED_ACCOUNTS.map(
       (declaration) => ({
         ...declaration,

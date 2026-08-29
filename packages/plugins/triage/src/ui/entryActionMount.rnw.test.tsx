@@ -458,7 +458,7 @@ async function settle(): Promise<void> {
 
 async function openTheRow(shell: PluginUiTestkit): Promise<void> {
     await act(async () => {
-        await shell.press(await shell.getByRole('option', { name: ENTRY_TITLE }));
+        await shell.press(await shell.getByRole('button', { name: ENTRY_TITLE }));
     });
     // The detail read settles a turn after the press. Offered controls use the
     // exact descriptor already stamped on this physical mount.

@@ -7,6 +7,7 @@ import {
 
 import { admitGithubDetailInvocation } from './admission.js';
 import {
+  GithubCapabilitiesInputV1Schema,
   GithubChangedFilesInputV1Schema,
   GithubChecksInputV1Schema,
   GithubFeedbackInputV1Schema,
@@ -14,11 +15,13 @@ import {
   GithubReviewsInputV1Schema,
   GithubTimelineInputV1Schema,
   type GithubChangedFilesResultV1,
+  type GithubCapabilitiesResultV1,
   type GithubChecksResultV1,
   type GithubFeedbackResultV1,
   type GithubReviewsResultV1,
   type GithubTimelineResultV1,
 } from './detail/contracts.js';
+import { projectGithubRepositoryCapabilities } from './capabilities.js';
 import {
   readGithubFeedbackConnection,
   type GithubFeedbackCommentV1,
@@ -43,7 +46,7 @@ import {
 import { toTriageFailure } from './mapping/protocol.js';
 
 /**
- * The five bound source-native detail operations.
+ * The six bound source-native detail operations.
  *
  * Each is the whole vertical for one Action invocation: it validates the
  * published input, admits the configured instance through the SAME rule `scan`
@@ -129,6 +132,26 @@ function unavailable(failure: TriageSourceFailureV1): Readonly<{
   failure: TriageSourceFailureV1;
 }> {
   return Object.freeze({ kind: 'unavailable' as const, failure });
+}
+
+export async function readGithubCapabilities(
+  input: unknown,
+  context: PluginInvocationContext,
+): Promise<GithubCapabilitiesResultV1> {
+  const parsed = GithubCapabilitiesInputV1Schema.safeParse(input);
+  if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
+  const request = parsed.data;
+  const admitted = await admitGithubDetailInvocation({
+    instance: request.instance,
+    localRef: request.localRef,
+    routingToken: request.routingToken,
+    admissibleKinds: ['pull-request', 'issue'],
+  }, context);
+  if (!admitted.ok) return unavailable(admitted.failure);
+  return Object.freeze({
+    kind: 'capabilities' as const,
+    ...projectGithubRepositoryCapabilities(admitted.repository, admitted.kindId),
+  });
 }
 
 /* ------------------------------------------------------------------- timeline */

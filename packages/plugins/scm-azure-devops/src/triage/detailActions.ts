@@ -3,7 +3,9 @@ import {
   fitActionResultPageV1,
   fitActionResultSequenceV1,
 } from '@happier-dev/triage-sources/projection/actionResultSequence';
-import { createBoundedInvocation } from '@happier-dev/triage-sources/runtime';
+import {
+  createBoundedInvocation,
+} from '@happier-dev/triage-sources/runtime';
 import type {
   TriageConfiguredSourceInstanceV1,
   TriageSourceEntryLocalRefV1,
@@ -85,8 +87,6 @@ export const AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS = Object.freeze({
  * and three separately-bounded calls would let the panel wait three times as
  * long as the number here.
  */
-export const AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
-
 function invalidInput(): TriageSourceFailureV1 {
   return createAzureSourceFailure({
     class: 'unsupportedContract',
@@ -175,7 +175,6 @@ async function admitAzureDetailInvocation(
   // as a hanging read does.
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: AZURE_DEVOPS_MOUNTED_DETAIL_DEADLINE_MS,
   });
 
   const authorized = await authorizeClient({

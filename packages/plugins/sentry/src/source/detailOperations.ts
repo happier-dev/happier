@@ -234,18 +234,6 @@ export function fitSentryEventResult(projection: SentryEventProjectionV1): Sentr
 }
 
 /**
- * How long one mounted detail read may take before this source stops waiting.
- *
- * The resource it protects is a panel a person is looking at. `CONTRACT.md` §5.2
- * puts that bound on the source: Triage owns deadlines only for the
- * `listInstances`, `scan` and `get` invocations it starts, and it neither
- * supplies nor decides this one. Without it a Sentry that accepts the connection
- * and never answers leaves the tab in its loading state until the mount is torn
- * down, which the reader cannot retry, report, or tell apart from a slow read.
- */
-export const SENTRY_MOUNTED_DETAIL_DEADLINE_MS = 20_000;
-
-/**
  * Resolves the position one paged detail read starts from.
  *
  * A rejected token restarts the walk at the first page rather than requesting a
@@ -312,7 +300,6 @@ export async function readSentryIssue(
 
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
   try {
     const routed = admitSentryEntryInvocation({
@@ -357,7 +344,6 @@ export async function listSentryIssueEvents(
 
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
   try {
     const routed = admitSentryEntryInvocation({
@@ -427,7 +413,6 @@ export async function listSentryTagValues(
 
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
   try {
     const routed = admitSentryEntryInvocation({
@@ -507,7 +492,6 @@ export async function readSentryEvent(
 
   const bounded = createBoundedInvocation({
     callerSignal: context.signal,
-    timeoutMs: SENTRY_MOUNTED_DETAIL_DEADLINE_MS,
   });
   try {
     const routed = admitSentryEntryInvocation({

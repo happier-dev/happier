@@ -20,10 +20,26 @@ export type OpenCodeAfterCursorV3 = Readonly<{
   kind: 'opencodeAfter';
   messageId: string | null;
   sessionCreatedAtMs: number;
+  /**
+   * Semantic item position inside `messageId` where the next read resumes.
+   * 0 (or absent) is the legacy whole-message anchor: every item of
+   * `messageId` and everything before it is consumed. One native OpenCode
+   * message can expand to several semantic transcript items, so a bounded
+   * page that stopped inside one anchors at this source-bound subitem
+   * position instead of losing or repeating the remainder.
+   */
+  subIndex?: number;
 }>;
 
 export function encodeOpenCodeExternalAfterCursor(value: OpenCodeAfterCursorV3): string {
-  return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  const subIndex = Math.max(0, Math.trunc(value.subIndex ?? 0));
+  return Buffer.from(JSON.stringify({
+    v: value.v,
+    kind: value.kind,
+    messageId: value.messageId,
+    sessionCreatedAtMs: value.sessionCreatedAtMs,
+    ...(subIndex > 0 ? { subIndex } : {}),
+  }), 'utf8').toString('base64url');
 }
 
 export function decodeOpenCodeExternalAfterCursor(raw: string): OpenCodeAfterCursorV3 | null {
@@ -33,12 +49,17 @@ export function decodeOpenCodeExternalAfterCursor(raw: string): OpenCodeAfterCur
     if (Reflect.get(decoded, 'v') !== 3 || Reflect.get(decoded, 'kind') !== 'opencodeAfter') return null;
     const messageId = Reflect.get(decoded, 'messageId');
     const sessionCreatedAtMs = Reflect.get(decoded, 'sessionCreatedAtMs');
+    const rawSubIndex = Reflect.get(decoded, 'subIndex');
+    const subIndex = rawSubIndex === undefined ? 0 : rawSubIndex;
     return (
       messageId === null || (typeof messageId === 'string' && messageId.length > 0)
     ) && typeof sessionCreatedAtMs === 'number'
       && Number.isSafeInteger(sessionCreatedAtMs)
       && sessionCreatedAtMs >= 0
-      ? { v: 3, kind: 'opencodeAfter', messageId, sessionCreatedAtMs }
+      && typeof subIndex === 'number'
+      && Number.isSafeInteger(subIndex)
+      && subIndex >= 0
+      ? { v: 3, kind: 'opencodeAfter', messageId, sessionCreatedAtMs, subIndex }
       : null;
   } catch {
     return null;
@@ -163,18 +184,27 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
     );
     if (confirmedSessionCreatedAtMs !== decoded.sessionCreatedAtMs) return { outcome: 'source_replaced' };
     const rawMessages = latest.items;
-    const startIndex = decoded.messageId === null
-      ? 0
-      : rawMessages.findIndex((message) => readOpenCodeMessageId(message) === decoded.messageId) + 1;
-    if (decoded.messageId !== null && startIndex === 0) {
+    // A subIndex > 0 anchors INSIDE the exact native message: resume at that
+    // semantic item; the legacy whole-message anchor resumes after it.
+    const resumeSubIndex = Math.max(0, Math.trunc(decoded.subIndex ?? 0));
+    const anchorIndex = decoded.messageId === null
+      ? -1
+      : rawMessages.findIndex((message) => readOpenCodeMessageId(message) === decoded.messageId);
+    if (decoded.messageId !== null && anchorIndex === -1) {
       return gap();
     }
+    const startIndex = decoded.messageId === null
+      ? 0
+      : resumeSubIndex > 0
+        ? anchorIndex
+        : anchorIndex + 1;
 
     const knownNonTranscriptPositions: number[] = [];
     const unsupportedPositions: number[] = [];
     const page = readOpenCodeTranscriptForwardWindow<AgentExternalSessionTranscriptItem>({
       messages: rawMessages,
       startIndex,
+      ...(resumeSubIndex > 0 ? { startSubIndex: resumeSubIndex } : {}),
       maxBytes: params.maxBytes,
       maxItems,
       mapMessage: (message, index) => {
@@ -190,11 +220,18 @@ export async function readAfterOpenCodeTranscript(params: Readonly<{
     });
     const newestReadMessageId = readOpenCodeMessageId(rawMessages.at(page.nextIndex - 1))
       ?? decoded.messageId;
+    // A mid-message stop anchors inside the exact native message that still
+    // holds unserved semantic items; whole-message boundaries keep the released
+    // anchor shape (subIndex 0 is omitted from the encoded cursor).
+    const boundaryMessageId = page.nextSubIndex > 0
+      ? readOpenCodeMessageId(rawMessages[page.nextIndex])
+      : newestReadMessageId;
     const nextCursor = encodeOpenCodeExternalAfterCursor({
       v: 3,
       kind: 'opencodeAfter',
-      messageId: newestReadMessageId,
+      messageId: boundaryMessageId,
       sessionCreatedAtMs,
+      subIndex: page.nextSubIndex,
     });
     if (page.items.length === 0) {
       if (newestReadMessageId === decoded.messageId) {

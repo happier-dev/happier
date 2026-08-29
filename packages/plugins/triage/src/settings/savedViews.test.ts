@@ -8,12 +8,12 @@ import { CORPUS_DEFAULT_SMART_POLICY_V1 } from '../corpus/query/smartPolicy.js';
 import {
     CORPUS_EMPTY_SAVED_VIEWS_V1,
     MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1,
-    TRIAGE_SAVED_VIEWS_SETTING_ID_V1,
+    TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
     mutateTriageSavedViews,
     parseTriageSavedViews,
     readTriageSavedViews,
 } from './savedViews.js';
-import { createTestkitAccountSettings } from './testkit/accountSettings.test-support.js';
+import { createTestkitAccountKv } from './testkit/accountKv.test-support.js';
 
 const SOURCE = Object.freeze({ pluginId: 'happier.example.source', localId: 'example-forge' });
 
@@ -36,12 +36,12 @@ function mintIds(): () => string {
     };
 }
 
-function createDeps(fixture: ReturnType<typeof createTestkitAccountSettings>) {
-    return { settings: fixture.settings, mintViewId: mintIds() };
+function createDeps(fixture: ReturnType<typeof createTestkitAccountKv>) {
+    return { catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1), mintViewId: mintIds() };
 }
 
 async function create(
-    fixture: ReturnType<typeof createTestkitAccountSettings>,
+    fixture: ReturnType<typeof createTestkitAccountKv>,
     deps: ReturnType<typeof createDeps>,
     label: string,
     overrides: Partial<Readonly<{ filters: SurfaceFilterSelectionV1; order: 'newest' | 'oldest' | 'smart' }>> = {},
@@ -49,7 +49,7 @@ async function create(
     void fixture;
     return await mutateTriageSavedViews(deps, {
         kind: 'create',
-        expectedRevision: fixture.revision(),
+        expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         label,
         filters: overrides.filters ?? filters(),
         order: overrides.order ?? 'newest',
@@ -102,14 +102,14 @@ describe('parseTriageSavedViews', () => {
 
 describe('mutateTriageSavedViews', () => {
     it('refuses a stale full-view draft instead of overwriting a newer rename', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const created = await create(fixture, deps, 'Original name');
         if (created.status !== 'applied') throw new Error('setup failed');
 
         // Both editors opened the same durable document revision. A renames the
         // view, then B submits the stale full draft it formed before that rename.
-        const shared = await readTriageSavedViews({ settings: fixture.settings });
+        const shared = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         const original = shared.value.views[0];
         if (original === undefined) throw new Error('setup failed');
         const command = (label: string, order: 'newest' | 'oldest') => ({
@@ -127,12 +127,12 @@ describe('mutateTriageSavedViews', () => {
         expect(await mutateTriageSavedViews(deps, command('Original name', 'oldest')))
             .toEqual({ status: 'conflict' });
 
-        const after = await readTriageSavedViews({ settings: fixture.settings });
+        const after = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(after.value.views[0]).toMatchObject({ label: 'Renamed by A', order: 'newest' });
     });
 
     it('restores the selected saved view exactly after restart and clears selection when it is deleted', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
 
         const lens = filters({
@@ -148,7 +148,7 @@ describe('mutateTriageSavedViews', () => {
 
         // "Restart": a fresh reader over the same stored bytes, with no
         // in-process state carried across.
-        const restarted = await readTriageSavedViews({ settings: fixture.settings });
+        const restarted = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(restarted.value.selectedViewId).toBe(second.viewId);
         expect(restarted.value.views).toHaveLength(2);
         expect(restarted.value.views[0]).toEqual({
@@ -161,37 +161,37 @@ describe('mutateTriageSavedViews', () => {
 
         // Deleting the selected view clears the selection in the same write.
         const deleted = await mutateTriageSavedViews(deps, {
-            kind: 'delete', viewId: second.viewId, expectedRevision: fixture.revision(),
+            kind: 'delete', viewId: second.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         expect(deleted.status).toBe('applied');
-        const afterDelete = await readTriageSavedViews({ settings: fixture.settings });
+        const afterDelete = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(afterDelete.value.selectedViewId).toBeNull();
         expect(afterDelete.value.views.map((view) => view.viewId)).toEqual([first.viewId]);
         // Asserted on the stored bytes, not only on the parsed read: leaving a
         // dangling id in durable state and repairing it on every read would
         // look identical here while silently persisting a selection that names
         // nothing.
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1))
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1))
             .toMatchObject({ selectedViewId: null });
 
         // Deleting an unselected view leaves the selection alone.
         await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         const third = await create(fixture, deps, 'Third');
         if (third.status !== 'applied') return;
         await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         await mutateTriageSavedViews(deps, {
-            kind: 'delete', viewId: third.viewId, expectedRevision: fixture.revision(),
+            kind: 'delete', viewId: third.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
-        expect((await readTriageSavedViews({ settings: fixture.settings })).value.selectedViewId)
+        expect((await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.selectedViewId)
             .toBe(first.viewId);
     });
 
     it('keys selection on the minted view id rather than an index or a display label', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const first = await create(fixture, deps, 'Mine');
         const second = await create(fixture, deps, 'Mine');
@@ -199,28 +199,28 @@ describe('mutateTriageSavedViews', () => {
         expect(first.viewId).not.toBe(second.viewId);
 
         await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: second.viewId, expectedRevision: fixture.revision(),
+            kind: 'select', viewId: second.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
         await mutateTriageSavedViews(deps, {
-            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(),
+            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         });
 
         // An index- or label-keyed selection would now name the wrong view.
-        const after = await readTriageSavedViews({ settings: fixture.settings });
+        const after = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(after.value.selectedViewId).toBe(second.viewId);
         expect(after.value.views).toHaveLength(1);
         expect(await mutateTriageSavedViews(deps, {
-            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(),
+            kind: 'select', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         }))
             .toEqual({ status: 'unknownView' });
         expect(await mutateTriageSavedViews(deps, {
-            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(),
+            kind: 'delete', viewId: first.viewId, expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
         }))
             .toEqual({ status: 'unknownView' });
     });
 
     it('enforces label shape, duplicate identity and the canonical whole-value bound before CAS', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
 
         const longLabel = 'a'.repeat(4 * 1024);
@@ -230,7 +230,7 @@ describe('mutateTriageSavedViews', () => {
         const trimmed = await create(fixture, deps, `   ${longLabel}   `);
         expect(trimmed.status).toBe('applied');
         if (trimmed.status === 'applied') {
-            const stored = (await readTriageSavedViews({ settings: fixture.settings })).value.views
+            const stored = (await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.views
                 .find((view) => view.viewId === trimmed.viewId);
             expect(stored?.label).toBe(longLabel);
         }
@@ -262,18 +262,18 @@ describe('mutateTriageSavedViews', () => {
             filters: filters({ states: ['open', 'open'] }),
         })).toEqual({ status: 'rejected', reason: 'duplicateFacetValue' });
 
-        // Nothing above reached the Settings record.
+        // Nothing above reached the Account KV value.
         expect(fixture.setCallCount()).toBe(writesBeforeRejections + 3);
 
         // The whole serialized value is bounded, not each member: a set of
         // individually valid views that together overflow is rejected.
-        const wide = createTestkitAccountSettings();
+        const wide = createTestkitAccountKv();
         const wideDeps = createDeps(wide);
         let overflowed: string | null = null;
         for (let index = 0; index < 1_000; index += 1) {
             const result = await mutateTriageSavedViews(wideDeps, {
                 kind: 'create',
-                expectedRevision: wide.revision(),
+                expectedRevision: wide.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
                 label: `view ${index}`,
                 filters: filters({ scopes: scopeValues(17) }),
                 order: 'newest',
@@ -285,38 +285,38 @@ describe('mutateTriageSavedViews', () => {
             }
         }
         expect(overflowed).toBe('valueTooLarge');
-        const serialized = JSON.stringify(wide.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1));
+        const serialized = JSON.stringify(wide.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1));
         expect(new TextEncoder().encode(serialized).byteLength)
             .toBeLessThanOrEqual(MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1);
     });
 
-    it('admits a thirty-third view when the serialized Settings value still fits', async () => {
-        const fixture = createTestkitAccountSettings();
+    it('admits a thirty-third view when the serialized Account KV value still fits', async () => {
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         for (let index = 0; index < 33; index += 1) {
             expect(await create(fixture, deps, `view ${index}`)).toMatchObject({ status: 'applied' });
         }
-        expect((await readTriageSavedViews({ settings: fixture.settings })).value.views)
+        expect((await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.views)
             .toHaveLength(33);
     });
 
     it('admits more than sixteen values in a facet while the complete saved value fits', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
 
         expect(await create(fixture, deps, 'Broad scope', {
             filters: filters({ scopes: scopeValues(17) }),
         })).toMatchObject({ status: 'applied' });
-        expect((await readTriageSavedViews({ settings: fixture.settings })).value.views[0]?.filters.scopes)
+        expect((await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.views[0]?.filters.scopes)
             .toHaveLength(17);
     });
 
     it('rejects an order or Smart policy outside the closed vocabulary', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         expect(await mutateTriageSavedViews(deps, {
             kind: 'create',
-            expectedRevision: fixture.revision(),
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Bad order',
             filters: filters(),
             order: 'attention' as unknown as 'newest',
@@ -324,7 +324,7 @@ describe('mutateTriageSavedViews', () => {
         })).toEqual({ status: 'rejected', reason: 'order' });
         expect(await mutateTriageSavedViews(deps, {
             kind: 'create',
-            expectedRevision: fixture.revision(),
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Bad policy',
             filters: filters(),
             order: 'smart',
@@ -333,11 +333,11 @@ describe('mutateTriageSavedViews', () => {
     });
 
     it('retains the Smart policy across a non-Smart order switch', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const created = await mutateTriageSavedViews(deps, {
             kind: 'create',
-            expectedRevision: fixture.revision(),
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Activity first',
             filters: filters(),
             order: 'smart',
@@ -347,7 +347,7 @@ describe('mutateTriageSavedViews', () => {
 
         const updated = await mutateTriageSavedViews(deps, {
             kind: 'update',
-            expectedRevision: fixture.revision(),
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             viewId: created.viewId,
             label: 'Activity first',
             filters: filters(),
@@ -356,7 +356,7 @@ describe('mutateTriageSavedViews', () => {
         });
         expect(updated.status).toBe('applied');
 
-        const stored = (await readTriageSavedViews({ settings: fixture.settings })).value.views[0];
+        const stored = (await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) })).value.views[0];
         expect(stored?.order).toBe('newest');
         // The policy survives an order the policy does not apply to, so
         // switching back does not silently reset the user's preference.
@@ -364,20 +364,20 @@ describe('mutateTriageSavedViews', () => {
     });
 
     it('returns the typed conflict without overwriting a competing writer', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const created = await create(fixture, deps, 'Mine');
         if (created.status !== 'applied') throw new Error('setup failed');
 
         // Another device writes between our read and our write.
-        fixture.armConcurrentWrite(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, {
+        fixture.armConcurrentWrite(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1, {
             v: 1,
             views: [],
             selectedViewId: null,
         });
         const result = await mutateTriageSavedViews(deps, {
             kind: 'create',
-            expectedRevision: fixture.revision(),
+            expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
             label: 'Ours',
             filters: filters(),
             order: 'newest',
@@ -385,38 +385,39 @@ describe('mutateTriageSavedViews', () => {
         });
 
         expect(result).toEqual({ status: 'conflict' });
-        expect(fixture.rejectedExpectedRevisions()).toHaveLength(1);
+        expect(fixture.rejectedExpectedVersions()).toHaveLength(1);
         // The competing write survives: there is no last-writer-wins merge and
         // no hidden local copy.
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1))
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1))
             .toEqual({ v: 1, views: [], selectedViewId: null });
     });
 
-    it('surfaces a non-conflict Settings failure instead of reporting it as a conflict', async () => {
+    it('surfaces a non-conflict Account KV failure instead of reporting it as a conflict', async () => {
         // The host raises five distinguishable codes plus abort and store
         // failures from this one call. Reporting any of them as `conflict`
         // tells the user their views were changed elsewhere and to retry, when
         // in fact the write is refused for a reason retrying cannot resolve.
         const failures: readonly Error[] = [
             new PluginError({
-                code: 'plugin_settings_validation_failed',
-                message: "Plugin setting 'triage.savedViews' failed schema validation",
+                code: 'plugin_account_storage_value_invalid',
+                message: "Triage saved views failed Account KV validation",
             }),
             new PluginError({
-                code: 'plugin_settings_scope_unavailable',
-                message: "Plugin settings scope 'account' has no bound daemon persistence owner",
+                code: 'plugin_account_storage_unavailable',
+                message: "Plugin Account KV has no bound Account persistence owner",
             }),
             // Not every refusal is a PluginError: an abort or a store failure
             // reaches the caller as itself.
-            new Error('account settings store unavailable'),
+            new Error('account data store unavailable'),
         ];
 
         for (const failure of failures) {
-            const fixture = createTestkitAccountSettings();
+            const fixture = createTestkitAccountKv();
+            const catalog = fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1);
             const deps = {
-                settings: {
-                    snapshot: fixture.settings.snapshot.bind(fixture.settings),
-                    set: async () => {
+                catalog: {
+                    read: catalog.read.bind(catalog),
+                    write: async () => {
                         throw failure;
                     },
                 },
@@ -425,7 +426,7 @@ describe('mutateTriageSavedViews', () => {
 
             await expect(mutateTriageSavedViews(deps, {
                 kind: 'create',
-                expectedRevision: fixture.revision(),
+                expectedRevision: fixture.revision(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1),
                 label: 'Mine',
                 filters: filters(),
                 order: 'newest',
@@ -435,26 +436,26 @@ describe('mutateTriageSavedViews', () => {
     });
 
     it('refuses to write over a stored value it cannot read', async () => {
-        const fixture = createTestkitAccountSettings({
-            [TRIAGE_SAVED_VIEWS_SETTING_ID_V1]: { v: 2, views: [], selectedViewId: null },
+        const fixture = createTestkitAccountKv({
+            [TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1]: { v: 2, views: [], selectedViewId: null },
         });
         const deps = createDeps(fixture);
         const writesBefore = fixture.setCallCount();
 
         expect(await create(fixture, deps, 'Mine')).toEqual({ status: 'unreadable' });
         expect(fixture.setCallCount()).toBe(writesBefore);
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1))
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1))
             .toEqual({ v: 2, views: [], selectedViewId: null });
 
         // The list still works: an unreadable value reads as the default lens
         // and says so, rather than failing the surface.
-        const read = await readTriageSavedViews({ settings: fixture.settings });
+        const read = await readTriageSavedViews({ catalog: fixture.catalog(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1) });
         expect(read.kind).toBe('unreadable');
         expect(read.value).toEqual(CORPUS_EMPTY_SAVED_VIEWS_V1);
     });
 
     it('stores the canonical source-neutral lens with no derived tag or extra member', async () => {
-        const fixture = createTestkitAccountSettings();
+        const fixture = createTestkitAccountKv();
         const deps = createDeps(fixture);
         const lens = filters({
             sources: [{ source: SOURCE }],
@@ -467,7 +468,7 @@ describe('mutateTriageSavedViews', () => {
         // The persisted spelling is the canonical private identity, byte for
         // byte. A resurrected `scopeTag` encoder would show up here as an extra
         // member and reintroduce the rekey-invalidation bug it caused.
-        expect(fixture.read(TRIAGE_SAVED_VIEWS_SETTING_ID_V1)).toEqual({
+        expect(fixture.read(TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1)).toEqual({
             v: 1,
             views: [{
                 viewId: created.viewId,

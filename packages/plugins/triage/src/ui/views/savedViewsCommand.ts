@@ -21,13 +21,13 @@ import {
   type CorpusSavedViewV1,
   type CorpusSavedViewsReadV1,
 } from '../../settings/savedViews.js';
-import type { TriageAccountSettingsV1 } from '../durable/accountDurableState.js';
+import type { TriageCatalogStoreV1 } from '../../settings/accountKvCatalogStore.js';
 
 /**
  * The surface's path to the `triage.savedViews` CAS owner.
  *
  * Two transports, one owner. A mount that can reach the reader's Account
- * directly drives `actions/savedViews.ts` over its own Account Settings scope,
+ * directly drives `actions/savedViews.ts` over its own Account KV scope,
  * so saved views keep working with no daemon reachable — a saved view is
  * Account state, not provider data. A mount that cannot reach the Account
  * directly invokes the same two published Actions through a daemon.
@@ -77,21 +77,21 @@ export type TriageSavedViewsTransportV1 = Readonly<{
 }>;
 
 /**
- * The direct transport: this mount's own Account Settings scope, handed to the
+ * The direct transport: this mount's own Account KV catalog, handed to the
  * same projection the daemon handler calls. It restates no bound, no CAS rule
  * and no id-minting decision.
  */
 export function createDirectTriageSavedViewsTransport(
-  settings: TriageAccountSettingsV1,
+  catalog: TriageCatalogStoreV1,
 ): TriageSavedViewsTransportV1 {
   return Object.freeze({
     read: async (options) => await readTriageSavedViewsForSurface({ v: 1 }, {
-      settings,
+      catalog,
       mintViewId: mintTriageOpaqueIdV1,
       ...(options?.signal ? { signal: options.signal } : {}),
     }),
     administer: async (input, options) => await administerTriageSavedView(input, {
-      settings,
+      catalog,
       // Minted at the writer, which for this transport is this mount.
       mintViewId: mintTriageOpaqueIdV1,
       ...(options?.signal ? { signal: options.signal } : {}),

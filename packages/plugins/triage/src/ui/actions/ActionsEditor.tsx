@@ -45,12 +45,8 @@ import { useTriagePromptInvocations } from './usePromptInvocations.js';
  * The configured-action editor: add, remove, rename, reorder, disable and
  * configure, in one place.
  *
- * It is the whole reason `triage.actions` is a hidden Settings field rather than
- * a declared form. The declarative Settings surface has text, switch, select,
- * number and JSON controls and no repeatable record editor, so the only way to
- * present a catalog through it is raw JSON — which is not configuration, it is
- * a text file with a label. The field still has a real declared home in the
- * Account record; this is what edits it.
+ * The declarative Settings surface is not a repeatable record editor, so this
+ * purpose-built editor writes the one `triage.actions` Account KV catalog.
  *
  * It decides nothing about what an action MEANS. Which subjects exist, what a
  * workspace mode is worth and which arm an action runs are closed vocabularies

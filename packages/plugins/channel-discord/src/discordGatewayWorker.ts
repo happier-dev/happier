@@ -113,7 +113,7 @@ export type DiscordGatewayWorkerInput = Readonly<{
     options: Readonly<{ signal: AbortSignal }>,
   ): Promise<void>;
   /** Supervisor-owned queueing hook; it never persists provider state locally. */
-  reportReadiness?(): void;
+  reportReadiness?(): void | Promise<void>;
   signal: AbortSignal;
   clock?: DiscordGatewayWorkerClock;
   ingressLimits?: Readonly<{
@@ -592,7 +592,7 @@ export function startDiscordGatewayWorker(input: DiscordGatewayWorkerInput): Dis
                   (effect.event === 'READY' || effect.event === 'RESUMED')
                   && (!messageContentIntent.coreDemand || messageContentIntent.gatewayIntentActive)
                 ) {
-                  input.reportReadiness?.();
+                  await input.reportReadiness?.();
                 }
                 await admitDispatch(effect);
                 break;

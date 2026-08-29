@@ -17,7 +17,8 @@ import type {
 import {
   ConversationBindingReadResultV1Schema,
   ConversationSessionProjectionBaselineAcceptResultV1Schema,
-  isConversationConnectionSelectableTransportV1,
+  isConversationConnectionCreateSelectableTransportV1,
+  conversationConnectionWebhookSourceInstanceIdV1,
   ConversationConnectionTestInputV1Schema,
   ConversationConnectionTestResultV1Schema,
   ConversationEndpointResolveInputV1Schema,
@@ -44,6 +45,7 @@ import {
   type ConversationBindingSetEnabledInputV1,
   type ConversationBindingUpdateInputV1,
   type ConversationBindingUpdateResultV1,
+  type ConversationConnectionCreateResultV1,
   type ConversationConnectionCreateInputV1,
   type ConversationConnectionDeleteInputV1,
   type ConversationConnectionPollRetryInputV1,
@@ -84,6 +86,13 @@ import {
   CHANNEL_STATE_RECORD_KIND,
   isCanonicalChannelStateRecordIdentity,
 } from './collections.js';
+import {
+  assertConversationConnectionWebhookEndpointCorrespondence,
+  buildConversationConnectionEndpointRequiredResult,
+  CONVERSATION_CONNECTION_WEBHOOK_ENDPOINT_ENSURE_SETUP_V1,
+  mintConversationConnectionWebhookEndpointAttemptIdentity,
+  readCanonicalConversationWebhookEndpointId,
+} from './connectionWebhookEndpoint.js';
 import { requireChannelsAccountStorage } from './requiredAccountStorage.js';
 import {
   abandonConversationConnectionStop,
@@ -183,10 +192,21 @@ export {
 type ConnectionTransportOrigin = Awaited<
   ReturnType<PluginInvocationContext['services']['actions']['executeAdmittedTargetedOperationWithExecutionOrigin']>
 >['executionOrigin'];
+type ConversationConnectionEndpointRequiredResult = Extract<
+  ConversationConnectionCreateResultV1,
+  Readonly<{ kind: 'endpointRequired' }>
+>;
 type ConversationConnectionCreateResult =
   | Readonly<{ kind: 'created'; connectionId: string }>
   | Readonly<{ kind: 'rejoined'; connectionId: string }>
+  | ConversationConnectionEndpointRequiredResult
   | Extract<ProviderConnectionPreparation, Readonly<{ kind: 'notReady' }>>;
+/** The endpoint facts a durable-push continuation writes into the connection row. */
+type ConversationConnectionWebhookEndpoint = Readonly<{
+  webhookContributionRef: Readonly<{ pluginId: string; localId: string }>;
+  webhookEndpointId: string;
+  webhookSourceInstanceId: string;
+}>;
 type ConversationConnectionTransferResult = ConversationConnectionTransferResultV1;
 type ConversationConnectionSetupAndTestInput = Pick<
   ConversationConnectionCreateInputV1,
@@ -1512,6 +1532,7 @@ export function createConversationPairingManagementHandlers(pairing: Conversatio
       return pairing.createChallenge({
         connectionId: createInput.connectionId,
         expectedConnectionRevision: createInput.expectedConnectionRevision,
+        pairingRequestId: createInput.pairingRequestId,
         materialization: facts.materialization,
         destinationLabel: facts.destinationLabel,
         ...(facts.pairingDeepLinkTemplate === undefined
@@ -1790,6 +1811,7 @@ function connectionRows(input: Readonly<{
   providerPluginId: string;
   setup: ConversationProviderSetupResultV1;
   transportOrigin: ConnectionTransportOrigin;
+  webhookEndpoint?: ConversationConnectionWebhookEndpoint;
   now: number;
 }>): readonly [JsonRecord, JsonRecord] {
   if (input.providerPluginId !== input.createInput.providerSelection.contributor.pluginId) {
@@ -1798,7 +1820,19 @@ function connectionRows(input: Readonly<{
       'The current provider must retain the exact selected contribution plugin identity before persistence.',
     );
   }
-  const transport: JsonRecord = { kind: input.createInput.selectedTransport };
+  // A durable-push row carries the exact ensured endpoint facts; every other
+  // transport keeps its previous record shape.
+  const transport: JsonRecord = input.webhookEndpoint === undefined
+    ? { kind: input.createInput.selectedTransport }
+    : {
+      kind: 'durablePush',
+      webhookContributionRef: {
+        pluginId: input.webhookEndpoint.webhookContributionRef.pluginId,
+        localId: input.webhookEndpoint.webhookContributionRef.localId,
+      },
+      webhookEndpointId: input.webhookEndpoint.webhookEndpointId,
+      webhookSourceInstanceId: input.webhookEndpoint.webhookSourceInstanceId,
+    };
   const connection = {
     [CHANNEL_STATE_FIELD.id]: input.connectionId,
     [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.connection,
@@ -1864,7 +1898,11 @@ function connectionRows(input: Readonly<{
  * One authoritative create attempt owns the outcome: canonical reservation
  * create, tombstone reuse at its exact revision, and the authoritative reread.
  * Losing that race surfaces the existing retryable conflict to the caller's
- * own retry path instead of an unowned local attempt count.
+ * own retry path instead of an unowned local attempt count. The connection ID
+ * is the one preallocated identity for the whole create journey: it already
+ * fed the provider connection-test correlation and, for durable push, the
+ * endpoint source instance, and it is the ID this batch persists or a later
+ * exact rejoin observes.
  */
 async function createOrRejoinConnection(input: Readonly<{
   context: PluginInvocationContext;
@@ -1872,6 +1910,8 @@ async function createOrRejoinConnection(input: Readonly<{
   providerPluginId: string;
   setup: ConversationProviderSetupResultV1;
   transportOrigin: ConnectionTransportOrigin;
+  connectionId: string;
+  webhookEndpoint?: ConversationConnectionWebhookEndpoint;
 }>): Promise<Extract<ConversationConnectionCreateResult, Readonly<{ kind: 'created' | 'rejoined' }>>> {
   const connectionIdentityKey = await ensureConnectionIdentityKey(input.context);
   const reservationRowId = await deriveReservationRowId({
@@ -1891,7 +1931,7 @@ async function createOrRejoinConnection(input: Readonly<{
 
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   assertNotAborted(input.context.signal);
-  const connectionId = createConnectionId();
+  const connectionId = input.connectionId;
   const [reservation, connection] = connectionRows({
     connectionId,
     reservationRowId,
@@ -1899,6 +1939,7 @@ async function createOrRejoinConnection(input: Readonly<{
     providerPluginId: input.providerPluginId,
     setup: input.setup,
     transportOrigin: input.transportOrigin,
+    ...(input.webhookEndpoint === undefined ? {} : { webhookEndpoint: input.webhookEndpoint }),
     now: Date.now(),
   });
   const result = await collection.batch([
@@ -2072,11 +2113,15 @@ async function runProviderSetup(input: Readonly<{
  * A selected non-durable transport must retain its matching lifecycle role
  * before setup can create external state. The selected current contribution is
  * the only role-map authority; setup output cannot manufacture a missing role.
+ * A selected durable-push transport needs no poll or stop role: the provider's
+ * declared webhook contribution is the setup fact the endpoint continuation
+ * proves, and the generic webhook owner owns dispatch.
  */
 function assertSelectedTransportRoleAvailable(input: Readonly<{
   provider: CurrentProvider;
   selectedTransport: ConversationConnectionCreateInputV1['selectedTransport'];
 }>): void {
+  if (input.selectedTransport === 'durablePush') return;
   const requiredOperation = input.selectedTransport === 'socket' ? 'connectionStop' : 'observationsPoll';
   const operation = input.selectedTransport === 'socket'
     ? input.provider.connectionStop
@@ -2174,7 +2219,7 @@ function projectConnectionPrepareTransportSelection(
   recommendedTransport: ConversationConnectionCreateInputV1['selectedTransport'];
 }> {
   const supportedTransports = setup.supportedTransports.filter(
-    isConversationConnectionSelectableTransportV1,
+    isConversationConnectionCreateSelectableTransportV1,
   );
   const fallbackTransport = supportedTransports[0];
   if (fallbackTransport === undefined) {
@@ -2185,7 +2230,7 @@ function projectConnectionPrepareTransportSelection(
   }
   return {
     supportedTransports,
-    recommendedTransport: isConversationConnectionSelectableTransportV1(setup.recommendedTransport)
+    recommendedTransport: isConversationConnectionCreateSelectableTransportV1(setup.recommendedTransport)
       ? setup.recommendedTransport
       : fallbackTransport,
   };
@@ -4474,7 +4519,14 @@ export async function resolveConversationDeliveryForInvocation(
   });
 }
 
-/** C2's final persistence owner for public non-durable connection creation. */
+/**
+ * The one connection-creation owner. Non-durable transports keep their exact
+ * previous persistence shape. A durable-push selection runs the strict
+ * two-call journey: the first call returns the preallocated final identity
+ * plus the generic endpoint-ensure facts, and the continuation proves
+ * host-derived correspondence before the incumbent reservation and connection
+ * rows are written or rejoined.
+ */
 export async function createConversationConnectionForInvocation(
   input: JsonValue,
   context: PluginInvocationContext,
@@ -4484,11 +4536,19 @@ export async function createConversationConnectionForInvocation(
     context,
     selection: createInput.providerSelection,
   });
+  // The preallocated ID is the one final connection identity for this whole
+  // create journey. It feeds the provider connection-test correlation and,
+  // for durable push, the endpoint source instance, and it is the ID the
+  // Account batch persists or a later exact rejoin observes — setup never
+  // mints a second identity after the endpoint exists.
+  const connectionId = createInput.endpointContinuation === undefined
+    ? createConnectionId()
+    : createInput.endpointContinuation.connectionId;
   const prepared = await runProviderSetupAndTest({
     context,
     setupInput: createInput,
     provider,
-    connectionIdForTest: createConnectionId(),
+    connectionIdForTest: connectionId,
   });
   if (prepared.kind === 'notReady') return prepared;
 
@@ -4506,13 +4566,48 @@ export async function createConversationConnectionForInvocation(
       true,
     );
   }
-  const existing = await findExistingConnection({
-    context,
-    createInput,
-    providerPluginId: providerForPersistence.pluginId,
-    setup: prepared.setup,
-  });
-  if (existing !== null) return { kind: 'rejoined', connectionId: existing };
+  // Any existing exact connection rejoins before the endpoint journey can
+  // ensure anything new; uniqueness stays the one identity authority. The
+  // durable-push continuation is the one exception: it re-runs this same
+  // uniqueness lookup itself so a retained connection rejoins only with the
+  // exact endpoint it was created with, and anything else fails closed.
+  const isDurablePushContinuation = createInput.selectedTransport === 'durablePush'
+    && createInput.endpointContinuation !== undefined;
+  if (!isDurablePushContinuation) {
+    const existing = await findExistingConnection({
+      context,
+      createInput,
+      providerPluginId: providerForPersistence.pluginId,
+      setup: prepared.setup,
+    });
+    if (existing !== null) return { kind: 'rejoined', connectionId: existing };
+  }
+
+  if (createInput.selectedTransport === 'durablePush') {
+    if (createInput.endpointContinuation === undefined) {
+      return await prepareEndpointRequiredConnectionCreation({
+        connectionId,
+        setup: prepared.setup,
+        transportOrigin: prepared.transportOrigin,
+      });
+    }
+    return await continueDurablePushConnectionCreation({
+      context,
+      createInput,
+      connectionId,
+      providerPluginId: providerForPersistence.pluginId,
+      setup: prepared.setup,
+      transportOrigin: prepared.transportOrigin,
+      continuation: createInput.endpointContinuation,
+    });
+  }
+  if (createInput.endpointContinuation !== undefined) {
+    throw pluginError(
+      'channels_connection_create_endpoint_continuation_invalid',
+      'Only a durable-push connection creation continues after the webhook endpoint is ensured.',
+      true,
+    );
+  }
 
   return await createOrRejoinConnection({
     context,
@@ -4520,7 +4615,179 @@ export async function createConversationConnectionForInvocation(
     providerPluginId: providerForPersistence.pluginId,
     setup: prepared.setup,
     transportOrigin: prepared.transportOrigin,
+    connectionId,
   });
+}
+
+/** The declared webhook contribution a durable-push setup must carry. */
+function readDurablePushWebhookContribution(
+  setup: ConversationProviderSetupResultV1,
+): Readonly<{ pluginId: string; localId: string }> {
+  const webhookContribution = setup.webhookContributionRef;
+  if (webhookContribution === undefined) {
+    throw pluginError(
+      'channels_connection_webhook_contribution_missing',
+      'Durable-push setup did not declare its generic webhook contribution.',
+    );
+  }
+  return webhookContribution;
+}
+
+/**
+ * The first durable-push create call. It persists nothing and holds no
+ * transaction: it returns the preallocated final connection identity plus the
+ * exact generic endpoint-ensure facts, and the present-user UI performs the
+ * endpoint effect through the existing host Action.
+ */
+async function prepareEndpointRequiredConnectionCreation(input: Readonly<{
+  connectionId: string;
+  setup: ConversationProviderSetupResultV1;
+  transportOrigin: ConnectionTransportOrigin;
+}>): Promise<ConversationConnectionEndpointRequiredResult> {
+  const attempt = mintConversationConnectionWebhookEndpointAttemptIdentity({
+    connectionId: input.connectionId,
+  });
+  return buildConversationConnectionEndpointRequiredResult({
+    attempt,
+    facts: {
+      connectionId: input.connectionId,
+      webhookContribution: readDurablePushWebhookContribution(input.setup),
+      targetMaterialization: input.transportOrigin.materializationRef,
+    },
+    webhookEndpointSetup: CONVERSATION_CONNECTION_WEBHOOK_ENDPOINT_ENSURE_SETUP_V1,
+  });
+}
+
+/** Reads the endpoint identity a retained durable-push connection carries. */
+async function readExistingDurablePushConnectionEndpoint(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+}>): Promise<Readonly<{ webhookEndpointId: string; webhookSourceInstanceId: string }> | null> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const row = await collection.get(input.connectionId, { signal: input.context.signal });
+  assertNotAborted(input.context.signal);
+  if (row === null) return null;
+  const current = readConversationConnectionUpdateRow({ row, connectionId: input.connectionId });
+  const transport = own(current.payload, 'transport');
+  if (!isJsonRecord(transport) || transport.kind !== 'durablePush') return null;
+  const webhookEndpointId = own(transport, 'webhookEndpointId');
+  const webhookSourceInstanceId = own(transport, 'webhookSourceInstanceId');
+  if (typeof webhookEndpointId !== 'string' || typeof webhookSourceInstanceId !== 'string') {
+    throw pluginError(
+      'channels_connection_create_corrupt',
+      'Retained durable-push connection is missing its endpoint correspondence facts.',
+    );
+  }
+  return { webhookEndpointId, webhookSourceInstanceId };
+}
+
+/**
+ * Admits a durable-push rejoin only when the incumbent connection retained
+ * the exact endpoint and derived source instance from this continuation. This
+ * check is required both before the reservation batch and after its conflict
+ * path: another creator may install the incumbent between those two points.
+ */
+async function assertDurablePushConnectionRejoinEndpoint(input: Readonly<{
+  context: PluginInvocationContext;
+  connectionId: string;
+  webhookEndpointId: string;
+  webhookSourceInstanceId: string;
+}>): Promise<void> {
+  const retainedEndpoint = await readExistingDurablePushConnectionEndpoint({
+    context: input.context,
+    connectionId: input.connectionId,
+  });
+  if (retainedEndpoint === null
+    || retainedEndpoint.webhookEndpointId !== input.webhookEndpointId
+    || retainedEndpoint.webhookSourceInstanceId !== input.webhookSourceInstanceId) {
+    throw pluginError(
+      'channels_connection_create_endpoint_mismatch',
+      'The retained connection was created with a different webhook endpoint.',
+    );
+  }
+}
+
+/**
+ * The durable-push continuation. Setup, credential echo, test, uniqueness,
+ * and currentness are re-run exactly as in the first call; the endpoint ID is
+ * admitted through its canonical owner parser; and only a current host-derived
+ * ready correspondence result admits the incumbent reservation-plus-connection
+ * batch. A lost response rejoins the same connection and endpoint; a
+ * mismatched attempt or endpoint fails closed without any Channel write.
+ */
+async function continueDurablePushConnectionCreation(input: Readonly<{
+  context: PluginInvocationContext;
+  createInput: ConversationConnectionCreateInputV1;
+  connectionId: string;
+  providerPluginId: string;
+  setup: ConversationProviderSetupResultV1;
+  transportOrigin: ConnectionTransportOrigin;
+  continuation: NonNullable<ConversationConnectionCreateInputV1['endpointContinuation']>;
+}>): Promise<ConversationConnectionCreateResult> {
+  const continuation = input.continuation;
+  const webhookEndpointId = readCanonicalConversationWebhookEndpointId(
+    continuation.webhookEndpointId,
+  );
+  const sourceInstanceId = conversationConnectionWebhookSourceInstanceIdV1(input.connectionId);
+
+  // Correspondence is host-derived only. No UI- or provider-asserted
+  // correspondence fact participates; only a current ready result admits a
+  // rejoin or the connection batch below.
+  await assertConversationConnectionWebhookEndpointCorrespondence({
+    context: input.context,
+    webhookEndpointId,
+    webhookContribution: readDurablePushWebhookContribution(input.setup),
+    targetMaterialization: input.transportOrigin.materializationRef,
+    sourceInstanceId,
+  });
+  assertNotAborted(input.context.signal);
+
+  // A lost continuation response rejoins the exact committed connection with
+  // the exact endpoint it was created with; any other retained endpoint
+  // belongs to a different setup attempt and fails closed. The currentness,
+  // setup, test, and correspondence checks above deliberately run first.
+  const existing = await findExistingConnection({
+    context: input.context,
+    createInput: input.createInput,
+    providerPluginId: input.providerPluginId,
+    setup: input.setup,
+  });
+  if (existing !== null) {
+    await assertDurablePushConnectionRejoinEndpoint({
+      context: input.context,
+      connectionId: existing,
+      webhookEndpointId,
+      webhookSourceInstanceId: sourceInstanceId,
+    });
+    return { kind: 'rejoined', connectionId: existing };
+  }
+
+  const outcome = await createOrRejoinConnection({
+    context: input.context,
+    createInput: input.createInput,
+    providerPluginId: input.providerPluginId,
+    setup: input.setup,
+    transportOrigin: input.transportOrigin,
+    connectionId: input.connectionId,
+    webhookEndpoint: {
+      webhookContributionRef: readDurablePushWebhookContribution(input.setup),
+      webhookEndpointId,
+      webhookSourceInstanceId: sourceInstanceId,
+    },
+  });
+  if (outcome.kind === 'rejoined') {
+    // The shared reservation owner may observe an incumbent that won after
+    // the pre-check above, either before its batch or through the conflict
+    // reread. Re-admit that raced rejoin against the exact continuation facts
+    // before returning it as this attempt's outcome.
+    await assertDurablePushConnectionRejoinEndpoint({
+      context: input.context,
+      connectionId: outcome.connectionId,
+      webhookEndpointId,
+      webhookSourceInstanceId: sourceInstanceId,
+    });
+  }
+  return outcome;
 }
 
 function assertTransferProviderPluginIdentity(input: Readonly<{

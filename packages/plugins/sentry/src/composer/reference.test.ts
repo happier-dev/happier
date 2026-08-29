@@ -1,4 +1,7 @@
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import {
+  ProtocolComposerReferenceResolutionV1Schema,
+} from '@happier-dev/plugin-sdk/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { encodeSentryInstanceConfiguration } from '../instances/sentryInstanceConfiguration.js';
@@ -228,6 +231,66 @@ describe('the Sentry selected-evidence Composer reference', () => {
     );
   });
 
+  it('uses the canonical redacted event projection for useful agent evidence without forwarding user fields or frame locals', async () => {
+    const candidate = disclosedCandidate();
+    const event = {
+      ...rawEvent(),
+      user: {
+        id: 'person-1',
+        email: 'person@example.com',
+        username: 'checkout-user',
+        ip_address: '192.0.2.1',
+        name: 'Example Person',
+      },
+      entries: [
+        ...rawEvent().entries,
+        {
+          type: 'breadcrumbs',
+          data: {
+            values: [{
+              timestamp: '2026-02-03T04:05:05.000Z',
+              category: 'ui.click',
+              level: 'info',
+              message: 'Pressed submit order',
+              data: { authorization: 'must-not-survive' },
+            }],
+          },
+        },
+      ],
+    };
+
+    const resolved = await resolveSentryEvidenceReference(
+      candidate.candidate.id,
+      host({ status: 200, body: event }).context,
+    );
+
+    expect(resolved.context).toContain('Location: app/checkout.ts');
+    expect(resolved.context).toContain('Culprit: submitOrder(app/checkout)');
+    expect(resolved.context).toContain('Platform: javascript');
+    expect(resolved.context).toContain('await charge(card, total);');
+    expect(resolved.context).toContain('Pressed submit order');
+    expect(resolved.context).toContain('5 event user fields');
+    expect(resolved.context).not.toContain('person@example.com');
+    expect(resolved.context).not.toContain('checkout-user');
+    expect(resolved.context).not.toContain('must-not-survive');
+  });
+
+  it('preserves a protocol-valid timestamp outside the JavaScript Date range without throwing', async () => {
+    const candidate = disclosedCandidate();
+    const outsideDateRangeEpochSeconds = 8_640_000_000_001;
+    const resolved = await resolveSentryEvidenceReference(
+      candidate.candidate.id,
+      host({
+        status: 200,
+        body: { ...rawEvent(), dateCreated: outsideDateRangeEpochSeconds },
+      }).context,
+    );
+
+    expect(resolved.context).toContain(
+      `Occurred: ${String(outsideDateRangeEpochSeconds * 1_000)}`,
+    );
+  });
+
   it('refuses a candidate after its configured source changes and performs no provider read', async () => {
     const candidate = disclosedCandidate();
     const changed = configuredInstance();
@@ -250,7 +313,7 @@ describe('the Sentry selected-evidence Composer reference', () => {
     expect(harness.request).not.toHaveBeenCalled();
   });
 
-  it('does not create a second frame or byte projection below the event projector', async () => {
+  it('does not impose a second arbitrary frame count below the Composer schema', async () => {
     const candidate = disclosedCandidate();
     const frames = Array.from({ length: 9 }, (_, index) => ({
       filename: `app/frame-${String(index + 1)}.ts`,
@@ -277,7 +340,56 @@ describe('the Sentry selected-evidence Composer reference', () => {
       host({ status: 200, body: event }).context,
     );
 
+    expect(ProtocolComposerReferenceResolutionV1Schema.safeParse(resolved).success).toBe(true);
     expect(resolved.context).toContain('projectedFrame9');
+    expect(resolved.context).not.toContain('Agent evidence omitted: 1 frame');
+  });
+
+  it('keeps release, environment, relevant tags and redaction disclosure within 16 KiB', async () => {
+    const candidate = disclosedCandidate();
+    const hostile = '\\\"'.repeat(256);
+    const frames = Array.from({ length: 40 }, (_, index) => ({
+      filename: `${hostile}/frame-${String(index)}.ts`,
+      function: `${hostile}fn-${String(index)}`,
+      lineNo: index + 1,
+      colNo: 1,
+      inApp: index % 2 === 0,
+      context: [[index + 1, hostile]],
+      vars: { secret: 'must-not-survive' },
+    }));
+    const event = {
+      ...rawEvent(),
+      message: hostile,
+      tags: [
+        { key: 'release', value: 'checkout@2026.8.29' },
+        { key: 'environment', value: 'production' },
+        { key: 'level', value: 'error' },
+        { key: 'transaction', value: '/checkout' },
+        { key: 'runtime', value: 'node' },
+        { key: 'browser', value: 'Firefox' },
+        { key: 'os', value: 'Linux' },
+        { key: 'device', value: 'desktop' },
+        { key: 'custom-secret', value: 'must-not-survive' },
+      ],
+      entries: [{
+        type: 'exception',
+        data: { values: [{ type: hostile, value: hostile, stacktrace: { frames } }] },
+      }],
+    };
+
+    const resolved = await resolveSentryEvidenceReference(
+      candidate.candidate.id,
+      host({ status: 200, body: event }).context,
+    );
+
+    expect(ProtocolComposerReferenceResolutionV1Schema.safeParse(resolved).success).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(resolved)).byteLength).toBeLessThanOrEqual(16 * 1024);
+    expect(resolved.context).toContain('Release: checkout@2026.8.29');
+    expect(resolved.context).toContain('Environment: production');
+    expect(resolved.context).toContain('level: error');
+    expect(resolved.context).toContain('Evidence disclosure:');
+    expect(resolved.context).toContain('Agent evidence omitted:');
+    expect(resolved.context).not.toContain('must-not-survive');
   });
 
   it('refuses invalid candidates and changed or unavailable events', async () => {

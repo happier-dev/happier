@@ -72,7 +72,7 @@ import type { BitbucketTriageApiClient } from '../apiClient.js';
  *
  * The shape every write here follows is the same three steps:
  *
- * 1. **fresh read** under this Action's own signal and deadline, proving the entry is still the
+ * 1. **fresh read** under this Action's host-stamped signal, proving the entry is still the
  *    one the user acted on;
  * 2. **the exact documented native request**, sent once and never retried;
  * 3. **a confirming read**, whose re-observed entity is what comes back — never a bare boolean,
@@ -98,8 +98,6 @@ export const BITBUCKET_TRIAGE_MUTATION_ACTION_IDS = Object.freeze({
  * the one merge-task status read and the confirming pull-request read together, because what it
  * protects is one person waiting on one button — not each request separately.
  */
-export const BITBUCKET_MUTATION_DEADLINE_MS = 45_000;
-
 /**
  * Bitbucket's merge "may complete asynchronously, and not at our option". This Action follows the
  * admitted same-origin task location once, then performs its exact pull-request reread. It does not
@@ -114,21 +112,18 @@ function unavailable(failure: TriageSourceFailureV1): BitbucketMutationResultV1 
 }
 
 /**
- * The caller's signal, additionally bounded by this Action's own deadline.
+ * The caller's host-stamped signal used by the whole Action.
  *
  * The composition itself is the shared forge rule and lives at its one owner; only the duration
  * and the sentence are this source's. Two copies of a `clearTimeout`/`unref` pair is how one of
  * them ends up holding the daemon open for a write nobody is waiting on.
  *
- * NOTE, recorded rather than silently relied on: the deadline aborts with a `TimeoutError` so the
- * classifier (`triage/failures.ts#classifyBitbucketTransportFailure`) preserves the distinction:
- * deadline expiry is `transient/invocation-deadline-exceeded`, while caller cancellation is
- * `cancelled/invocation-cancelled`.
+ * A caller may itself supply a `TimeoutError`; the classifier preserves that evidence versus an
+ * ordinary cancellation without this source choosing the duration.
  */
 function boundMutation(callerSignal: AbortSignal | undefined): BoundedInvocation {
   return createBoundedInvocation({
     callerSignal,
-    timeoutMs: BITBUCKET_MUTATION_DEADLINE_MS,
   });
 }
 

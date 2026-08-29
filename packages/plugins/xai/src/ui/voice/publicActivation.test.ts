@@ -5,7 +5,6 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
-import { XAI_REALTIME_DEFAULT_SETTINGS } from '../../protocol/voice/settings.js';
 import { activate } from './runtime.js';
 import { VOICE_PROVIDER_PRESENTATIONS } from './index.js';
 
@@ -31,20 +30,15 @@ describe('xAI Realtime public Voice activation', () => {
     const entry = VOICE_PROVIDER_PRESENTATIONS[0];
 
     expect(Object.keys(entry).sort()).toEqual([
-      'createSettingsSection',
-      'legacySettingsMigration',
       'providerId',
       'selectionOptions',
       'settingsSectionId',
     ]);
     expect(entry.providerId).toBe('happier.voice.xai/realtime-grok');
     expect(entry).not.toHaveProperty('declaration');
-    expect(entry.legacySettingsMigration?.migrateLegacy?.({
-      ...XAI_REALTIME_DEFAULT_SETTINGS,
-      instructions: null,
-    })).toMatchObject({
-      config: { instructions: '' },
-    });
+    expect(entry).not.toHaveProperty('legacySettingsMigration');
+    expect(PLUGIN_MANIFEST.contributes.voiceProviders[0]?.settings?.presentation)
+      .toMatchObject({ kind: 'voice.provider-settings.v1', modes: ['byo'] });
   });
 
   it('declares one exact bounded xAI voices operation and rejects projection drift', () => {

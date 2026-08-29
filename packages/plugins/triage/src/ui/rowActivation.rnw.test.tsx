@@ -198,7 +198,7 @@ describe('opening a PRs & Issues row', () => {
         // `option` is the semantic the shared List gives a row only once the
         // shell supplies a selection owner. Without it the row is unreachable
         // by pointer, touch, keyboard and assistive technology alike.
-        expect(await shell.getAllByRole('option', {
+        expect(await shell.getAllByRole('button', {
             name: 'Replace the duplicated normalizer',
         })).toHaveLength(1);
     });
@@ -223,7 +223,7 @@ describe('opening a PRs & Issues row', () => {
         const before = locations.length;
 
         await act(async () => {
-            await shell.press(await shell.getByRole('option', {
+            await shell.press(await shell.getByRole('button', {
                 name: 'Replace the duplicated normalizer',
             }));
         });

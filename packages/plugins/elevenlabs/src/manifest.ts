@@ -2,6 +2,7 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
 
 import { ELEVENLABS_VOICE_PROVIDER_CONTRIBUTION_ID } from './constants.js';
+import { ELEVENLABS_SETTINGS_SECTION } from './voiceSettingsPresentation.js';
 
 const ELEVENLABS_API_KEY_VOICE_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
 const ELEVENLABS_PROCESSING_DISCLOSURE_KEY = 'settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure';
@@ -107,6 +108,7 @@ export const ELEVENLABS_PLUGIN = definePlugin({
         },
         settings: {
           schemaVersion: 2,
+          presentation: JSON.parse(JSON.stringify(ELEVENLABS_SETTINGS_SECTION)),
           privacyDisclosure: {
             key: ELEVENLABS_PROCESSING_DISCLOSURE_KEY,
             fallback: ELEVENLABS_PROCESSING_DISCLOSURE_FALLBACK,

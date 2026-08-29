@@ -1,10 +1,7 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
-import {
-    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1,
-    type ScopedSettingsService,
-} from '@happier-dev/plugin-sdk/settings';
+import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import {
     MAX_TRIAGE_COLLISION_SCOPE_UTF8_BYTES_V1,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -27,9 +24,10 @@ import type {
 } from '../projection/listWindow.js';
 
 import { readExactKeys } from './storedValue.js';
+import type { TriageCatalogStoreV1 } from './accountKvCatalogStore.js';
 
 /**
- * The sole `triage.savedViews` owner: one typed Account Settings value, read,
+ * The sole `triage.savedViews` owner: one typed Account KV value, read,
  * validated and written in one place.
  *
  * Saved views are genuine durable user state — one of only four things Triage
@@ -48,27 +46,27 @@ import { readExactKeys } from './storedValue.js';
  * silently invalidates, and a view expressible only by naming a provider concept
  * would be source vocabulary leaking into the aggregate.
  *
- * It is neither a generic Settings manager nor a materialization authority.
- * Materialization has no Settings value at all, so a view edit can never contend
+ * It is neither a generic Account Data manager nor a materialization authority.
+ * Materialization has no KV value at all, so a view edit can never contend
  * with or become a refresh command.
  */
 
-/** The one versioned Account Settings key this document owns. */
-export const TRIAGE_SAVED_VIEWS_SETTING_ID_V1 = 'triage.savedViews';
+/** The one versioned Account KV key this document owns. */
+export const TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 = 'triage.savedViews';
 
 /**
  * The whole serialized `triage.savedViews` value.
  *
  * It is measured over the complete value rather than per member, because a set
- * of individually valid views is exactly how a Settings record overflows. The
- * generic Account-document structural ceiling is a host safeguard around every
- * Settings value and is deliberately not restated here: it is not this key's
+ * of individually valid views is exactly how an Account KV value overflows. The
+ * generic Account-data row ceiling is a host safeguard around every KV record
+ * and is deliberately not restated here: it is not this key's
  * member-count bound, and treating its 256-field limit as "256 views" would be
- * wrong by an order of magnitude. The byte boundary below is the Settings
- * owner's public field boundary, not a second Triage-specific 64-KiB decision.
+ * wrong by an order of magnitude. The byte boundary below is Account Data's
+ * public value boundary, not a second Triage-specific 64-KiB decision.
  */
 export const MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1 =
-    PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFieldEncodedBytes;
+    PLUGIN_ACCOUNT_STORAGE_LIMITS_V1.maximumValueEncodedBytes;
 
 export type CorpusSavedViewV1 = Readonly<{
     /** Target-minted opaque id; neither an entry/source identity nor a storage tag. */
@@ -80,7 +78,7 @@ export type CorpusSavedViewV1 = Readonly<{
     smartPolicy: CorpusSmartPolicyV1;
 }>;
 
-export type CorpusSavedViewsSettingV1 = Readonly<{
+export type CorpusSavedViewsCatalogV1 = Readonly<{
     v: 1;
     views: readonly CorpusSavedViewV1[];
     /** `null` selects the deterministic unsaved default; otherwise it names exactly one member. */
@@ -88,7 +86,7 @@ export type CorpusSavedViewsSettingV1 = Readonly<{
 }>;
 
 /** The parsed absence and the effective default lens behind it. */
-export const CORPUS_EMPTY_SAVED_VIEWS_V1: CorpusSavedViewsSettingV1 = Object.freeze({
+export const CORPUS_EMPTY_SAVED_VIEWS_V1: CorpusSavedViewsCatalogV1 = Object.freeze({
     v: 1,
     views: Object.freeze([]),
     selectedViewId: null,
@@ -104,7 +102,7 @@ export const CORPUS_EMPTY_SAVED_VIEWS_V1: CorpusSavedViewsSettingV1 = Object.fre
  */
 export type CorpusSavedViewsReadV1 = Readonly<{
     kind: 'absent' | 'parsed' | 'unreadable';
-    value: CorpusSavedViewsSettingV1;
+    value: CorpusSavedViewsCatalogV1;
 }>;
 
 export type CorpusSavedViewsRejectionV1 =
@@ -119,7 +117,7 @@ export type CorpusSavedViewsMutationResultV1 =
     | Readonly<{
         status: 'applied';
         viewId: string | null;
-        value: CorpusSavedViewsSettingV1;
+        value: CorpusSavedViewsCatalogV1;
         revision: string;
     }>
     /** Another writer won; the caller re-reads rather than forcing its value. */
@@ -129,7 +127,7 @@ export type CorpusSavedViewsMutationResultV1 =
     | Readonly<{ status: 'rejected'; reason: CorpusSavedViewsRejectionV1 }>;
 
 type CorpusSavedViewsAppliedPlanV1 =
-    | Readonly<{ status: 'applied'; viewId: string | null; value: CorpusSavedViewsSettingV1 }>
+    | Readonly<{ status: 'applied'; viewId: string | null; value: CorpusSavedViewsCatalogV1 }>
     | Exclude<CorpusSavedViewsMutationResultV1, Readonly<{ status: 'applied' }>>;
 
 export type CorpusSavedViewDraftV1 = Readonly<{
@@ -149,7 +147,7 @@ export type CorpusSavedViewCommandV1 = CorpusSavedViewCommandBaseV1 & (
 );
 
 export type CorpusSavedViewsDepsV1 = Readonly<{
-    settings: Pick<ScopedSettingsService, 'snapshot' | 'set'>;
+    catalog: TriageCatalogStoreV1;
     /** The opaque view id is minted only here, and only for a create. */
     mintViewId: () => string;
     signal?: AbortSignal;
@@ -307,7 +305,7 @@ function readView(viewId: string, draft: Readonly<{
     order: unknown;
     smartPolicy: unknown;
 }>): ViewOutcome {
-    // The complete Account Settings field has the canonical storage boundary.
+    // The complete Account KV value has the canonical storage boundary.
     // Labels have no independent provider, transport, or product ceiling.
     const label = readSingleLineString(draft.label);
     if (label === null) return { ok: false, reason: 'label' };
@@ -336,7 +334,7 @@ export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
     if (raw === undefined || raw === null) return { kind: 'absent', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
     const unreadable: CorpusSavedViewsReadV1 = { kind: 'unreadable', value: CORPUS_EMPTY_SAVED_VIEWS_V1 };
     // The local whole-value bound is read back as well as written so the reader
-    // and writer agree about which Settings documents this implementation owns.
+    // and writer agree about which Account KV values this implementation owns.
     if (typeof raw !== 'object') return unreadable;
     if (utf8ByteLength(JSON.stringify(raw)) > MAX_TRIAGE_SAVED_VIEWS_SERIALIZED_UTF8_BYTES_V1) {
         return unreadable;
@@ -375,7 +373,7 @@ export function parseTriageSavedViews(raw: unknown): CorpusSavedViewsReadV1 {
  * the validator did not admit — a derived tag, a stray display value, an
  * unparsed policy — can ride into durable Account state.
  */
-function toStoredValue(value: CorpusSavedViewsSettingV1): JsonValue {
+function toStoredValue(value: CorpusSavedViewsCatalogV1): JsonValue {
     return {
         v: 1,
         views: value.views.map((view) => ({
@@ -402,16 +400,16 @@ function toStoredValue(value: CorpusSavedViewsSettingV1): JsonValue {
 }
 
 export async function readTriageSavedViews(deps: Readonly<{
-    settings: Pick<ScopedSettingsService, 'snapshot'>;
+    catalog: Pick<TriageCatalogStoreV1, 'read'>;
     signal?: AbortSignal;
 }>): Promise<CorpusSavedViewsReadV1 & Readonly<{ revision: string }>> {
-    const snapshot = await deps.settings.snapshot(deps.signal ? { signal: deps.signal } : undefined);
-    const read = parseTriageSavedViews(snapshot.values[TRIAGE_SAVED_VIEWS_SETTING_ID_V1]);
+    const snapshot = await deps.catalog.read(deps.signal ? { signal: deps.signal } : undefined);
+    const read = parseTriageSavedViews(snapshot.value);
     return { ...read, revision: snapshot.revision };
 }
 
 function applyCommand(
-    current: CorpusSavedViewsSettingV1,
+    current: CorpusSavedViewsCatalogV1,
     command: CorpusSavedViewCommandV1,
     mintViewId: () => string,
 ): CorpusSavedViewsAppliedPlanV1 {
@@ -472,10 +470,10 @@ function applyCommand(
  * It reads the authoritative record, validates the whole resulting value, and
  * writes it against the revision it read. A losing write returns the typed
  * `conflict` and the caller re-reads: there is no last-writer-wins merge, no
- * hidden local copy, and no Collection fallback for a Settings value.
+ * hidden local copy, and no Collection fallback for an Account KV value.
  *
  * `conflict` means exactly one thing — the host refused this write because
- * another writer moved the revision. Every other refusal the Settings service
+ * another writer moved the revision. Every other refusal the Account KV service
  * raises, and an abort or a store failure, surfaces as itself: folding them all
  * into `conflict` would tell the user their views changed elsewhere and to
  * retry, when the write is in fact refused for a reason retrying cannot
@@ -486,12 +484,12 @@ export async function mutateTriageSavedViews(
     command: CorpusSavedViewCommandV1,
 ): Promise<CorpusSavedViewsMutationResultV1> {
     const options = deps.signal ? { signal: deps.signal } : undefined;
-    const snapshot = await deps.settings.snapshot(options);
+    const snapshot = await deps.catalog.read(options);
     // The caller names the document it edited. Comparing before applying the
-    // full draft closes the window the final Settings CAS cannot see: a change
+    // full draft closes the window the final Account KV CAS cannot see: a change
     // that landed after the editor read but before this function's own snapshot.
     if (snapshot.revision !== command.expectedRevision) return { status: 'conflict' };
-    const read = parseTriageSavedViews(snapshot.values[TRIAGE_SAVED_VIEWS_SETTING_ID_V1]);
+    const read = parseTriageSavedViews(snapshot.value);
     // Refusing here is what keeps a newer client's views alive: this build
     // cannot merge into a value it cannot read, so it declines rather than
     // replacing it with its own idea of the set.
@@ -506,13 +504,13 @@ export async function mutateTriageSavedViews(
     }
 
     try {
-        const mutation = await deps.settings.set(TRIAGE_SAVED_VIEWS_SETTING_ID_V1, stored, {
+        const mutation = await deps.catalog.write(stored, {
             expectedRevision: snapshot.revision,
             ...(deps.signal ? { signal: deps.signal } : {}),
         });
         return { ...applied, revision: mutation.revision };
     } catch (error) {
-        if (isPluginError(error) && error.code === 'plugin_settings_revision_conflict') {
+        if (isPluginError(error) && error.code === 'plugin_account_kv_conflict') {
             return { status: 'conflict' };
         }
         throw error;

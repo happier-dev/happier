@@ -1,5 +1,8 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { VoiceCredentialSlotIdSchema } from '@happier-dev/plugin-sdk/voice';
+import {
+  VOICE_SPEECH_OUTPUT_MAX_BYTES,
+  VoiceCredentialSlotIdSchema,
+} from '@happier-dev/plugin-sdk/voice';
 
 import {
   OPENAI_COMPAT_STT_CREDENTIAL_ENVIRONMENT_KEY,
@@ -275,7 +278,7 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
         limits: {
           synthesize: {
             maxInputCharacters: 200000,
-            maxOutputBytes: 33554432,
+            maxOutputBytes: VOICE_SPEECH_OUTPUT_MAX_BYTES,
           },
         },
       },

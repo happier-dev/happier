@@ -217,6 +217,68 @@ describe('pageOpenCodeTranscript', () => {
     }));
   });
 
+  it('serves one semantic item per page inside one message with maxItems=1 and continues without loss', async () => {
+    const toolsMessage = {
+      info: { id: 'msg-tools', role: 'assistant', time: { created: 2 } },
+      parts: [
+        { type: 'text', text: 'hello' },
+        {
+          id: 'part-tools',
+          type: 'tool',
+          sessionID: 'sess-1',
+          messageID: 'msg-tools',
+          callID: 'call-tools',
+          tool: 'bash',
+          state: {
+            status: 'completed',
+            input: { command: 'pwd' },
+            output: '/repo\\n',
+          },
+        },
+      ],
+    };
+    const olderMessage = {
+      info: { id: 'msg-older', role: 'user', time: { created: 1 } },
+      parts: [{ type: 'text', text: 'older' }],
+    };
+    sessionMessagesList
+      .mockResolvedValueOnce({ items: [toolsMessage], nextCursor: 'before-tools' })
+      .mockResolvedValueOnce({ items: [toolsMessage], nextCursor: 'before-tools' })
+      .mockResolvedValueOnce({ items: [toolsMessage], nextCursor: 'before-tools' })
+      .mockResolvedValueOnce({ items: [olderMessage], nextCursor: null });
+
+    const page = (cursor?: string) => pageOpenCodeTranscript({
+      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4099' },
+      providerSessionId: 'sess-1',
+      direction: 'older',
+      ...(cursor ? { cursor } : {}),
+      maxBytes: 100_000,
+      maxItems: 1,
+    });
+
+    const first = await page();
+    expect(first.items.map((item) => item.id)).toEqual([
+      'opencode:sess-1:msg-tools:tool-result:call-tools',
+    ]);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextCursor).toEqual(expect.any(String));
+
+    const second = await page(first.nextCursor ?? undefined);
+    expect(second.items.map((item) => item.id)).toEqual([
+      'opencode:sess-1:msg-tools:tool-call:call-tools',
+    ]);
+    expect(second.hasMore).toBe(true);
+
+    const third = await page(second.nextCursor ?? undefined);
+    expect(third.items.map((item) => item.id)).toEqual(['opencode:sess-1:msg-tools']);
+    expect(third.hasMore).toBe(true);
+
+    const fourth = await page(third.nextCursor ?? undefined);
+    expect(fourth.items.map((item) => item.id)).toEqual(['opencode:sess-1:msg-older']);
+    expect(fourth.hasMore).toBe(false);
+    expect(fourth.nextCursor).toBeNull();
+  });
+
   it('fences a backward-page continuation when OpenCode replaces the same session id', async () => {
     sessionGet
       .mockResolvedValueOnce({

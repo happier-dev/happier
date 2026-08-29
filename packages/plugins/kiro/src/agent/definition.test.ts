@@ -57,8 +57,6 @@ describe('Kiro agent definition', () => {
         loginLaunches: [{ kind: 'primary', args: ['login'] }],
       },
     });
-    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities).toMatchObject({
-      executionRuns: { open: ['create'], checkpoint: false, stop: true },
-    });
+    expect(PLUGIN_MANIFEST.contributes.agents[0]?.capabilities).not.toHaveProperty('executionRuns');
   });
 });
