@@ -48,7 +48,7 @@ what decides which actions apply:
 ## What you can do with one
 
 - **Pin it.** Pins are yours and sync with your account, so the entry you pinned on your laptop is pinned on your phone.
-- **Link it to a session.** The link is a durable relation, not a copied URL — an entry can carry up to 32 linked sessions, and a session opened from an entry stays associated with it.
+- **Link it to a session.** The link is a durable relation, not a copied URL. Linked sessions are paged, so older relationships remain reachable, and a session opened from an entry stays associated with it.
 - **Attach it to a message.** The composer has a **PRs & Issues** attachment, so you can hand an agent the entry itself rather than pasting a link and hoping it fetches the right thing.
 - **Save a view.** Filters you use often become saved views, under **Saved views** in the plugin's settings.
 
@@ -56,12 +56,13 @@ Three things sync with your account: the sources you configured, the links
 between entries and sessions, and your pins. Nothing else about the list is
 stored — entries themselves are read from their source each time.
 
-## Agents can read it too
+## Give an entry to an Agent
 
-The plugin contributes MCP servers and discovery sources, so an agent in a
-session can query the same list you are looking at. That is what makes "look at
-my review queue and start on the oldest one" a thing you can ask for rather than
-a thing you have to do by hand.
+Attach one or more entries in the Composer, or start a Session from an entry's
+configured action. Happier resolves the current source context when the message
+is sent and keeps a structured attachment presentation in the transcript, so
+the Agent receives the selected work and the conversation keeps showing what
+you attached.
 
 ## Related
 

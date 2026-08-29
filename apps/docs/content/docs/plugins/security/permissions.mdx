@@ -45,9 +45,22 @@ Two consequences worth stating plainly:
 - **Only host-resource-selection capabilities may be optional.** `connectedAccounts`,
   `sessions`, `storage.account` and `mcp` are the complete list. A manifest that
   puts anything else in `optional[]` is rejected.
-- **A required request is not scope-checked at runtime.** Required authority is
-  granted at install time by the person who chose to trust the package. The
-  runtime grant comparison exists for optional resource selections.
+- **A required request is not scope-checked at runtime** — with one exception.
+  Required authority is granted at install time by the person who chose to trust
+  the package. The runtime grant comparison exists for optional resource
+  selections.
+
+**The `sessions` exception.** The public External Sessions surface
+(`context.services.sessions.external`) enforces the resolved Session scopes on
+every call, including required requests: `capabilities`, `list`,
+`readTranscript`, and `followTranscript` require a scope granting Session
+`read`; `attach` and `takeover` require Session `control`. A scope restricted
+with `machineIds` grants nothing on hosts outside that list, and a scope
+restricted with `projectIds` fails closed on this surface because the host owns
+no canonical project identity for external sources (plugin-private source link
+data is never consulted). The restriction is re-evaluated against the currently
+published manifest on every call, so a retained Agent cannot keep a grant its
+replacement no longer declares.
 
 ## Example
 

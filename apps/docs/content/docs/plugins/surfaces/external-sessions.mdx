@@ -629,16 +629,12 @@ const takeover = {
     if (request.signal.aborted) {
       return { ok: false, code: 'cancelled' };
     }
-    if (!request.linkedDirectory) {
-      return {
-        ok: false,
-        code: 'unavailable',
-        message: 'This linked session has no working directory.',
-      };
-    }
+    // The plan carries no launch directory: the host enforces the request's
+    // targetDirectory as the spawned cwd, and optional linkedDirectory is
+    // informational history that never gates the launch.
     return {
       ok: true,
-      value: { directory: request.linkedDirectory },
+      value: {},
     };
   },
 } satisfies AgentExternalSessionTakeoverContribution;
@@ -703,7 +699,6 @@ with exactly:
 {
   ok: true,
   value: {
-    directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -711,12 +706,17 @@ with exactly:
 }
 ```
 
-`directory` is required and limited to 10,000 code units. It is Agent-native
-launch context; the host-selected `targetDirectory` remains the spawned
-process working directory.
+The plan carries no launch directory. The host-selected `targetDirectory` is
+the spawned process working directory, and the request's optional
+`linkedDirectory` is informational history a plugin may inspect — it never
+gates the launch or selects the cwd.
 `backendModeHint`, when used, is the Agent's existing narrow backend-mode
-vocabulary and is limited to 256 code units. Environment variables are limited
-to 64 entries, 128 code units per key, and 16,384 code units per value. Every
+vocabulary and is limited to 256 code units. The host routes it through the
+launch's Agent-owned `runtimeDescriptorV1` — the same selection carrier the
+canonical spawn path uses — and never turns it into a generic spawn field;
+when the plan also carries a descriptor that already selects a backend mode,
+the descriptor wins. Environment variables are limited
+ to 64 entries, 128 code units per key, and 16,384 code units per value. Every
 key must also pass that Agent's existing process-environment authorization and
 the host's reserved/custody-key denial; one invalid key rejects the whole plan.
 `runtimeDescriptorV1`, when present, is the strict bounded Agent-owned runtime
@@ -739,8 +739,12 @@ no alias, method-presence fallback, broader launch carrier, or plugin-selected
 takeover mode: the host retains quiescence, admission, transcript, and lifecycle
 authority for both linked and persisted takeover flows.
 
-Registering the facet does not by itself advertise external-linked takeover.
-That mode also requires the Agent manifest's
+The host only advertises takeover when the Agent's current runtime
+generation admitted this facet; a generation without it reports takeover
+unavailable (`plugin_external_agent_unavailable`) instead of advertising a
+takeover that could only fail at launch. Registering the facet does not by
+itself advertise external-linked takeover. That mode additionally requires the
+Agent manifest's
 `surfaces.externalSession.externalLinkedTakeover.writerSafety` to be
 `native_prevention`. Use `unsupported` when the native Agent cannot prove that
 another writer to the same native session is excluded. These are the only
