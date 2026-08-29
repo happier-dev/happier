@@ -1,11 +1,12 @@
 ---
 title: Conversation channels
-description: Connect a Discord or Telegram conversation to a Happier session or automation, so people who do not use Happier can still talk to your agents.
+description: Connect a Discord, Telegram, or GitHub conversation to a Happier session or automation, so people who do not use Happier can still talk to your agents.
 ---
 
-A channel connects a conversation somewhere else — a Discord channel, a Telegram
-chat — to a session or an automation on your machine. Messages arrive as input,
-replies go back out, and the people on the other end never install anything.
+A channel connects a conversation somewhere else — a Discord channel, a
+Telegram chat, a GitHub issue or pull request — to a session or an automation
+on your machine. Messages arrive as input, replies go back out, and the people
+on the other end never install anything.
 
 <Callout type="warn">
   Conversation channels are part of the current 0.3 Developer Preview. The
@@ -13,8 +14,8 @@ replies go back out, and the people on the other end never install anything.
   provider journeys are still release gates rather than stable-release claims.
 </Callout>
 
-The current 0.3 source bundles **Discord** and **Telegram** providers. Discord
-has no reservation-only shipping hold. Providers are a contribution point
+The current 0.3 source bundles **Discord**, **Telegram**, and **GitHub**
+providers. Providers are a contribution point
 rather than a fixed list, so a trusted installed plugin receives the same public
 contract and can add another.
 
@@ -35,8 +36,8 @@ when a session ends and you want the same Discord channel driving the next one.
 
 ## Getting connected
 
-Credentials do not live in the channel setup form. Both providers bind to a
-**Connected Account** holding a bot credential, and the setup action asks you to
+Credentials do not live in the channel setup form. Every provider binds to a
+**Connected Account** holding its credential, and the setup action asks you to
 *select* one — Telegram's own field description says bot tokens are never entered
 there. So the order is: create the Connected Account first, then point the
 channel at it.
@@ -45,14 +46,28 @@ channel at it.
 | --- | --- | --- |
 | Discord | `discord-bot-credential` | Discord REST plus a persistent gateway worker |
 | Telegram | `telegram-bot-credential` | The Telegram bot API |
+| GitHub | `github-connected-account` | The GitHub REST API over checkpointed polling |
 
-Connecting a conversation runs a **pairing challenge** that you then finalize —
+Connecting a Discord or Telegram conversation runs a **pairing challenge** that
+you then finalize —
 or cancel. You choose the conversation to connect; whoever claims it proves who
 they are by sending the challenge token to the bot in a **private message**, and
 is answered there once the request has been recorded. That keeps the token out
 of a group everyone can read while still connecting the group you picked.
 Pairing exists so that connecting a conversation is something somebody has to
 agree to, rather than something you can do to a channel from the outside.
+
+### GitHub repositories
+
+The GitHub provider ships inside the bundled GitHub hosting provider plugin and
+connects one repository at a time: setup verifies the selected repository
+against your GitHub Connected Account credential. Each conversation is a single
+issue or pull request in that repository — you point a binding at it by number.
+Comments on that issue or pull request arrive as channel messages, and replies
+are posted back as comments on it; a reply longer than one GitHub comment is
+split across several. GitHub has no webhook delivery in this preview: inbound
+messages arrive through checkpointed polling, so a connected machine needs to
+wake up for the poll to advance.
 
 ### The history baseline
 
@@ -80,9 +95,9 @@ out.
 A binding can target an automation rather than a session. When a message is
 admitted through that binding, Happier invokes a Conversation-origin Run for
 the selected automation; the automation's own definition remains independent
-of the conversation binding. Together that is: someone posts in a Discord
-channel, a Run starts on your machine, and the result is delivered back into
-the conversation.
+of the conversation binding. Together that is: someone comments on the connected
+GitHub issue or posts in a Discord channel, a Run starts on your machine, and
+the result is delivered back into the conversation.
 
 For a verified automation that starts or continues a Session, the binding can
 deliver the final result or deliver no result. Execution-run automations support
@@ -121,5 +136,5 @@ currentness before accepting an answer.
 
 - [Automations](/extras/automations) — including automation bindings.
 - [Connected Services](/accounts/connected-services) — where the bot credentials live.
-- [What ships in the box](/plugins/bundled) — the Discord and Telegram provider plugins.
+- [What ships in the box](/plugins/bundled) — the provider plugins: Discord, Telegram, and GitHub (inside the GitHub hosting provider).
 - [Participant routing](/accounts/participant-routing) — who a message reaches inside Happier.

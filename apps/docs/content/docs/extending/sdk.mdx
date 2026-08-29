@@ -42,7 +42,7 @@ rather than building a new integration protocol around Happier.
 
 | Interface | Best fit | Authentication and targeting | Live output |
 | --- | --- | --- | --- |
-| Human CLI | Interactive terminal work | Saved sign-in or an API Token; current machine or `--machine-id` | `happier history <session> --follow` |
+| Human CLI | Interactive terminal work | Saved sign-in or an API Token; current machine or `--machine-id` | `hdev history <session> --follow` |
 | CLI JSON | Shell scripts and agent tooling | API Token through `HAPPIER_TOKEN` or `--api-token`; `--machine-id` when needed | `--follow --jsonl` |
 | Fluent SDK | Node.js Session workflows | Explicit `connect({ endpoint, token })`; root client for a local daemon, machine-bound client for the server | Demand-driven async iterators with `AbortSignal` and cleanup |
 | Raw SDK | Dynamic Action discovery and invocation from Node.js | Same client and target rules as the fluent SDK | Compose the finite follow/read/cancel Actions |
@@ -55,6 +55,11 @@ trusted plugins are additional capabilities over the same Action owner.
 
 ## First five minutes
 
+This page describes the current workspace source, so the commands below invoke
+the CLI through `hdev`, the development lane that tracks that source (install
+it with `install-dev`, or point the stable `happier` shim at this checkout
+with `yarn cli:activate` — every command is identical after that).
+
 Use the checked-in basic example for one deterministic daemon-local run. It
 connects with an explicit token and endpoint, creates a Session on the daemon's
 current machine, sends one message, reads the assistant response, stops the
@@ -65,13 +70,23 @@ Session, and closes the client.
    credential store.
 2. Start a signed-in daemon, then read its current HTTP port. The port is not
    fixed.
-3. Choose an Agent installed and enabled on this machine. The example uses
-   `codex` unless you set `HAPPIER_AGENT_ID` to another exact Agent id.
+3. Choose an Agent installed and enabled on this machine. Discover the exact
+   ids through the existing read-only catalog Action instead of guessing
+   (`agents.backends.list` is the same inventory `sessions.spawn()` resolves
+   your `agent` value against):
+
+   ```bash
+   hdev actions invoke agents.backends.list --input-json '{"includeDisabled":true}' --json \
+     | jq -er '.data.items[] | select(.enabled == true) | .agentId'
+   ```
+
+   The example uses `codex` unless you set `HAPPIER_AGENT_ID` to one of the
+   ids this prints.
 4. From the repository root, run:
 
 ```bash
-happier daemon start
-DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
+hdev daemon start
+DAEMON_PORT="$(hdev daemon status --json | jq -er '.daemon.httpPort')"
 HAPPIER_API_ENDPOINT="http://127.0.0.1:$DAEMON_PORT" \
 HAPPIER_TOKEN='hap_v1_…' \
 HAPPIER_AGENT_ID='codex' \
@@ -132,7 +147,7 @@ For a generic CLI Action mutation, provide a request id you can keep with your
 automation log:
 
 ```bash
-happier actions invoke session.title.set \
+hdev actions invoke session.title.set \
   --request-id onboarding-title-1 \
   --input-json "{\"sessionId\":\"$SESSION_ID\",\"title\":\"SDK onboarding\"}"
 ```
@@ -185,8 +200,8 @@ Human output stays compact; JSONL emits one record per line. Press Ctrl-C to
 cancel either command and release the follow lease:
 
 ```bash
-happier history "$SESSION_ID" --follow
-happier history "$SESSION_ID" --follow --jsonl
+hdev history "$SESSION_ID" --follow
+hdev history "$SESSION_ID" --follow --jsonl
 ```
 
 The fluent SDK exposes the same lifecycle as a demand-driven iterator:
@@ -221,7 +236,7 @@ For daemon-local use, get the current HTTP port from the daemon status JSON;
 the port is not fixed:
 
 ```bash
-DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
+DAEMON_PORT="$(hdev daemon status --json | jq -er '.daemon.httpPort')"
 export HAPPIER_API_ENDPOINT="http://127.0.0.1:$DAEMON_PORT"
 ```
 
@@ -550,7 +565,7 @@ For a daemon-local origin, omit `target`; the daemon executes on its current
 machine. This read-only discovery call is a useful first connectivity check:
 
 ```bash
-DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
+DAEMON_PORT="$(hdev daemon status --json | jq -er '.daemon.httpPort')"
 curl --fail-with-body --request POST \
   --header "Authorization: Bearer $HAPPIER_TOKEN" \
   --header 'Content-Type: application/json' \

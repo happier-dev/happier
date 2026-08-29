@@ -129,7 +129,10 @@ creation fails, it emits one failure envelope. If following fails after
 creation, the already-emitted creation envelope remains first and a standard
 failure envelope terminates the stream.
 
-`--follow --json` is rejected; use `--jsonl` for a multi-line stream.
+`--follow --json` is rejected; use `--jsonl` for a multi-line stream. These are
+instances of the [CLI automation contract](/apps/cli#cli-automation-contract),
+which also fixes the JSON envelope, stdout purity, `0`/`1`/`2` exit codes,
+cancellation, and jq pipelines that preserve failure status.
 
 ## List sessions
 

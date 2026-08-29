@@ -262,6 +262,65 @@ Action-domain failures exit with status 1. Unexpected internal or dependency
 faults exit with status 2. In JSON mode, failures use `ok: false` and include a
 stable error code in `error.code`.
 
+The envelope, exit codes, and stream rules above are instances of the one
+[CLI automation contract](#cli-automation-contract) that every scripted
+command follows.
+
+## CLI automation contract
+
+One contract covers every scripted CLI invocation, whichever command the script
+calls. Command pages link here instead of restating it.
+
+**Envelope.** `--json` prints exactly one versioned record to stdout —
+`{ "v": 1, "ok": true, "kind": "<operation>", "data": … }` on success or
+`{ "v": 1, "ok": false, "kind": "<operation>", "error": … }` on failure.
+`kind` names the operation (`machines_list`, `actions_invoke`, `session_create`,
+`session_history`, `session_wait`, `session_stop`, …), and a JSON failure
+carries a stable code in `error.code`.
+
+**JSON vs JSONL.** Use `--json` when the command produces one record. A
+streaming command that emits many records takes `--jsonl`: one self-contained
+JSON record per line, no array wrapper. `--follow --json` is rejected because
+one record cannot represent a multi-line stream; use `--follow --jsonl`.
+
+**Stdout purity.** In JSON mode stdout carries only the envelope or the
+records — no progress lines, tables, or banners. Never parse the CLI's
+human-readable output; pass an explicit `--json` or `--jsonl` instead.
+
+**Spawn envelope, then stream rows.** `happier spawn … --follow --jsonl` emits
+the normal `session_create` envelope as its first line, including
+`data.session.id`, followed by one compact history row per transcript update. A
+session that produces no rows still emits the creation envelope and exits
+successfully. If creation requires approval, the command emits the successful
+`approval_request_created` creation envelope and does not start following; if
+creation fails, one failure envelope is the whole stream.
+
+**Terminal framing.** Without `--json`/`--jsonl`, output is compact text for
+people: tables, short rows, and history rows printed as they arrive, with long
+values truncated (compact history rows cap at 24 lines or 2,000 characters).
+That framing is for reading, not for scripting.
+
+**Exit codes.** `0` success; `1` expected failure — invalid input,
+authentication, settings, approval, placement, transport, and Action-domain
+failures; `2` unexpected internal or dependency fault. Exit codes never
+downgrade: an unexpected fault stays `2` even when a later step also reports a
+failure.
+
+**Cancellation.** Ctrl-C (SIGINT) cancels a `--follow` stream or an in-progress
+`wait`; an active transcript follow lease is released, rows already emitted
+stay valid, and the interrupted process does not report success.
+
+**jq without swallowing failures.** Run pipelines with `set -o pipefail` and
+use `jq -e` (usually `jq -er`) so a failed CLI call, a missing field, or a
+`null`/`false` result fails the pipeline instead of printing empty output and
+exiting `0`:
+
+```bash
+set -o pipefail
+SESSION_ID="$(happier spawn "Fix the failing tests" --json | jq -er '.data.session.id')"
+DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
+```
+
 ## Bootstrap & setup (one-command)
 
 `happier setup` guides initial setup from the terminal. It settles the Relay first, signs in if needed, configures the service, and optionally sets up Agents using the existing Relay, auth, service, Agent, and Relay-access commands.

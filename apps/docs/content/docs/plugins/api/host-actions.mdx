@@ -17,12 +17,15 @@ const result = await context.services.actions.execute('action.spec.get', {
 
 The Action service validates the exact input and result contract for each id. Use the input guidance below when it is present; the TypeScript API remains the final typed contract.
 
+Every row carries its canonical **Caller authority** from the ActionSpec registry. Being listed here proves the Action is discoverable on the Plugin surface; it does not imply a plugin caller can satisfy it. A row marked `present_user` is admitted only when the host stamps present-user caller authority — a plugin or API-token caller carries automation authority and receives the typed `present_user_required` failure instead of a result. Caller authority is host-stamped: Action input can never supply, widen, or narrow it.
+
 ## `account.apiTokens.create`
 
 **Create API token** — Create a named API token for the current Account. The token secret is shown once.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -36,6 +39,7 @@ The Action service validates the exact input and result contract for each id. Us
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -48,6 +52,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -60,6 +65,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -72,6 +78,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -84,6 +91,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -96,6 +104,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `voice`, `api`.
 
 ### Input guidance
@@ -110,6 +119,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -127,6 +137,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -139,6 +150,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -152,6 +164,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -166,6 +179,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -174,6 +188,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `backendTargetKey` (text): Backend target key
 - `modelId` (text): Model id
 - `machineId` (text): Machine id (optional)
+- `serverId` (text): Server id (optional)
 - `limit` (text): Max results
 
 ## `agents.models.list`
@@ -182,6 +197,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -189,6 +205,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `agentId` (text): Runtime agent id
 - `backendTargetKey` (text): Backend target key
 - `machineId` (text): Machine id (optional)
+- `serverId` (text): Server id (optional)
 - `limit` (text): Max results
 
 ## `agents.session_modes.list`
@@ -197,6 +214,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -204,6 +222,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `agentId` (text): Runtime agent id
 - `backendTargetKey` (text): Backend target key
 - `machineId` (text): Machine id (optional)
+- `serverId` (text): Server id (optional)
 - `limit` (text): Max results
 
 ## `approval.request.create`
@@ -212,6 +231,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -226,6 +246,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -239,6 +260,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -251,6 +273,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -264,6 +287,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -276,6 +300,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -288,6 +313,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -300,6 +326,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -312,6 +339,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -324,6 +352,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -336,6 +365,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -348,6 +378,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -360,6 +391,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -372,6 +404,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -384,6 +417,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -396,6 +430,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -408,6 +443,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -420,6 +456,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -432,6 +469,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -444,6 +482,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -456,6 +495,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -468,6 +508,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -480,6 +521,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -492,6 +534,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -504,6 +547,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -516,6 +560,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -528,6 +573,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -540,6 +586,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -552,6 +599,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -564,6 +612,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -576,6 +625,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -588,6 +638,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -600,6 +651,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -612,6 +664,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -624,6 +677,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -636,6 +690,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -648,6 +703,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -660,6 +716,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -672,6 +729,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -684,6 +742,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -696,6 +755,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -708,6 +768,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -720,6 +781,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -732,6 +794,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -744,6 +807,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -756,6 +820,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -768,6 +833,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -780,6 +846,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -792,6 +859,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -804,6 +872,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -816,6 +885,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -828,6 +898,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -840,6 +911,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -852,6 +924,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -864,6 +937,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -876,6 +950,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -888,6 +963,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -900,6 +976,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -912,6 +989,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -924,6 +1002,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -936,6 +1015,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -948,6 +1028,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -960,6 +1041,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -972,6 +1054,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -984,6 +1067,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -996,6 +1080,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1008,6 +1093,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1020,6 +1106,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1032,6 +1119,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1044,6 +1132,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1056,6 +1145,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1068,6 +1158,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1080,6 +1171,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1092,6 +1184,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1104,6 +1197,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1116,6 +1210,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `none`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1128,6 +1223,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1140,6 +1236,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1152,6 +1249,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1164,6 +1262,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1176,6 +1275,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1188,6 +1288,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1200,6 +1301,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1212,6 +1314,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1224,6 +1327,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1236,6 +1340,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -1248,6 +1353,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1260,6 +1366,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1272,6 +1379,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1284,6 +1392,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1296,6 +1405,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1308,6 +1418,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1320,6 +1431,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1332,6 +1444,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1344,6 +1457,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1356,6 +1470,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1368,6 +1483,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1380,6 +1496,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1392,6 +1509,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1404,6 +1522,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1416,6 +1535,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1428,6 +1548,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1440,6 +1561,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1452,6 +1574,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1467,6 +1590,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
@@ -1481,6 +1605,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
@@ -1496,6 +1621,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1510,6 +1636,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1525,6 +1652,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1540,6 +1668,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1565,6 +1694,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -1578,6 +1708,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
@@ -1592,6 +1723,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
@@ -1608,6 +1740,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
@@ -1624,6 +1757,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -1639,6 +1773,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1651,6 +1786,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1663,6 +1799,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1675,6 +1812,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1687,6 +1825,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1699,6 +1838,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1711,6 +1851,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1723,6 +1864,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1735,6 +1877,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1747,6 +1890,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1759,6 +1903,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1771,6 +1916,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1783,6 +1929,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1795,6 +1942,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1807,6 +1955,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1819,6 +1968,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1831,6 +1981,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1843,6 +1994,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1855,6 +2007,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1867,6 +2020,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1879,6 +2033,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `cli`, `api`.
 
 ### Input guidance
@@ -1891,6 +2046,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
@@ -1904,6 +2060,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
@@ -1919,6 +2076,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
@@ -1933,6 +2091,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -1946,6 +2105,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1958,6 +2118,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1970,6 +2131,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `api`.
 
 ### Input guidance
@@ -1982,6 +2144,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `api`.
 
 ### Input guidance
@@ -1994,6 +2157,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2006,6 +2170,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2018,6 +2183,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2030,6 +2196,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2042,6 +2209,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2054,6 +2222,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2066,6 +2235,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `api`.
 
 ### Input guidance
@@ -2078,6 +2248,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2090,6 +2261,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2102,6 +2274,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2114,6 +2287,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2126,6 +2300,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2138,6 +2313,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2150,6 +2326,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2162,6 +2339,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2174,6 +2352,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2186,6 +2365,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2198,6 +2378,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2210,6 +2391,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2222,6 +2404,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2234,6 +2417,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2246,6 +2430,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`.
 
 ### Input guidance
@@ -2258,6 +2443,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2270,6 +2456,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2282,6 +2469,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2294,6 +2482,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2306,6 +2495,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2318,6 +2508,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2330,6 +2521,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2342,6 +2534,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2354,6 +2547,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2366,6 +2560,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2378,6 +2573,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2390,6 +2586,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2402,6 +2599,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2414,6 +2612,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2426,6 +2625,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `api`.
 
 ### Input guidance
@@ -2438,6 +2638,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2450,6 +2651,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2463,6 +2665,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2482,6 +2685,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2498,6 +2702,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2514,6 +2719,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2534,6 +2740,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2547,6 +2754,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -2559,6 +2767,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
@@ -2572,6 +2781,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2589,6 +2799,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2601,6 +2812,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2613,6 +2825,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2625,6 +2838,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2637,6 +2851,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2649,6 +2864,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2661,6 +2877,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2673,6 +2890,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2685,6 +2903,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2697,6 +2916,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2709,6 +2929,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -2721,6 +2942,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2739,6 +2961,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2752,6 +2975,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2774,6 +2998,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2789,6 +3014,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2804,6 +3030,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2820,6 +3047,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2835,6 +3063,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2852,6 +3081,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2869,6 +3099,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2890,6 +3121,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2908,6 +3140,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2921,6 +3154,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -2935,6 +3169,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -2950,6 +3185,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `api`.
 
 ### Input guidance
@@ -2962,6 +3198,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2975,6 +3212,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -2987,6 +3225,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -3000,6 +3239,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -3014,6 +3254,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3028,6 +3269,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3042,6 +3284,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `rpc`, `api`.
 
 ### Input guidance
@@ -3054,6 +3297,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3066,6 +3310,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3078,6 +3323,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3093,6 +3339,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -3106,6 +3353,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3118,6 +3366,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3134,6 +3383,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3148,6 +3398,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3162,6 +3413,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3180,6 +3432,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3196,6 +3449,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3209,6 +3463,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3223,6 +3478,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
@@ -3236,6 +3492,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3250,6 +3507,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3264,6 +3522,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3279,6 +3538,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -3294,6 +3554,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -3315,6 +3576,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3329,6 +3591,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3342,6 +3605,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -3356,6 +3620,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `rpc`, `api`.
 
 ### Input guidance
@@ -3368,6 +3633,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3381,6 +3647,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3412,6 +3679,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3425,6 +3693,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3437,6 +3706,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `mcp`, `api`.
 
 ### Input guidance
@@ -3450,6 +3720,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
@@ -3462,6 +3733,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3475,6 +3747,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3488,6 +3761,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3504,6 +3778,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3516,6 +3791,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3531,6 +3807,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3545,6 +3822,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3560,6 +3838,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3575,6 +3854,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3591,6 +3871,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: none.
 
 ### Input guidance
@@ -3608,6 +3889,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3621,6 +3903,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3634,6 +3917,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3646,6 +3930,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3659,6 +3944,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`.
 
 ### Input guidance
@@ -3671,6 +3957,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3685,6 +3972,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3699,6 +3987,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3713,6 +4002,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3727,6 +4017,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3741,6 +4032,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3753,12 +4045,15 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
 
 - `agentId` (text): Runtime agent id
 - `backendTargetKey` (text): Backend target key
+- `machineId` (text): Machine id (optional)
+- `serverId` (text): Server id (optional)
 - `includeUnavailable` (boolean): Include unavailable
 
 ## `sessions.spawn.mcp_servers.preview`
@@ -3767,6 +4062,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3785,6 +4081,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3799,6 +4096,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3812,6 +4110,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3826,6 +4125,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3839,6 +4139,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3856,6 +4157,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance
@@ -3872,6 +4174,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3889,6 +4192,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3904,6 +4208,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3919,6 +4224,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3934,6 +4240,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `rpc`, `api`.
 
 ### Input guidance
@@ -3951,6 +4258,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `cli`, `rpc`, `api`.
 
 ### Input guidance
@@ -3964,6 +4272,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `voice`, `api`.
 
 ### Input guidance
@@ -3976,6 +4285,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `voice`, `api`.
 
 ### Input guidance
@@ -3988,6 +4298,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: not classified.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `api`.
 
 ### Input guidance
@@ -4000,6 +4311,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
@@ -4012,6 +4324,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `api`.
 
 ### Input guidance
@@ -4024,6 +4337,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `safe`; side effect: `external`.
 - Approval: `optional` result; `deferred` flow.
+- Caller authority: `account_automation` — automation callers (including trusted plugins and API Tokens) are admitted.
 - Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `api`.
 
 ### Input guidance

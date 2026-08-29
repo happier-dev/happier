@@ -32,6 +32,12 @@ runs. There is no ordering or requirement that several triggers fire together.
 Edits affect occurrences admitted after the edit; an admitted Run keeps the
 recipe and assignments it started with.
 
+An enabled Automation must keep at least one enabled machine assignment — a
+Run freezes the assignments it was admitted with, so a Run with no machine
+could never start. You can save a paused draft with no assignments and assign
+machines before enabling it; removing or disabling the last enabled assignment
+of a running Automation is refused until you pause it first.
+
 ## What can trigger one
 
 A timer is only one of three automatic sources that can start an Automation.

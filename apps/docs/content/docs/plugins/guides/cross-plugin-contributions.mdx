@@ -141,7 +141,7 @@ export const externalReviewersV1 = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: inspectResult,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
   surfaces: {

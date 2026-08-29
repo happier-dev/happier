@@ -19,8 +19,10 @@ backgroundServices: [{
 ```
 
 The host starts the runner after generation commit and retires it on
-replacement, disable/uninstall, or daemon shutdown. Subscribe to declared
-events through the existing events service; do not use event activation as a
-background scheduler. Honor `context.signal`, let failures surface as
+replacement, disable/uninstall, or daemon shutdown. Do not use event activation
+as a background scheduler, and do not build a runner-owned polling loop to
+imitate one: the `events` declaration family and `context.services.events`
+remain deferred for ordinary author use (see [Events](/plugins/api/events)).
+Honor `context.signal`, let failures surface as
 diagnostics, and avoid a plugin-owned watcher, timer registry, or service
 lifecycle cache.

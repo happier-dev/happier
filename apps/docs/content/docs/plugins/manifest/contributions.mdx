@@ -10,11 +10,11 @@ description: Contribution families that a plugin can declare for projection and 
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
 | `actions` | User, CLI, MCP, and session-agent operations | daemon root: `actions.<id>.run`; client leaf: `activate(api)` → `api.actions.register(...)`. See [Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target). |
-| `tools` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative tool-facing wrappers around actions | manifest action reference |
-| `commands` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative CLI entries around actions | manifest action reference |
+| `tools` | Declarative tool-facing wrappers around actions | manifest action reference |
+| `commands` | Declarative CLI entries around actions | manifest action reference |
 | `hooks` | Host extension points | `hooks.<id>.handler` |
 | activation cleanup | Plugin-owned resources from a successful activation | cleanup function returned by `setup` |
-| `events` | Plugin-authored event ids and payload schemas | `context.services.events` remains deferred in the current capability matrix |
+| `events` | Plugin-authored event ids and payload schemas | The declaration family is available; `context.services.events` remains deferred for ordinary author use in the current generated matrix. |
 | `agents` | AI agent declarations and runtime metadata | custom Agents: `agents.<id>.factory`; declarative ACP: host-owned |
 | `providers` | Model-provider declarations, catalogs, connection facts, and an optional cold managed-runtime facet | ordinary Providers are descriptor-only; a managed Provider uses `providers.<id>.runtime` |
 | `connectedAccountDescriptors` | A plugin-produced account service and authentication modes | `connectedAccountDescriptors.<id>.runtime` |
@@ -22,8 +22,8 @@ description: Contribution families that a plugin can declare for projection and 
 | `scmHostingProviders` | Remote forge and hosting-service integration | `scmHostingProviders.<id>.runtime` |
 | `scmBackends` | Local repository and working-tree integration | `scmBackends.<id>.runtime` |
 | `settings` | Typed settings descriptors | `context.services.settings` in invoked handlers |
-| `openableContentViewers` | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
-| MCP servers | **Deferred.** Not supported or advertised for ordinary author use; consult the matrix unblock condition. Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
+| `openableContentViewers` | Declarative matching for host-opened content and its plugin-owned viewer | direct same-plugin `contributes.ui.views` destination |
+| MCP servers | Hosted or managed MCP server descriptors | `mcp.servers.<id>.runtime` when dynamic |
 | MCP discovery | Runtime MCP discovery | `mcp.discoverySources.<id>.discover` |
 | UI | Host-rendered descriptors or React Native surfaces; hosted web availability is reported per host, and an unavailable host reports a typed reason | generated artifact tree where executable UI is declared |
 | `managedDependencies` | Host-managed tool/runtime dependencies | declarative descriptor only; the host owns resolution, installation, validation, update, and removal |
@@ -77,7 +77,7 @@ the ordinary target and contributor workflow.
 
 Settings, UI surfaces, managed dependencies, notification categories, agent runtime capabilities, and projected display metadata should be descriptor-first. The manifest describes them; executable code only handles the dynamic behavior the descriptor references.
 
-## Openable content viewers (deferred)
+## Openable content viewers
 
 `contributes.openableContentViewers` declares a plugin-owned viewer for content
 the host can open. Each row has a local `id`, a required `destination`, and one

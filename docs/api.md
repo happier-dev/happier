@@ -12,24 +12,44 @@ We intentionally avoid the full REST verb palette because many operations span m
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`.
 
-### Challenge transition (supported compatibility)
+### Key-challenge login (v2)
 
-The v1 challenge shape below is a compatibility transition, not a permanent
-contract. Retain it only while a published stable or preview artifact, or the
-current `../remote-dev` predecessor, can still send v1 to a v2-capable server.
-New clients choose v1 only when the ready server capability says
-`capabilities.auth.keyChallenge.v2` is absent or false. A network, timeout,
-malformed, or 5xx capability-probe failure does not trigger a v1 downgrade.
-Clients do not advertise their challenge version. Retire v1 only after immutable
-stable/preview artifact evidence and the current predecessor show that no
-supported authenticating client still needs it. This is a release-frontier
-decision based on immutable artifact evidence and current predecessor behavior.
+The current challenge contract is a server-issued, single-use challenge bound
+to the server audience. The client signs the issued facts; it never invents
+challenge material:
 
-Auth flows:
-- `POST /v1/auth`
-  - Body: `{ publicKey, challenge, signature }` (base64 strings)
-  - Verifies signature using the provided public key.
-  - Upserts account by public key and returns `{ success, token }`.
+1. **Issue** — `POST /v1/auth/challenge`
+   - Body: `{ "expectedAccountId": "..." }` (optional; required when the login
+     must resolve to one exact E2EE Account).
+   - Response:
+     `{ "challengeId", "nonce", "issuedAt", "expiresAt", "audience": { "origin", "serverIdentityId" } }`.
+   - The challenge is valid for 5 minutes, is bound to the canonical server
+     origin and the server identity, and can be redeemed exactly once. When
+     the server cannot establish its canonical URL or identity it returns
+     `503 { "error": "key_challenge_v2_unavailable" }`.
+
+2. **Sign** — the client builds the canonical signing input from the issued
+   facts (domain `happier.key-challenge.v2`, `challengeId`, `nonce`,
+   `issuedAt`, `expiresAt`, `audience`, plus `expectedAccountId` when used)
+   and signs it with the account Ed25519 key. The protocol package owns this
+   encoding (`createKeyChallengeV2SigningInput`); clients do not hand-roll it.
+
+3. **Redeem** — `POST /v1/auth`
+   - Body: `{ "challengeId", "publicKey", "signature" }` plus the optional
+     `contentPublicKey`/`contentPublicKeySig` pair and `expectedAccountId`
+     (base64 strings; the content-key fields are only ever supplied together).
+   - The server rebuilds the expected signing input from the stored challenge,
+     verifies the signature, enforces expiry, audience, and expected-account
+     correspondence, consumes the challenge atomically, and returns
+     `{ success, token }`. A challenge that was already redeemed, expired, or
+     issued for a different audience or account fails with `401`.
+
+Clients do not advertise their challenge version. A client uses v2 only after
+the ready server capability says `capabilities.auth.keyChallenge.v2` is
+present and true. A network, timeout, malformed, or 5xx capability-probe
+failure does not trigger a v1 downgrade.
+
+### Terminal and account-link auth
 
 - `POST /v1/auth/request`
   - Body: `{ publicKey, supportsV2? }`
@@ -49,6 +69,22 @@ Auth flows:
 
 - `POST /v1/auth/account/response`
   - Body: `{ response, publicKey }` (requires Bearer auth)
+
+### v1 raw-challenge compatibility
+
+The original signed-raw-challenge shape is a supported compatibility
+transition, not a permanent contract. `POST /v1/auth` also accepts
+`{ publicKey, challenge, signature }` (base64 strings) plus the optional
+content-key and expected-account fields; the raw challenge bytes are the
+signing input, and the server verifies the signature using the provided public
+key, upserts the account by public key, and returns `{ success, token }`.
+
+Retain v1 only while a published stable or preview artifact, or the
+current `../remote-dev` predecessor, can still send v1 to a v2-capable server.
+Retire v1 only after immutable stable/preview artifact evidence and the current
+predecessor show that no supported authenticating client still needs it. This
+is a release-frontier decision based on immutable artifact evidence and current
+predecessor behavior.
 
 Signed terminal credentials carry `account_automation`, not present-user
 authority. Automation definition/run management reads and mutations, run
