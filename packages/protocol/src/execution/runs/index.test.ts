@@ -334,17 +334,17 @@ describe('executionRuns protocol', () => {
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
-          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'group_1' },
+          'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+          'happier.agent.claude/claude-subscription': { source: 'connected', selection: 'group', groupId: 'group_1' },
         },
       },
     });
-    expect(parsed.connectedServices?.bindingsByServiceId['openai-codex']).toEqual({
+    expect(parsed.connectedServices?.bindingsByServiceId['happier.agent.codex/openai-codex']).toEqual({
       source: 'connected',
       selection: 'profile',
       profileId: 'profile_1',
     });
-    expect(parsed.connectedServices?.bindingsByServiceId['claude-subscription']).toEqual({
+    expect(parsed.connectedServices?.bindingsByServiceId['happier.agent.claude/claude-subscription']).toEqual({
       source: 'connected',
       selection: 'group',
       groupId: 'group_1',

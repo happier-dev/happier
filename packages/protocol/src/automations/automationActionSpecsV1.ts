@@ -301,6 +301,28 @@ export const AutomationEventAdmitHttpInputV1Schema = z.object({
 }).strict();
 export type AutomationEventAdmitHttpInputV1 = z.infer<typeof AutomationEventAdmitHttpInputV1Schema>;
 
+const AutomationEventRefreshDefinitionStatusV1Schema = z.object({
+  kind: z.literal('refreshDefinition'),
+  reason: z.enum(['definitionStale', 'observationTargetChanged']),
+}).strict();
+const AutomationEventBlockedStatusV1Schema = z.object({
+  kind: z.literal('blocked'),
+  reason: z.enum(['capacity', 'temporarilyUnavailable', 'occurrenceConflict', 'noEnabledAssignment']),
+}).strict();
+
+/**
+ * The canonical unresolved Event-admission status. Webhook dead-letter
+ * diagnostics retain this exact status without the live result's
+ * `checkpointSafe` member; they must not copy its reason union.
+ */
+export const AutomationEventAdmitUnresolvedStatusV1Schema = z.discriminatedUnion('kind', [
+  AutomationEventRefreshDefinitionStatusV1Schema,
+  AutomationEventBlockedStatusV1Schema,
+]);
+export type AutomationEventAdmitUnresolvedStatusV1 = z.infer<
+  typeof AutomationEventAdmitUnresolvedStatusV1Schema
+>;
+
 export const AutomationEventAdmitItemResultV1Schema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('admitted'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }).strict(),
   z.object({ kind: z.literal('rejoined'), runId: asProtocolZod(HostIdentifierV1Schema), checkpointSafe: z.literal(true) }).strict(),
@@ -309,16 +331,12 @@ export const AutomationEventAdmitItemResultV1Schema = z.discriminatedUnion('kind
     reason: z.enum(['filtered', 'beforeObservationStart', 'outsideFreshness', 'definitionRetired', 'occurrenceRejected']),
     checkpointSafe: z.literal(true),
   }).strict(),
-  z.object({
-    kind: z.literal('refreshDefinition'),
-    reason: z.enum(['definitionStale', 'observationTargetChanged']),
+  AutomationEventRefreshDefinitionStatusV1Schema.extend({
     checkpointSafe: z.literal(false),
-  }).strict(),
-  z.object({
-    kind: z.literal('blocked'),
-    reason: z.enum(['capacity', 'temporarilyUnavailable', 'occurrenceConflict']),
+  }),
+  AutomationEventBlockedStatusV1Schema.extend({
     checkpointSafe: z.literal(false),
-  }).strict(),
+  }),
 ]);
 export type AutomationEventAdmitItemResultV1 = z.infer<typeof AutomationEventAdmitItemResultV1Schema>;
 

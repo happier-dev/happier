@@ -104,7 +104,9 @@ describe('ActionExecutor prepared invocation', () => {
     });
 
     const prepared = await executor.prepare('session.spawn_new', input, {
-      surface: 'api',
+      // The canonical spawn input carries executionTarget; the public api
+      // projection treats placement as transport metadata and omits it.
+      surface: 'cli',
       authority: 'present_user',
     });
 

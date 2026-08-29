@@ -798,7 +798,7 @@ export type AutomationV3WorkerStartRequest = z.infer<typeof AutomationV3WorkerSt
 
 /** Current writers carry a result envelope; predecessor summary bytes stay V2-only. */
 export const AutomationV3WorkerSucceedRequestSchema = AutomationV3WorkerMachineAttemptSchema.extend({
-  /** S: exact post-start Account witness. */
+  /** S: the post-start Account witness, echoed unchanged from the successful start. */
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   producedSessionId: IDENTIFIER_SCHEMA.nullable().optional(),
   resultEnvelope: z.string().min(1).nullable().optional(),
@@ -806,7 +806,7 @@ export const AutomationV3WorkerSucceedRequestSchema = AutomationV3WorkerMachineA
 export type AutomationV3WorkerSucceedRequest = z.infer<typeof AutomationV3WorkerSucceedRequestSchema>;
 
 export const AutomationV3WorkerFailRequestSchema = AutomationV3WorkerMachineAttemptSchema.extend({
-  /** S: exact post-start Account witness. */
+  /** S: the post-start Account witness, echoed unchanged from the successful start. */
   accountCurrentness: AutomationAccountCurrentnessWitnessV1Schema,
   /** A known canonical new-Session id survives input failure/cancellation settlement. */
   producedSessionId: IDENTIFIER_SCHEMA.nullable().optional(),

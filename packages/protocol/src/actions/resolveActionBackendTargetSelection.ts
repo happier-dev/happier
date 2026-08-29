@@ -1,4 +1,5 @@
 import {
+  BackendTargetKeyV2Schema,
   BackendTargetRefV2Schema,
   buildBackendTargetKeyV2,
   convertBackendTargetRefV2ToV1,
@@ -15,6 +16,7 @@ import {
 import { isBuiltInBackendAgentId } from '../profiles/builtInBackendProfiles.js';
 import { EXTERNAL_SESSIONS_AGENT_IDS } from '../sessions/external/sourceCatalog.js';
 import type { RuntimeDescriptorV1 } from '../sessions/metadata/runtimeDescriptorV1.js';
+import { parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
 
 type ActionBackendTargetSelectionInput = Readonly<{
   agentId?: string;
@@ -97,6 +99,44 @@ export function resolveActionBackendTargetSelection(
       ok: false,
       message: 'runtimeDescriptorV1.agentId must identify a concrete runtime Agent',
       path: 'runtimeDescriptorV1',
+    };
+  }
+
+  const qualifiedAgentIdentity = backendTargetKey
+    && BackendTargetKeyV2Schema.safeParse(backendTargetKey).success
+    && backendTargetKey.startsWith('agent:')
+      ? parseQualifiedPluginContributionKey(backendTargetKey.slice('agent:'.length))
+      : null;
+  if (qualifiedAgentIdentity) {
+    if (input.backendTarget !== undefined && input.backendTarget !== null) {
+      return {
+        ok: false,
+        message: 'backendTarget must not accompany a qualified Agent contribution target',
+        path: 'backendTarget',
+      };
+    }
+    if (!agentId) {
+      return {
+        ok: false,
+        message: 'agentId is required for a qualified Agent contribution target',
+        path: 'agentId',
+      };
+    }
+    if (runtimeDescriptorAgentId && runtimeDescriptorAgentId !== agentId) {
+      return {
+        ok: false,
+        message: 'runtimeDescriptorV1.agentId must match agentId when both are provided',
+        path: 'runtimeDescriptorV1',
+      };
+    }
+    return {
+      ok: true,
+      selection: {
+        agentId,
+        backendTargetKey,
+        backendTarget: null,
+        canonicalBackendTarget: null,
+      },
     };
   }
 

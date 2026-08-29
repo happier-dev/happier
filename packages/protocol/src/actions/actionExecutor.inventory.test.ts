@@ -146,7 +146,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const codexSelection = {
       v: 1,
       bindingsByServiceId: {
-        'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
       },
     };
 
@@ -166,7 +166,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         connectedServices: expect.objectContaining({
           bindingsByServiceId: expect.objectContaining({
-            'openai-codex': expect.objectContaining({ profileId: 'profile_1' }),
+            'happier.agent.codex/openai-codex': expect.objectContaining({ profileId: 'profile_1' }),
           }),
         }),
       }),
@@ -538,6 +538,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       agentId: 'claude',
       backendTargetKey: 'backend:claude',
       machineId: 'm1',
+      serverId: 'local',
       modelId: 'claude-opus-4-8',
       limit: 5,
     });
@@ -547,6 +548,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       agentId: 'claude',
       backendTargetKey: 'backend:claude',
       machineId: 'm1',
+      serverId: 'local',
       modelId: 'claude-opus-4-8',
       limit: 5,
     });
@@ -1274,6 +1276,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(deps.resolveSessionSpawnAgentInventorySelection).toHaveBeenCalledWith({
       agentTarget: sessionSpawnOptionContext.agentTarget,
+      machineId: 'm1',
+      serverId: 'local',
     });
     expect(deps.agentsBackendsList).toHaveBeenCalledWith({
       includeDisabled: false,
@@ -1284,12 +1288,14 @@ describe('createActionExecutor (inventory/discovery)', () => {
       agentId: 'claude',
       backendTargetKey: 'backend:claude',
       machineId: 'm1',
+      serverId: 'local',
       limit: 10,
     });
     expect(deps.agentsConfigOptionsList).toHaveBeenCalledWith({
       agentId: 'claude',
       backendTargetKey: 'backend:claude',
       machineId: 'm1',
+      serverId: 'local',
       modelId: 'claude-opus-4-8',
       limit: 10,
     });
@@ -1338,6 +1344,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
         kind: 'agent',
         identity: { pluginId: 'happier.agent.unavailable', localId: 'unavailable' },
       },
+      machineId: 'm1',
+      serverId: 'local',
     });
     expect(deps.agentsModelsList).not.toHaveBeenCalled();
   });

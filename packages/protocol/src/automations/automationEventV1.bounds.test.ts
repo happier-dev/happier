@@ -127,7 +127,6 @@ describe('Automation event V1 exact bounds', () => {
     const conversation = {
       automationId: 'automation-1',
       bindingId: 'binding-1',
-      templateVersion: 1,
       occurrenceId: 'occurrence-1',
       occurredAt: maxPortableOccurredAt,
       sender: {},
@@ -181,7 +180,6 @@ describe('Automation event V1 exact bounds', () => {
     const conversation = {
       automationId: 'automation-1',
       bindingId: 'binding-1',
-      templateVersion: 1,
       occurrenceId: 'occurrence-1',
       occurredAt: 1,
       sender: senderAtMax,
@@ -211,7 +209,6 @@ describe('Automation event V1 exact bounds', () => {
     const conversation = (text: string) => ({
       automationId: 'automation-1',
       bindingId: 'binding-1',
-      templateVersion: 1,
       occurrenceId: 'occurrence-1',
       occurredAt: 1,
       sender: { principalId: 'user-1', kind: 'human', isIntegrationSelf: false },
@@ -304,7 +301,6 @@ describe('Automation event V1 exact bounds', () => {
     expect(AutomationConversationAdmitInputV1Schema.safeParse({
       automationId: 'automation-1',
       bindingId: 'binding-1',
-      templateVersion: 1,
       occurrenceId: 'occurrence-1',
       occurredAt: 1,
       sender: deepJson,
@@ -453,7 +449,6 @@ describe('Automation event V1 exact bounds', () => {
     const conversation = {
       automationId: 'automation-1',
       bindingId: 'binding-1',
-      templateVersion: 1,
       occurrenceId: 'occurrence-1',
       occurredAt: 1,
       sender: {},
@@ -608,15 +603,16 @@ describe('Automation event V1 exact bounds', () => {
         randomBytes: (length) => new Uint8Array(length),
       }),
     } as const;
-    const occurrenceKey = deriveAutomationOccurrenceKeyV1(
-      buildAutomationPluginEventOccurrenceEvidenceV1({
+    const occurrenceKey = deriveAutomationOccurrenceKeyV1({
+      triggerId: 'trigger-1',
+      evidence: buildAutomationPluginEventOccurrenceEvidenceV1({
         eventRef,
         sourceSelectorId,
         occurrenceId: 'delivery-1',
         occurredAt: 1,
         payload: { action: 'opened' },
       }),
-    );
+    });
     // This is deliberately well below the per-definition 512 KiB envelope
     // ceiling. The 500 below is the source-LIST page cardinality
     // (MAX_AUTOMATION_EVENT_SOURCE_DEFINITIONS_PER_PAGE), not an Action

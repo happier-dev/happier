@@ -30,6 +30,18 @@ function renderApproval(spec: ActionSpec): string {
   return `\`${spec.approval.result}\` result; \`${flow}\` flow`;
 }
 
+/**
+ * Canonical caller authority copied from the ActionSpec row. Discovery on the
+ * `plugin` surface never implies a plugin caller can satisfy the Action: rows
+ * that require `present_user` reject automation callers (plugins and API
+ * Tokens) with `present_user_required`.
+ */
+function renderCallerAuthority(spec: ActionSpec): string {
+  return spec.requiredAuthority === 'present_user'
+    ? '`present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`'
+    : '`account_automation` — automation callers (including trusted plugins and API Tokens) are admitted';
+}
+
 function renderHostSurfaces(spec: ActionSpec): string {
   const surfaces = Object.entries(spec.surfaces)
     .filter(([surface, enabled]) => surface !== 'plugin' && enabled)
@@ -64,6 +76,7 @@ function renderAction(spec: ActionSpec): string {
     '',
     `- Safety: \`${spec.safety}\`; side effect: ${sideEffectClass}.`,
     `- Approval: ${renderApproval(spec)}.`,
+    `- Caller authority: ${renderCallerAuthority(spec)}.`,
     `- Also surfaced on: ${renderHostSurfaces(spec)}.`,
     '',
     '### Input guidance',
@@ -101,6 +114,8 @@ export function renderPluginActionReferenceMarkdown(): string {
     '```',
     '',
     'The Action service validates the exact input and result contract for each id. Use the input guidance below when it is present; the TypeScript API remains the final typed contract.',
+    '',
+    'Every row carries its canonical **Caller authority** from the ActionSpec registry. Being listed here proves the Action is discoverable on the Plugin surface; it does not imply a plugin caller can satisfy it. A row marked `present_user` is admitted only when the host stamps present-user caller authority — a plugin or API-token caller carries automation authority and receives the typed `present_user_required` failure instead of a result. Caller authority is host-stamped: Action input can never supply, widen, or narrow it.',
     '',
     ...actionSpecs.map(renderAction),
   ].join('\n');

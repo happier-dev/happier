@@ -135,6 +135,7 @@ export const AutomationConversationAdmitResultV1Schema = z.discriminatedUnion('k
       'capacity',
       'temporarilyUnavailable',
       'occurrenceConflict',
+      'noEnabledAssignment',
       'resultDeliveryUnsupported',
     ]),
     checkpointSafe: z.literal(false),

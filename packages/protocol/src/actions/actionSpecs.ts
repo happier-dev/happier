@@ -1478,6 +1478,7 @@ const AgentsModelsListInputSchema = z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
+  serverId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
@@ -1497,7 +1498,9 @@ const AgentSpawnOptionsListInputBaseSchema = z.object({
   limit: z.number().int().min(1).max(200).optional(),
 });
 
-const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.passthrough().superRefine((value, ctx) => {
+const AgentSpawnOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
+  serverId: z.string().min(1).optional(),
+}).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1533,6 +1536,7 @@ const SpawnProfilesListInputSchema = AgentSpawnOptionsListInputBaseSchema
 
 const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
   modelId: z.string().min(1).optional(),
+  serverId: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
@@ -1546,6 +1550,7 @@ const AgentsConfigOptionsListInputSchema = AgentSpawnOptionsListInputBaseSchema.
 
 const SpawnConnectedServicesListInputSchema = AgentSpawnOptionsListInputBaseSchema.extend({
   includeUnavailable: z.boolean().optional(),
+  serverId: z.string().min(1).optional(),
 }).passthrough().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
@@ -5423,6 +5428,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'serverId', title: 'Server id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
@@ -5456,6 +5462,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'modelId', title: 'Model id', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'serverId', title: 'Server id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
@@ -5488,6 +5495,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
         { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
         { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'serverId', title: 'Server id (optional)', widget: 'text' },
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
@@ -5550,6 +5558,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL = Object.freeze(defineActionSpecs([
       fields: [
         { path: 'agentId', title: 'Runtime agent id', widget: 'text' },
         { path: 'backendTargetKey', title: 'Backend target key', widget: 'text' },
+        { path: 'machineId', title: 'Machine id (optional)', widget: 'text' },
+        { path: 'serverId', title: 'Server id (optional)', widget: 'text' },
         { path: 'includeUnavailable', title: 'Include unavailable', widget: 'boolean' },
       ],
     },
@@ -8630,6 +8640,9 @@ export const INTERNAL_ACTION_REASONS = Object.freeze({
   'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.',
   'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.',
   'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.',
+  'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.',
+  'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.',
   'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',
   'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.',

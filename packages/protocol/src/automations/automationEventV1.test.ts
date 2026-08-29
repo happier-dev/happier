@@ -44,7 +44,10 @@ import {
   isAutomationEventObservationFreshV1,
   validateAutomationEventFilterAgainstPayloadSchemaV1,
 } from './automationEventV1.js';
-import { AutomationEventSourcesListResultV1Schema } from './automationActionSpecsV1.js';
+import {
+  AutomationEventAdmitItemResultV1Schema,
+  AutomationEventSourcesListResultV1Schema,
+} from './automationActionSpecsV1.js';
 import {
   buildAutomationPluginEventOccurrenceEvidenceV1,
   deriveAutomationOccurrenceKeyV1,
@@ -115,6 +118,27 @@ describe('Automation event V1 contracts', () => {
     expect(MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS).toBe(
       AutomationResultDeliveryV1.MAX_AUTOMATION_SOURCE_RETRY_AFTER_MS,
     );
+  });
+
+  it('reports zero-assignment admission as retryable instead of retiring the definition', () => {
+    expect(AutomationEventAdmitItemResultV1Schema.parse({
+      kind: 'blocked',
+      reason: 'noEnabledAssignment',
+      checkpointSafe: false,
+    })).toEqual({
+      kind: 'blocked',
+      reason: 'noEnabledAssignment',
+      checkpointSafe: false,
+    });
+    expect(AutomationConversationAdmitResultV1Schema.parse({
+      kind: 'blocked',
+      reason: 'noEnabledAssignment',
+      checkpointSafe: false,
+    })).toEqual({
+      kind: 'blocked',
+      reason: 'noEnabledAssignment',
+      checkpointSafe: false,
+    });
   });
 
   it('uses one exact bounded Automation identity without rewriting its bytes', () => {

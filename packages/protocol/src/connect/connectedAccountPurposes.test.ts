@@ -111,6 +111,7 @@ describe('connected-account consumer purposes', () => {
       },
       required: false,
       materializationKinds: ['files', 'environment'],
+      credentialKinds: ['oauth', 'token'],
     })).toEqual({
       purpose: 'realtime_upstream',
       service: {
@@ -123,11 +124,24 @@ describe('connected-account consumer purposes', () => {
       },
       required: false,
       materializationKinds: ['files', 'environment'],
+      credentialKinds: ['oauth', 'token'],
     });
     expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
       purpose: 'primary',
       service: 'openai-codex',
       accountId: 'must-not-be-authority',
+    }).success).toBe(false);
+  });
+
+  it('accepts only an explicit unique non-empty credential kind set', () => {
+    expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
+      purpose: 'primary', service: 'novel-service', credentialKinds: ['oauth', 'token'],
+    }).success).toBe(true);
+    expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
+      purpose: 'primary', service: 'novel-service', credentialKinds: [],
+    }).success).toBe(false);
+    expect(ConnectedAccountPurposeDeclarationV1Schema.safeParse({
+      purpose: 'primary', service: 'novel-service', credentialKinds: ['token', 'token'],
     }).success).toBe(false);
   });
 

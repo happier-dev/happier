@@ -103,6 +103,8 @@ describe('ActionIdSchema', () => {
       inventory: [
         'paths.list_recent',
         'projects.list',
+        'prompts.invocations.list',
+        'prompts.invocation.resolve',
         'machines.list',
         'servers.list',
         'review.engines.list',
@@ -514,6 +516,8 @@ describe('ActionIdSchema', () => {
       'session.spawn_new',
       'paths.list_recent',
       'projects.list',
+      'prompts.invocations.list',
+      'prompts.invocation.resolve',
       'machines.list',
       'servers.list',
       'review.engines.list',

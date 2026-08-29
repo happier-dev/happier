@@ -732,7 +732,7 @@ describe('createActionExecutor (approvals)', () => {
       isActionApprovalRequired: (actionId) => actionId === 'session.list',
     } as any);
 
-    const blockingCall = executor.execute('session.list' as any, {}, { surface: 'mcp' });
+    const blockingCall = executor.execute('session.list' as any, {}, { surface: 'mcp', authority: 'present_user' });
 
     await waiterReady;
     const decideResult = await executor.execute('approval.request.decide' as any, {
@@ -740,6 +740,7 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     }, {
       surface: 'mcp',
+      authority: 'present_user',
     });
     const blockingResult = await blockingCall;
 
@@ -1280,6 +1281,7 @@ describe('createActionExecutor (approvals)', () => {
       decision: 'approve',
     }, {
       surface: 'mcp',
+      authority: 'present_user',
     });
 
     expect(res.ok).toBe(true);

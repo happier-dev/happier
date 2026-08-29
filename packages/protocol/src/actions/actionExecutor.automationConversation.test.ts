@@ -5,7 +5,6 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 const conversationAdmitInput = {
   automationId: 'automation-1',
   bindingId: 'binding-1',
-  templateVersion: 3,
   occurrenceId: 'telegram:update:1',
   occurredAt: 1_700_000_000_000,
   sender: { id: 'sender-1' },
@@ -108,11 +107,9 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     const controller = new AbortController();
     const input = {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     } as const;
     const automationConversationAction = vi.fn(async () => ({
       kind: 'verified' as const,
-      templateVersion: 3,
     }));
     const executor = createActionExecutor({
       automationConversationAction,
@@ -128,7 +125,7 @@ describe('createActionExecutor (Automation conversation admission)', () => {
         materialization: callerMaterialization,
       },
       signal: controller.signal,
-    })).resolves.toEqual({ ok: true, result: { kind: 'verified', templateVersion: 3 } });
+    })).resolves.toEqual({ ok: true, result: { kind: 'verified' } });
     expect(automationConversationAction).toHaveBeenCalledWith({
       actionId: 'automation.conversation.target.verify',
       input,
@@ -147,7 +144,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     const automationConversationAction = vi.fn(async () => ({
       items: [{
         automationId: 'automation-1',
-        templateVersion: 3,
         label: 'Conversation target',
         execution: { targetType: 'execution_run' as const, enabled: true },
       }],
@@ -171,7 +167,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
       result: {
         items: [{
           automationId: 'automation-1',
-          templateVersion: 3,
           label: 'Conversation target',
           execution: { targetType: 'execution_run', enabled: true },
         }],
@@ -242,7 +237,6 @@ describe('createActionExecutor (Automation conversation admission)', () => {
     } as ActionExecutorDeps);
     const input = {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     } as const;
 
     await expect(executor.execute('automation.conversation.target.verify', input, {
@@ -276,13 +270,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
       'automation.conversation.targets.list': {
         items: [{
           automationId: 'automation-1',
-          templateVersion: 3,
           label: 'Conversation target',
           execution: { targetType: 'execution_run' as const, enabled: true },
         }],
         nextCursor: null,
       },
-      'automation.conversation.target.verify': { kind: 'verified', templateVersion: 3 },
+      'automation.conversation.target.verify': { kind: 'verified' },
       'automation.conversation.admit': { kind: 'admitted', runId: 'run-1', checkpointSafe: true },
     };
     const automationConversationAction = vi.fn(async (args: Readonly<{ actionId: string }>) => (
@@ -305,13 +298,12 @@ describe('createActionExecutor (Automation conversation admission)', () => {
 
     await expect(executor.execute('automation.conversation.target.verify', {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     }, {
       surface: 'plugin',
       actionCaller: thirdPartyCaller,
     })).resolves.toEqual({
       ok: true,
-      result: { kind: 'verified', templateVersion: 3 },
+      result: { kind: 'verified' },
     });
 
     // The bridge admits with its OWN declared reply-delivery contribution: the

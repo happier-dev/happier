@@ -841,16 +841,21 @@ export type ActionExecutorDeps = Readonly<{
    */
   resolveSessionSpawnAgentInventorySelection?: (args: Readonly<{
     agentTarget: AgentExecutionTargetV1;
-  }>) => Readonly<{
+    machineId?: string;
+    serverId?: string;
+  }>) => Promise<Readonly<{
+    agentId: string;
+    backendTargetKey: string;
+  }> | null> | Readonly<{
     agentId: string;
     backendTargetKey: string;
   }> | null;
   agentsBackendsList: (args: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>) => Promise<AgentsBackendsListOutput>;
-  agentsModelsList: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
-  agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
-  agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
+  agentsModelsList: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
+  agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
+  agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
   spawnProfilesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; limit?: number }>) => Promise<unknown>;
-  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; machineId?: string; includeUnavailable?: boolean }>) => Promise<unknown>;
+  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; machineId?: string; serverId?: string; includeUnavailable?: boolean }>) => Promise<unknown>;
   spawnMcpServersPreview?: (args: Readonly<{
     agentId?: string;
     backendTargetKey?: string;

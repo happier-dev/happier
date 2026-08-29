@@ -8,15 +8,15 @@ describe('current UI context host ActionSpecs', () => {
     const invoke = getActionSpec('ui.current_context.command.invoke' as never);
     const invokeAction = getActionSpec('action.invoke' as never);
 
-    const voiceOnly = {
+    const voiceApiPlugin = {
       ui: false,
       voice: true,
       agent: false,
       mcp: false,
       cli: false,
       rpc: false,
-      api: false,
-      plugin: false,
+      api: true,
+      plugin: true,
     };
     expect(read).toMatchObject({
       id: 'ui.current_context.read',
@@ -24,7 +24,7 @@ describe('current UI context host ActionSpecs', () => {
       safety: 'safe',
       bindings: { voiceClientToolName: 'readCurrentUiContext' },
     });
-    expect(read.surfaces).toEqual(voiceOnly);
+    expect(read.surfaces).toEqual(voiceApiPlugin);
     expect(read.inputSchema.safeParse({}).success).toBe(true);
     expect(read.outputSchema?.safeParse({
       navigation: { area: 'workspace', screen: 'session', title: 'Current session' },
@@ -37,7 +37,7 @@ describe('current UI context host ActionSpecs', () => {
       safety: 'safe',
       bindings: { voiceClientToolName: 'invokeCurrentUiCommand' },
     });
-    expect(invoke.surfaces).toEqual(voiceOnly);
+    expect(invoke.surfaces).toEqual(voiceApiPlugin);
     expect(invoke.inputSchema.safeParse({ commandId: 'current-ui:1:0' }).success).toBe(true);
     expect(invoke.inputSchema.safeParse({ command: { kind: 'executeAction' } }).success).toBe(false);
 
@@ -48,7 +48,7 @@ describe('current UI context host ActionSpecs', () => {
       bindings: { voiceClientToolName: 'invokeAction' },
     });
     expect(invokeAction.surfaces).toEqual({
-      ...voiceOnly,
+      ...voiceApiPlugin,
       api: true,
       plugin: true,
     });

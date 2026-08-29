@@ -52,9 +52,14 @@ export function projectAutomationAccountCurrentnessWitnessV1(reading: Readonly<{
 }
 
 /**
- * Exact witness equality. Every Automation request that carries a witness to
- * the server must match the server's current Account state exactly, including
- * its Account change version.
+ * Exact witness equality. Pre-effect Automation decisions — claim, start,
+ * session-server-start authorization, and redispatch permission — must match
+ * the server's current Account state exactly, including its Account change
+ * version. A terminal settlement that reports an already-committed external
+ * effect compares content identity instead (see
+ * {@link sameAutomationAccountContentIdentityV1}): the reported effect itself,
+ * and any unrelated Account write, may have advanced the change version after
+ * the echoed start witness was minted.
  */
 export function sameAutomationAccountCurrentnessWitnessV1(
   left: AutomationAccountCurrentnessWitnessV1,

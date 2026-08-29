@@ -17,6 +17,13 @@ const baseDiagnostic = {
   },
 } as const;
 
+const normalizedDiagnostic = {
+  ...baseDiagnostic,
+  // The canonical owner upgrades legacy bare service ids to the qualified
+  // Connected Account service key of the owning Agent.
+  serviceId: 'happier.agent.codex/openai-codex',
+} as const;
+
 function normalize(value: unknown, options?: { sessionId?: string | null }) {
   const normalizer = (protocol as Record<string, unknown>).normalizeSessionUsageLimitRecoveryOperationResultV1;
   expect(typeof normalizer).toBe('function');
@@ -53,7 +60,7 @@ describe('SessionUsageLimitRecoveryOperationResultV1', () => {
       sessionId: 'sess_123',
       issueFingerprint: 'usage-limit:sess_123:codex',
       retryAfterMs: 500,
-      uxDiagnostic: baseDiagnostic,
+      uxDiagnostic: normalizedDiagnostic,
       diagnostics: {
         source: 'unit',
         attempt: 1,
@@ -107,7 +114,7 @@ describe('SessionUsageLimitRecoveryOperationResultV1', () => {
       sessionId: 'sess_123',
       errorCode: 'probe_rate_limited',
       retryAfterMs: 300,
-      uxDiagnostic: baseDiagnostic,
+      uxDiagnostic: normalizedDiagnostic,
     });
 
     expect(normalize({
@@ -187,7 +194,7 @@ describe('SessionUsageLimitRecoveryOperationResultV1', () => {
       retryAfterMs: 123,
       issueFingerprint: 'usage-limit:sess_123:codex',
       resumePromptMode: 'off',
-      uxDiagnostic: baseDiagnostic,
+      uxDiagnostic: normalizedDiagnostic,
     });
 
     expect(normalize({

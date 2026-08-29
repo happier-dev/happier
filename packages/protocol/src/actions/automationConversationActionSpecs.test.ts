@@ -19,7 +19,6 @@ import {
 const conversationAdmitInput = {
   automationId: 'automation-1',
   bindingId: 'binding-1',
-  templateVersion: 3,
   occurrenceId: 'telegram:update:1',
   occurredAt: 1_700_000_000_000,
   sender: { id: 'sender-1' },
@@ -74,7 +73,6 @@ describe('Automation conversation admission ActionSpec', () => {
 
     const item = {
       automationId: 'automation-1',
-      templateVersion: 3,
       label: 'Conversation target',
       execution: { targetType: 'execution_run', enabled: true },
     };
@@ -94,7 +92,6 @@ describe('Automation conversation admission ActionSpec', () => {
     expect(spec.outputSchema.safeParse({
       items: [{
         automationId: item.automationId,
-        templateVersion: item.templateVersion,
         label: item.label,
       }],
       nextCursor: null,
@@ -107,18 +104,19 @@ describe('Automation conversation admission ActionSpec', () => {
       items: [{ ...item, label: 'x'.repeat(257) }],
       nextCursor: null,
     }).success).toBe(false);
+    // Template versions are definition-editor CAS witnesses, not binding
+    // facts: the target projection must not leak them.
     expect(spec.outputSchema.safeParse({
-      items: [{ ...item, templateVersion: -1 }],
+      items: [{ ...item, templateVersion: 3 }],
       nextCursor: null,
     }).success).toBe(false);
     expect(spec.outputSchema.safeParse({
-      items: [{ ...item, templateVersion: Number.MAX_SAFE_INTEGER + 1 }],
+      items: [{ ...item, execution: { ...item.execution, enabled: 'yes' } }],
       nextCursor: null,
     }).success).toBe(false);
     expect(spec.outputSchema.safeParse({
       items: Array.from({ length: 101 }, (_, index) => ({
         automationId: `automation-${index}`,
-        templateVersion: index,
         label: `Target ${index}`,
         execution: { targetType: 'execution_run', enabled: true },
       })),
@@ -160,12 +158,14 @@ describe('Automation conversation admission ActionSpec', () => {
     const spec = getActionSpec('automation.conversation.target.verify');
     const input = {
       automationId: 'automation-1',
-      expectedTemplateVersion: 3,
     } as const;
 
     expect(spec.inputSchema.parse(input)).toEqual(input);
-    expect(spec.inputSchema.safeParse({ ...input, expectedTemplateVersion: -1 }).success).toBe(false);
-    expect(spec.inputSchema.safeParse({ ...input, expectedTemplateVersion: Number.MAX_SAFE_INTEGER + 1 }).success).toBe(false);
+    // Verification asks only whether the caller is naming a current target;
+    // final-result authors say so through the optional result delivery fact.
+    expect(spec.inputSchema.safeParse({ ...input, resultDelivery: 'finalResult' }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, resultDelivery: 'intermediate' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, expectedTemplateVersion: 3 }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, templateVersion: 3 }).success).toBe(false);
     // A conversation is an additional invocation source, so several bindings
     // may name one target and the verifier asks no per-binding question.
@@ -178,19 +178,17 @@ describe('Automation conversation admission ActionSpec', () => {
       .toBe(false);
     expect(spec.outputSchema.safeParse({ kind: 'notVerified', reason: 'notConversation' }).success)
       .toBe(false);
+    expect(spec.outputSchema.safeParse({ kind: 'notVerified', reason: 'templateVersionMismatch' }).success)
+      .toBe(false);
     expect(spec.outputSchema.parse({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' }))
       .toEqual({ kind: 'notVerified', reason: 'resultDeliveryUnsupported' });
-    expect(spec.outputSchema.parse({ kind: 'verified', templateVersion: 3 })).toEqual({
-      kind: 'verified',
-      templateVersion: 3,
-    });
-    expect(spec.outputSchema.parse({
-      kind: 'notVerified',
-      reason: 'templateVersionMismatch',
-    })).toEqual({ kind: 'notVerified', reason: 'templateVersionMismatch' });
+    expect(spec.outputSchema.parse({ kind: 'verified' })).toEqual({ kind: 'verified' });
+    expect(spec.outputSchema.safeParse({ kind: 'verified', templateVersion: 3 }).success).toBe(false);
+    expect(spec.outputSchema.parse({ kind: 'notVerified', reason: 'notFound' }))
+      .toEqual({ kind: 'notVerified', reason: 'notFound' });
     expect(spec.outputSchema.safeParse({
       kind: 'notVerified',
-      reason: 'templateVersionMismatch',
+      reason: 'notFound',
       currentTemplateVersion: 4,
     }).success).toBe(false);
   });

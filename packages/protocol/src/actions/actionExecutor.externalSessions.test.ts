@@ -74,8 +74,6 @@ describe('createActionExecutor (public External Session actions)', () => {
 
   it.each([
     ['sessions.external.status.get', { sessionId: 'session-1' }],
-    ['sessions.external.follow', { sessionId: 'session-1' }],
-    ['sessions.external.unfollow', { sessionId: 'session-1', leaseId: 'lease-1' }],
     ['sessions.external.backgroundFollow.set', { sessionId: 'session-1', enabled: true }],
     ['sessions.external.materialize.start', {
       request: {
@@ -109,6 +107,33 @@ describe('createActionExecutor (public External Session actions)', () => {
       input,
       pluginId: 'author.example',
     });
+  });
+
+  // follow/unfollow are admitted only on the host api surface: follow leases
+  // are host-owned, so the api path routes through the host external-session
+  // owner instead of manufacturing plugin identity from transport data.
+  it.each([
+    ['sessions.external.follow', { sessionId: 'session-1' }],
+    ['sessions.external.unfollow', { sessionId: 'session-1', leaseId: 'lease-1' }],
+  ] as const)('routes the host-api semantic mapping %s', async (actionId, input) => {
+    const hostExternalSessionAction = vi.fn(async () => ({
+      ok: true as const,
+      result: { ok: false, error: { code: 'fixture', message: 'fixture' } },
+    }));
+    const executor = createActionExecutor({
+      ...createDeps(vi.fn()),
+      hostExternalSessionAction,
+    });
+
+    await executor.execute(actionId, input, {
+      surface: 'api',
+      actionCaller: { kind: 'host' },
+    });
+
+    expect(hostExternalSessionAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId,
+      input,
+    }));
   });
 
   it('fails closed before dispatch when the plugin principal is missing', async () => {

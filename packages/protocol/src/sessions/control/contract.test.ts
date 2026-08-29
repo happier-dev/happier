@@ -658,7 +658,9 @@ describe('sessionControl contract exports', () => {
     expect(parsedDetails.success).toBe(true);
     expect(parsedDetails.data.limitCategory).toBe('usage_limit');
     expect(parsedDetails.data.quotaSnapshotRef).toEqual({
-      serviceId: 'openai-codex',
+      // The canonical owner upgrades legacy bare service ids to the qualified
+      // Connected Account service key of the owning Agent.
+      serviceId: 'happier.agent.codex/openai-codex',
       profileId: 'work',
       groupId: 'codex-main',
       fetchedAtMs: 120_000,

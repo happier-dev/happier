@@ -1244,37 +1244,20 @@ describe('Action Spec Registry', () => {
       sessionId: 'session-1',
       provider: 'codex',
     })).toMatchObject({ sessionId: 'session-1', agentId: 'codex' });
-    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
+    expect(PluginInvocableActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
     expect(PluginInvocableActionIdSchema.safeParse('voice_agent.start').success).toBe(true);
   });
 
-  it('publishes safe subagent reads while keeping lifecycle mutations RPC-only', () => {
-    const publicSubagentReadActionIds = [
+  it('keeps all six raw subagent lifecycle Actions RPC-only', () => {
+    const rawSubagentActionIds = [
       'sessions.subagents.list',
       'sessions.subagents.get',
       'sessions.subagents.watch',
-    ] as const;
-    for (const actionId of publicSubagentReadActionIds) {
-      const spec = getActionSpec(actionId);
-      expect(spec.surfaces.rpc).toBe(true);
-      expect(spec.surfaces.api).toBe(true);
-      expect(spec.surfaces.plugin).toBe(true);
-      expect(PublicActionIdSchema.safeParse(actionId).success).toBe(true);
-      expect(PluginInvocableActionIdSchema.safeParse(actionId).success).toBe(true);
-      expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
-      expect(Object.hasOwn(PUBLIC_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
-      expect(Object.hasOwn(PLUGIN_ACTION_INPUT_SCHEMAS, actionId)).toBe(true);
-      expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(true);
-      expect(isPluginSurfaceExcludedActionId(actionId)).toBe(false);
-      expect(isInternalActionId(actionId)).toBe(false);
-    }
-
-    const internalSubagentMutationActionIds = [
       'sessions.subagents.upsert',
       'sessions.subagents.updateStatus',
       'sessions.subagents.complete',
     ] as const;
-    for (const actionId of internalSubagentMutationActionIds) {
+    for (const actionId of rawSubagentActionIds) {
       const spec = getActionSpec(actionId);
       expect(spec.surfaces.rpc).toBe(true);
       expect(spec.surfaces.api).toBe(false);
@@ -1287,6 +1270,13 @@ describe('Action Spec Registry', () => {
       expect(Object.hasOwn(PLUGIN_ACTION_OUTPUT_SCHEMAS, actionId)).toBe(false);
       expect(isPluginSurfaceExcludedActionId(actionId)).toBe(true);
       expect(isInternalActionId(actionId)).toBe(true);
+    }
+
+    for (const actionId of ['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start'] as const) {
+      expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({
+        api: true,
+        plugin: true,
+      }));
     }
 
     const contextualExternalActionId = 'sessions.external.candidates.list';

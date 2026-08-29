@@ -3,6 +3,33 @@ import { describe, expect, it } from 'vitest';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { resolveActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
 
+describe('resolveActionBackendTargetSelection (qualified Agent contributions)', () => {
+  it('preserves a novel qualified Agent key alongside its machine runtime routing id', () => {
+    expect(resolveActionBackendTargetSelection({
+      agentId: 'acme-runtime-agent',
+      backendTargetKey: 'agent:acme.voice/agent',
+    })).toEqual({
+      ok: true,
+      selection: {
+        agentId: 'acme-runtime-agent',
+        backendTargetKey: 'agent:acme.voice/agent',
+        backendTarget: null,
+        canonicalBackendTarget: null,
+      },
+    });
+  });
+
+  it('does not infer the runtime routing id from a qualified Agent identity', () => {
+    expect(resolveActionBackendTargetSelection({
+      backendTargetKey: 'agent:acme.voice/agent',
+    })).toEqual({
+      ok: false,
+      message: 'agentId is required for a qualified Agent contribution target',
+      path: 'agentId',
+    });
+  });
+});
+
 describe('resolveActionBackendTargetSelection (RU-02 customAcp ingress-only)', () => {
   it.each([
     ['agentId', { agentId: 'claude' }, 'agentId'],

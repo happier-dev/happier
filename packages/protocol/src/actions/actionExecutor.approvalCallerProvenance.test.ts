@@ -13,7 +13,7 @@ const sessionSpawnInput = {
     kind: 'agent',
     identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
   },
-  initialMessage: 'Inspect this repository.',
+  initialInput: { text: 'Inspect this repository.' },
 } as const;
 
 describe('createActionExecutor (durable plugin approval caller provenance)', () => {
@@ -184,7 +184,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       },
     });
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
-      initialMessage: 'Inspect this repository.',
+      initialInput: { text: 'Inspect this repository.' },
       actionCaller: {
         kind: 'plugin',
         pluginId: 'plugin.example',

@@ -32,12 +32,24 @@ const PRESENT_USER_ACTION_IDS = [
 
 describe('webhook endpoint ActionSpecs', () => {
   it('exposes lifecycle and Account-route credential operations only to present-user surfaces', () => {
+    // Present-user authority is host-stamped, so openness never implies a
+    // plugin caller can satisfy the Action: automation callers receive the
+    // typed `present_user_required` failure instead of a hidden method.
+    // `delivery.movePending` stays a host-internal delivery control and is
+    // admitted on no caller surface beyond ui/cli hosts.
+    const HOST_INTERNAL_PRESENT_USER_ACTION_IDS = [
+      'plugin.webhook.delivery.movePending',
+    ] as const;
     for (const actionId of PRESENT_USER_ACTION_IDS) {
       const spec = getActionSpec(actionId);
+      expect(spec.requiredAuthority).toBe('present_user');
+      const hostExposed = !HOST_INTERNAL_PRESENT_USER_ACTION_IDS.includes(
+        actionId as (typeof HOST_INTERNAL_PRESENT_USER_ACTION_IDS)[number],
+      );
       expect(spec.surfaces).toEqual(expect.objectContaining({
         ui: true,
         cli: true,
-        plugin: false,
+        ...(hostExposed ? { api: true, plugin: true } : { api: false, plugin: false }),
       }));
       expect(spec.inputSchema).toBeDefined();
       expect(spec.outputSchema).toBeDefined();

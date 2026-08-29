@@ -190,7 +190,10 @@ import type {
   SessionRestoreRequestV1,
   SessionRestoreResultV1,
 } from '../sessions/control/checkpoints/v1.js';
-import { resolveActionBackendTargetSelection, type ActionBackendTargetSelection } from './resolveActionBackendTargetSelection.js';
+import {
+  resolveActionBackendTargetSelection,
+  type ActionBackendTargetSelection,
+} from './resolveActionBackendTargetSelection.js';
 import { projectActionExecuteFailure } from './actionExecutionResult.js';
 import { dispatchRuntimeAction, type RuntimeActionExecute } from './executor/index.js';
 
@@ -1029,18 +1032,24 @@ function resolveAgentInventorySelection(
  * than making it possible, and a caller that picks a profile FIRST has no agent
  * to name yet. A contradictory pair is still refused in both modes.
  */
-function buildAgentInventorySelectionArgs(params: Readonly<{
+async function buildAgentInventorySelectionArgs(params: Readonly<{
   deps: ActionExecutorDeps;
   actionId: ActionId | null;
   input: Record<string, unknown>;
   agentScope?: 'required' | 'optional';
-}>): Readonly<{ agentId?: string; backendTargetKey?: string }> | null {
+}>): Promise<Readonly<{ agentId?: string; backendTargetKey?: string }> | null> {
   const { deps, actionId, input } = params;
   const agentScope = params.agentScope ?? 'required';
   if (actionId === 'session.spawn_new') {
     const agentTarget = AgentExecutionTargetV1Schema.safeParse(input.agentTarget);
     if (!agentTarget.success) return agentScope === 'optional' ? {} : null;
-    return deps.resolveSessionSpawnAgentInventorySelection?.({ agentTarget: agentTarget.data })
+    const machineId = readDynamicOptionMachineId(input, actionId);
+    const serverId = readNonEmptyString(readRecord(input.executionTarget).serverId);
+    return await deps.resolveSessionSpawnAgentInventorySelection?.({
+      agentTarget: agentTarget.data,
+      ...(machineId ? { machineId } : {}),
+      ...(serverId ? { serverId } : {}),
+    })
       ?? (agentScope === 'optional' ? {} : null);
   }
 
@@ -1060,6 +1069,16 @@ function readDynamicOptionMachineId(
     return readNonEmptyString(readRecord(input.executionTarget).machineId);
   }
   return typeof input.machineId === 'string' ? input.machineId : undefined;
+}
+
+function readDynamicOptionServerId(
+  input: Record<string, unknown>,
+  actionId: ActionId | null,
+): string | undefined {
+  if (actionId === 'session.spawn_new') {
+    return readNonEmptyString(readRecord(input.executionTarget).serverId);
+  }
+  return readNonEmptyString(input.serverId);
 }
 
 function readDynamicOptionModelId(
@@ -1093,6 +1112,7 @@ async function resolveDynamicActionOptions(params: Readonly<{
 }>): Promise<ActionExecuteResult> {
   const { deps, ctx, actionId, optionsSourceId, input } = params;
   const machineId = readDynamicOptionMachineId(input, actionId);
+  const serverId = readDynamicOptionServerId(input, actionId);
   const modelId = readDynamicOptionModelId(input, actionId);
   const directory = readDynamicOptionDirectory(input, actionId);
 
@@ -1137,11 +1157,12 @@ async function resolveDynamicActionOptions(params: Readonly<{
   }
 
   if (optionsSourceId === 'agents.models.available') {
-    const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId, input });
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const result = await deps.agentsModelsList({
       ...selectionArgs,
       ...(machineId === undefined ? {} : { machineId }),
+      ...(serverId === undefined ? {} : { serverId }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });
     return { ok: true, result: normalizeResolvedOptions(result) };
@@ -1151,11 +1172,12 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!deps.agentsSessionModesList) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.session_modes.list' };
     }
-    const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId, input });
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const result = await deps.agentsSessionModesList({
       ...selectionArgs,
       ...(machineId === undefined ? {} : { machineId }),
+      ...(serverId === undefined ? {} : { serverId }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });
     return { ok: true, result: normalizeResolvedOptions(result) };
@@ -1165,11 +1187,12 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!deps.agentsConfigOptionsList) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.config_options.list' };
     }
-    const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId, input });
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const result = await deps.agentsConfigOptionsList({
       ...selectionArgs,
       ...(machineId === undefined ? {} : { machineId }),
+      ...(serverId === undefined ? {} : { serverId }),
       ...(modelId === undefined ? {} : { modelId }),
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
     });
@@ -1202,7 +1225,7 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!deps.spawnProfilesList) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.profiles.list' };
     }
-    const selectionArgs = buildAgentInventorySelectionArgs({
+    const selectionArgs = await buildAgentInventorySelectionArgs({
       deps,
       actionId,
       input,
@@ -1220,11 +1243,13 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!deps.spawnConnectedServicesList) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.connected_services.list' };
     }
-    const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId, input });
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    const machineId = readDynamicOptionMachineId(input, actionId);
     const result = await deps.spawnConnectedServicesList({
       ...selectionArgs,
-      ...(typeof input.machineId === 'string' ? { machineId: input.machineId } : {}),
+      ...(machineId ? { machineId } : {}),
+      ...(serverId ? { serverId } : {}),
       ...(typeof input.includeUnavailable === 'boolean' ? { includeUnavailable: input.includeUnavailable } : {}),
     });
     return { ok: true, result: normalizeResolvedOptions(result) };
@@ -1234,7 +1259,7 @@ async function resolveDynamicActionOptions(params: Readonly<{
     if (!deps.spawnMcpServersPreview) {
       return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.mcp_servers.preview' };
     }
-    const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId, input });
+    const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId, input });
     if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     const result = await deps.spawnMcpServersPreview({
       ...selectionArgs,
@@ -4042,6 +4067,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.agentsModelsList({
             ...(resolvedAgentId ? { agentId: resolvedAgentId } : {}),
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
+            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...(backendTargetKey ? { backendTargetKey } : {}),
           });
@@ -4052,11 +4078,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.agentsConfigOptionsList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.config_options.list' };
           }
-          const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
+          const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
           if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.agentsConfigOptionsList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
+            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
             ...((data.modelId) ? { modelId: String(data.modelId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
@@ -4067,11 +4094,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.agentsSessionModesList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:agents.session_modes.list' };
           }
-          const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
+          const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
           if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.agentsSessionModesList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
+            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
           });
           return completeActionResult(res);
@@ -4081,7 +4109,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.spawnProfilesList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.profiles.list' };
           }
-          const selectionArgs = buildAgentInventorySelectionArgs({
+          const selectionArgs = await buildAgentInventorySelectionArgs({
             deps,
             actionId: null,
             input: data,
@@ -4099,11 +4127,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.spawnConnectedServicesList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.connected_services.list' };
           }
-          const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
+          const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
           if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.spawnConnectedServicesList({
             ...selectionArgs,
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
+            ...((data.serverId) ? { serverId: String(data.serverId) } : {}),
             ...(typeof data.includeUnavailable === 'boolean' ? { includeUnavailable: data.includeUnavailable } : {}),
           });
           return completeActionResult(res);
@@ -4113,7 +4142,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!deps.spawnMcpServersPreview) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.spawn.mcp_servers.preview' };
           }
-          const selectionArgs = buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
+          const selectionArgs = await buildAgentInventorySelectionArgs({ deps, actionId: null, input: data });
           if (!selectionArgs) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const directory = typeof data.directory === 'string' && data.directory.trim().length > 0
             ? data.directory.trim()

@@ -740,7 +740,9 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const request = executionRunStart.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(request.connectedServices).toEqual({
       v: 1,
-      bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' } },
+      bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+      },
     });
   });
 
@@ -783,7 +785,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     const request = executionRunStart.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(request.connectedServices).toEqual({
       v: 1,
-      bindingsByServiceId: { 'openai-codex': { source: 'native' } },
+      bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'native' } },
     });
   });
 });

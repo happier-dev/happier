@@ -383,7 +383,7 @@ describe('ActionSpec-generated plugin action types', () => {
 
   it('projects exact API schemas only for public Actions', () => {
     expect(PublicActionIdSchema.parse('session.spawn_new')).toBe('session.spawn_new');
-    expect(PublicActionIdSchema.safeParse('sessions.subagents.list').success).toBe(true);
+    expect(PublicActionIdSchema.safeParse('sessions.subagents.list').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('sessions.subagents.upsert').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('sessions.external.materialize.start').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('plugins.permissions.grants.revoke').success).toBe(false);
@@ -391,7 +391,7 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('devices.simulator.input.orientation').success).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'session.spawn_new')).toBe(true);
-    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.subagents.list')).toBe(true);
+    expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.subagents.list')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.subagents.upsert')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'sessions.external.materialize.start')).toBe(false);
     expect(Object.hasOwn(PUBLIC_ACTION_INPUT_SCHEMAS, 'plugins.permissions.grants.revoke')).toBe(false);
@@ -399,7 +399,7 @@ describe('ActionSpec-generated plugin action types', () => {
 
     expectTypeOf<Extract<PublicActionId, 'session.spawn_new'>>().toEqualTypeOf<'session.spawn_new'>();
     expectTypeOf<Extract<PublicActionId, 'sessions.subagents.list'>>()
-      .toEqualTypeOf<'sessions.subagents.list'>();
+      .toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'projects.list'>>().toEqualTypeOf<'projects.list'>();
     expectTypeOf<Extract<PublicActionId, 'ui.current_context.read'>>()
       .toEqualTypeOf<'ui.current_context.read'>();
