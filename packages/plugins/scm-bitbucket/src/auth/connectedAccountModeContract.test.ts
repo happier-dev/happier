@@ -16,8 +16,15 @@ describe('Bitbucket Connected Account mode contract', () => {
           kind: 'manual',
           outcomeReconciliation: 'none',
           fields: [
-            expect.objectContaining({ id: 'identity' }),
-            expect.objectContaining({ id: 'token', secret: true }),
+            expect.objectContaining({
+              id: 'identity',
+              title: 'Atlassian account email',
+            }),
+            expect.objectContaining({
+              id: 'token',
+              secret: true,
+              description: expect.stringContaining('read:user:bitbucket'),
+            }),
           ],
         }],
       },

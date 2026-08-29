@@ -69,7 +69,7 @@ export function resolveBitbucketAuthReadiness(input: BitbucketAuthReadinessInput
     return {
       state: 'missing_token',
       diagnostic: 'Bitbucket Cloud credentials are missing an API token.',
-      // App passwords reached end of life on 2026-07-28 and no longer work, so the remediation
+      // App passwords were disabled on 2026-06-09 and no longer work, so the remediation
       // must never send a reader to one.
       remediation: 'Reconnect Bitbucket with an Atlassian API token.',
     };

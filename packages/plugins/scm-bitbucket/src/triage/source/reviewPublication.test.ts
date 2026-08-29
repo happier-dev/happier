@@ -374,6 +374,29 @@ describe('Bitbucket canonical review publication', () => {
     expect(requests.filter((candidate) => candidate.method === 'POST')).toHaveLength(1);
   });
 
+  it('fails closed when a non-deleted comment has unreadable content that could hide a marker', async () => {
+    const publicationPlan = plan({ entries: [entry('comment-1', 12)], verdict: null });
+    const commentsUrl = `${PULL_REQUEST_URL}/comments`;
+    const { http, requests } = createHttpStub((url, requestInfo) => {
+      if (url.endsWith('/2.0/user')) return { body: { uuid: VIEWER_UUID } };
+      if (url === PULL_REQUEST_URL) return { body: pullRequest() };
+      if (url.startsWith(commentsUrl) && requestInfo?.method === 'GET') {
+        return { body: { values: [{ id: 778, deleted: false, content: { raw: 42 } }] } };
+      }
+      if (url === commentsUrl && requestInfo?.method === 'POST') return { status: 201, body: { id: 772 } };
+      return undefined;
+    });
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const context = withClaim(createInvocationContext(connectedAccounts, http), publicationPlan);
+
+    await expect(publishBitbucketPullRequestReviewAction(request(publicationPlan), context))
+      .resolves.toMatchObject({
+        kind: 'settled',
+        publication: { entries: [{ outcome: { kind: 'uncertain' } }] },
+      });
+    expect(requests.some((candidate) => candidate.method === 'POST')).toBe(false);
+  });
+
   it('keeps an answer-lost markerless verdict uncertain even when participant state now matches', async () => {
     const publicationPlan = plan({ entries: [], verdict: { kind: 'approve', body: 'Approved.' } });
     const verdictUrl = `${PULL_REQUEST_URL}/approve`;

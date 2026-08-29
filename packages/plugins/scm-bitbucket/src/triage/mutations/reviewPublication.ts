@@ -72,16 +72,18 @@ function rawComment(raw: unknown): Readonly<{ externalRef: string; body: string 
   const record = raw as Readonly<Record<string, unknown>>;
   const ref = externalId(record);
   if (ref === null) return null;
-  // A deleted tombstone or an unrendered row is still enumerated by the
-  // provider and cannot carry a marker, so it reads as an empty body — the same
-  // fact the Comments projection publishes for the same row. Decoding it as
-  // damage would make one deleted comment block every reconciliation read and
-  // stop publication with everything uncertain and nothing written.
+  // A deleted tombstone is still enumerated by the provider and cannot carry a
+  // marker, so it reads as an empty body — the same fact the Comments
+  // projection publishes for the same row. Any OTHER unreadable body fails the
+  // collection closed: treating malformed live content as empty could hide an
+  // existing marker and duplicate an outward write.
   const content = record.content;
   const body = content !== null && typeof content === 'object' && !Array.isArray(content)
     ? (content as Readonly<Record<string, unknown>>).raw
     : undefined;
-  return { externalRef: ref, body: typeof body === 'string' ? body : '' };
+  return typeof body === 'string'
+    ? { externalRef: ref, body }
+    : record.deleted === true ? { externalRef: ref, body: '' } : null;
 }
 
 async function readMarkers(

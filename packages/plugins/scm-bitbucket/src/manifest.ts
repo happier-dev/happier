@@ -617,9 +617,11 @@ export const BITBUCKET_PLUGIN = definePlugin({
               {
                 id: 'token',
                 title: 'API token',
-                // App passwords reached end of life on 2026-07-28 and no longer work, so there is
+                // App passwords were disabled on 2026-06-09 and no longer work, so there is
                 // nothing to fall back to and nothing to name but an API token.
-                description: 'A Bitbucket API token with repository access.',
+                description: 'A Bitbucket API token with read:user:bitbucket, read:workspace:bitbucket, '
+                  + 'read:repository:bitbucket, read:pullrequest:bitbucket, and write:pullrequest:bitbucket '
+                  + 'scopes. Add write:repository:bitbucket when Sessions will push changes.',
                 schema: { type: 'string', minLength: 1 },
                 secret: true,
               },

@@ -81,7 +81,7 @@ export function classifyBitbucketHttpFailure(
   }
 
   switch (input.status) {
-    // Atlassian moved app passwords to end of life on 2026-07-28; a 401 on a connection that
+    // Atlassian disabled app passwords on 2026-06-09; a 401 on a connection that
     // previously worked means the credential itself is no longer valid, not a transient blip.
     case 401:
       return withDetail('authentication', 'credential-invalid');

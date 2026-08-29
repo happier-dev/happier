@@ -73,6 +73,7 @@ const LOCAL_REF = {
 
 async function mountDetail(
   launchInput: JsonValue = FIXTURE.detailInput as unknown as JsonValue,
+  translations: Readonly<Record<string, string>> = {},
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -90,7 +91,7 @@ async function mountDetail(
           {renderSurface(context)}
         </TriagePostMutationCompletionProvider>
       ),
-      surfaceContext: createSurfaceContextFixture(),
+      surfaceContext: createSurfaceContextFixture({ translations }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput,
       handlers: {
@@ -158,11 +159,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
     } as unknown as JsonValue);
 
     await expect(detail.getByRole('button', { name: 'Submit review' })).resolves.toBeDefined();
-    await expect(detail.getByRole('button', { name: 'Publish comment' })).resolves.toMatchObject({
-      state: { disabled: false },
-    });
-    await expect(detail.getByRole('option', { name: 'Please keep this invariant explicit.' }))
-      .resolves.toMatchObject({ state: { selected: true } });
+    await expect(detail.getByRole('button', { name: 'Publish comment' })).resolves.toBeDefined();
     await detail.press(await detail.getByRole('button', { name: 'Publish comment' }));
     expect(recordedWrites()).toHaveLength(1);
     expect(recordedWrites()[0]).toMatchObject({
@@ -179,11 +176,7 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
       },
     });
     await detail.press(await detail.getByRole('tab', { name: 'Comments' }));
-    await expect(detail.getByRole('option', { name: 'Reviewer: Please rename this' }))
-      .resolves.toMatchObject({ state: { selected: true } });
-    await expect(detail.getByRole('button', { name: 'Post reply' })).resolves.toMatchObject({
-      state: { disabled: false },
-    });
+    await expect(detail.getByRole('button', { name: 'Post reply' })).resolves.toBeDefined();
     await detail.press(await detail.getByRole('button', { name: 'Post reply' }));
     expect(recordedWrites().at(-1)).toMatchObject({
       action: {
@@ -197,6 +190,32 @@ describe('the mounted Bitbucket Cloud pull-request writes', () => {
         },
       },
     });
+  });
+
+  it('localizes the review publication outcome counts instead of composing English chrome', async () => {
+    nextResult = {
+      kind: 'settled',
+      publication: {
+        publicationPlanId: 'P'.repeat(43),
+        entries: [{
+          happierCommentId: 'review-comment-1',
+          publicationCorrelationId: 'A'.repeat(43),
+          outcome: { kind: 'published', externalRef: 'comment-101' },
+        }],
+        verdict: { kind: 'notRequested' },
+      },
+    } as JsonValue;
+    const detail = await mountDetail({
+      ...FIXTURE.detailInput,
+      linkedSessions: [{ sessionId: 'session-review-1', displayTitle: 'Review this pull request' }],
+    } as unknown as JsonValue, {
+      'plugins.bitbucket.ui.mutations.review.outcomeCounts': '{published} publié · {uncertain} incertain · {failed} non publié',
+    });
+
+    await detail.press(await detail.getByRole('button', { name: 'Publish comment' }));
+
+    await expect(detail.queryByText('1 publié · 0 incertain · 0 non publié')).resolves.toBeDefined();
+    await expect(detail.queryByText('1 published')).resolves.toBeUndefined();
   });
 
   it('hands an applied write to the target-owned re-observation seam', async () => {

@@ -332,7 +332,10 @@ function reviewPublicationBanner(
   if (parsed.data.kind === 'rejected') return {
     tone: 'warning',
     title: text('plugins.bitbucket.ui.mutations.review.rejected', 'Nothing was published.'),
-    detail: parsed.data.reason.replaceAll('_', ' '),
+    detail: text(
+      'plugins.bitbucket.ui.mutations.review.rejectionDetail',
+      'Bitbucket refused this review before publishing.',
+    ),
   };
   const verdict = parsed.data.publication.verdict;
   const effects = [
@@ -348,13 +351,22 @@ function reviewPublicationBanner(
     && verdict.outcome.kind !== 'published'
     && verdict.outcome.kind !== 'skippedPriorFailure'
     && verdict.outcome.externalRef !== undefined;
-  const partialDetail = `${published} published · ${uncertain} uncertain · ${failed} not published`
-    + (summaryLanded ? ' · review summary visible on Bitbucket' : '');
+  const outcomeCounts = text(
+    'plugins.bitbucket.ui.mutations.review.outcomeCounts',
+    '{published} published · {uncertain} uncertain · {failed} not published',
+    { published, uncertain, failed },
+  );
+  const partialDetail = summaryLanded
+    ? `${outcomeCounts} · ${text(
+      'plugins.bitbucket.ui.mutations.review.summaryVisible',
+      'Review summary visible on Bitbucket',
+    )}`
+    : outcomeCounts;
   return uncertain > 0
     ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.uncertain', 'Some review effects are uncertain. Reload before trying again.'), detail: partialDetail }
     : failed > 0
       ? { tone: 'warning', title: text('plugins.bitbucket.ui.mutations.review.partial', 'The review was only partly published.'), detail: partialDetail }
-      : { tone: 'success', title: text('plugins.bitbucket.ui.mutations.review.published', 'Bitbucket confirmed every review effect.'), detail: `${published} published` };
+      : { tone: 'success', title: text('plugins.bitbucket.ui.mutations.review.published', 'Bitbucket confirmed every review effect.'), detail: outcomeCounts };
 }
 
 function bitbucketReviewPublicationTarget(
