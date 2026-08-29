@@ -1,25 +1,9 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
-- runFlow:
-    file: ../_shared/gotoNewSessionComposer.yaml
-
-- assertVisible:
-    id: agent-input-agent-chip
-- tapOn:
-    id: agent-input-agent-chip
-- extendedWaitUntil:
-    visible:
-      id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
-    timeout: 60000
-- tapOn:
-    id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
-
-- tapOn:
-    id: new-session-composer-input
-- inputText: ${HAPPIER_E2E_SESSION_AGENT_PROMPT}
-- tapOn:
-    id: new-session-composer-send
-
+# Downstream confirmation/recovery half of the external Session Agent
+# journey. Runs only after the owning CLI has armed exact cleanup from the
+# creation/send fact, so a failure here can no longer leak the armed
+# disposable Session.
 # Host confirmation interaction: the deterministic example asks once per turn.
 - extendedWaitUntil:
     visible:

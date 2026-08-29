@@ -29,6 +29,15 @@ test('release coordinator carries public SDK package decisions, risk facts, and 
   assert.match(String(publishNpm?.if ?? ''), /publish_sdk/);
   assert.equal(publishNpm?.with?.publish_plugin_sdk, "${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}");
   assert.equal(publishNpm?.with?.publish_sdk, "${{ needs.plan.outputs.publish_sdk == 'true' }}");
+  // The npm publisher consumes the versions the plan already admitted; it must
+  // not allocate a different publication identity at publish time.
+  assert.equal(publishNpm?.with?.plugin_sdk_version, '${{ needs.plan.outputs.plugin_sdk_version }}');
+  assert.equal(publishNpm?.with?.sdk_version, '${{ needs.plan.outputs.sdk_version }}');
+  assert.equal(
+    publishNpm?.with?.release_message,
+    undefined,
+    'release notes stay owned by the release-notes projection owners, not the npm publisher',
+  );
 
   const statusFacts = workflow.jobs?.release_status?.steps?.find((step) => step.name === 'Project release status facts');
   assert.equal(statusFacts?.env?.REQUEST_PLUGIN_SDK, "${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}");

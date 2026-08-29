@@ -102,6 +102,11 @@ function servicePort(value) {
   return Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : null;
 }
 
+function normalizeRuntimeStartedAt(value) {
+  const timestampMs = Date.parse(String(value ?? '').trim());
+  return Number.isFinite(timestampMs) ? new Date(timestampMs).toISOString() : '';
+}
+
 function parseProjectedStackRuntime(output) {
   const lines = String(output ?? '').replace(/\r/g, '').split('\n');
   const headers = lines.slice(0, 3);
@@ -216,6 +221,16 @@ function buildForwards(projection) {
   return [...byListenPort.values()];
 }
 
+function pendingProjectedServices(projection) {
+  const expoTargetName = String(projection.runtime.placement?.expo ?? '').trim();
+  if (!expoTargetName) return [];
+  const expoTarget = projection.runtime.remoteTargets?.[expoTargetName];
+  return expoTarget?.services?.expo === true
+    && expoTarget?.serviceStatus?.expo === 'starting'
+    ? ['expo']
+    : [];
+}
+
 function workspaceStatePath(profile, env, workspaceId) {
   const instance = requireSafeComponent(profile?.instance, 'managed Lima instance name');
   const workspace = String(workspaceId ?? '').trim() || 'default';
@@ -324,6 +339,9 @@ function defaultBoundary() {
     },
     async delay(ms, options) {
       await delay(ms, undefined, options);
+    },
+    reportWarning(message) {
+      process.stderr.write(`${message}\n`);
     },
   };
 }
@@ -491,11 +509,14 @@ export async function inspectExecutionHostStackRuntime({
   if (expectedStack && projection.stackName !== expectedStack) {
     throw new Error('[dev-vm] managed guest returned an unexpected Stack declaration');
   }
+  const runtimeStartedAt = normalizeRuntimeStartedAt(projection.runtime.startedAt);
   return {
     status: 'ready',
     workspaceId: workspace.id,
     stackName: projection.stackName,
     forwards: buildForwards(projection),
+    pendingServices: pendingProjectedServices(projection),
+    ...(runtimeStartedAt ? { runtimeStartedAt } : {}),
   };
 }
 
@@ -564,7 +585,14 @@ async function ensureExecutionHostServiceTunnelUnlocked({
   const processBoundary = boundary ?? defaultBoundary();
   const projection = await inspectExecutionHostStackRuntime({ profile, workspaceId: workspace.id, stackName, executor });
   if (projection.status !== 'ready' || projection.forwards.length === 0) {
-    return { changed: false, status: projection.status === 'ready' ? 'no_services' : projection.status, workspaceId: workspace.id, statePath };
+    return {
+      changed: false,
+      status: projection.status === 'ready' ? 'no_services' : projection.status,
+      workspaceId: workspace.id,
+      statePath,
+      pendingServices: projection.pendingServices,
+      ...(projection.runtimeStartedAt ? { runtimeStartedAt: projection.runtimeStartedAt } : {}),
+    };
   }
   const marker = tunnelMarker({ profile, workspaceId: workspace.id, stackName: projection.stackName });
   const loaded = await readTunnelState(statePath);
@@ -591,7 +619,16 @@ async function ensureExecutionHostServiceTunnelUnlocked({
           && sameForwards(loaded.state.forwards, projection.forwards);
         const inspection = await inspectSavedTunnel(loaded.state, processBoundary);
         if (samePlan && inspection.ok) {
-          return { changed: false, status: 'running', workspaceId: workspace.id, statePath, stackName: projection.stackName, forwards: projection.forwards };
+          return {
+            changed: false,
+            status: 'running',
+            workspaceId: workspace.id,
+            statePath,
+            stackName: projection.stackName,
+            forwards: projection.forwards,
+            pendingServices: projection.pendingServices,
+            ...(projection.runtimeStartedAt ? { runtimeStartedAt: projection.runtimeStartedAt } : {}),
+          };
         }
         if (inspection.reason !== 'process_missing' && !inspection.ownerVerified) {
           throw tunnelError(
@@ -684,7 +721,16 @@ async function ensureExecutionHostServiceTunnelUnlocked({
       forwards: projection.forwards,
     };
     await writeTunnelState(statePath, state);
-    return { changed: true, status: 'running', workspaceId: workspace.id, stackName: projection.stackName, forwards: projection.forwards, statePath };
+    return {
+      changed: true,
+      status: 'running',
+      workspaceId: workspace.id,
+      stackName: projection.stackName,
+      forwards: projection.forwards,
+      statePath,
+      pendingServices: projection.pendingServices,
+      ...(projection.runtimeStartedAt ? { runtimeStartedAt: projection.runtimeStartedAt } : {}),
+    };
   } catch (error) {
     if (replacementInProgress) await removeReplacingTunnelState(statePath);
     throw error;
@@ -729,8 +775,10 @@ export async function waitForExecutionHostServiceTunnel({
   env = process.env,
   boundary,
   signal,
+  previousRuntimeStartedAt = '',
 } = {}) {
   const processBoundary = boundary ?? defaultBoundary();
+  const predecessorRuntimeStartedAt = normalizeRuntimeStartedAt(previousRuntimeStartedAt);
   for (let attempt = 0; attempt <= MAX_STACK_RUNTIME_READY_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) return { changed: false, status: 'cancelled', workspaceId };
     // eslint-disable-next-line no-await-in-loop
@@ -743,8 +791,17 @@ export async function waitForExecutionHostServiceTunnel({
       boundary: processBoundary,
       signal,
     });
-    if (result.status === 'running') return result;
-    if (![
+    const awaitingSuccessorRuntime = predecessorRuntimeStartedAt
+      && result.status === 'running'
+      && (
+        !result.runtimeStartedAt
+        || result.runtimeStartedAt === predecessorRuntimeStartedAt
+      );
+    const awaitingPendingServices = result.status === 'running'
+      && Array.isArray(result.pendingServices)
+      && result.pendingServices.length > 0;
+    if (result.status === 'running' && !awaitingSuccessorRuntime && !awaitingPendingServices) return result;
+    if (!awaitingSuccessorRuntime && !awaitingPendingServices && ![
       'missing',
       'no_services',
       TUNNEL_TRANSITION_REPLACING,
@@ -776,6 +833,7 @@ export async function superviseExecutionHostServiceTunnel({
   env = process.env,
   boundary,
   signal,
+  previousRuntimeStartedAt = '',
 } = {}) {
   const processBoundary = boundary ?? defaultBoundary();
   const workspace = requireWorkspace(profile, workspaceId);
@@ -788,8 +846,10 @@ export async function superviseExecutionHostServiceTunnel({
     env,
     boundary: processBoundary,
     signal,
+    previousRuntimeStartedAt,
   });
   if (result.status !== 'running') return result;
+  let recoveryErrorMessage = '';
 
   while (!signal?.aborted) {
     try {
@@ -810,17 +870,31 @@ export async function superviseExecutionHostServiceTunnel({
       return { changed: false, status: 'stopped', workspaceId: workspace.id, statePath: inspection.statePath };
     }
     if (inspection.status === TUNNEL_TRANSITION_REPLACING || inspection.status === TUNNEL_TRANSITION_STOPPING) continue;
-    if (inspection.healthy) continue;
+    if (inspection.healthy && inspection.status !== 'absent') continue;
 
-    result = await waitForExecutionHostServiceTunnel({
-      profile,
-      workspaceId: workspace.id,
-      stackName,
-      executor,
-      env,
-      boundary: processBoundary,
-      signal,
-    });
+    try {
+      result = await waitForExecutionHostServiceTunnel({
+        profile,
+        workspaceId: workspace.id,
+        stackName,
+        executor,
+        env,
+        boundary: processBoundary,
+        signal,
+      });
+      if (recoveryErrorMessage) {
+        processBoundary.reportWarning?.('[dev-vm] host service tunnel recovered after a transient replacement failure');
+        recoveryErrorMessage = '';
+      }
+    } catch (error) {
+      if (signal?.aborted || error?.name === 'AbortError') return cancelled();
+      const message = String(error?.message ?? error);
+      if (message !== recoveryErrorMessage) {
+        processBoundary.reportWarning?.(`[dev-vm] host service tunnel replacement failed; retrying: ${message}`);
+        recoveryErrorMessage = message;
+      }
+      continue;
+    }
     if (result.status !== 'running') return result;
   }
   return cancelled();

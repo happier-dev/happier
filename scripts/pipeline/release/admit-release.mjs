@@ -113,28 +113,6 @@ export function admitPublicSdkPublication(input) {
 }
 
 /**
- * The exact npm package names each public release selection publishes. Both
- * the pipeline entry point and the package release owner derive their admitted
- * names from this one table, so a public package cannot reach npm through one
- * path while the other still ignores it.
- */
-const PUBLIC_NPM_RELEASE_SELECTIONS = Object.freeze({
-  pluginSdk: Object.freeze(['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui']),
-  sdk: Object.freeze(['@happier-dev/sdk']),
-  channelsProtocol: Object.freeze(['@happier-dev/channels-protocol']),
-});
-
-/**
- * @param {Partial<Record<keyof typeof PUBLIC_NPM_RELEASE_SELECTIONS, boolean>>} selection
- * @returns {string[]}
- */
-export function resolvePublicNpmPackageNames(selection) {
-  return Object.entries(PUBLIC_NPM_RELEASE_SELECTIONS)
-    .filter(([key]) => selection?.[/** @type {keyof typeof PUBLIC_NPM_RELEASE_SELECTIONS} */ (key)] === true)
-    .flatMap(([, names]) => [...names]);
-}
-
-/**
  * Publication approval belongs to the actual release dispatch. API governance
  * may independently require a maintainer decision for a breaking public change.
  *
@@ -169,7 +147,6 @@ export function admitPublicSdkRelease(input) {
  *   dryRun: boolean;
  *   authorizedSha?: string;
  *   checkedOutSha?: string;
- *   packageNames?: readonly string[];
  * }} input
  */
 export function admitNpmPublication(input) {
@@ -196,7 +173,7 @@ export function admitNpmPublication(input) {
       }
     }
   } else if (publishes) {
-    throw new Error('[release-admission] npm publication requires the release-dispatch source SHA (--authorized-sha).');
+    throw new Error('[release-admission] npm publication requires a release-admitted exact source SHA (--authorized-sha).');
   }
 
   return { admitted: true, authorizedSha: authorizedSha || null };

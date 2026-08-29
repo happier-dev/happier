@@ -1366,13 +1366,14 @@ jobs:
       publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
       publish_plugin_sdk: ${{ needs.plan.outputs.publish_plugin_sdk == 'true' }}
       publish_sdk: ${{ needs.plan.outputs.publish_sdk == 'true' }}
+      plugin_sdk_version: ${{ needs.plan.outputs.plugin_sdk_version }}
+      sdk_version: ${{ needs.plan.outputs.sdk_version }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
       authorized_sha: ${{ needs.prepare_release_candidate.outputs.source_sha }}
       approve_public_sdk_release: ${{ inputs.approve_public_sdk_release }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      release_message: ${{ needs.prepare_release_candidate.outputs.release_notes_github_markdown }}
 
   release_verify:
     name: Release Verification (release-verify.yml)

@@ -160,6 +160,8 @@ function main() {
       'publish-plugin-sdk': { type: 'string', default: 'false' },
       'publish-sdk': { type: 'string', default: 'false' },
       'publish-channels-protocol': { type: 'string', default: 'false' },
+      'plugin-sdk-version': { type: 'string', default: '' },
+      'sdk-version': { type: 'string', default: '' },
       'server-runner-dir': { type: 'string', default: 'packages/relay-server' },
       'github-output': { type: 'string', default: '' },
     },
@@ -180,9 +182,39 @@ function main() {
   };
   const repoRoot = process.cwd();
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
-  const versions = channel === 'preview'
-    ? readPreviewVersions(repoRoot, requested, serverRunnerDir)
-    : readProductionVersions(repoRoot, requested, serverRunnerDir);
+  // Versions already admitted by the release plan are consumed as-is; only the
+  // remaining selections allocate from published release state. A supplied
+  // version that is no longer valid refuses downstream at the rolling
+  // allocator instead of silently reallocating a different publication.
+  const admittedVersions = {
+    pluginSdk: String(values['plugin-sdk-version'] ?? '').trim(),
+    sdk: String(values['sdk-version'] ?? '').trim(),
+  };
+  /** @type {Record<string, string>} */
+  let versions;
+  if (channel === 'preview') {
+    versions = readPreviewVersions(repoRoot, {
+      ...requested,
+      pluginSdk: requested.pluginSdk && !admittedVersions.pluginSdk,
+      sdk: requested.sdk && !admittedVersions.sdk,
+    }, serverRunnerDir);
+    if (requested.pluginSdk && admittedVersions.pluginSdk) versions.pluginSdk = admittedVersions.pluginSdk;
+    if (requested.sdk && admittedVersions.sdk) versions.sdk = admittedVersions.sdk;
+  } else {
+    versions = readProductionVersions(repoRoot, requested, serverRunnerDir);
+    if (requested.pluginSdk && admittedVersions.pluginSdk && versions.pluginSdk !== admittedVersions.pluginSdk) {
+      throw new Error(
+        `npm release metadata refused the admitted plugin SDK version ${admittedVersions.pluginSdk};`
+        + ` the authorized source checkout contains ${versions.pluginSdk}`,
+      );
+    }
+    if (requested.sdk && admittedVersions.sdk && versions.sdk !== admittedVersions.sdk) {
+      throw new Error(
+        `npm release metadata refused the admitted SDK version ${admittedVersions.sdk};`
+        + ` the authorized source checkout contains ${versions.sdk}`,
+      );
+    }
+  }
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
   const result = resolveNpmReleaseMetadata({
     channel,

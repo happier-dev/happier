@@ -159,17 +159,6 @@ export async function readCanonicalAuthorSurfaceInventory(inventoryPath = sdkInv
   return { inventory };
 }
 
-export async function assertPackedPublishReadyPackageMetadata(packageRoot) {
-  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
-  if (packageJson.version === '0.0.0') {
-    throw new Error('Packed SDK package must not use placeholder version 0.0.0 at publication readiness');
-  }
-  if (packageJson.private === true) {
-    throw new Error('Packed SDK package must not remain private at publication readiness');
-  }
-  return packageJson;
-}
-
 function isTypeOnlyExportAlias(symbol) {
   if (!(symbol.flags & ts.SymbolFlags.Alias)) return false;
   return symbol.declarations?.some((declaration) => {
@@ -183,7 +172,10 @@ function isTypeOnlyExportAlias(symbol) {
 }
 
 export async function classifyPackedNormalSurface(packageRoot, { inventory }) {
-  const packageJson = await assertPackedPublishReadyPackageMetadata(packageRoot);
+  // This is a current-development package-copy proof, not release
+  // publication certification. The canonical SDK intentionally remains
+  // private at 0.0.0 until release automation assigns its publish identity.
+  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
   const expectedPackageExports = Object.fromEntries(
     inventory.entrypoints.map((entrypoint) => [
       entrypoint.specifier,

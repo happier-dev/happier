@@ -10,7 +10,13 @@ import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-
 
 import { qaProtocol } from './protocol.js';
 import { QA_REVISION } from './revision.js';
-import { createCurrentSourceQaAgentRuntime } from './agent/deterministicAgent.js';
+import {
+  QA_REFERENCE_CANDIDATE_ID,
+  QA_REFERENCE_LABEL,
+  createCurrentSourceQaAgentRuntime,
+  resolveCurrentSourceQaAttachmentsForDispatch,
+  resolveCurrentSourceQaReferenceCandidate,
+} from './agent/deterministicAgent.js';
 
 const pluginId = 'qa.current-source.native-public';
 
@@ -129,14 +135,7 @@ export const { manifest, activate } = definePlugin({
             ...(content === undefined ? {} : { content }),
           })),
         }),
-        resolveForDispatch: async ({ attachments }) => ({
-          attachments: attachments.map(({ instanceId, value }) => ({
-            instanceId,
-            status: 'ready' as const,
-            context: 'Current source native QA attachment context.',
-            data: value,
-          })),
-        }),
+        resolveForDispatch: async ({ attachments }) => resolveCurrentSourceQaAttachmentsForDispatch({ attachments }),
         afterMessageAccepted: async () => undefined,
       },
     }),
@@ -144,8 +143,8 @@ export const { manifest, activate } = definePlugin({
     references: {
     'qa-references': defineComposerReference({
       title: 'Current source QA references', icon: 'search', triggers: ['@'],
-      search: async () => [{ id: 'qa:1', label: 'Current source QA reference' }],
-      resolve: async (id) => ({ id, label: 'Current source QA reference', context: 'Current source native QA reference context.' }),
+      search: async () => [{ id: QA_REFERENCE_CANDIDATE_ID, label: QA_REFERENCE_LABEL }],
+      resolve: async (id) => resolveCurrentSourceQaReferenceCandidate(id),
     }),
     },
     controls: {
@@ -164,9 +163,9 @@ export const { manifest, activate } = definePlugin({
             kind: 'reference.insert',
             reference: {
               kind: 'happier.composerReference',
-              ref: 'composerReference:qa:1',
+              ref: `composerReference:${QA_REFERENCE_CANDIDATE_ID}`,
               token: '@qa-ref',
-              label: 'Current source QA reference',
+              label: QA_REFERENCE_LABEL,
               start: 0,
               end: 7,
               composerReference: { pluginId, localId: 'qa-references' },

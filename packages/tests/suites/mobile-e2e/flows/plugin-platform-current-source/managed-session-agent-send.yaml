@@ -1,0 +1,34 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+# Create/send half of the external Session Agent journey. The shared flow
+# opens the canonical New Session composer; this flow selects the exact
+# qualified example and sends its deterministic prompt. It ends at the send's
+# own custody proof (the New Session screen is dismissed by the created
+# Session's route) and never asserts any downstream confirmation/recovery
+# fact. Exact cleanup for the created Session is armed by the owning CLI
+# immediately after this flow and before the transcript flow runs.
+- runFlow:
+    file: ../_shared/gotoNewSessionComposer.yaml
+
+- assertVisible:
+    id: agent-input-agent-chip
+- tapOn:
+    id: agent-input-agent-chip
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
+    timeout: 60000
+- tapOn:
+    id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}
+
+- tapOn:
+    id: new-session-composer-input
+- inputText: ${HAPPIER_E2E_SESSION_AGENT_PROMPT}
+- tapOn:
+    id: new-session-composer-send
+# Send custody proof: a landed send leaves the New Session screen for the
+# created Session's route.
+- extendedWaitUntil:
+    notVisible:
+      id: new-session-composer-input
+    timeout: 120000

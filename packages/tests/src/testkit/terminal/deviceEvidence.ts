@@ -971,10 +971,19 @@ export function validateTerminalNativeDeviceEvidence(value: unknown): TerminalNa
       if (!releaseApprovalReady) {
         issue('external-approval-not-ready', '$.externalApproval.status', 'required external approval must be approved for release readiness');
       }
-      requireString(value.externalApproval.authority, '$.externalApproval.authority', issue);
-      if (!isNonEmptyString(value.externalApproval.approvalArtifactId)
-        || artifactKinds.get(value.externalApproval.approvalArtifactId) !== 'release-approval') {
-        issue('invalid-release-approval-artifact', '$.externalApproval.approvalArtifactId', 'must reference a release-approval artifact');
+      if (releaseApprovalReady) {
+        requireString(value.externalApproval.authority, '$.externalApproval.authority', issue);
+        if (!isNonEmptyString(value.externalApproval.approvalArtifactId)
+          || artifactKinds.get(value.externalApproval.approvalArtifactId) !== 'release-approval') {
+          issue('invalid-release-approval-artifact', '$.externalApproval.approvalArtifactId', 'must reference a release-approval artifact');
+        }
+      } else {
+        if (value.externalApproval.authority !== null) {
+          issue('approval-authority-mismatch', '$.externalApproval.authority', 'must be null until external approval is issued');
+        }
+        if (value.externalApproval.approvalArtifactId !== null) {
+          issue('approval-artifacts-mismatch', '$.externalApproval.approvalArtifactId', 'must be null until external approval is issued');
+        }
       }
     } else {
       releaseApprovalReady = value.externalApproval.status === 'not-required';

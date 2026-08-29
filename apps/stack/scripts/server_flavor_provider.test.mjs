@@ -40,12 +40,15 @@ async function switchFlavor(t, {
   return { contents: await readFile(envPath, 'utf8'), result };
 }
 
-test('server flavor writer replaces incompatible or absent providers with the target default', async (t) => {
-  for (const initialProvider of [undefined, 'sqlite', 'pglite']) {
+test('server flavor writer changes only the behavior preset and preserves the effective provider', async (t) => {
+  for (const initialProvider of [undefined, 'sqlite']) {
     const { contents } = await switchFlavor(t, { initialProvider, target: 'full' });
     assert.match(contents, /HAPPIER_STACK_SERVER_COMPONENT=happier-server\n/);
-    assert.match(contents, /HAPPIER_DB_PROVIDER=postgres\n/);
+    assert.match(contents, /HAPPIER_DB_PROVIDER=sqlite\n/);
   }
+
+  const { contents: pglite } = await switchFlavor(t, { initialProvider: 'pglite', target: 'full' });
+  assert.match(pglite, /HAPPIER_DB_PROVIDER=pglite\n/);
 
   const { contents: light } = await switchFlavor(t, {
     initialProvider: 'mysql',
@@ -54,8 +57,8 @@ test('server flavor writer replaces incompatible or absent providers with the ta
     target: 'light',
   });
   assert.match(light, /HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\n/);
-  assert.match(light, /HAPPIER_DB_PROVIDER=sqlite\n/);
-  assert.doesNotMatch(light, /^DATABASE_URL=/m);
+  assert.match(light, /HAPPIER_DB_PROVIDER=mysql\n/);
+  assert.match(light, /^DATABASE_URL=mysql:\/\/operator:secret@db\.example\.test:3306\/happier$/m);
 });
 
 test('server flavor writer rejects explicitly empty or unknown provider metadata', async (t) => {
@@ -102,13 +105,13 @@ test('server flavor writer fails closed when preserving MySQL without DATABASE_U
   assert.match(contents, /^HAPPIER_DB_PROVIDER=mysql$/m);
 });
 
-test('server flavor writer removes incompatible MySQL URL when selecting full Postgres', async (t) => {
+test('server flavor writer removes URLs incompatible with the preserved provider', async (t) => {
   const { contents } = await switchFlavor(t, {
     initialProvider: 'sqlite',
     databaseUrl: 'mysql://stale:secret@db.example.test:3306/happier',
     target: 'full',
   });
-  assert.match(contents, /^HAPPIER_DB_PROVIDER=postgres$/m);
+  assert.match(contents, /^HAPPIER_DB_PROVIDER=sqlite$/m);
   assert.doesNotMatch(contents, /^DATABASE_URL=/m);
 
   const { contents: lightUrlContents } = await switchFlavor(t, {
@@ -116,6 +119,26 @@ test('server flavor writer removes incompatible MySQL URL when selecting full Po
     databaseUrl: 'file:/tmp/stale-light-database',
     target: 'full',
   });
-  assert.match(lightUrlContents, /^HAPPIER_DB_PROVIDER=postgres$/m);
+  assert.match(lightUrlContents, /^HAPPIER_DB_PROVIDER=pglite$/m);
   assert.doesNotMatch(lightUrlContents, /^DATABASE_URL=/m);
+});
+
+test('server flavor writer preserves external Postgres authority and rejects light Postgres without it', async (t) => {
+  const databaseUrl = 'postgresql://operator:secret@db.example.test:5432/happier';
+  const { contents } = await switchFlavor(t, {
+    initialProvider: 'postgres',
+    initialComponent: 'happier-server',
+    databaseUrl,
+    target: 'light',
+  });
+  assert.match(contents, /^HAPPIER_DB_PROVIDER=postgres$/m);
+  assert.match(contents, new RegExp(`^DATABASE_URL=${databaseUrl}$`, 'm'));
+
+  const rejected = await switchFlavor(t, {
+    initialProvider: 'postgres',
+    initialComponent: 'happier-server',
+    target: 'light',
+    expectCode: 1,
+  });
+  assert.match(`${rejected.result.stdout}\n${rejected.result.stderr}`, /postgres.*DATABASE_URL|DATABASE_URL.*postgres/i);
 });

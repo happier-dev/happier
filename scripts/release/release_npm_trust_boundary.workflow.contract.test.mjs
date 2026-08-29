@@ -110,6 +110,23 @@ test('npm release workflow delegates release-ring validation and metadata emissi
   assert.doesNotMatch(String(metadata?.run ?? ''), /write_version_output|node --input-type=module|versions_json=/);
 });
 
+test('the reusable npm workflow consumes parent-admitted public SDK versions instead of reallocating', async () => {
+  const workflow = await loadWorkflow();
+  const inputs = workflow.on?.workflow_call?.inputs;
+
+  assert.equal(inputs?.plugin_sdk_version?.type, 'string');
+  assert.equal(inputs?.plugin_sdk_version?.default, '');
+  assert.equal(inputs?.sdk_version?.type, 'string');
+  assert.equal(inputs?.sdk_version?.default, '');
+
+  const metadata = workflow.jobs?.release?.steps?.find((step) => step.name === 'Resolve release metadata');
+  assert.equal(metadata?.env?.INPUT_PLUGIN_SDK_VERSION, '${{ inputs.plugin_sdk_version }}');
+  assert.equal(metadata?.env?.INPUT_SDK_VERSION, '${{ inputs.sdk_version }}');
+  const metadataRun = String(metadata?.run ?? '');
+  assert.match(metadataRun, /--plugin-sdk-version "\$\{INPUT_PLUGIN_SDK_VERSION\}"/);
+  assert.match(metadataRun, /--sdk-version "\$\{INPUT_SDK_VERSION\}"/);
+});
+
 test('npm publication is reusable-only and requires the caller-admitted candidate SHA', async () => {
   const workflow = await loadWorkflow();
   const reusable = workflow.on?.workflow_call;
@@ -194,6 +211,14 @@ test('public SDK releases use one lockstep pair publisher and return per-package
   assert.match(String(reusable?.outputs?.plugin_sdk_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_sdk_integrity/);
   assert.match(String(reusable?.outputs?.plugin_ui_integrity?.value ?? ''), /publish-plugin-sdk-pair\.outputs\.plugin_ui_integrity/);
   assert.match(String(reusable?.outputs?.sdk_integrity?.value ?? ''), /publish-sdk\.outputs\.sdk_integrity/);
+
+  // The pair publisher emits each package's verified result itself, so the
+  // status projection reports Plugin SDK/UI independently during a partial
+  // failure instead of failing both packages with the shared step outcome.
+  const pairOutputs = pair.outputs ?? {};
+  assert.equal(pairOutputs.plugin_sdk_result, "${{ steps.publish.outputs.plugin_sdk_result == 'success' && 'success' || 'failed' }}");
+  assert.equal(pairOutputs.plugin_ui_result, "${{ steps.publish.outputs.plugin_ui_result == 'success' && 'success' || 'failed' }}");
+  assert.doesNotMatch(JSON.stringify(pairOutputs), /steps\.publish\.outcome/);
 });
 
 test('the public Channels protocol is packed and published by the generic npm release owner', async () => {

@@ -28,14 +28,6 @@ const fixtureConsumerRoot = join(
   repoRoot,
   'packages/tests/fixtures/plugin-platform/action-contract-consumer',
 );
-const exampleProducerRoot = join(
-  repoRoot,
-  'packages/plugin-sdk/examples/action-contract-producer',
-);
-const exampleConsumerRoot = join(
-  repoRoot,
-  'packages/plugin-sdk/examples/action-contract-consumer',
-);
 const require = createRequire(import.meta.url);
 const nativeTypeScriptPlatformPackageName =
   `@typescript/typescript-${process.platform}-${process.arch}`;
@@ -127,13 +119,6 @@ async function prepareCurrentAuthorSourceLayout(projectDir, fixtureSourceEntrypo
     if (error?.code !== 'ENOENT') throw error;
     await cp(join(projectDir, fixtureSourceEntrypoint), currentEntrypoint);
   }
-  const tsconfigPath = join(projectDir, 'tsconfig.json');
-  const tsconfig = JSON.parse(await readFile(tsconfigPath, 'utf8'));
-  tsconfig.compilerOptions = {
-    ...tsconfig.compilerOptions,
-    noEmit: true,
-  };
-  await writeFile(tsconfigPath, `${JSON.stringify(tsconfig, null, 2)}\n`, 'utf8');
 }
 
 async function linkWorkspacePackage(projectDir, packageName, packageRoot) {
@@ -343,13 +328,10 @@ test('independently packed producer/consumer fixture composes through public ./a
   });
 });
 
-test('copyable example producer/consumer composes through normal plugin activation', async () => {
-  await runPackedComposition({
-    producerRoot: exampleProducerRoot,
-    consumerRoot: exampleConsumerRoot,
-    producerPackageName: '@example/happier-action-contract-producer',
-    consumerPackageName: '@example/happier-action-contract-consumer',
-    producerPluginId: 'examples.action-contract-producer',
-    producerRuntimeEntry: 'dist/index.js',
-  });
-});
+// The copyable `examples/action-contract-{producer,consumer}` pair is the
+// Triage targeted-contribution dogfood (its own `node --test` files plus the
+// generated capability-matrix availability rows are its proof owners); it no
+// longer composes through a producer `./actions` ActionContract. The packed
+// ActionContract composition proof above therefore runs only the maintained
+// fixtures pair, which stays the single executeWithExecutionOrigin author
+// boundary proof.

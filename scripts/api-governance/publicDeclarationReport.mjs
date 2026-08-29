@@ -423,19 +423,35 @@ function orderedDeclarations(symbol) {
 function collectReferencedTypeNames(declaration, referenceNodes) {
   const visit = (node) => {
     if (ts.isTypeReferenceNode(node)) {
-      referenceNodes.push(ts.isQualifiedName(node.typeName) ? node.typeName.left : node.typeName);
+      referenceNodes.push(node.typeName);
     } else if (ts.isExpressionWithTypeArguments(node)) {
       referenceNodes.push(node.expression);
     } else if (ts.isTypeQueryNode(node)) {
-      referenceNodes.push(ts.isQualifiedName(node.exprName) ? node.exprName.left : node.exprName);
+      referenceNodes.push(node.exprName);
     } else if (ts.isImportTypeNode(node) && node.qualifier !== undefined) {
-      referenceNodes.push(
-        ts.isQualifiedName(node.qualifier) ? node.qualifier.left : node.qualifier,
-      );
+      referenceNodes.push(node.qualifier);
     }
     ts.forEachChild(node, visit);
   };
   ts.forEachChild(declaration, visit);
+}
+
+function referencedSymbol(checker, referenceNode) {
+  if (ts.isQualifiedName(referenceNode)) {
+    // A namespace-import member can be a transient symbol without declarations.
+    // Resolve the namespace and read the member from its actual module exports;
+    // this also handles nested qualifiers such as import('./x').Types.Hidden.
+    const leftLocated = referencedSymbol(checker, referenceNode.left);
+    if (leftLocated !== undefined) {
+      const left = resolvedSymbol(checker, leftLocated);
+      const exported = checker.getExportsOfModule(left)
+        .find((candidate) => candidate.name === referenceNode.right.text);
+      if (exported !== undefined) return exported;
+    }
+    const member = checker.getSymbolAtLocation(referenceNode.right);
+    if (member !== undefined) return member;
+  }
+  return checker.getSymbolAtLocation(referenceNode);
 }
 
 function declaredName(declaration, fallback) {
@@ -577,6 +593,13 @@ export function projectPublicDeclarationReport({
    * signature cannot change silently. A declaration outside those roots remains
    * a named package edge because the consumer resolves and versions it
    * independently.
+   *
+   * Reference nodes are pushed as complete (possibly qualified) names, so the
+   * checker resolves the reached member symbol: `Types.Hidden` records the
+   * `Hidden` declaration this package owns, and a member resolved outside the
+   * package (for example `z.ZodString` or `NodeJS.ProcessEnv`) stays a named
+   * dependency edge instead of silently dropping through a namespace alias
+   * whose only declaration is a source file.
    */
   const recordOwnedDeclarations = (symbol) => {
     const owned = [];
@@ -653,7 +676,7 @@ export function projectPublicDeclarationReport({
     const referenceKey = declarationKey(referenceNode);
     if (visitedReferenceNodes.has(referenceKey)) continue;
     visitedReferenceNodes.add(referenceKey);
-    const located = checker.getSymbolAtLocation(referenceNode);
+    const located = referencedSymbol(checker, referenceNode);
     if (!located) continue;
     const symbol = resolvedSymbol(checker, located);
     if ((symbol.flags & ts.SymbolFlags.TypeParameter) !== 0) continue;

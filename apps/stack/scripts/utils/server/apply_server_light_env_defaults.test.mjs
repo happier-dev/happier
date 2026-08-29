@@ -27,7 +27,7 @@ test('applyServerLightEnvDefaults preserves explicit pglite opt-in db dir', () =
 });
 
 test('applyServerLightEnvDefaults fails closed for explicit empty and unsupported providers', () => {
-  for (const provider of ['', '   ', 'postgres', 'unsupported']) {
+  for (const provider of ['', '   ', 'unsupported']) {
     assert.throws(
       () => applyServerLightEnvDefaults({
         baseEnv: { HAPPIER_DB_PROVIDER: provider },
@@ -38,4 +38,15 @@ test('applyServerLightEnvDefaults fails closed for explicit empty and unsupporte
       `provider=${JSON.stringify(provider)}`,
     );
   }
+});
+
+test('applyServerLightEnvDefaults preserves external DB authority independently of the preset', () => {
+  const serverEnv = { DATABASE_URL: 'postgresql://operator/db' };
+  applyServerLightEnvDefaults({
+    baseEnv: { HAPPIER_DB_PROVIDER: 'postgres', DATABASE_URL: serverEnv.DATABASE_URL },
+    serverEnv,
+    baseDir: '/stack/demo',
+  });
+  assert.equal(serverEnv.HAPPIER_DB_PROVIDER, 'postgres');
+  assert.equal(serverEnv.DATABASE_URL, 'postgresql://operator/db');
 });

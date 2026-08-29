@@ -617,9 +617,13 @@ jobs:
           PACKAGED_PAYLOAD_PATH="${EXTRACT_DIR}/happier-v${RELEASE_VERSION}-${CLI_TARGET}"
           test -d "${PACKAGED_PAYLOAD_PATH}"
           PACKAGED_WRAPPER_PATH="$(find "${EXTRACT_DIR}" -type f -name "$WRAPPER_NAME" -print)"
+          CUSTODY_NAME="happier-process-custody"
+          if [ "${RUNNER_OS}" = "Windows" ]; then CUSTODY_NAME="${CUSTODY_NAME}.exe"; fi
+          PACKAGED_CUSTODY_PATH="$(find "${EXTRACT_DIR}" -type f -name "$CUSTODY_NAME" -print)"
           PACKAGED_LICENSE_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-LICENSE' -print)"
           PACKAGED_NOTICES_PATH="$(find "${EXTRACT_DIR}" -type f -name 'CLIProxyAPI-THIRD-PARTY-NOTICES' -print)"
           test "$(printf '%s\n' "${PACKAGED_WRAPPER_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
+          test "$(printf '%s\n' "${PACKAGED_CUSTODY_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           test "$(printf '%s\n' "${PACKAGED_LICENSE_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           test "$(printf '%s\n' "${PACKAGED_NOTICES_PATH}" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
           cmp \
@@ -642,6 +646,7 @@ jobs:
             PACKAGED_WRAPPER_PATH="$(cygpath -w "${PACKAGED_WRAPPER_PATH}")"
           else
             test -x "${PACKAGED_WRAPPER_PATH}"
+            test -x "${PACKAGED_CUSTODY_PATH}"
           fi
           HAPPIER_CLIPROXYAPI_EXECUTABLE="${PACKAGED_WRAPPER_PATH}" \
             HAPPIER_CLIPROXYAPI_WRAPPER_BUILD_VERSION="$RELEASE_VERSION" \

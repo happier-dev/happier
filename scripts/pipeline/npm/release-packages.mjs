@@ -19,7 +19,6 @@ import {
   admitPublicSdkPublication,
   admitPublicSdkRelease,
   publicSdkReleaseApprovalRequired,
-  resolvePublicNpmPackageNames,
 } from '../release/admit-release.mjs';
 import { analyzeCurrentPublicApiForEditorial } from '../release/public-api-governance.mjs';
 import { publicApiAdmissionFacts } from '../release/analyze-release-change.mjs';
@@ -487,18 +486,12 @@ async function main() {
     fail(`--mode must be 'pack' or 'pack+publish' (got: ${mode})`);
   }
 
-  const publicSdkPackageNames = resolvePublicNpmPackageNames({
-    pluginSdk: publishPluginSdk,
-    sdk: publishSdk,
-    channelsProtocol: publishChannelsProtocol,
-  });
   if (authorizedSha || (mode === 'pack+publish' && !dryRun)) {
     admitNpmPublication({
       mode,
       dryRun,
       authorizedSha,
       checkedOutSha: authorizedSha ? readCheckedOutSourceSha(repoRoot) : '',
-      packageNames: publicSdkPackageNames,
     });
   }
   if (!dryRun && mode === 'pack+publish') {

@@ -457,6 +457,76 @@ export function validateTerminalNativeDeviceEvidenceWithArtifacts(
               }
             }
           }
+          if (gateId === 'repeatable-package-build' && rendererId === 'ios-ghosttykit'
+            && isObject(gateReport.details) && isObject(value.app)) {
+            const details = gateReport.details;
+            const firstBuild = isObject(details.firstBuild) ? details.firstBuild : null;
+            const secondBuild = isObject(details.secondBuild) ? details.secondBuild : null;
+            if (firstBuild && secondBuild
+              && firstBuild.binaryArtifactId === secondBuild.binaryArtifactId) {
+              issue('ios-repeatability-artifact-reused', `$.app.packagingReportArtifactId.gates.${gateId}`, 'iOS repeatability must retain two distinct build artifacts');
+            }
+            if (firstBuild && firstBuild.binaryArtifactId !== value.app.binaryArtifactId) {
+              issue('ios-repeatability-primary-mismatch', `$.app.packagingReportArtifactId.gates.${gateId}.firstBuild.binaryArtifactId`, 'first iOS build must be the retained app binary loaded by this run');
+            }
+            for (const [label, build] of [['firstBuild', firstBuild], ['secondBuild', secondBuild]] as const) {
+              if (!build) continue;
+              const basePath = `$.app.packagingReportArtifactId.gates.${gateId}.${label}`;
+              const binaryId = String(build.binaryArtifactId ?? '');
+              const logId = String(build.buildLogArtifactId ?? '');
+              const binaryArtifact = artifacts.get(binaryId);
+              const logArtifact = artifacts.get(logId);
+              const binaryPath = artifactFiles.get(binaryId);
+              const logPath = artifactFiles.get(logId);
+              if (!binaryArtifact || binaryArtifact.kind !== 'app-binary' || !binaryPath
+                || binaryArtifact.sha256 !== build.binarySha256) {
+                issue('ios-repeatability-binary-mismatch', `${basePath}.binaryArtifactId`, 'build must reference its exact retained iOS app package');
+                continue;
+              }
+              if (!logArtifact || logArtifact.kind !== 'log' || !logPath
+                || logArtifact.sha256 !== build.buildLogSha256) {
+                issue('ios-repeatability-log-mismatch', `${basePath}.buildLogArtifactId`, 'build must reference its exact retained build log');
+              } else if (!readFileSync(logPath, 'utf8').includes('** BUILD SUCCEEDED **')) {
+                issue('ios-repeatability-build-not-proven', `${basePath}.buildLogArtifactId`, 'retained build log must contain the Xcode success marker');
+              }
+              try {
+                const inspection = inspectTerminalNativeAppPackage(binaryPath, 'ios');
+                const expectedInspection = {
+                  format: inspection.format,
+                  applicationId: inspection.applicationId,
+                  version: inspection.version,
+                  buildNumber: inspection.buildNumber,
+                  architectures: inspection.architectures,
+                  metadataSha256: inspection.metadataSha256,
+                  executable: inspection.executable,
+                  codeSignaturePresent: inspection.codeSignaturePresent,
+                  provisioningProfilePresent: inspection.provisioningProfilePresent,
+                };
+                if (!same(build.inspection, expectedInspection)) {
+                  issue('ios-repeatability-inspection-mismatch', `${basePath}.inspection`, 'recorded facts must equal direct inspection of this retained iOS package');
+                }
+                const identity = inspection.identity;
+                const authority = capturePolicyValid && policies
+                  ? policies.capturePolicy.authorities.find((candidate) => candidate.id === identity.authorityId)
+                  : undefined;
+                if (identity.platform !== 'ios' || identity.rendererId !== rendererId
+                  || identity.buildEvidenceId !== value.buildEvidenceId
+                  || identity.applicationId !== value.app.applicationId
+                  || identity.version !== value.app.version || identity.buildNumber !== value.app.buildNumber
+                  || identity.sourceStateSha256 !== value.app.sourceStateSha256
+                  || identity.dependencyClosureSha256 !== expectedPin.dependencyClosureSha256) {
+                  issue('ios-repeatability-identity-mismatch', `${basePath}.binaryArtifactId`, 'both retained builds must embed the same build/source/dependency identity');
+                } else if (!authority || !isString(identity.generatedAt)
+                  || !terminalNativeCaptureAuthorityAllows(authority, rendererId, String(value.buildEvidenceId))
+                  || !terminalNativeCaptureTimestampIsAllowed(authority, identity.generatedAt)
+                  || !verifyTerminalNativeCaptureSignature(identity, authority)) {
+                  issue('ios-repeatability-identity-untrusted', `${basePath}.binaryArtifactId`, 'both retained build identities must be signed by the scoped capture authority');
+                }
+              } catch (error) {
+                issue('ios-repeatability-package-unreadable', `${basePath}.binaryArtifactId`, error instanceof Error ? error.message : String(error));
+              }
+            }
+          }
         }
         if (!gateArtifact || gateArtifact.sha256 !== gate.reportSha256 || !gateReport) {
           issue('packaging-gate-report-mismatch', '$.app.packagingReportArtifactId', `gate ${gateId} must reference its exact semantic report`);
@@ -626,7 +696,8 @@ export function validateTerminalNativeDeviceEvidenceWithArtifacts(
     }
   }
 
-  if (isObject(value.externalApproval) && value.externalApproval.required === true) {
+  if (isObject(value.externalApproval) && value.externalApproval.required === true
+    && value.externalApproval.status === 'approved') {
     const approval = semantic(value.externalApproval.approvalArtifactId, 'release-approval', '$.externalApproval.approvalArtifactId');
     const authorityId = value.externalApproval.authority;
     const authority = approvalPolicyValid

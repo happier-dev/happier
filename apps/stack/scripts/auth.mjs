@@ -16,9 +16,10 @@ import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { applyStackCacheEnv, ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
+import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForDbProvider } from './utils/server/prisma_client_import.mjs';
+import { applyEffectiveDbProviderEnv, resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
@@ -63,7 +64,6 @@ import {
   resolveTrustedStackRuntimeServerPort,
 } from './utils/stack/runtime_state.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
-import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
 
 function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false, autoStart = false } = {}) {
   if (healthOk) return 'proceed';
@@ -624,9 +624,19 @@ export function buildLightMigrationBaseEnv(processEnv, envIn) {
   delete baseEnv.HAPPIER_DB_PROVIDER;
   delete baseEnv.HAPPY_DB_PROVIDER;
   const fileEnv = { ...(envIn && typeof envIn === 'object' ? envIn : {}) };
-  delete fileEnv.DATABASE_URL;
   delete fileEnv.HAPPY_DB_PROVIDER;
-  return { ...baseEnv, ...fileEnv };
+  const projected = { ...baseEnv, ...fileEnv };
+  const transition = resolveEffectiveDbProviderTransition({
+    previousServerComponentName: 'happier-server-light',
+    nextServerComponentName: 'happier-server-light',
+    env: projected,
+  });
+  if (!transition.ok) {
+    throw new Error(`[auth] invalid database authority for ${transition.provider ?? 'server'}: ${transition.reason}`);
+  }
+  projected.HAPPIER_DB_PROVIDER = transition.provider;
+  if (transition.removeDatabaseUrl) delete projected.DATABASE_URL;
+  return projected;
 }
 
 export function resolveDbProviderForLightFromEnv(env) {
@@ -653,7 +663,7 @@ function resolveSqliteDatabaseUrlForLight({ dataDir, env }) {
   });
 }
 
-async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
+async function ensurePresetMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
   // IMPORTANT: envIn is often parsed from a stack env file (so it does not include PATH).
   // Start from the current process env so we can spawn Yarn reliably, then overlay stack-specific vars.
   const env = buildLightMigrationBaseEnv(process.env, envIn);
@@ -668,15 +678,9 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
   const provider = resolveDbProviderForLightFromEnv(env);
   env.HAPPIER_DB_PROVIDER = provider;
 
-  // Migration step:
-  // - pglite: spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma
-  // - sqlite: runs migrate:sqlite:deploy against prisma/sqlite/schema.prisma
-  //
-  // Both are idempotent and safe to re-run when the light DB is not held open.
   const envWithCache = await applyStackCacheEnv(env);
-  const migrateScript = provider === 'sqlite' ? 'migrate:sqlite:deploy' : 'migrate:light:deploy';
-  await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: envWithCache, quiet });
-  return { dataDir, filesDir, dbDir };
+  await applyHappyServerMigrations({ serverDir, env: envWithCache, dbProvider: provider, quiet });
+  return { dataDir, filesDir, dbDir, provider, env: envWithCache };
 }
 
 async function listAccountsFromPglite({ cwd, dbDir }) {
@@ -1150,34 +1154,23 @@ async function cmdCopyFrom({ argv, json }) {
       ? resolveDbProviderForLightFromEnv(targetEnv)
       : resolveDbProviderForFullFromEnv(targetEnv);
 
-  const sourceClientImport =
-    fromServerComponent === 'happier-server-light'
-      ? sourceDbProvider === 'sqlite'
-        ? resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: 'sqlite' })
-        : resolvePrismaClientImportForServerComponent({ serverComponentName: fromServerComponent, serverDir: sourceCwd })
-      : resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
-  const targetClientImport =
-    targetServerComponent === 'happier-server-light'
-      ? targetDbProvider === 'sqlite'
-        ? resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: 'sqlite' })
-        : resolvePrismaClientImportForServerComponent({ serverComponentName: targetServerComponent, serverDir: targetCwd })
-      : resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
+  const sourceClientImport = resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
+  const targetClientImport = resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
 
   const readSourceAccounts = async () => {
-    if (fromServerComponent === 'happier-server-light') {
-      const lightProvider = resolveDbProviderForLightFromEnv(sourceEnv);
-      if (lightProvider === 'sqlite') {
-        // The source database is evidence for auth seeding, not a migration target. Its
-        // ledger can legitimately differ from this checkout, so only read an existing file.
-        const { dataDir } = resolveLightDirsForStack({ env: sourceEnv, baseDir: sourceBaseDir });
-        const sourceSqlitePath = join(dataDir, 'happier-server-light.sqlite');
-        if (!existsSync(sourceSqlitePath)) {
-          throw new Error(`[auth] source stack "${fromStackName}" is missing its SQLite database at ${sourceSqlitePath}`);
-        }
-        const url = resolveSqliteDatabaseUrlForLight({ dataDir, env: sourceEnv });
-        return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
+    if (sourceDbProvider === 'sqlite') {
+      // The source database is evidence for auth seeding, not a migration target. Its
+      // ledger can legitimately differ from this checkout, so only read an existing file.
+      const { dataDir } = resolveLightDirsForStack({ env: sourceEnv, baseDir: sourceBaseDir });
+      const sourceSqlitePath = join(dataDir, 'happier-server-light.sqlite');
+      if (!existsSync(sourceSqlitePath)) {
+        throw new Error(`[auth] source stack "${fromStackName}" is missing its SQLite database at ${sourceSqlitePath}`);
       }
-      const { dbDir } = await ensureLightMigrationsApplied({
+      const url = String(sourceEnv.DATABASE_URL ?? '').trim() || resolveSqliteDatabaseUrlForLight({ dataDir, env: sourceEnv });
+      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
+    }
+    if (sourceDbProvider === 'pglite') {
+      const { dbDir } = await ensurePresetMigrationsApplied({
         serverDir: sourceCwd,
         baseDir: sourceBaseDir,
         envIn: sourceEnv,
@@ -1217,7 +1210,7 @@ async function cmdCopyFrom({ argv, json }) {
       );
     }
   }
-  if (fromServerComponent === 'happier-server-light' && sourceDbProvider === 'sqlite') {
+  if (sourceDbProvider === 'sqlite') {
     try {
       // Copied credentials depend on these source Account facts. Read the source before
       // writing target auth files so unavailable SQLite data cannot produce a partial seed.
@@ -1233,7 +1226,7 @@ async function cmdCopyFrom({ argv, json }) {
   const canValidateSourceTokenSubject =
     !(sourceTokenValidation && sourceTokenValidation.checked && sourceTokenValidation.valid === true) &&
     Boolean(sourceTokenSubject) &&
-    (fromServerComponent === 'happier-server-light' || hasSourceDatabaseUrl);
+    (sourceDbProvider === 'sqlite' || sourceDbProvider === 'pglite' || hasSourceDatabaseUrl);
   if (canValidateSourceTokenSubject) {
     try {
       sourceAccounts = sourceAccounts ?? (await readSourceAccounts());
@@ -1263,16 +1256,15 @@ async function cmdCopyFrom({ argv, json }) {
   }).catch(() => {});
   const accounts = sourceAccounts ?? (await readSourceAccounts());
   const runInsert = async () => {
-    if (targetServerComponent === 'happier-server-light') {
-      const lightProvider = resolveDbProviderForLightFromEnv(targetEnv);
-      const { dataDir, dbDir } = await ensureLightMigrationsApplied({
+    if (targetDbProvider === 'sqlite' || targetDbProvider === 'pglite') {
+      const { dataDir, dbDir } = await ensurePresetMigrationsApplied({
         serverDir: targetCwd,
         baseDir: targetBaseDir,
         envIn: targetEnv,
         quiet: json,
       });
-      if (lightProvider === 'sqlite') {
-        const url = resolveSqliteDatabaseUrlForLight({ dataDir, env: targetEnv });
+      if (targetDbProvider === 'sqlite') {
+        const url = String(targetEnv.DATABASE_URL ?? '').trim() || resolveSqliteDatabaseUrlForLight({ dataDir, env: targetEnv });
         return await insertAccountsIntoPostgres({
           cwd: targetCwd,
           clientImport: targetClientImport,
@@ -1339,9 +1331,9 @@ async function cmdCopyFrom({ argv, json }) {
       const looksLikeMissingTable = message.toLowerCase().includes('does not exist') || message.toLowerCase().includes('no such table');
       if (!looksLikeMissingTable) throw error;
 
-      if (targetServerComponent === 'happier-server-light') {
-        await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
-      } else if (targetServerComponent === 'happier-server') {
+      if (targetDbProvider === 'sqlite' || targetDbProvider === 'pglite') {
+        await ensurePresetMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
+      } else {
         await applyHappyServerMigrations({
           serverDir: targetCwd,
           env: targetEnv,

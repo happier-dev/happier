@@ -325,7 +325,6 @@ function main() {
       mode: 'pack+publish',
       dryRun: false,
       authorizedSha,
-      packageNames: [metadata.name],
     });
   }
 

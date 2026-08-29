@@ -37,17 +37,20 @@ export async function prepareRemoteValidationWorkspace({
     }
     const {
       resolveCliBundledWorkspacePackageNames,
-      runCanonicalBundledPluginArtifactPublisher,
+      publishBundledPluginArtifactsAfterWorkspaceBuild,
     } = await loadCliBuildOwner();
-    const workspaceNames = resolveCliBundledWorkspacePackageNames({ repoRoot: resolve(repoDir) });
-    await runCanonicalBundledPluginArtifactPublisher({
+    // The CLI bundled selection mixes host workspaces with bundled plugins.
+    // The canonical publication owner selects the bundled-plugin subset — and
+    // skips publication when it is empty — so mixed selections never reach the
+    // plugin-only generator CLI.
+    await publishBundledPluginArtifactsAfterWorkspaceBuild({
       repoRoot: resolve(repoDir),
-      workspaceNames,
+      workspaceNames: resolveCliBundledWorkspacePackageNames({ repoRoot: resolve(repoDir) }),
       env,
       // These generated files are deliberately replica-owned and absent from
       // Mutagen. Preparation must materialize them, not check a nonexistent
       // local projection or synchronize the primary checkout's stale bytes.
-      mode: 'write',
+      bundledPluginArtifactPublication: { mode: 'write' },
     });
   }
   return result;

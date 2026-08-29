@@ -11,7 +11,7 @@ async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
 }
 
-test('ensureServerLightSchemaReady runs migrate:sqlite:deploy by default when not best-effort', async (t) => {
+test('ensureServerLightSchemaReady runs the canonical migration dispatcher by default when not best-effort', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
     prefix: 'hs-startup-light-migrate-',
     socketPort: 54322,
@@ -21,7 +21,7 @@ test('ensureServerLightSchemaReady runs migrate:sqlite:deploy by default when no
   assert.equal(res.ok, true);
   assert.equal(res.migrated, true);
   assert.equal(res.accountCount, 0);
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to be invoked (${markerPath})`);
 });
 
 test('ensureServerLightSchemaReady builds source server internal workspace dependencies before migration', async (t) => {
@@ -81,7 +81,7 @@ test('ensureServerLightSchemaReady builds source server internal workspace depen
       `  fs.writeFileSync(${JSON.stringify(buildMarkerPath)}, 'ok\\n', 'utf-8');`,
       '  process.exit(0);',
       '}',
-      `if ((args[0] === '-s' && args[1] === 'migrate:sqlite:deploy') || (args[0] === 'run' && args[1] === 'migrate:sqlite:deploy')) { fs.writeFileSync(${JSON.stringify(markerPath)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
+      `if ((args[0] === '-s' && args[1] === 'migrate:deploy') || (args[0] === 'run' && args[1] === 'migrate:deploy')) { fs.writeFileSync(${JSON.stringify(markerPath)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
       'process.exit(0);',
     ].join('\n') + '\n',
     'utf-8',
@@ -93,5 +93,5 @@ test('ensureServerLightSchemaReady builds source server internal workspace depen
 
   assert.equal(res.ok, true);
   assert.equal(existsSync(buildMarkerPath), true, `expected cli-common build to be invoked (${buildMarkerPath})`);
-  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:deploy to be invoked (${markerPath})`);
 });

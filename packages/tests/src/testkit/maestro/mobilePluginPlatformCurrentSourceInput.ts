@@ -1,110 +1,67 @@
 export const MOBILE_PLUGIN_PLATFORM_CURRENT_SOURCE_FLOW =
   'suites/mobile-e2e/flows/plugin-platform-current-source/managed-inspector-native.yaml';
 
-export type CurrentSourceDisposableSessionAttribution =
-  | Readonly<{ status: 'attributed'; sessionId: string }>
-  | Readonly<{ status: 'absent' }>
-  | Readonly<{ status: 'ambiguous'; deltaCount: number }>;
-
 /**
- * Attributes the Session delta inside one New Session creation/send window.
- * `before`/`after` are Account snapshots taken immediately around that window;
- * they can only name the single Session the window created and never authorize
- * deleting an unrelated delta.
+ * The exact disposable-Session fact for one New Session creation/send handoff,
+ * produced or canonically bound by that handoff's own spawn-attempt owner and
+ * keyed by the QA-owned draft/attempt. Account-wide lists, timing deltas, and
+ * URL guesses are never consulted: the only deletable Session is one this fact
+ * binds by exact id.
  */
-export function resolveCurrentSourceDisposableSessionCleanupId(input: Readonly<{
-  before: ReadonlySet<string>;
-  after: ReadonlySet<string>;
-}>): CurrentSourceDisposableSessionAttribution {
-  const createdSessionIds = [...input.after].filter((sessionId) => !input.before.has(sessionId));
-  if (createdSessionIds.length === 1) {
-    return { status: 'attributed', sessionId: createdSessionIds[0] ?? '' };
-  }
-  if (createdSessionIds.length === 0) return { status: 'absent' };
-  return { status: 'ambiguous', deltaCount: createdSessionIds.length };
-}
-
-export type CurrentSourceDisposableSessionCapture = Readonly<{
-  /** Exact Session id armed for cleanup, or null when nothing was attributable. */
-  sessionId: string | null;
-  /** Typed attribution conflict; never authorizes deletion. */
-  conflict: string | null;
-  /** Unreadable snapshot error; never authorizes deletion. */
-  readError: unknown;
-}>;
-
-const DISPOSABLE_SESSION_CAPTURE_DEFAULT_ATTEMPTS = 3;
-const DISPOSABLE_SESSION_CAPTURE_DEFAULT_DELAY_MS = 250;
-
-function delaySync(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => { setTimeout(resolveDelay, ms); });
-}
+export type CurrentSourceDisposableSessionExactFact =
+  | Readonly<{ status: 'bound'; sessionId: string }>
+  /** The handoff produced no Session identity (or none survived). */
+  | Readonly<{ status: 'missing' }>
+  /** The exact key resolved to more than one Session identity. */
+  | Readonly<{ status: 'conflicting'; matches: number }>
+  /** The exact-fact source could not be read; never authorizes deletion. */
+  | Readonly<{ status: 'unreadable'; error: unknown }>
+  /** No exact-fact source is wired for this corridor yet; never authorizes deletion. */
+  | Readonly<{ status: 'unavailable'; reason: string }>;
 
 /**
- * Arms exact cleanup for the Session created by this row's New Session
- * creation/send handoff. `before` must be the Account snapshot taken
- * immediately before the window opened. A short retry on an absent delta
- * absorbs the row's own list read racing the just-created Session; ambiguity
- * and unreadable reads never arm deletion.
+ * Production exact-fact source for the disposable Session created by this
+ * row's New Session UI send. The canonical spawn-attempt/Action-operation fact
+ * that binds the QA-owned draft to the created Session id is not yet exposed on
+ * any harness-reachable surface: the launch-attempt identity lives only in the
+ * device-local draft supplement (`SessionDraftLocalSupplement` is never sealed
+ * or sent to the server), and Action-operation snapshots are ephemeral
+ * encrypted pushes with no account-scoped or daemon-control read. Until that
+ * single canonical surface exists, the row fails closed: it never deletes a
+ * Session it cannot name exactly, records the unavailability as lifecycle
+ * evidence, leaves unrelated concurrent Sessions undeletable by construction,
+ * and blocks the deciding row nonzero instead of crediting a green loaded row
+ * while the Session it created can be neither named nor deleted.
  */
-export async function captureCurrentSourceDisposableSessionId(input: Readonly<{
-  before: ReadonlySet<string>;
-  readSessionIds: () => Promise<ReadonlySet<string>>;
-  attempts?: number;
-  delayMs?: number;
-}>): Promise<CurrentSourceDisposableSessionCapture> {
-  const attempts = Math.max(1, Math.floor(input.attempts ?? DISPOSABLE_SESSION_CAPTURE_DEFAULT_ATTEMPTS));
-  const delayMs = Math.max(0, Math.floor(input.delayMs ?? DISPOSABLE_SESSION_CAPTURE_DEFAULT_DELAY_MS));
-  let readError: unknown = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    let after: ReadonlySet<string>;
-    try {
-      after = await input.readSessionIds();
-      readError = null;
-    } catch (error) {
-      readError = error;
-      if (attempt + 1 < attempts) {
-        await delaySync(delayMs);
-        continue;
-      }
-      return { sessionId: null, conflict: null, readError };
-    }
-    const attribution = resolveCurrentSourceDisposableSessionCleanupId({
-      before: input.before,
-      after,
-    });
-    if (attribution.status === 'attributed') {
-      return { sessionId: attribution.sessionId, conflict: null, readError: null };
-    }
-    if (attribution.status === 'ambiguous') {
-      return {
-        sessionId: null,
-        conflict: `plugin_ui_current_source_disposable_session_identity_ambiguous:${attribution.deltaCount}`,
-        readError: null,
-      };
-    }
-    if (attempt + 1 < attempts) await delaySync(delayMs);
-  }
-  return { sessionId: null, conflict: null, readError };
+export async function readCurrentSourceDisposableSessionExactFact(): Promise<CurrentSourceDisposableSessionExactFact> {
+  return {
+    status: 'unavailable',
+    reason: 'plugin_ui_current_source_disposable_session_exact_fact_source_not_wired',
+  };
 }
 
 /**
- * The armed exact Session id is the sole deletion authority for this row.
- * Attribution conflicts and unreadable reads fail closed: they delete nothing
- * and surface as aggregated cleanup failures. Account-wide snapshot deltas are
- * never consulted here, so unrelated concurrent Sessions are undeletable by
- * construction.
+ * The bound exact Session id is the sole deletion authority for this row.
+ * Missing, conflicting, and unreadable facts fail closed: they delete nothing
+ * and surface as aggregated cleanup failures, so an unrelated Session can never
+ * be a deletion target.
  */
 export function resolveCurrentSourceDisposableSessionDeletionTarget(
-  capture: CurrentSourceDisposableSessionCapture,
+  fact: CurrentSourceDisposableSessionExactFact,
 ): string | null {
-  if (capture.readError != null) {
+  if (fact.status === 'bound') return fact.sessionId;
+  if (fact.status === 'missing') {
+    throw new Error('plugin_ui_current_source_disposable_session_identity_missing');
+  }
+  if (fact.status === 'conflicting') {
+    throw new Error(`plugin_ui_current_source_disposable_session_identity_conflicting:${fact.matches}`);
+  }
+  if (fact.status === 'unreadable') {
     throw new Error('plugin_ui_current_source_disposable_session_identity_unreadable', {
-      cause: capture.readError,
+      cause: fact.error,
     });
   }
-  if (capture.conflict) throw new Error(capture.conflict);
-  return capture.sessionId;
+  return null;
 }
 
 function stripOption(argv: readonly string[], option: string): string[] {

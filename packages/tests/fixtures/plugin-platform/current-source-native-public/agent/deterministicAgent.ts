@@ -4,6 +4,7 @@ import type {
   AgentSessionRuntimeContext,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginJsonValueV2 } from '@happier-dev/plugin-sdk';
 
 import { QA_REVISION } from '../revision.js';
 
@@ -16,11 +17,44 @@ type RuntimeEventInput = AgentSessionRuntimeEvent extends infer Event
 type JsonRecord = { [key: string]: unknown };
 
 const ATTACHMENT_LOCAL_ID = 'qa-item';
-const REFERENCE_LOCAL_ID = 'qa-references';
-const REFERENCE_CANDIDATE_ID = 'qa:1';
-const REFERENCE_LABEL = 'Current source QA reference';
-const REFERENCE_CONTEXT = 'Current source native QA reference context.';
+export const QA_REFERENCE_LOCAL_ID = 'qa-references';
+export const QA_REFERENCE_CANDIDATE_ID = `qa:${QA_REVISION}`;
+export const QA_REFERENCE_LABEL = `Current source QA reference ${QA_REVISION}`;
+export const QA_REFERENCE_CONTEXT = `Current source native QA reference context ${QA_REVISION}.`;
 const TRANSCRIPT_SENTINEL = 'PLUGIN_UI_CURRENT_SOURCE_NATIVE_ACCEPTED';
+
+export function resolveCurrentSourceQaReferenceCandidate(candidateId: string) {
+  if (candidateId !== QA_REFERENCE_CANDIDATE_ID) {
+    throw Object.assign(new Error(`Current source QA reference ${candidateId} is not current.`), {
+      code: 'plugin_generation_stale',
+    });
+  }
+  return Object.freeze({
+    id: QA_REFERENCE_CANDIDATE_ID,
+    label: QA_REFERENCE_LABEL,
+    context: QA_REFERENCE_CONTEXT,
+  });
+}
+
+/**
+ * The fixture attachment's dispatch projection: one revision-qualified resolved
+ * Composer attachment per staged instance. The fixture plugin's
+ * `resolveForDispatch` runtime and the canonical-dispatch integration test
+ * share this one resolver, so a test can never prove dispatch facts that the
+ * loaded plugin would not produce.
+ */
+export function resolveCurrentSourceQaAttachmentsForDispatch(params: Readonly<{
+  attachments: ReadonlyArray<Readonly<{ instanceId: string; value: PluginJsonValueV2 }>>;
+}>) {
+  return {
+    attachments: params.attachments.map(({ instanceId, value }) => ({
+      instanceId,
+      status: 'ready' as const,
+      context: 'Current source native QA attachment context.',
+      data: value,
+    })),
+  };
+}
 
 /**
  * Stable admission diagnostics for the runtime-event boundary. They let a QA
@@ -62,10 +96,10 @@ function expectedReferenceContextLines(pluginId: string): readonly string[] {
     .replaceAll('>', '\\u003e');
   return [
     `reference_plugin_id=${encode(pluginId)}`,
-    `reference_local_id=${encode(REFERENCE_LOCAL_ID)}`,
-    `candidate_id=${encode(REFERENCE_CANDIDATE_ID)}`,
-    `label=${encode(REFERENCE_LABEL)}`,
-    `context=${encode(REFERENCE_CONTEXT)}`,
+    `reference_local_id=${encode(QA_REFERENCE_LOCAL_ID)}`,
+    `candidate_id=${encode(QA_REFERENCE_CANDIDATE_ID)}`,
+    `label=${encode(QA_REFERENCE_LABEL)}`,
+    `context=${encode(QA_REFERENCE_CONTEXT)}`,
   ];
 }
 

@@ -301,6 +301,30 @@ const args = process.argv.slice(2);
 const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) process.exit(2);
 
+if (args[0] === 'server' && args[1] === 'set') {
+  const value = (name) => {
+    const index = args.indexOf(name);
+    return index >= 0 ? String(args[index + 1] || '') : '';
+  };
+  const settingsPath = join(home, 'settings.json');
+  const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+  const serverId = value('--server-id');
+  const current = settings.servers?.[serverId] ?? {};
+  settings.activeServerId = serverId;
+  settings.servers = {
+    ...(settings.servers ?? {}),
+    [serverId]: {
+      ...current,
+      id: serverId,
+      serverUrl: value('--server-url'),
+      localServerUrl: value('--local-server-url'),
+      webappUrl: value('--webapp-url'),
+    },
+  };
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\\n', 'utf-8');
+  process.exit(0);
+}
+
 if (args[0] !== 'daemon') process.exit(0);
 const sub = args[1] || '';
 if (sub === 'stop' || sub === 'status') process.exit(0);

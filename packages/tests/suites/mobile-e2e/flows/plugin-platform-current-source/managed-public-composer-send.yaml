@@ -1,5 +1,11 @@
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
+# Create/send half of the New Session handoff. The QA-owned deep-link draft
+# opens the exact New Session draft; this flow ends at the send's own custody
+# proof (the composer screen is dismissed by the created Session's route) and
+# never asserts the transcript. Exact cleanup for the created Session is armed
+# by the owning CLI immediately after this flow and before the transcript flow
+# runs.
 - openLink: ${HAPPIER_E2E_CURRENT_SOURCE_NEW_SESSION_URL}
 - extendedWaitUntil:
     visible:
@@ -40,10 +46,9 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - takeScreenshot: plugin-platform-current-source-public-composer-${HAPPIER_E2E_MOBILE_PLATFORM}
 - tapOn:
     id: new-session-composer-send
+# Send custody proof: a landed send leaves the New Session screen for the
+# created Session's route. A failed launch keeps the composer mounted.
 - extendedWaitUntil:
-    visible: ${HAPPIER_E2E_CURRENT_SOURCE_TRANSCRIPT_SENTINEL}
+    notVisible:
+      id: new-session-composer-input
     timeout: 120000
-- assertVisible: ${HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_ATTACHMENT_LABEL}
-- assertVisible:
-    id: "transcript-composer-attachment:.*"
-- takeScreenshot: plugin-platform-current-source-public-transcript-${HAPPIER_E2E_MOBILE_PLATFORM}

@@ -15,6 +15,7 @@ function isolatedEnv(overrides = {}) {
     HAPPIER_STACK_REPO_DIR: join(stackRootDir, '..', '..'),
     HAPPIER_STACK_SERVE_UI: '0',
     HAPPIER_STACK_DAEMON: '0',
+    HAPPIER_STACK_RUNTIME_MODE: 'source',
     ...overrides,
   };
   delete env.HAPPIER_DB_PROVIDER;
@@ -36,8 +37,16 @@ test('hstack start materializes the full server default and postgresql alias', a
   }
 });
 
-test('hstack start rejects incompatible, empty, and unsupported full providers before startup', async () => {
-  for (const provider of ['sqlite', 'pglite', '', 'unsupported']) {
+test('hstack start accepts local databases with the full preset and rejects corrupt metadata', async () => {
+  for (const provider of ['sqlite', 'pglite']) {
+    const result = await runNode([runScript, '--server=happier-server', '--no-ui', '--json'], {
+      cwd: stackRootDir,
+      env: isolatedEnv({ HAPPIER_DB_PROVIDER: provider }),
+    });
+    assert.equal(result.code, 0, `provider=${provider}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.equal(JSON.parse(result.stdout).dbProvider, provider);
+  }
+  for (const provider of ['', 'unsupported']) {
     const result = await runNode([runScript, '--server=happier-server', '--no-ui', '--json'], {
       cwd: stackRootDir,
       env: isolatedEnv({ HAPPIER_DB_PROVIDER: provider }),

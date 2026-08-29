@@ -477,17 +477,6 @@ async function readVoiceQaMediaSnapshot(page: Page): Promise<Readonly<Record<str
     return readRecord(JSON.parse(raw ?? '{}')) ?? {};
 }
 
-async function readPluginGenerationLabel(page: Page, pluginId: string): Promise<string> {
-    const summary = page.getByTestId(`settings.plugins.detail.${pluginId}.summary`);
-    await expect(summary).toHaveCount(1, { timeout: 120_000 });
-    const text = (await summary.textContent())?.trim() ?? '';
-    const match = text.match(/Generation\s*([0-9A-Za-z._-]+)/i);
-    if (!match?.[1]) {
-        throw new Error(`missing_generation_in_summary:${pluginId}:${text}`);
-    }
-    return match[1];
-}
-
 async function enterVoiceCredentialThroughUi(params: Readonly<{
     page: Page;
     credentialTestId: string;
@@ -827,47 +816,35 @@ test.describe('ui e2e: plugin settings reload', () => {
                 requiredTestIds: [
                     `settings.plugins.detail.${pluginId}.header`,
                     `settings.plugins.detail.${pluginId}.summary`,
-                    `settings.plugins.detail.${pluginId}.action.reload`,
+                    `settings.plugins.detail.${pluginId}.action.uninstall`,
                 ],
                 timeoutMs: 120_000,
             });
 
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.header`)).toHaveCount(1, { timeout: 120_000 });
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.summary`)).toHaveCount(1, { timeout: 120_000 });
-            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.action.reload`)).toHaveCount(1, { timeout: 120_000 });
+            // The `tool.plugins` capability contract removed `reload`: the
+            // update above is the lifecycle mutation that re-materializes the
+            // new generation, so the detail route must not present a separate
+            // reload action anymore.
+            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.action.reload`)).toHaveCount(0);
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.diagnostic.plugin_trust_approval_required.0`)).toHaveCount(1, { timeout: 120_000 });
-            const initialGeneration = await readPluginGenerationLabel(page, pluginId);
-
-            await page.getByTestId(`settings.plugins.detail.${pluginId}.action.reload`).click();
-            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.header`)).toHaveCount(1, { timeout: 120_000 });
-            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.summary`)).toHaveCount(1, { timeout: 120_000 });
-            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.action.reload`)).toHaveCount(1, { timeout: 120_000 });
-            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.diagnostic.plugin_trust_approval_required.0`)).toHaveCount(1, { timeout: 120_000 });
-            await dismissSuccessAlert(page);
-            await waitForAuthenticatedRouteUi({
-                page,
-                expectedPathname: `/settings/plugins/${pluginId}`,
-                requiredTestIds: [
-                    `settings.plugins.detail.${pluginId}.header`,
-                    `settings.plugins.detail.${pluginId}.summary`,
-                    `settings.plugins.detail.${pluginId}.action.reload`,
-                ],
-                timeoutMs: 120_000,
-            });
-            const reloadedGeneration = await readPluginGenerationLabel(page, pluginId);
-            expect(initialGeneration.length).toBeGreaterThan(0);
-            expect(reloadedGeneration.length).toBeGreaterThan(0);
-            expect(reloadedGeneration).not.toEqual(initialGeneration);
+            // The summary grid is the current installed-truth surface: the
+            // updated release must be the version presented after the update.
+            await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.summary`)).toContainText('1.1.0', { timeout: 120_000 });
 
             await daemon.stop();
             daemon = null;
             const readOnlySnapshot = page.getByTestId('settings.plugins.detail.readOnlySnapshot');
-            const reloadAction = page.getByTestId(`settings.plugins.detail.${pluginId}.action.reload`);
+            // `uninstall` is the always-present user-managed lifecycle action;
+            // its disabled/enabled state carries the read-only snapshot gating
+            // that the removed reload action used to exercise.
+            const uninstallAction = page.getByTestId(`settings.plugins.detail.${pluginId}.action.uninstall`);
             await expect(readOnlySnapshot).toHaveCount(1, { timeout: 120_000 });
             await expect(readOnlySnapshot).toHaveAttribute('aria-live', 'polite');
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.header`)).toHaveCount(1);
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.summary`)).toHaveCount(1);
-            await expect(reloadAction).toBeDisabled();
+            await expect(uninstallAction).toBeDisabled();
             await page.screenshot({
                 path: join(testDir, 'plugin-details-offline-read-only.png'),
                 fullPage: true,
@@ -875,7 +852,7 @@ test.describe('ui e2e: plugin settings reload', () => {
 
             daemon = await startSettingsPluginDaemon();
             await expect(readOnlySnapshot).toHaveCount(0, { timeout: 120_000 });
-            await expect(reloadAction).toBeEnabled({ timeout: 120_000 });
+            await expect(uninstallAction).toBeEnabled({ timeout: 120_000 });
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.header`)).toHaveCount(1);
             await expect(page.getByTestId(`settings.plugins.detail.${pluginId}.summary`)).toHaveCount(1);
             await expect(page.getByTestId('web-modal-confirm')).toHaveCount(0);
@@ -1431,31 +1408,14 @@ test.describe('ui e2e: plugin settings reload', () => {
             requiredTestIds: [
                 `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.header`,
                 `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.summary`,
-                `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.action.reload`,
+                `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.action.uninstall`,
             ],
             timeoutMs: 120_000,
         });
-        const generationBeforeReload = await readPluginGenerationLabel(page, PACKED_VOICE_PLUGIN_ID);
-        const reloadDocumentMarker = `packed-voice-reload-${randomBytes(16).toString('hex')}`;
-        await page.evaluate((marker) => {
-            Reflect.set(globalThis, '__HAPPIER_PACKED_VOICE_APPSHELL_DOCUMENT_MARKER__', marker);
-        }, reloadDocumentMarker);
-        await page.getByTestId(`settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.action.reload`).click();
-        await dismissSuccessAlert(page);
-        await waitForAuthenticatedRouteUi({
-            page,
-            expectedPathname: `/settings/plugins/${PACKED_VOICE_PLUGIN_ID}`,
-            requiredTestIds: [
-                `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.summary`,
-                `settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.action.reload`,
-            ],
-            timeoutMs: 120_000,
-        });
-        const generationAfterReload = await readPluginGenerationLabel(page, PACKED_VOICE_PLUGIN_ID);
-        expect(generationAfterReload).not.toBe(generationBeforeReload);
-        expect(await page.evaluate(() => (
-            Reflect.get(globalThis, '__HAPPIER_PACKED_VOICE_APPSHELL_DOCUMENT_MARKER__')
-        ))).toBe(reloadDocumentMarker);
+        // The removed `reload` capability must not resurface on the packed
+        // plugin's detail route either; the summary grid stays the installed
+        // truth surface.
+        await expect(page.getByTestId(`settings.plugins.detail.${PACKED_VOICE_PLUGIN_ID}.action.reload`)).toHaveCount(0);
 
         await gotoDomContentLoadedWithRetries(
             page,

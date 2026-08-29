@@ -3,13 +3,33 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import {
+  HappierStructuredInputV1Schema,
+  PluginManifestV2Schema,
+  buildComposerReferenceMentionPayloadV1,
+  renderSessionInputContextPromptV1,
+  type JsonValue,
+} from '@happier-dev/protocol';
 import { computePluginUiArtifactFileSetSha256DigestV1 } from '@happier-dev/protocol/plugins/ui';
-import type { AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type {
+  AgentRuntimeFactoryContext,
+  AgentSessionRuntimeContext,
+  AgentSessionRuntimeEvent,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+import type { PluginJsonValueV2 } from '@happier-dev/plugin-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createCurrentSourceQaAgentRuntime } from '../../../fixtures/plugin-platform/current-source-native-public/agent/deterministicAgent';
+import {
+  QA_REFERENCE_CANDIDATE_ID,
+  QA_REFERENCE_CONTEXT,
+  QA_REFERENCE_LABEL,
+  QA_REFERENCE_LOCAL_ID,
+  createCurrentSourceQaAgentRuntime,
+  resolveCurrentSourceQaAttachmentsForDispatch,
+  resolveCurrentSourceQaReferenceCandidate,
+} from '../../../fixtures/plugin-platform/current-source-native-public/agent/deterministicAgent';
 import { QA_REVISION } from '../../../fixtures/plugin-platform/current-source-native-public/revision';
+import { resolveStructuredInputProviderDispatchContext } from '../../../../../apps/cli/src/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 import {
   attestCurrentManagedStackPluginUi,
@@ -17,12 +37,83 @@ import {
   prepareCurrentManagedStackDeclarativeLifecycleFixture,
   prepareCurrentManagedStackNativePublicFixture,
   resolveCurrentManagedStackPluginUiContext,
+  stageCurrentSourceNativePublicFixtureSource,
 } from './currentManagedStackPluginUiQa';
 
 const roots: string[] = [];
 
 /** The fixture plugin id the deterministic QA Agent must bind resolved facts to. */
 const QA_AGENT_PLUGIN_ID = 'qa.current-source.native-public';
+
+/**
+ * The fixture module surface the canonical dispatch chain consumes. It is
+ * implemented both by the repository's checked-in fixture (the current
+ * checkout generation) and by every staged fixture copy, so the exact same
+ * regression runs against both generated fixture revisions.
+ */
+type CurrentSourceQaFixtureModule = Readonly<{
+  QA_REVISION: string;
+  QA_REFERENCE_CANDIDATE_ID: string;
+  QA_REFERENCE_LABEL: string;
+  QA_REFERENCE_CONTEXT: string;
+  QA_REFERENCE_LOCAL_ID: string;
+  createCurrentSourceQaAgentRuntime: typeof createCurrentSourceQaAgentRuntime;
+  resolveCurrentSourceQaAttachmentsForDispatch: typeof resolveCurrentSourceQaAttachmentsForDispatch;
+  resolveCurrentSourceQaReferenceCandidate: typeof resolveCurrentSourceQaReferenceCandidate;
+}>;
+
+const repoFixtureModule: CurrentSourceQaFixtureModule = {
+  QA_REVISION,
+  QA_REFERENCE_CANDIDATE_ID,
+  QA_REFERENCE_LABEL,
+  QA_REFERENCE_CONTEXT,
+  QA_REFERENCE_LOCAL_ID,
+  createCurrentSourceQaAgentRuntime,
+  resolveCurrentSourceQaAttachmentsForDispatch,
+  resolveCurrentSourceQaReferenceCandidate,
+};
+
+/**
+ * Imports one staged fixture copy's deterministic Agent and refuses a copy
+ * that does not carry exactly the requested generation, so a staging defect
+ * can never silently test the repository's checked-in generation instead.
+ */
+async function importStagedCurrentSourceQaFixture(params: Readonly<{
+  root: string;
+  revision: 'v1' | 'v2';
+}>): Promise<CurrentSourceQaFixtureModule> {
+  // The staged copy's own revision module is the generation owner; the agent
+  // module imports it but does not re-export it.
+  const stagedRevision = await import(join(params.root, 'revision.ts')) as unknown;
+  const revisionModule = (stagedRevision && typeof stagedRevision === 'object' ? stagedRevision : {}) as Record<string, unknown>;
+  const staged = await import(join(params.root, 'agent', 'deterministicAgent.ts')) as unknown;
+  if (!staged || typeof staged !== 'object') {
+    throw new Error('staged_current_source_fixture_agent_module_invalid');
+  }
+  const module = staged as Record<string, unknown>;
+  if (
+    revisionModule.QA_REVISION !== params.revision
+    || module.QA_REFERENCE_CANDIDATE_ID !== `qa:${params.revision}`
+    || typeof module.QA_REFERENCE_LABEL !== 'string'
+    || typeof module.QA_REFERENCE_CONTEXT !== 'string'
+    || typeof module.QA_REFERENCE_LOCAL_ID !== 'string'
+    || typeof module.createCurrentSourceQaAgentRuntime !== 'function'
+    || typeof module.resolveCurrentSourceQaAttachmentsForDispatch !== 'function'
+    || typeof module.resolveCurrentSourceQaReferenceCandidate !== 'function'
+  ) {
+    throw new Error(`staged_current_source_fixture_agent_generation_mismatch:${params.revision}`);
+  }
+  return {
+    QA_REVISION: params.revision,
+    QA_REFERENCE_CANDIDATE_ID: module.QA_REFERENCE_CANDIDATE_ID as string,
+    QA_REFERENCE_LABEL: module.QA_REFERENCE_LABEL as string,
+    QA_REFERENCE_CONTEXT: module.QA_REFERENCE_CONTEXT as string,
+    QA_REFERENCE_LOCAL_ID: module.QA_REFERENCE_LOCAL_ID as string,
+    createCurrentSourceQaAgentRuntime: module.createCurrentSourceQaAgentRuntime as CurrentSourceQaFixtureModule['createCurrentSourceQaAgentRuntime'],
+    resolveCurrentSourceQaAttachmentsForDispatch: module.resolveCurrentSourceQaAttachmentsForDispatch as CurrentSourceQaFixtureModule['resolveCurrentSourceQaAttachmentsForDispatch'],
+    resolveCurrentSourceQaReferenceCandidate: module.resolveCurrentSourceQaReferenceCandidate as CurrentSourceQaFixtureModule['resolveCurrentSourceQaReferenceCandidate'],
+  };
+}
 
 function encodeModelTextLine(key: string, value: string): string {
   // Mirrors the canonical composer reference context renderer exactly.
@@ -32,10 +123,10 @@ function encodeModelTextLine(key: string, value: string): string {
 function expectedComposerReferenceContextLines(): readonly string[] {
   return [
     encodeModelTextLine('reference_plugin_id', QA_AGENT_PLUGIN_ID),
-    encodeModelTextLine('reference_local_id', 'qa-references'),
-    encodeModelTextLine('candidate_id', 'qa:1'),
-    encodeModelTextLine('label', 'Current source QA reference'),
-    encodeModelTextLine('context', 'Current source native QA reference context.'),
+    encodeModelTextLine('reference_local_id', QA_REFERENCE_LOCAL_ID),
+    encodeModelTextLine('candidate_id', QA_REFERENCE_CANDIDATE_ID),
+    encodeModelTextLine('label', QA_REFERENCE_LABEL),
+    encodeModelTextLine('context', QA_REFERENCE_CONTEXT),
   ];
 }
 
@@ -75,11 +166,13 @@ function qaAgentSessionContext(): AgentSessionRuntimeContext {
   } as unknown as AgentSessionRuntimeContext;
 }
 
-async function sendQaTurn(params: Readonly<{ text: string; structuredInput?: unknown }>): Promise<{
+async function sendQaTurn(params: Readonly<{ fixture?: CurrentSourceQaFixtureModule; text: string; structuredInput?: unknown }>): Promise<{
   status: string;
   events: AgentSessionRuntimeEvent[];
 }> {
-  const factory = createCurrentSourceQaAgentRuntime();
+  const fixture = params.fixture ?? repoFixtureModule;
+  const factory = await fixture.createCurrentSourceQaAgentRuntime({} as AgentRuntimeFactoryContext);
+  if (!factory.sessions) throw new Error('current_source_qa_agent_sessions_runtime_missing');
   const runtime = await factory.sessions.open(
     { kind: 'create', sessionId: 'qa-session', cwd: '/tmp' },
     qaAgentSessionContext(),
@@ -90,7 +183,9 @@ async function sendQaTurn(params: Readonly<{ text: string; structuredInput?: unk
     inputIds: ['qa-input-1'],
     input: {
       text: params.text,
-      ...(params.structuredInput === undefined ? {} : { structuredInput: params.structuredInput }),
+      ...(params.structuredInput === undefined
+        ? {}
+        : { structuredInput: params.structuredInput as JsonValue }),
     },
     delivery: { kind: 'newTurn', turnId: 'qa-turn-1' },
   });
@@ -102,7 +197,153 @@ function exactComposerFactsPromptText(): string {
   return expectedComposerReferenceContextLines().join('\n');
 }
 
+async function resolveCanonicalQaDispatch(params: Readonly<{
+  fixture?: CurrentSourceQaFixtureModule;
+  includeReference?: boolean;
+  includeAttachment?: boolean;
+  referencePluginId?: string;
+  candidateId?: string;
+}> = {}) {
+  const fixture = params.fixture ?? repoFixtureModule;
+  const revision = fixture.QA_REVISION;
+  const candidateId = params.candidateId ?? fixture.QA_REFERENCE_CANDIDATE_ID;
+  const mention = {
+    ...buildComposerReferenceMentionPayloadV1({
+      reference: {
+        pluginId: params.referencePluginId ?? QA_AGENT_PLUGIN_ID,
+        localId: fixture.QA_REFERENCE_LOCAL_ID,
+      },
+      candidate: { id: candidateId, label: fixture.QA_REFERENCE_LABEL },
+    }),
+    token: '@qa-ref',
+    start: 0,
+    end: 7,
+  };
+  const raw = HappierStructuredInputV1Schema.parse({
+    v: 1,
+    ...(params.includeReference === false ? {} : { mentions: [mention] }),
+    ...(params.includeAttachment === false ? {} : {
+      composerAttachments: [{
+        v: 1,
+        instanceId: 'qa-instance-1',
+        attachment: { pluginId: QA_AGENT_PLUGIN_ID, localId: 'qa-item' },
+        key: `qa-${revision}`,
+        value: { qaId: revision },
+        presentation: {
+          label: `Current source QA attachment ${revision}`,
+          typeLabel: 'Current source QA item',
+        },
+      }],
+    }),
+  });
+  const dispatch = await resolveStructuredInputProviderDispatchContext({
+    structuredInput: raw,
+    composerReferences: {
+      resolve: async ({ reference, candidateId: selectedCandidateId }) => {
+        if (reference.pluginId !== QA_AGENT_PLUGIN_ID || reference.localId !== fixture.QA_REFERENCE_LOCAL_ID) {
+          throw Object.assign(new Error('The Composer reference contribution is not the current QA fixture.'), {
+            code: 'plugin_generation_stale',
+          });
+        }
+        return fixture.resolveCurrentSourceQaReferenceCandidate(selectedCandidateId);
+      },
+      signal: new AbortController().signal,
+    },
+    composerAttachments: {
+      sessionId: 'qa-session',
+      localId: 'qa-input-1',
+      resolve: async ({ request }) => fixture.resolveCurrentSourceQaAttachmentsForDispatch({
+        // The canonical Protocol resolver has already parsed/frozen this
+        // ordinary-JSON value. The public fixture helper consumes the same
+        // authored JSON vocabulary before returning its dispatch projection.
+        attachments: request.attachments.map(({ instanceId, value }) => ({
+          instanceId,
+          value: value as unknown as PluginJsonValueV2,
+        })),
+      }),
+      signal: new AbortController().signal,
+    },
+  });
+  return Object.freeze({
+    structuredInput: dispatch.structuredInput,
+    text: renderSessionInputContextPromptV1({
+      ...dispatch.promptContext,
+      transformedUserText: '@qa-ref',
+    }),
+  });
+}
+
 describe('current-source deterministic QA Agent composer-facts admission', () => {
+  it.each([
+    { revision: 'v1' as const },
+    { revision: 'v2' as const },
+  ])('admits exactly the staged $revision generation through the canonical dispatch chain and rejects stale, wrong, and missing facts before input acceptance', async ({ revision }) => {
+    const stagedRoot = await mkdtemp(join(tmpdir(), 'current-source-fixture-'));
+    roots.push(stagedRoot);
+    await stageCurrentSourceNativePublicFixtureSource({ root: stagedRoot, pluginId: QA_AGENT_PLUGIN_ID, revision });
+    const fixture = await importStagedCurrentSourceQaFixture({ root: stagedRoot, revision });
+    const otherRevision = revision === 'v1' ? 'v2' : 'v1';
+
+    // Current generation: the canonical raw mention+attachment -> actual
+    // dispatch resolver -> rendered context prompt -> actual fixture Agent.
+    const dispatch = await resolveCanonicalQaDispatch({ fixture });
+    const result = await sendQaTurn({ fixture, ...dispatch });
+    expect(result.status).toBe('admitted');
+    expect(result.events.map((event) => event.kind)).toEqual([
+      'provider-session-id',
+      'input-accepted',
+      'turn-start',
+      'message-delta',
+      'turn-complete',
+    ]);
+    const delta = result.events.find((event) => event.kind === 'message-delta');
+    expect(delta && 'text' in delta && delta.text.includes('PLUGIN_UI_CURRENT_SOURCE_NATIVE_ACCEPTED')).toBe(true);
+
+    // Stale generation: the other revision's candidate never resolves.
+    await expect(resolveCanonicalQaDispatch({ fixture, candidateId: `qa:${otherRevision}` }))
+      .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+
+    // Wrong contribution binding: another plugin's mention never resolves.
+    await expect(resolveCanonicalQaDispatch({ fixture, referencePluginId: 'qa.other-plugin' }))
+      .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+
+    // Missing resolved attachment facts: the fixture Agent rejects the turn
+    // through the same canonical chain before any input-accepted event.
+    const referenceOnlyDispatch = await resolveCanonicalQaDispatch({ fixture, includeAttachment: false });
+    const missingResult = await sendQaTurn({ fixture, ...referenceOnlyDispatch });
+    expect(missingResult.status).toBe('rejected');
+    expect(missingResult.events.map((event) => event.kind)).toEqual(['input-rejected']);
+  });
+
+  it('admits facts produced by the canonical Composer dispatch resolver and actual fixture Agent', async () => {
+    const dispatch = await resolveCanonicalQaDispatch();
+    const result = await sendQaTurn(dispatch);
+
+    expect(result.status).toBe('admitted');
+    expect(result.events.map((event) => event.kind)).toEqual([
+      'provider-session-id',
+      'input-accepted',
+      'turn-start',
+      'message-delta',
+      'turn-complete',
+    ]);
+  });
+
+  it('rejects canonical dispatch without the current Composer reference', async () => {
+    const dispatch = await resolveCanonicalQaDispatch({ includeReference: false });
+    const result = await sendQaTurn(dispatch);
+    expect(result.status).toBe('rejected');
+    expect(result.events.map((event) => event.kind)).toEqual(['input-rejected']);
+  });
+
+  it('rejects a wrong contribution and stale-generation reference before Agent acceptance', async () => {
+    await expect(resolveCanonicalQaDispatch({ referencePluginId: 'qa.other-plugin' }))
+      .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+    const staleRevision = QA_REVISION === 'v1' ? 'v2' : 'v1';
+    await expect(resolveCanonicalQaDispatch({ candidateId: `qa:${staleRevision}` }))
+      .rejects.toMatchObject({ code: 'plugin_generation_stale' });
+  });
+
   it('rejects a turn whose structured input is missing the exact resolved Composer attachment', async () => {
     const result = await sendQaTurn({
       text: exactComposerFactsPromptText(),

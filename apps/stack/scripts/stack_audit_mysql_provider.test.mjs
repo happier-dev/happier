@@ -192,6 +192,19 @@ test('hstack stack audit reports MySQL without DATABASE_URL and does not invent 
   assert.doesNotMatch(raw, /^DATABASE_URL=/m);
 });
 
+test('hstack stack audit reports light Postgres without external authority', async (t) => {
+  const fixture = await createAuditFixture(t);
+  const envPath = await fixture.writeStack('light-postgres-missing-url', {
+    serverComponent: 'happier-server-light',
+    dbProvider: 'postgres',
+  });
+
+  const result = await fixture.audit([]);
+  assert.equal(result.code, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+  assert.match(result.stdout, /missing_postgres_database_url/);
+  assert.doesNotMatch(await readFile(envPath, 'utf8'), /^DATABASE_URL=/m);
+});
+
 test('hstack stack edit preserves MySQL provider and DATABASE_URL for an ephemeral stack', async (t) => {
   const fixture = await createAuditFixture(t);
   const databaseUrl = 'mysql://operator:secret@db.example.test:3306/happier';

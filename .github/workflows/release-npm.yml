@@ -98,8 +98,13 @@ on:
         required: false
         default: false
         type: boolean
-      release_message:
-        description: "Release message — Optional note to include at the top of GitHub rolling release notes"
+      plugin_sdk_version:
+        description: "Publish (Plugin SDK) — Release-admitted lockstep pair version (empty: allocate from published state)"
+        required: false
+        default: ""
+        type: string
+      sdk_version:
+        description: "Publish (SDK) — Release-admitted external SDK version (empty: allocate from published state)"
         required: false
         default: ""
         type: string
@@ -330,6 +335,8 @@ jobs:
           INPUT_PUBLISH_PLUGIN_SDK: ${{ inputs.publish_plugin_sdk }}
           INPUT_PUBLISH_SDK: ${{ inputs.publish_sdk }}
           INPUT_PUBLISH_CHANNELS_PROTOCOL: ${{ inputs.publish_channels_protocol }}
+          INPUT_PLUGIN_SDK_VERSION: ${{ inputs.plugin_sdk_version }}
+          INPUT_SDK_VERSION: ${{ inputs.sdk_version }}
           RESOLVED_SOURCE_REF: ${{ steps.release_inputs.outputs.source_ref }}
           SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
@@ -344,15 +351,16 @@ jobs:
             --publish-plugin-sdk "$INPUT_PUBLISH_PLUGIN_SDK" \
             --publish-sdk "$INPUT_PUBLISH_SDK" \
             --publish-channels-protocol "$INPUT_PUBLISH_CHANNELS_PROTOCOL" \
+            --plugin-sdk-version "${INPUT_PLUGIN_SDK_VERSION}" \
+            --sdk-version "${INPUT_SDK_VERSION}" \
             --server-runner-dir "$SERVER_RUNNER_DIR" \
             --github-output "$GITHUB_OUTPUT"
 
-      # The npm CLI tarball bundles the CLIProxyAPI plugin, whose managed Provider
-      # launches a packaged runtime binary from `tools/unpacked`. Stage that
-      # wrapper for every supported npm platform through the one existing
-      # component-artifact build owner before packing; `packTarball` fails closed
-      # if any platform archive is missing.
-      - name: Stage managed CLIProxyAPI runtime archives (cli)
+      # The npm CLI tarball bundles the CLIProxyAPI wrapper and the native SVC09
+      # process-custody helper in one platform archive. Stage both through the
+      # canonical component-artifact owners before packing; `packTarball` fails
+      # closed if any platform archive is missing or incomplete.
+      - name: Stage managed CLI runtime archives (cli)
         if: inputs.publish_cli
         run: node apps/cli/scripts/stageManagedRuntimeArchives.mjs
 
@@ -642,10 +650,10 @@ jobs:
       contents: read
       id-token: write
     outputs:
-      plugin_sdk_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      plugin_sdk_result: ${{ steps.publish.outputs.plugin_sdk_result == 'success' && 'success' || 'failed' }}
       plugin_sdk_version: ${{ steps.publish.outputs.plugin_sdk_version }}
       plugin_sdk_integrity: ${{ steps.publish.outputs.plugin_sdk_integrity }}
-      plugin_ui_result: ${{ steps.publish.outcome == 'success' && 'success' || 'failed' }}
+      plugin_ui_result: ${{ steps.publish.outputs.plugin_ui_result == 'success' && 'success' || 'failed' }}
       plugin_ui_version: ${{ steps.publish.outputs.plugin_ui_version }}
       plugin_ui_integrity: ${{ steps.publish.outputs.plugin_ui_integrity }}
     steps:

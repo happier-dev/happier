@@ -7,7 +7,7 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
-import { ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
+import { ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { ensureHappyServerManagedInfra, applyHappyServerMigrations } from './utils/server/infra/happy_server_infra.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
@@ -150,10 +150,9 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
   await cp(fromDbDir, snapshotDbDir, { recursive: true, force: true });
 
   // Ensure schema is applied on the snapshot DB (idempotent).
-  await pmExecBin({
-    dir: lightDir,
-    bin: 'migrate:light:deploy',
-    args: [],
+  await applyHappyServerMigrations({
+    serverDir: lightDir,
+    dbProvider: 'pglite',
     env: {
       ...process.env,
       HAPPIER_SERVER_LIGHT_DATA_DIR: fromDataDir,

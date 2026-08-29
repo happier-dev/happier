@@ -13,7 +13,7 @@ import {
   projectPreparedDeclarationSurface,
   readPreparedDeclarationEntrypoints,
 } from './emittedDeclarationSurface.mjs';
-import { summarizeDeclarationDiff } from './declarationDiff.mjs';
+import { renderDeclarationDiffSample, summarizeDeclarationDiff } from './declarationDiff.mjs';
 import {
   isExactCanonicalPublishedVersion,
   projectPublishedInventoryProvenance,
@@ -365,7 +365,7 @@ async function preflightOutput(packageRoot, output) {
     originalContents,
     changed: originalContents !== output.contents,
     summary: output.relativePath === 'api-declarations.md'
-      ? summarizeDeclarationDiff(originalContents, output.contents)
+      ? renderDeclarationDiffSample(summarizeDeclarationDiff(originalContents, output.contents))
       : Object.freeze([]),
   });
 }

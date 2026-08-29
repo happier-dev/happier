@@ -10,7 +10,6 @@ import {
   prepareCurrentManagedStackDeclarativeLifecycleFixture,
   prepareCurrentManagedStackNativePublicFixture,
   prepareCurrentManagedStackSessionAgentFixture,
-  readCurrentManagedStackSessionIds,
   type CurrentManagedStackPluginUiContext,
 } from '../pluginPlatform/currentManagedStackPluginUiQa';
 import {
@@ -19,12 +18,41 @@ import {
 } from './mobileMaestroRunner';
 import { runDefaultMobileMaestroCli } from './mobileMaestroCli';
 import {
-  captureCurrentSourceDisposableSessionId,
+  readCurrentSourceDisposableSessionExactFact,
   resolveCurrentSourceDisposableSessionDeletionTarget,
   resolveMobilePluginPlatformCurrentSourceExitCode,
   resolveMobilePluginPlatformCurrentSourceRun,
-  type CurrentSourceDisposableSessionCapture,
+  type CurrentSourceDisposableSessionExactFact,
 } from './mobilePluginPlatformCurrentSourceInput';
+
+/**
+ * Structured cause for the current-source mobile row's own nonzero journey
+ * exit. Constructed exactly once after the mobile runner returns, so every
+ * downstream failure aggregation can include the original failing exit
+ * without swallowing or duplicating it.
+ */
+export class MobilePluginPlatformCurrentSourceJourneyExitError extends Error {
+  readonly code = 'plugin_ui_current_source_mobile_journey_exit';
+  readonly exitCode: number;
+
+  constructor(exitCode: number) {
+    super(`plugin_ui_current_source_mobile_journey_exit_${exitCode}`);
+    this.name = 'MobilePluginPlatformCurrentSourceJourneyExitError';
+    this.exitCode = exitCode;
+  }
+}
+
+/**
+ * The scenario ends at the first non-bound terminal exact-fact state: every
+ * later phase would only create more Sessions this row can neither name nor
+ * delete. The armed fact itself is preserved for the finally cleanup and its
+ * evidence, and cleanup still runs below.
+ */
+function stopUnlessDisposableSessionFactBound(fact: CurrentSourceDisposableSessionExactFact): void {
+  if (fact.status !== 'bound') {
+    throw new Error(`plugin_ui_current_source_disposable_session_exact_fact_not_bound:${fact.status}`);
+  }
+}
 
 /**
  * Genuine system boundaries behind the current-source row. Tests may override
@@ -38,9 +66,9 @@ export type MobilePluginPlatformCurrentSourceCliDeps = Readonly<{
   prepareNativePublicFixture: typeof prepareCurrentManagedStackNativePublicFixture;
   prepareDeclarativeLifecycleFixture: typeof prepareCurrentManagedStackDeclarativeLifecycleFixture;
   prepareSessionAgentFixture: typeof prepareCurrentManagedStackSessionAgentFixture;
-  readSessionIds: typeof readCurrentManagedStackSessionIds;
   deleteSession: typeof deleteCurrentManagedStackSession;
   deleteNewSessionDraft: typeof deleteCurrentManagedStackNewSessionDraft;
+  readDisposableSessionExactFact: typeof readCurrentSourceDisposableSessionExactFact;
   appendManifestEvidence: typeof appendMobileMaestroManifestEvidence;
 }>;
 
@@ -51,9 +79,9 @@ const defaultCurrentSourceCliDeps: MobilePluginPlatformCurrentSourceCliDeps = {
   prepareNativePublicFixture: prepareCurrentManagedStackNativePublicFixture,
   prepareDeclarativeLifecycleFixture: prepareCurrentManagedStackDeclarativeLifecycleFixture,
   prepareSessionAgentFixture: prepareCurrentManagedStackSessionAgentFixture,
-  readSessionIds: readCurrentManagedStackSessionIds,
   deleteSession: deleteCurrentManagedStackSession,
   deleteNewSessionDraft: deleteCurrentManagedStackNewSessionDraft,
+  readDisposableSessionExactFact: readCurrentSourceDisposableSessionExactFact,
   appendManifestEvidence: appendMobileMaestroManifestEvidence,
 };
 
@@ -122,6 +150,9 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
     throw error;
   });
   const newSessionDraftId = randomUUID();
+  // The fresh post-update Composer dispatch runs on its own QA-owned draft so
+  // the created v2 Session is exactly cleanup-scoped like the v1 one.
+  const v2NewSessionDraftId = randomUUID();
   const resolved = resolveMobilePluginPlatformCurrentSourceRun({
     ...input,
     managedStack: {
@@ -143,18 +174,10 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
   }];
   let result: Awaited<ReturnType<typeof runDefaultMobileMaestroCli>> | null = null;
   let finalStackAttestation: Awaited<ReturnType<typeof attestCurrentManagedStackPluginUi>> | null = null;
-  let disposableSessionCapture: CurrentSourceDisposableSessionCapture = {
-    sessionId: null,
-    conflict: null,
-    readError: null,
-  };
-  let sessionAgentSessionCapture: CurrentSourceDisposableSessionCapture = {
-    sessionId: null,
-    conflict: null,
-    readError: null,
-  };
+  let disposableSessionFact: CurrentSourceDisposableSessionExactFact | null = null;
+  let disposableSessionV2Fact: CurrentSourceDisposableSessionExactFact | null = null;
+  let sessionAgentSessionFact: CurrentSourceDisposableSessionExactFact | null = null;
   let runError: unknown = null;
-  let cleanupError: unknown = null;
   try {
     result = await deps.runMobileMaestroCli({
       argv: resolved.argv,
@@ -211,8 +234,16 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
           HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_SECONDARY_CONTROL_ID: nativeFixture.sentinels.composerSecondaryControl,
           HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_REGION_ID: nativeFixture.sentinels.composerRegion,
           HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_CHOICE_LABEL: 'Attach Current source QA facts',
-          HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_ATTACHMENT_LABEL: nativeFixture.sentinels.composerAttachmentV1,
-          HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_REFERENCE_LABEL: nativeFixture.sentinels.composerReference,
+          // Composer reference and attachment presentation facts are
+          // generation-qualified like every other fixture sentinel: a v2 flow
+          // env must never advertise a v1 label, or the loaded journey could
+          // pass while the reloaded projection actually lost currentness.
+          HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_ATTACHMENT_LABEL: version === 'v1'
+            ? nativeFixture.sentinels.composerAttachmentV1
+            : nativeFixture.sentinels.composerAttachmentV2,
+          HAPPIER_E2E_CURRENT_SOURCE_COMPOSER_REFERENCE_LABEL: version === 'v1'
+            ? nativeFixture.sentinels.composerReferenceV1
+            : nativeFixture.sentinels.composerReferenceV2,
           HAPPIER_E2E_CURRENT_SOURCE_AGENT_TITLE: nativeFixture.sentinels.agentTitle,
           HAPPIER_E2E_CURRENT_SOURCE_TRANSCRIPT_SENTINEL: nativeFixture.sentinels.transcriptSentinel,
           HAPPIER_E2E_CURRENT_SOURCE_RESOURCE_SENTINEL: version === 'v1'
@@ -247,35 +278,35 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
           nativeV1Env,
         );
         if (code !== 0) return code;
-        // Canonical New Session creation/send handoff: this Composer flow owns
-        // the deep-link draft open, the send, and the transcript assertion.
-        // Snapshot immediately before the window, run the flow, then arm exact
-        // cleanup from the single Session the window created — as soon as it
-        // exists. The Account snapshots here are attribution diagnostics for
-        // this window only; deletion is authorized exclusively by the armed
-        // exact id, so unrelated concurrent Sessions are undeletable by
-        // construction. A failed handoff arms nothing: its window delta cannot
-        // distinguish the row's own Session from an unrelated concurrent one,
-        // and failing closed leaks a disposable Session rather than risking
-        // another writer's Session.
-        const disposableWindowBefore = await deps.readSessionIds(context);
+        // Canonical New Session creation/send handoff, split so exact cleanup
+        // is armed from the creation/send owner's own fact BEFORE the
+        // transcript proof runs. The create/send flow ends at the send's own
+        // custody proof; only a landed send arms the fact, and the fact — never
+        // an Account-wide delta, timing window, or URL guess — is the sole
+        // deletion authority. Missing/conflicting/unreadable facts delete
+        // nothing and aggregate as cleanup failures.
         code = await runPhase(
           runFlow,
-          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer.yaml',
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer-send.yaml',
           nativeV1Env,
         );
-        if (code === 0) {
-          disposableSessionCapture = await captureCurrentSourceDisposableSessionId({
-            before: disposableWindowBefore,
-            readSessionIds: () => deps.readSessionIds(context),
-          });
-          if (disposableSessionCapture.sessionId) {
-            nativeLifecycleEvidence.push({
-              phase: 'disposable-session-armed',
-              sessionId: disposableSessionCapture.sessionId,
-            });
-          }
-        }
+        if (code !== 0) return code;
+        disposableSessionFact = await deps.readDisposableSessionExactFact();
+        nativeLifecycleEvidence.push({
+          phase: 'disposable-session-armed',
+          fact: disposableSessionFact.status,
+          ...(disposableSessionFact.status === 'bound'
+            ? { sessionId: disposableSessionFact.sessionId }
+            : {}),
+        });
+        // A non-bound fact is terminal: the row stops here instead of
+        // creating the v2 and Session-Agent Sessions it could never clean.
+        stopUnlessDisposableSessionFactBound(disposableSessionFact);
+        code = await runPhase(
+          runFlow,
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer-transcript.yaml',
+          nativeV1Env,
+        );
         if (code !== 0) return code;
         const nativeV2 = await nativeFixture.applyV2();
         nativeLifecycleEvidence.push({ phase: 'applied-v2', ...nativeV2 });
@@ -294,6 +325,40 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
           runFlow,
           'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer-retained.yaml',
           nativeV1Env,
+        );
+        if (code !== 0) return code;
+        // Fresh post-update Composer dispatch on a new QA-owned draft: the
+        // reloaded v2 projection must still carry the full Composer path. The
+        // deterministic Agent rejects another generation's reference and
+        // attachment facts before input acceptance, so a settled v2
+        // transcript proves the fresh dispatch resolved and adopted exactly
+        // qa:v2 and the v2 attachment facts. The retained v1 assertion above
+        // remains the persisted v1 transcript immutability proof.
+        code = await runPhase(
+          runFlow,
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer-send.yaml',
+          {
+            ...nativeV2Env,
+            HAPPIER_E2E_CURRENT_SOURCE_NEW_SESSION_URL:
+              `${mobileScheme}:///new?draftId=${encodeURIComponent(v2NewSessionDraftId)}`,
+          },
+        );
+        if (code !== 0) return code;
+        disposableSessionV2Fact = await deps.readDisposableSessionExactFact();
+        nativeLifecycleEvidence.push({
+          phase: 'disposable-session-v2-armed',
+          fact: disposableSessionV2Fact.status,
+          ...(disposableSessionV2Fact.status === 'bound'
+            ? { sessionId: disposableSessionV2Fact.sessionId }
+            : {}),
+        });
+        // Same terminal boundary for the fresh v2 dispatch: a non-bound v2
+        // fact stops before the v2 transcript and the Session-Agent Session.
+        stopUnlessDisposableSessionFactBound(disposableSessionV2Fact);
+        code = await runPhase(
+          runFlow,
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-public-composer-transcript.yaml',
+          nativeV2Env,
         );
         if (code !== 0) return code;
         code = await runPhase(
@@ -458,40 +523,53 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
         );
         if (code !== 0) return code;
         // Canonical external Session Agent journey for the exact qualified
-        // example identity: chip-picker selection, prompt, host confirmation,
-        // assistant settlement, a later cancelled turn, and recovery on the
-        // same Session. The disposable Session window is attributed exactly
-        // like the Composer flow above.
-        const sessionAgentWindowBefore = await deps.readSessionIds(context);
+        // example identity: chip-picker selection, prompt, and the send's own
+        // custody proof, split from the downstream host-confirmation,
+        // settlement, cancellation, and recovery proof exactly like the
+        // Composer flows above. The disposable Session is armed from the exact
+        // creation/send fact BEFORE any downstream assertion can fail, so a
+        // downstream failure still cleans the bound exact Agent Session.
+        const sessionAgentEnv: NodeJS.ProcessEnv = {
+          HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID: sessionAgentFixture.selectors.chipPickerOption,
+          HAPPIER_E2E_SESSION_AGENT_ASSISTANT_TEXT: sessionAgentFixture.assistantText,
+          HAPPIER_E2E_SESSION_AGENT_PROMPT: 'Run the deterministic check for the current-source native row.',
+          HAPPIER_E2E_SESSION_AGENT_CANCEL_PROMPT: 'Cancel this deterministic check for the current-source native row.',
+          HAPPIER_E2E_SESSION_AGENT_RECOVERY_PROMPT: 'Recover with this deterministic check for the current-source native row.',
+        };
         code = await runPhase(
           runFlow,
-          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent.yaml',
-          {
-            HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID: sessionAgentFixture.selectors.chipPickerOption,
-            HAPPIER_E2E_SESSION_AGENT_ASSISTANT_TEXT: sessionAgentFixture.assistantText,
-            HAPPIER_E2E_SESSION_AGENT_PROMPT: 'Run the deterministic check for the current-source native row.',
-            HAPPIER_E2E_SESSION_AGENT_CANCEL_PROMPT: 'Cancel this deterministic check for the current-source native row.',
-            HAPPIER_E2E_SESSION_AGENT_RECOVERY_PROMPT: 'Recover with this deterministic check for the current-source native row.',
-          },
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent-send.yaml',
+          sessionAgentEnv,
         );
-        if (code === 0) {
-          sessionAgentSessionCapture = await captureCurrentSourceDisposableSessionId({
-            before: sessionAgentWindowBefore,
-            readSessionIds: () => deps.readSessionIds(context),
-          });
-          if (sessionAgentSessionCapture.sessionId) {
-            lifecycleEvidence.push({
-              phase: 'session-agent-disposable-session-armed',
-              sessionId: sessionAgentSessionCapture.sessionId,
-            });
-          }
-        }
+        if (code !== 0) return code;
+        sessionAgentSessionFact = await deps.readDisposableSessionExactFact();
+        lifecycleEvidence.push({
+          phase: 'session-agent-disposable-session-armed',
+          fact: sessionAgentSessionFact.status,
+          ...(sessionAgentSessionFact.status === 'bound'
+            ? { sessionId: sessionAgentSessionFact.sessionId }
+            : {}),
+        });
+        stopUnlessDisposableSessionFactBound(sessionAgentSessionFact);
+        code = await runPhase(
+          runFlow,
+          'suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent-transcript.yaml',
+          sessionAgentEnv,
+        );
+        if (code !== 0) return code;
         return code;
       },
     });
   } catch (error) {
     runError = error;
   }
+  // The journey's own nonzero exit is an orchestration result, not a thrown
+  // error: construct its structured cause exactly once, so every failure
+  // combination below carries the original failing exit without swallowing
+  // or duplicating it.
+  const journeyExitFailure = result && result.exitCode !== 0
+    ? new MobilePluginPlatformCurrentSourceJourneyExitError(result.exitCode)
+    : null;
   try {
     finalStackAttestation = await deps.attestPluginUi({
       context,
@@ -519,23 +597,55 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
     cleanupFailures.push(error);
   }
   try {
-    // Deletes exactly the id armed at the creation/send handoff — never a
-    // post-run Account-wide delta. Attribution conflicts and unreadable
-    // snapshot reads fail closed here: they delete nothing and aggregate.
-    const disposableSessionId = resolveCurrentSourceDisposableSessionDeletionTarget(disposableSessionCapture);
-    if (disposableSessionId) {
-      await deps.deleteSession(context, disposableSessionId);
-      nativeLifecycleEvidence.push({ phase: 'disposable-session-deleted', sessionId: disposableSessionId });
-    }
+    await deps.deleteNewSessionDraft(context, v2NewSessionDraftId);
+    nativeLifecycleEvidence.push({ phase: 'owned-new-session-v2-draft-retired', draftId: v2NewSessionDraftId });
   } catch (error) {
     cleanupFailures.push(error);
   }
-  try {
-    const sessionAgentSessionId = resolveCurrentSourceDisposableSessionDeletionTarget(sessionAgentSessionCapture);
-    if (sessionAgentSessionId) {
-      await deps.deleteSession(context, sessionAgentSessionId);
-      lifecycleEvidence.push({ phase: 'session-agent-disposable-session-deleted', sessionId: sessionAgentSessionId });
+  const disposeExactSession = async (
+    fact: CurrentSourceDisposableSessionExactFact | null,
+    phases: Readonly<{ deleted: string; unavailable: string }>,
+    evidence: Array<Readonly<Record<string, unknown>>>,
+  ): Promise<void> => {
+    if (!fact) return;
+    // Deletes exactly the id bound by the creation/send fact — never a
+    // post-run Account-wide delta. Missing/conflicting/unreadable facts fail
+    // closed here: they delete nothing and aggregate.
+    if (fact.status === 'unavailable') {
+      evidence.push({ phase: phases.unavailable, reason: fact.reason });
+      // An unwired exact-fact source can neither name nor delete the Session
+      // this row created: treating that as success would false-green a loaded
+      // row while its own disposable Session leaks. Keep the lifecycle
+      // evidence, then block the row observably until the canonical
+      // creation/send owner binds the exact id for this harness.
+      cleanupFailures.push(
+        new Error(`plugin_ui_current_source_disposable_session_exact_fact_unavailable:${fact.reason}`),
+      );
+      return;
     }
+    try {
+      const disposableSessionId = resolveCurrentSourceDisposableSessionDeletionTarget(fact);
+      if (disposableSessionId) {
+        await deps.deleteSession(context, disposableSessionId);
+        evidence.push({ phase: phases.deleted, sessionId: disposableSessionId });
+      }
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  };
+  try {
+    await disposeExactSession(disposableSessionFact, {
+      deleted: 'disposable-session-deleted',
+      unavailable: 'disposable-session-exact-fact-unavailable',
+    }, nativeLifecycleEvidence);
+    await disposeExactSession(disposableSessionV2Fact, {
+      deleted: 'disposable-session-v2-deleted',
+      unavailable: 'disposable-session-v2-exact-fact-unavailable',
+    }, nativeLifecycleEvidence);
+    await disposeExactSession(sessionAgentSessionFact, {
+      deleted: 'session-agent-disposable-session-deleted',
+      unavailable: 'session-agent-disposable-session-exact-fact-unavailable',
+    }, lifecycleEvidence);
   } catch (error) {
     cleanupFailures.push(error);
   }
@@ -552,15 +662,23 @@ export async function runMobilePluginPlatformCurrentSourceCli(input: Readonly<{
   if (fixtureCleanup[2]?.status === 'fulfilled') {
     lifecycleEvidence.push({ phase: 'session-agent-cleanup-retired', pluginId: sessionAgentFixture.pluginId });
   }
-  if (cleanupFailures.length === 1) cleanupError = cleanupFailures[0];
-  if (cleanupFailures.length > 1) {
-    cleanupError = new AggregateError(cleanupFailures, 'Current-source mobile cleanup had multiple failures');
+  // Aggregate every distinct cause exactly once — structured journey exit,
+  // attestation and run errors, then cleanup errors. A sole journey exit
+  // stays a returned result: the raw nonzero exit code below is the canonical
+  // row outcome.
+  const failureCauses: unknown[] = [
+    ...(journeyExitFailure ? [journeyExitFailure] : []),
+    ...(runError ? [runError] : []),
+    ...cleanupFailures,
+  ];
+  if (failureCauses.length === 1) {
+    if (!journeyExitFailure) throw failureCauses[0];
+  } else if (failureCauses.length > 1) {
+    throw new AggregateError(
+      failureCauses,
+      'Current-source mobile row failed with journey, attestation, or cleanup causes',
+    );
   }
-  if (runError && cleanupError) {
-    throw new AggregateError([runError, cleanupError], 'Current-source mobile row and fixture cleanup both failed');
-  }
-  if (runError) throw runError;
-  if (cleanupError) throw cleanupError;
   if (!result) throw new Error('plugin_ui_current_source_mobile_runner_missing_result');
   deps.appendManifestEvidence({
     manifestPath: result.manifestPath,

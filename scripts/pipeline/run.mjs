@@ -12,7 +12,8 @@ import { importDotenvIntoKeychainBundle } from './secrets/import-keychain-bundle
 import { resolveKeychainBundleAccounts } from './secrets/keychain-bundle-accounts.mjs';
 import { assertCleanWorktree, assertReleaseControlWorktreeClean } from './git/ensure-clean-worktree.mjs';
 import { resolveAuthorizedReleaseSource } from './github/resolve-authorized-release-source.mjs';
-import { admitNpmPublication, resolvePublicNpmPackageNames } from './release/admit-release.mjs';
+import { resolveGitHubRepoSlug } from './github/resolve-github-repo-slug.mjs';
+import { admitNpmPublication } from './release/admit-release.mjs';
 import { resolveRemoteReleasePlanningRefs } from './release/lib/release-planning-remote-refs.mjs';
 import { createAnsiStyle } from './cli/ansi-style.mjs';
 import { renderCommandHelp, renderPipelineHelp } from './cli/help.mjs';
@@ -1586,11 +1587,6 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       if (allowDirty) {
         fail('DIRTY_NPM_RELEASE_PUBLICATION_DISABLED: real npm pack+publish requires a clean worktree; use pack-only or --dry-run for dirty local inspection.');
       }
-      const publicSdkPackageNames = resolvePublicNpmPackageNames({
-        pluginSdk: publishPluginSdk.trim().toLowerCase() === 'true',
-        sdk: publishSdk.trim().toLowerCase() === 'true',
-        channelsProtocol: publishChannelsProtocol.trim().toLowerCase() === 'true',
-      });
       const checkedOutSha = authorizedSha
         ? String(execFileSync('git', ['rev-parse', 'HEAD'], {
           cwd: repoRoot,
@@ -1604,10 +1600,38 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         dryRun: false,
         authorizedSha,
         checkedOutSha,
-        packageNames: publicSdkPackageNames,
       });
       assertReleaseControlWorktreeClean({ cwd: repoRoot });
       assertCleanWorktree({ cwd: repoRoot, allowDirty });
+
+      const publishesPublicSdk = publishPluginSdk.trim().toLowerCase() === 'true'
+        || publishSdk.trim().toLowerCase() === 'true';
+      if (publishesPublicSdk) {
+        const repository = resolveGitHubRepoSlug({ repoRoot, env: process.env });
+        if (!repository) {
+          fail('PUBLIC_SDK_EXACT_SHA_CI_REQUIRED: could not resolve the GitHub repository for exact-SHA CI verification.');
+        }
+        const sourceBranch = channel === 'production' ? 'main' : channel;
+        try {
+          execFileSync(process.execPath, [
+            path.join(repoRoot, 'scripts/pipeline/release/verify-existing-ci.mjs'),
+            '--repository', repository,
+            '--source-sha', authorizedSha,
+            '--source-branch', sourceBranch,
+          ], {
+            cwd: repoRoot,
+            env: process.env,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: 30_000,
+          });
+        } catch (error) {
+          const detail = error && typeof error === 'object'
+            ? String(error.stderr ?? error.stdout ?? error.message ?? '').trim()
+            : String(error);
+          fail(`PUBLIC_SDK_EXACT_SHA_CI_REQUIRED: ${detail || 'exact-SHA CI verification failed'}`);
+        }
+      }
     }
 
     const { env, sources } = loadPipelineEnv({ repoRoot });

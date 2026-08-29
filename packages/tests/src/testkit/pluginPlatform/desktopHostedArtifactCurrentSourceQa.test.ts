@@ -16,6 +16,16 @@ import type {
   CurrentManagedStackSourcePluginGeneration,
 } from './currentManagedStackPluginUiQa';
 
+// The module under test is imported statically: its cold transform cost is
+// paid once at worker file load, outside every per-test timeout, instead of
+// reproducibly timing out the first filesystem-heavy case under the default
+// 5s test timeout. The module has no import-time side effects (its CLI entry
+// is guarded by an exact argv[1] identity check).
+import {
+  runDesktopHostedArtifactCurrentSourceCli,
+  runDesktopHostedArtifactCurrentSourceQa,
+} from './desktopHostedArtifactCurrentSourceQa';
+
 const roots: Array<string> = [];
 
 afterEach(async () => {
@@ -196,13 +206,12 @@ function stream(lines: Array<string>): NodeJS.WritableStream {
 describe('desktop hosted-artifact current-source loaded QA', () => {
   it('binds the attested identity, then refuses capture-preparation results that lack native-child proof', async () => {
     const pluginRoot = await writeCurrentSourcePluginRoot();
-    const mod = await import('./desktopHostedArtifactCurrentSourceQa');
     const qaCalls: Array<QaRunnerInput> = [];
     const deps = buildDeps(async (input) => {
       qaCalls.push(input);
       return incompleteCapture('/tmp/hosted-artifact-capture');
     });
-    await expect(mod.runDesktopHostedArtifactCurrentSourceQa(buildQaEnv(pluginRoot), deps))
+    await expect(runDesktopHostedArtifactCurrentSourceQa(buildQaEnv(pluginRoot), deps))
       .rejects.toThrow(/desktop_hosted_artifact_native_child_proof_blocked:capture_ready_for_native_child_checks/u);
     // The deciding identity facts must be attested and passed to the capture
     // before the recorded proof state is judged.
@@ -217,18 +226,16 @@ describe('desktop hosted-artifact current-source loaded QA', () => {
 
   it('emits the artifactRoot only when the recorded proof state is complete', async () => {
     const pluginRoot = await writeCurrentSourcePluginRoot();
-    const mod = await import('./desktopHostedArtifactCurrentSourceQa');
     const deps = buildDeps(async () => completeCapture('/tmp/hosted-artifact-capture-complete'));
-    await expect(mod.runDesktopHostedArtifactCurrentSourceQa(buildQaEnv(pluginRoot), deps))
+    await expect(runDesktopHostedArtifactCurrentSourceQa(buildQaEnv(pluginRoot), deps))
       .resolves.toEqual({ artifactRoot: '/tmp/hosted-artifact-capture-complete' });
   });
 
   it('exits nonzero without an artifactRoot success line while native-child proof is incomplete', async () => {
     const pluginRoot = await writeCurrentSourcePluginRoot();
-    const mod = await import('./desktopHostedArtifactCurrentSourceQa');
     const stdout: Array<string> = [];
     const stderr: Array<string> = [];
-    const exitCode = await mod.runDesktopHostedArtifactCurrentSourceCli({
+    const exitCode = await runDesktopHostedArtifactCurrentSourceCli({
       env: buildQaEnv(pluginRoot),
       deps: buildDeps(async () => incompleteCapture('/tmp/hosted-artifact-capture')),
       stdout: stream(stdout),
@@ -242,10 +249,9 @@ describe('desktop hosted-artifact current-source loaded QA', () => {
 
   it('exits zero and prints the artifactRoot once native-child proof is complete', async () => {
     const pluginRoot = await writeCurrentSourcePluginRoot();
-    const mod = await import('./desktopHostedArtifactCurrentSourceQa');
     const stdout: Array<string> = [];
     const stderr: Array<string> = [];
-    const exitCode = await mod.runDesktopHostedArtifactCurrentSourceCli({
+    const exitCode = await runDesktopHostedArtifactCurrentSourceCli({
       env: buildQaEnv(pluginRoot),
       deps: buildDeps(async () => completeCapture('/tmp/hosted-artifact-capture-complete')),
       stdout: stream(stdout),

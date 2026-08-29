@@ -67,6 +67,48 @@ test('hstack stack new server flavor defaults and explicit full flavor pin coher
         assert.ok(!contents.includes('HAPPIER_STACK_PG_PORT='), contents);
       },
     },
+    {
+      name: 'external postgres with light behavior preset',
+      stackName: 'exp-flavors-light-external-postgres',
+      args: [
+        '--server=happier-server-light',
+        '--db-provider=postgres',
+        '--database-url=postgresql://operator:secret@db.example/happier?sslmode=require',
+        '--no-copy-auth',
+        '--json',
+      ],
+      assertEnv(contents) {
+        assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\n'), contents);
+        assert.ok(contents.includes('HAPPIER_DB_PROVIDER=postgres\n'), contents);
+        assert.ok(contents.includes('DATABASE_URL=postgresql://operator:secret@db.example/happier?sslmode=require\n'), contents);
+        assert.ok(contents.includes('HAPPIER_SERVER_LIGHT_FILES_DIR='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_USER='), contents);
+      },
+    },
+    {
+      name: 'sqlite with full behavior preset',
+      stackName: 'exp-flavors-full-sqlite',
+      args: ['--server=happier-server', '--db-provider=sqlite', '--no-copy-auth', '--json'],
+      assertEnv(contents) {
+        assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happier-server\n'), contents);
+        assert.ok(contents.includes('HAPPIER_DB_PROVIDER=sqlite\n'), contents);
+        assert.ok(contents.includes('HAPPIER_SERVER_LIGHT_DATA_DIR='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_USER='), contents);
+      },
+    },
+    {
+      name: 'pglite with full behavior preset',
+      stackName: 'exp-flavors-full-pglite',
+      args: ['--server=happier-server', '--db-provider=pglite', '--no-copy-auth', '--json'],
+      assertEnv(contents) {
+        assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happier-server\n'), contents);
+        assert.ok(contents.includes('HAPPIER_DB_PROVIDER=pglite\n'), contents);
+        assert.ok(contents.includes('HAPPIER_SERVER_LIGHT_DATA_DIR='), contents);
+        assert.ok(contents.includes('HAPPIER_SERVER_LIGHT_DB_DIR='), contents);
+        assert.ok(!contents.includes('DATABASE_URL='), contents);
+        assert.ok(!contents.includes('HAPPIER_STACK_PG_USER='), contents);
+      },
+    },
   ];
 
   for (const testCase of cases) {

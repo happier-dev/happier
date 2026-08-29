@@ -18,7 +18,6 @@ import { readCliAccessKeyForServerId, type CliAccessKey } from '../cliAccessKey'
 import { daemonControlPostJson } from '../daemon/controlServerClient';
 import { buildCredentialsAuthBootstrapStorageSnapshot } from '../uiE2e/buildAuthBootstrapStorageSnapshot';
 import { fetchJson } from '../http';
-import { fetchSessionsV2 } from '../sessions';
 import type { AuthBootstrapStorageSnapshot } from '../uiE2e/readLegacyAuthSecretFromLocalStorage';
 import {
   applyTrustedLocalPluginFixture,
@@ -190,7 +189,9 @@ export type CurrentManagedStackNativePublicFixture = Readonly<{
     composerSecondaryControl: string;
     composerChoiceLabel: string;
     composerAttachmentV1: string;
-    composerReference: string;
+    composerAttachmentV2: string;
+    composerReferenceV1: string;
+    composerReferenceV2: string;
     composerRegion: string;
     agentTitle: string;
     transcriptSentinel: string;
@@ -280,26 +281,6 @@ export type CurrentManagedStackSessionAgentFixture = Readonly<{
 function currentManagedStackAccessToken(context: CurrentManagedStackPluginUiContext): string {
   const credentials = asRecord(JSON.parse(context.authStorage.localStorage.auth_credentials));
   return requireString(credentials?.token, 'plugin_ui_current_stack_account_access_token_missing');
-}
-
-/** Exact Account Session identity snapshot used only for reversible loaded QA. */
-export async function readCurrentManagedStackSessionIds(
-  context: CurrentManagedStackPluginUiContext,
-): Promise<ReadonlySet<string>> {
-  const ids = new Set<string>();
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await fetchSessionsV2(context.serverUrl, currentManagedStackAccessToken(context), {
-      ...(cursor ? { cursor } : {}),
-      limit: 500,
-    });
-    for (const session of page.sessions) ids.add(session.id);
-    if (!page.hasNext) return ids;
-    if (!page.nextCursor || page.nextCursor === cursor) {
-      throw new Error('plugin_ui_current_stack_session_snapshot_cursor_invalid');
-    }
-    cursor = page.nextCursor;
-  }
 }
 
 export async function deleteCurrentManagedStackSession(
@@ -1242,7 +1223,16 @@ export async function prepareCurrentManagedStackDeclarativeLifecycleFixture(para
   }
 }
 
-async function buildCurrentManagedStackNativePublicSource(params: Readonly<{
+/**
+ * The one staging path for generated current-source public fixture revisions:
+ * it copies the single checked-in fixture and qualifies only the plugin id and
+ * the generation constant, exactly like the loaded-QA harness's build step.
+ * Focused tests stage revisions through this same helper and import the staged
+ * source, so a regression can never prove dispatch facts the loaded plugin
+ * would not produce. There is no second fixture source and no second rewrite
+ * rule.
+ */
+export async function stageCurrentSourceNativePublicFixtureSource(params: Readonly<{
   root: string;
   pluginId: string;
   revision: 'v1' | 'v2';
@@ -1265,6 +1255,14 @@ async function buildCurrentManagedStackNativePublicSource(params: Readonly<{
     'utf8',
   );
   await writeFile(revisionPath, `export const QA_REVISION = ${JSON.stringify(params.revision)} as const;\n`, 'utf8');
+}
+
+async function buildCurrentManagedStackNativePublicSource(params: Readonly<{
+  root: string;
+  pluginId: string;
+  revision: 'v1' | 'v2';
+}>): Promise<void> {
+  await stageCurrentSourceNativePublicFixtureSource(params);
   // The same current-source CLI producer ordinary external authors invoke owns
   // dependency preparation, declaration/manifest emission, daemon bundling,
   // and UI artifacts. The QA harness intentionally does not reproduce any of
@@ -1428,7 +1426,9 @@ export async function prepareCurrentManagedStackNativePublicFixture(params: Read
         composerSecondaryControl: `plugin-composer-control:${pluginId}/qa-secondary-control`,
         composerChoiceLabel: 'Attach Current source QA facts',
         composerAttachmentV1: 'Current source QA attachment v1',
-        composerReference: 'Current source QA reference',
+        composerAttachmentV2: 'Current source QA attachment v2',
+        composerReferenceV1: 'Current source QA reference v1',
+        composerReferenceV2: 'Current source QA reference v2',
         composerRegion: 'qa-current-source-composer-region',
         agentTitle: `${pluginId} deterministic QA`,
         transcriptSentinel: 'PLUGIN_UI_CURRENT_SOURCE_NATIVE_ACCEPTED',
@@ -1660,6 +1660,46 @@ async function runCurrentManagedStackSessionAgentAuthorCommand(params: Readonly<
   );
 }
 
+/** The public, headless local-development install command an external author uses. */
+export function buildCurrentManagedStackSessionAgentInstallArgs(sourceRoot: string): readonly string[] {
+  return Object.freeze([
+    'plugins',
+    'install',
+    sourceRoot,
+    '--dev',
+    '--trust',
+    '--json',
+  ]);
+}
+
+async function installCurrentManagedStackSessionAgentThroughCli(params: Readonly<{
+  context: CurrentManagedStackPluginUiContext;
+  sourceRoot: string;
+}>): Promise<void> {
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      join(REPOSITORY_ROOT, 'apps/cli/bin/happier.mjs'),
+      ...buildCurrentManagedStackSessionAgentInstallArgs(params.sourceRoot),
+    ],
+    {
+      cwd: REPOSITORY_ROOT,
+      env: { ...process.env, HAPPIER_HOME_DIR: params.context.cliHome },
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 300_000,
+    },
+  );
+  const response = asRecord(JSON.parse(stdout.trim()));
+  const data = asRecord(response?.data);
+  if (
+    response?.ok !== true
+    || response.kind !== 'plugins_install'
+    || data?.pluginId !== CURRENT_SOURCE_SESSION_AGENT_PLUGIN_ID
+  ) {
+    throw new Error('plugin_ui_current_stack_session_agent_cli_install_not_committed');
+  }
+}
+
 function nextSessionAgentSourceVersion(previousIndex: number): string {
   return `0.1.${10 + previousIndex}`;
 }
@@ -1839,13 +1879,9 @@ export async function prepareCurrentManagedStackSessionAgentFixture(params: Read
     })
   );
   const install = async (): Promise<CurrentManagedStackSourcePluginGeneration> => {
-    await applyTrustedLocalPluginFixture({
-      daemonPort: context.daemon.port,
-      controlToken: context.daemon.controlToken,
-      pluginRoot: sourceRoot,
-      pluginId,
-      interactionId: `session-agent-${params.rowId}-${Date.now()}`,
-      postJson: params.postJson,
+    await installCurrentManagedStackSessionAgentThroughCli({
+      context,
+      sourceRoot,
     });
     installed = true;
     return await generation();

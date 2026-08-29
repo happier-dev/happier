@@ -6,10 +6,8 @@ const PROVIDER_ALIASES = new Map([
   ['sqlite', 'sqlite'],
 ]);
 
-const COMPONENT_PROVIDERS = {
-  'happier-server': ['postgres', 'mysql'],
-  'happier-server-light': ['sqlite', 'pglite'],
-};
+const SERVER_COMPONENTS = new Set(['happier-server', 'happier-server-light']);
+const SUPPORTED_PROVIDERS = Object.freeze(['postgres', 'mysql', 'pglite', 'sqlite']);
 
 const COMPONENT_DEFAULTS = {
   'happier-server': 'postgres',
@@ -17,13 +15,12 @@ const COMPONENT_DEFAULTS = {
 };
 
 export function resolveEffectiveDbProvider({ serverComponentName, env = {} } = {}) {
-  const supportedProviders = COMPONENT_PROVIDERS[serverComponentName];
-  if (!supportedProviders) {
+  if (!SERVER_COMPONENTS.has(serverComponentName)) {
     return {
       ok: false,
       reason: 'unsupported_server_component',
       serverComponentName,
-      supportedServerComponents: Object.keys(COMPONENT_PROVIDERS),
+      supportedServerComponents: [...SERVER_COMPONENTS],
     };
   }
 
@@ -37,14 +34,14 @@ export function resolveEffectiveDbProvider({ serverComponentName, env = {} } = {
     ? COMPONENT_DEFAULTS[serverComponentName]
     : PROVIDER_ALIASES.get(input);
 
-  if (!provider || !supportedProviders.includes(provider)) {
+  if (!provider || !SUPPORTED_PROVIDERS.includes(provider)) {
     return {
       ok: false,
       reason: 'unsupported_db_provider',
       serverComponentName,
       source,
       input,
-      supportedProviders: [...supportedProviders],
+      supportedProviders: [...SUPPORTED_PROVIDERS],
     };
   }
 
@@ -56,13 +53,8 @@ export function resolveEffectiveDbProviderTransition({
   nextServerComponentName,
   env = {},
 } = {}) {
-  let effective = resolveEffectiveDbProvider({ serverComponentName: nextServerComponentName, env });
-  if (!effective.ok && previousServerComponentName !== nextServerComponentName) {
-    const previous = resolveEffectiveDbProvider({ serverComponentName: previousServerComponentName, env });
-    if (previous.ok) {
-      effective = resolveEffectiveDbProvider({ serverComponentName: nextServerComponentName, env: {} });
-    }
-  }
+  void previousServerComponentName;
+  const effective = resolveEffectiveDbProvider({ serverComponentName: nextServerComponentName, env });
   if (!effective.ok) return effective;
 
   const databaseUrl = String(env.DATABASE_URL ?? '').trim();
@@ -70,23 +62,44 @@ export function resolveEffectiveDbProviderTransition({
     return { ok: false, reason: 'missing_mysql_database_url', provider: 'mysql' };
   }
 
-  let postgresUrl = false;
+  let databaseProtocol = '';
   if (databaseUrl) {
     try {
-      postgresUrl = ['postgres:', 'postgresql:'].includes(new URL(databaseUrl).protocol);
+      databaseProtocol = new URL(databaseUrl).protocol;
     } catch {
-      postgresUrl = false;
+      databaseProtocol = '';
     }
   }
+  if (effective.provider === 'mysql' && databaseProtocol !== 'mysql:') {
+    return { ok: false, reason: 'invalid_mysql_database_url', provider: 'mysql' };
+  }
+  const postgresProtocolValid = ['postgres:', 'postgresql:'].includes(databaseProtocol);
+  if (
+    effective.provider === 'postgres'
+    && nextServerComponentName === 'happier-server-light'
+    && !databaseUrl
+  ) {
+    return { ok: false, reason: 'missing_postgres_database_url', provider: 'postgres' };
+  }
+  if (
+    effective.provider === 'postgres'
+    && nextServerComponentName === 'happier-server-light'
+    && !postgresProtocolValid
+  ) {
+    return { ok: false, reason: 'invalid_postgres_database_url', provider: 'postgres' };
+  }
+
+  const databaseUrlCompatible = databaseUrl && (
+    (effective.provider === 'postgres' && postgresProtocolValid)
+    || (effective.provider === 'mysql' && databaseProtocol === 'mysql:')
+    || (effective.provider === 'sqlite' && databaseProtocol === 'file:')
+  );
 
   return {
     ok: true,
     provider: effective.provider,
-    databaseUrl: effective.provider === 'mysql' ? databaseUrl : null,
-    removeDatabaseUrl: Boolean(databaseUrl) && (
-      nextServerComponentName === 'happier-server-light' ||
-      (effective.provider === 'postgres' && !postgresUrl)
-    ),
+    databaseUrl: databaseUrlCompatible ? databaseUrl : null,
+    removeDatabaseUrl: Boolean(databaseUrl) && !databaseUrlCompatible,
   };
 }
 

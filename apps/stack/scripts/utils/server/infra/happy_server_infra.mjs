@@ -504,9 +504,11 @@ export async function applyHappyServerMigrations(
     env: dbProvider == null ? env : { HAPPIER_DB_PROVIDER: dbProvider },
     targetEnv: { ...env },
   });
-  if (effectiveDbProvider === 'mysql') {
-    await pmExecBinImpl({ dir: serverDir, bin: 'migrate:mysql:deploy', args: [], env, quiet });
-    return;
-  }
-  await pmExecBinImpl({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env, quiet });
+  await pmExecBinImpl({
+    dir: serverDir,
+    bin: 'migrate:deploy',
+    args: [],
+    env: { ...env, HAPPIER_DB_PROVIDER: effectiveDbProvider },
+    quiet,
+  });
 }

@@ -147,11 +147,18 @@ async function createBundledDeclarationFixture() {
   const externalDeclaration = [
     'export type ExternalOnly = Readonly<{ external: true }>;',
     '',
+    'export declare namespace External {',
+    '    type Nested = {',
+    '        flag?: boolean;',
+    '    };',
+    '}',
+    '',
   ].join('\n');
   await writeFixtureFile(root, 'before-artifact-bundle/package/package.json', `${JSON.stringify(packageJson, null, 2)}\n`);
   await writeFixtureFile(root, 'before-artifact-bundle/package/dist/index.d.ts', [
     "export type { PublicActionInputById } from '@fixture/protocol';",
     "export type { ExternalOnly } from '@fixture/external';",
+    "export declare function usesQualifiedExternal(): import('@fixture/external').External.Nested;",
     '',
   ].join('\n'));
   // This models a sandbox before its artifact bundler materializes the
@@ -279,7 +286,8 @@ test('plugin package scripts prepare declarations and invoke the shared governan
   );
   assert.equal(
     pluginSdkPackage.scripts['check:api-governance:locked'],
-    'yarn -s check:prepare:api-governance:prepared && yarn -s check:api-governance:prepared',
+    'yarn -s check:prepare:api-governance:prepared && node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+    'The locked governance transaction must end with the one full-publisher output plan so capability-matrix.json freshness is proven after declaration preparation',
   );
   assert.equal(
     pluginSdkPackage.scripts['check:api-governance:prepared'],
@@ -391,7 +399,8 @@ test('the finite public SDK task stages materialization before its mutation guar
   );
   assert.equal(
     pluginSdkPackage.scripts['api:finite:prepared'],
-    'node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s check:api-governance:prepared',
+    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
+    'The finite governance transaction must verify the one full-publisher output plan, including capability-matrix.json freshness, after declaration preparation',
   );
   assert.equal(
     pluginSdkPackage.scripts['test:finite'],
@@ -490,6 +499,67 @@ test('the plugin-ui profile detects a reachable emitted declaration drift even w
   }
 });
 
+test('the shared governance owner resolves complete qualified same-package references', async () => {
+  const root = await createEntrypointFixture();
+  try {
+    // Every surface below reaches `Types.Hidden` through a qualified name whose
+    // left identifier is a module or re-export namespace, the shape the report
+    // must still traverse to the reached member declaration.
+    await writeFixtureFile(root, 'dist/types.d.ts', [
+      'export type Hidden = {',
+      '    value?: string;',
+      '};',
+      'export declare const value: Hidden;',
+      '',
+    ].join('\n'));
+    await writeFixtureFile(root, 'dist/reexport.d.ts', [
+      "export * as Types from './types.js';",
+      '',
+    ].join('\n'));
+    await writeFixtureFile(root, 'dist/index.d.ts', [
+      "import * as Types from './types.js';",
+      'export declare function runRef(): Types.Hidden;',
+      'export declare function runQuery(): typeof Types.value;',
+      "export declare function runReexport(): import('./reexport.js').Types.Hidden;",
+      '',
+    ].join('\n'));
+
+    await runApiGovernance({
+      profileId: 'plugin-ui',
+      packageRoot: root,
+      write: true,
+      check: false,
+    });
+    const written = await readFile(join(root, 'api-declarations.md'), 'utf8');
+    assert.match(written, /### `dist\/types\.d\.ts` — `Hidden`/u);
+    assert.match(written, /### `dist\/types\.d\.ts` — `value`/u);
+
+    // Adversarial optional-to-required drift inside the qualified member must
+    // turn the no-drift gate red naming that member.
+    await writeFixtureFile(root, 'dist/types.d.ts', [
+      'export type Hidden = {',
+      '    value: string;',
+      '};',
+      'export declare const value: Hidden;',
+      '',
+    ].join('\n'));
+
+    const drift = await runApiGovernance({
+      profileId: 'plugin-ui',
+      packageRoot: root,
+      write: false,
+      check: true,
+    });
+    assert.equal(drift.status, 'drift');
+    assert.deepEqual(
+      drift.files.find((file) => file.path === 'api-declarations.md')?.summary,
+      ['dist/types.d.ts — Hidden'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('the plugin-sdk profile keeps an extracted final candidate check-only', async () => {
   await assert.rejects(
     () => runApiGovernance({
@@ -574,6 +644,7 @@ test('the emitted report gives declared bundled dependencies a candidate identit
     await writeFixtureFile(fixture.root, 'after-artifact-bundle/package/dist/index.d.ts', [
       "export type { PublicActionInputById } from '@fixture/protocol';",
       "export type { ExternalOnly } from '@fixture/external';",
+      "export declare function usesQualifiedExternal(): import('@fixture/external').External.Nested;",
       '',
     ].join('\n'));
     await writeFixtureFile(
@@ -612,6 +683,9 @@ test('the emitted report gives declared bundled dependencies a candidate identit
       /Re-exported from another package as `ExternalOnly`; that package owns the declaration\./u,
     );
     assert.match(beforeArtifactBundle, /`@fixture\/external#ExternalOnly`/u);
+    // A qualified reference into a truly external, independently versioned
+    // namespace stays a dependency edge named by the reached member.
+    assert.match(beforeArtifactBundle, /`@fixture\/external#Nested`/u);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

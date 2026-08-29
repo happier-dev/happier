@@ -137,6 +137,8 @@ async function writeSyntheticPackedSdk(
   } = {},
 ) {
   await writeFile(join(fixtureRoot, 'package.json'), JSON.stringify({
+    version: '0.0.0',
+    private: true,
     type: 'module',
     exports: Object.fromEntries(contract.inventory.entrypoints.map((entrypoint) => [
       entrypoint.specifier,
@@ -844,49 +846,6 @@ test('packed package graph rejects extra entrypoints and wrong conditions before
     await assert.rejects(
       probeHarness.classifyPackedNormalSurface(fixtureRoot, contract),
       /Packed SDK package export graph mismatch/u,
-    );
-  } finally {
-    await rm(fixtureRoot, { recursive: true, force: true });
-  }
-});
-
-test('packed SDK requires publication-ready package metadata before accepting its API surface', async () => {
-  assert.equal(
-    typeof probeHarness.assertPackedPublishReadyPackageMetadata,
-    'function',
-    'the external packed consumer must reject pre-publication SDK package metadata',
-  );
-
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-sdk-package-metadata-'));
-  const packageJsonPath = join(fixtureRoot, 'package.json');
-  try {
-    await writeFile(packageJsonPath, JSON.stringify({
-      name: '@happier-dev/plugin-sdk',
-      version: '1.0.0',
-      private: false,
-    }));
-    await assert.doesNotReject(
-      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
-    );
-
-    await writeFile(packageJsonPath, JSON.stringify({
-      name: '@happier-dev/plugin-sdk',
-      version: '0.0.0',
-      private: false,
-    }));
-    await assert.rejects(
-      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
-      /Packed SDK package must not use placeholder version 0\.0\.0 at publication readiness/u,
-    );
-
-    await writeFile(packageJsonPath, JSON.stringify({
-      name: '@happier-dev/plugin-sdk',
-      version: '1.0.0',
-      private: true,
-    }));
-    await assert.rejects(
-      probeHarness.assertPackedPublishReadyPackageMetadata(fixtureRoot),
-      /Packed SDK package must not remain private at publication readiness/u,
     );
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });

@@ -37,6 +37,8 @@ function runtimeProjection({
   serverPort = 52753,
   backendPort = 52754,
   expoPort = 18829,
+  startedAt = '',
+  expoEnabled = true,
 } = {}) {
   return [
     `stackName=${stackName}`,
@@ -44,9 +46,12 @@ function runtimeProjection({
     `expoPort=${expoPort}`,
     JSON.stringify({
       stackName,
+      ...(startedAt ? { startedAt } : {}),
       ports: { server: serverPort, serverBackend: backendPort },
       serverProxy: { enabled: true, mode: 'proxy' },
-      expo: { port: expoPort, webPort: expoPort, mobilePort: null, webEnabled: true, devClientEnabled: false },
+      expo: expoEnabled
+        ? { port: expoPort, webPort: expoPort, mobilePort: null, webEnabled: true, devClientEnabled: false }
+        : null,
     }),
   ].join('\n');
 }
@@ -337,6 +342,83 @@ test('service tunnel readiness waits for a just-started Stack runtime instead of
   assert.equal(boundary.spawned.length, 1);
 });
 
+test('service tunnel readiness waits for a declared remote Expo service to finish starting', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-service-tunnel-remote-expo-readiness-' });
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const remoteProjection = (expoStatus) => [
+    'stackName=repo-dev-1234567890',
+    'serverPort=52753',
+    'expoPort=18829',
+    JSON.stringify({
+      stackName: 'repo-dev-1234567890',
+      ports: { server: 52753, serverBackend: null },
+      placement: { server: 'mac-host', expo: 'mac-host', daemon: 'local' },
+      remoteTargets: {
+        'mac-host': {
+          services: { server: true, expo: true, daemon: true },
+          serviceStatus: { server: 'running', expo: expoStatus, daemon: 'running' },
+          status: expoStatus === 'running' ? 'running' : 'starting',
+        },
+      },
+      expo: null,
+    }),
+  ].join('\n');
+  const executor = {
+    calls: 0,
+    async capture() {
+      this.calls += 1;
+      return {
+        exitCode: 0,
+        out: remoteProjection(this.calls === 1 ? 'starting' : 'running'),
+        err: '',
+      };
+    },
+  };
+  let activePid = null;
+  let nextPid = 731;
+  const boundary = tunnelBoundary({
+    listenerPids: (_port, _spawned, { candidatePids } = {}) => (
+      activePid != null && candidatePids?.includes(activePid) ? [activePid] : []
+    ),
+  });
+  boundary.spawn = (command, args, options) => {
+    const child = { pid: nextPid, unref() {} };
+    nextPid += 1;
+    activePid = child.pid;
+    boundary.spawned.push({ command, args, options, child });
+    return child;
+  };
+  boundary.readFingerprint = (pid) => `darwin-ps:${pid}`;
+  boundary.observeProcess = async (pid) => (
+    pid === activePid
+      ? {
+          status: 'ok',
+          line: `${pid} ssh HAPPIER_STACK_PROCESS_KIND=execution-host-service-tunnel HAPPIER_STACK_EXECUTION_HOST_TUNNEL=primary:0.3:repo-dev-1234567890`,
+        }
+      : { status: 'not_found' }
+  );
+  boundary.terminate = async (pid, options) => {
+    boundary.terminated.push({ pid, options });
+    if (pid === activePid) activePid = null;
+    return { ok: true, signal: 'SIGTERM' };
+  };
+
+  const result = await waitForExecutionHostServiceTunnel({
+    profile: profile(fixture.path('lima')),
+    workspaceId: '0.3',
+    stackName: 'repo-dev-1234567890',
+    executor,
+    env,
+    boundary,
+  });
+
+  assert.equal(result.status, 'running');
+  assert.equal(executor.calls, 2, 'startup must keep inspecting while the selected Expo target is still starting');
+  assert.deepEqual(boundary.spawned.map(({ child }) => child.pid), [731, 732]);
+  assert.deepEqual(boundary.terminated.map(({ pid }) => pid), [731]);
+  assert.deepEqual(result.forwards.map(({ service }) => service), ['server', 'expo']);
+});
+
 test('service tunnel supervision replaces one transiently exited owned SSH transport and stops on cancellation', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-service-tunnel-supervision-' });
   const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
@@ -390,6 +472,66 @@ test('service tunnel supervision replaces one transiently exited owned SSH trans
   assert.equal(boundary.terminated.length, 0, 'a missing child must not cause any port-owner termination');
   const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
   assert.equal(state.pid, 732);
+});
+
+test('service tunnel supervision retries after one replacement transport fails to start', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-service-tunnel-supervision-retry-' });
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const controller = new AbortController();
+  let activePid = null;
+  let nextPid = 731;
+  let delays = 0;
+  const boundary = tunnelBoundary({
+    listenerPids: (_port, _spawned, { candidatePids } = {}) => (
+      activePid != null && candidatePids?.includes(activePid) ? [activePid] : []
+    ),
+  });
+  boundary.spawn = (command, args, options) => {
+    const child = {
+      pid: nextPid,
+      unref() {},
+      kill() {
+        if (activePid === this.pid) activePid = null;
+      },
+    };
+    nextPid += 1;
+    activePid = child.pid;
+    boundary.spawned.push({ command, args, options, child });
+    return child;
+  };
+  boundary.readFingerprint = (pid) => pid === 732 ? '' : `darwin-ps:${pid}`;
+  boundary.observeProcess = async (pid) => (
+    pid === activePid
+      ? {
+          status: 'ok',
+          line: `${pid} ssh HAPPIER_STACK_PROCESS_KIND=execution-host-service-tunnel HAPPIER_STACK_EXECUTION_HOST_TUNNEL=primary:0.3:repo-dev-1234567890`,
+        }
+      : { status: 'not_found' }
+  );
+  boundary.delay = async () => {
+    delays += 1;
+    if (delays === 1) activePid = null;
+    if (delays === 3) controller.abort();
+  };
+
+  const result = await superviseExecutionHostServiceTunnel({
+    profile: profile(fixture.path('lima')),
+    workspaceId: '0.3',
+    stackName: 'repo-dev-1234567890',
+    executor: runtimeExecutor(runtimeProjection()),
+    env,
+    boundary,
+    signal: controller.signal,
+  });
+
+  assert.equal(result.status, 'cancelled');
+  assert.deepEqual(
+    boundary.spawned.map(({ child }) => child.pid),
+    [731, 732, 733],
+    'supervision must retry after one replacement SSH child exits before identity capture',
+  );
+  const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
+  assert.equal(state.pid, 733);
 });
 
 test('service tunnel supervision does not poll a stable initial remote Expo projection', async (t) => {
@@ -449,6 +591,87 @@ test('service tunnel supervision does not poll a stable initial remote Expo proj
   assert.deepEqual(state.forwards, [
     { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
     { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 19364, targetHost: '127.0.0.1', targetPort: 19364 },
+  ]);
+});
+
+test('service tunnel supervision replaces a pre-dispatch plan after the guest publishes its successor runtime', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-service-tunnel-supervision-successor-runtime-' });
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home') };
+  const controller = new AbortController();
+  const previousRuntimeStartedAt = '2026-08-28T18:23:59.000Z';
+  const successorRuntimeStartedAt = '2026-08-28T18:24:00.000Z';
+  let projection = runtimeProjection({
+    startedAt: previousRuntimeStartedAt,
+    expoEnabled: false,
+  });
+  const executor = {
+    calls: [],
+    async capture() {
+      this.calls.push('inspect');
+      return { exitCode: 0, out: projection, err: '' };
+    },
+  };
+  let activePid = null;
+  let nextPid = 731;
+  let delays = 0;
+  const boundary = tunnelBoundary({
+    listenerPids: (_port, _spawned, { candidatePids } = {}) => (
+      activePid != null && candidatePids?.includes(activePid) ? [activePid] : []
+    ),
+  });
+  boundary.spawn = (command, args, options) => {
+    const child = { pid: nextPid, unref() {} };
+    nextPid += 1;
+    activePid = child.pid;
+    boundary.spawned.push({ command, args, options, child });
+    return child;
+  };
+  boundary.readFingerprint = (pid) => `darwin-ps:${pid}`;
+  boundary.observeProcess = async (pid) => (
+    pid === activePid
+      ? {
+          status: 'ok',
+          line: `${pid} ssh HAPPIER_STACK_PROCESS_KIND=execution-host-service-tunnel HAPPIER_STACK_EXECUTION_HOST_TUNNEL=primary:0.3:repo-dev-1234567890`,
+        }
+      : { status: 'not_found' }
+  );
+  boundary.terminate = async (pid, options) => {
+    boundary.terminated.push({ pid, options });
+    if (pid === activePid) activePid = null;
+    return { ok: true, signal: 'SIGTERM' };
+  };
+  boundary.delay = async () => {
+    delays += 1;
+    if (delays === 1) {
+      projection = runtimeProjection({ expoEnabled: false });
+      return;
+    }
+    if (delays === 2) {
+      projection = runtimeProjection({ startedAt: successorRuntimeStartedAt });
+      return;
+    }
+    controller.abort();
+  };
+
+  const result = await superviseExecutionHostServiceTunnel({
+    profile: profile(fixture.path('lima')),
+    workspaceId: '0.3',
+    stackName: 'repo-dev-1234567890',
+    executor,
+    env,
+    boundary,
+    signal: controller.signal,
+    previousRuntimeStartedAt,
+  });
+
+  assert.equal(result.status, 'cancelled');
+  assert.equal(executor.calls.length, 3, 'the bounded startup wait should require a valid successor declaration');
+  assert.deepEqual(boundary.spawned.map(({ child }) => child.pid), [731, 732]);
+  assert.deepEqual(boundary.terminated.map(({ pid }) => pid), [731]);
+  const state = JSON.parse(await readFile(`${fixture.path('home')}/execution-host-tunnels/primary-0.3.json`, 'utf8'));
+  assert.deepEqual(state.forwards, [
+    { service: 'server', listenHost: '0.0.0.0', listenPort: 52753, targetHost: '127.0.0.1', targetPort: 52754 },
+    { service: 'expo-web', listenHost: '0.0.0.0', listenPort: 18829, targetHost: '127.0.0.1', targetPort: 18829 },
   ]);
 });
 

@@ -1,13 +1,12 @@
 import { join } from 'node:path';
 import { applyEffectiveDbProviderEnv } from './effective_db_provider.mjs';
 
-export function applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir }) {
+export function applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir, serverComponentName = 'happier-server-light' }) {
   const dbProvider = applyEffectiveDbProviderEnv({
-    serverComponentName: 'happier-server-light',
+    serverComponentName,
     env: baseEnv,
     targetEnv: serverEnv,
   });
-  delete serverEnv.DATABASE_URL;
   const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
     ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
     : join(baseDir, 'server-light');

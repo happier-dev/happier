@@ -68,7 +68,14 @@ function startsGuestStackServices(argv) {
   return positionals[0] === 'stack' && ['start', 'dev'].includes(positionals[1]);
 }
 
-async function reconcileManagedHostAfterStart({ profile, workspaceId, stackName, signal, env }) {
+async function reconcileManagedHostAfterStart({
+  profile,
+  workspaceId,
+  stackName,
+  signal,
+  env,
+  previousRuntimeStartedAt,
+}) {
   const executor = createManagedLimaHostExecutor(
     { kind: 'local' },
     undefined,
@@ -82,6 +89,7 @@ async function reconcileManagedHostAfterStart({ profile, workspaceId, stackName,
     executor,
     env,
     signal,
+    previousRuntimeStartedAt,
   });
 }
 
@@ -186,12 +194,14 @@ export async function prepareManagedHost(profile, dependencies = {}) {
   const workspaceId = String(dependencies.workspaceId ?? '').trim();
   const stackName = String(dependencies.stackName ?? '').trim();
   const requiresServiceTunnel = dependencies.requiresServiceTunnel !== false;
+  let serviceTunnelRuntimeStartedAt = '';
   // A named profile can host several guest workspaces with overlapping service
   // ports. The caller that chose a guest workspace is the only safe place to
   // select which Stack declaration receives the host SSH transport.
   if (!pendingLegacyServiceForwardCutover && (profile.version !== 2 || workspaceId)) {
     try {
-      await reconcileServiceTunnel({ profile, workspaceId, stackName, executor, env: process.env });
+      const reconciliation = await reconcileServiceTunnel({ profile, workspaceId, stackName, executor, env: process.env });
+      serviceTunnelRuntimeStartedAt = String(reconciliation?.runtimeStartedAt ?? '').trim();
     } catch (error) {
       if (requiresServiceTunnel) throw error;
       dependencies.reportWarning?.(
@@ -207,6 +217,7 @@ export async function prepareManagedHost(profile, dependencies = {}) {
       executor,
     });
   }
+  return { serviceTunnelRuntimeStartedAt };
 }
 
 export async function runDelegatedHstackCommand({
@@ -227,7 +238,7 @@ export async function runDelegatedHstackCommand({
     requiresServiceTunnel: startsGuestStackServices(argv),
   };
   if (typeof boundary.reportWarning === 'function') preparation.reportWarning = boundary.reportWarning;
-  await prepare(profile, preparation);
+  const prepared = await prepare(profile, preparation);
   const guestCwd = mapping?.guestCwd ?? mapHostCwdToGuest(profile, cwd);
   const invocation = guestInvocation ?? (mapping
     ? {
@@ -262,6 +273,7 @@ export async function runDelegatedHstackCommand({
         stackName,
         signal: reconciliationController.signal,
         env,
+        previousRuntimeStartedAt: String(prepared?.serviceTunnelRuntimeStartedAt ?? '').trim(),
       })).catch((error) => {
         boundary.reportWarning?.(
           `[dev-vm] delegated Stack started, but its host service tunnel could not be reconciled: ${error?.message ?? error}`,

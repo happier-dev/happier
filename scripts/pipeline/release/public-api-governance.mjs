@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
-import { summarizeDeclarationDiff } from '../../api-governance/declarationDiff.mjs';
+import { renderDeclarationDiffSample, summarizeDeclarationDiff } from '../../api-governance/declarationDiff.mjs';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
 import {
@@ -619,7 +619,7 @@ export function renderPublicApiReleaseComparison(report) {
     `[pipeline] public API comparison: ${report.packageName}@${report.candidateVersion} vs ${report.previousVersion}`,
     `  added=${facts.addedSymbols.length} removed=${facts.removedSymbols.length} deprecated=${facts.deprecatedSymbols.length} changed-symbols=${facts.changedSymbols.length} changed-declaration-blocks=${facts.changedDeclarationBlocks.length}`,
     ...(facts.removedSymbols.length > 0 ? [`  removed (breaking): ${facts.removedSymbols.join(', ')}`] : []),
-    ...(facts.changedDeclarationBlocks.length > 0 ? [`  declaration review: ${facts.changedDeclarationBlocks.join(', ')}`] : []),
+    ...(facts.changedDeclarationBlocks.length > 0 ? [`  declaration review: ${renderDeclarationDiffSample(facts.changedDeclarationBlocks).join(', ')}`] : []),
     `  human review required: ${report.disposition.humanReviewRequired ? 'yes' : 'no'}; compatibility classification and version selection remain human release decisions.`,
     '',
   ].join('\n');

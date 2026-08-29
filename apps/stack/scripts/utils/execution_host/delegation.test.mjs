@@ -102,15 +102,21 @@ test('managed host preparation mounts an enabled guest workspace after the VM is
 
 test('named host preparation reconciles only the delegated workspace service tunnel before guest execution', async () => {
   const calls = [];
-  await prepareManagedHost(namedProfile, {
+  const preparation = await prepareManagedHost(namedProfile, {
     workspaceId: '0.3',
     stackName: 'repo-dev-a1cc5e0671',
     executor: { kind: 'test-executor' },
     start: async () => {},
     doctor: async () => ({ ok: true }),
-    reconcileServiceTunnel: async ({ workspaceId, stackName }) => { calls.push([workspaceId, stackName]); },
+    reconcileServiceTunnel: async ({ workspaceId, stackName }) => {
+      calls.push([workspaceId, stackName]);
+      return { runtimeStartedAt: '2026-08-28T18:23:59.000Z' };
+    },
   });
   assert.deepEqual(calls, [['0.3', 'repo-dev-a1cc5e0671']]);
+  assert.deepEqual(preparation, {
+    serviceTunnelRuntimeStartedAt: '2026-08-28T18:23:59.000Z',
+  });
 });
 
 test('managed host preparation warns but delegates commands that do not require the host service tunnel', async () => {
@@ -402,9 +408,12 @@ test('delegated Stack startup reconciles host service tunnels after spawning the
     argv: ['tui', 'stack', 'dev', 'repo-dev-a1cc5e0671'],
     cwd: '/Users/example/happier/dev',
     env: { PATH: '/usr/bin' },
-    prepare: async () => { calls.push('prepare'); },
-    reconcileAfterStart: ({ workspaceId, stackName, signal }) => new Promise((resolve) => {
-      calls.push(['reconcile', workspaceId, stackName, signal.aborted]);
+    prepare: async () => {
+      calls.push('prepare');
+      return { serviceTunnelRuntimeStartedAt: '2026-08-28T18:23:59.000Z' };
+    },
+    reconcileAfterStart: ({ workspaceId, stackName, signal, previousRuntimeStartedAt }) => new Promise((resolve) => {
+      calls.push(['reconcile', workspaceId, stackName, previousRuntimeStartedAt, signal.aborted]);
       signal.addEventListener('abort', () => {
         calls.push('reconciliation-cancelled');
         resolve({ status: 'cancelled' });
@@ -423,7 +432,7 @@ test('delegated Stack startup reconciles host service tunnels after spawning the
   assert.deepEqual(calls, [
     'prepare',
     'spawn',
-    ['reconcile', '0.3', 'repo-dev-a1cc5e0671', false],
+    ['reconcile', '0.3', 'repo-dev-a1cc5e0671', '2026-08-28T18:23:59.000Z', false],
   ]);
   closeChild();
   assert.deepEqual(await running, { exitCode: 0, signal: null });

@@ -119,16 +119,14 @@ function readPublishedIdentity(outputPath, expected) {
   return { package: values.package, version: values.version, integrity: values.integrity };
 }
 
-/** @param {string} outputPath @param {{ package: string; version: string; integrity: string }} sdk @param {{ package: string; version: string; integrity: string }} ui */
-function writePairPublicationOutput(outputPath, sdk, ui) {
+/** @param {string} outputPath @param {'plugin_sdk' | 'plugin_ui'} packageKey @param {{ package: string; version: string; integrity: string }} identity */
+function writePairPublicationOutput(outputPath, packageKey, identity) {
   if (!outputPath) return;
   appendFileSync(outputPath, [
-    `plugin_sdk_package=${sdk.package}`,
-    `plugin_sdk_version=${sdk.version}`,
-    `plugin_sdk_integrity=${sdk.integrity}`,
-    `plugin_ui_package=${ui.package}`,
-    `plugin_ui_version=${ui.version}`,
-    `plugin_ui_integrity=${ui.integrity}`,
+    `${packageKey}_result=success`,
+    `${packageKey}_package=${identity.package}`,
+    `${packageKey}_version=${identity.version}`,
+    `${packageKey}_integrity=${identity.integrity}`,
     '',
   ].join('\n'), 'utf8');
 }
@@ -191,20 +189,20 @@ function main() {
       mode: 'pack+publish',
       dryRun: false,
       authorizedSha,
-      packageNames: [sdk.name, ui.name],
     });
   }
 
   // The existing publisher owns npm integrity verification and idempotent tag
   // repair. This owner only sequences the lockstep pair: stage both immutable
-  // tarballs first, then make the public tag visible SDK-first.
+  // tarballs first, then make the public tag visible SDK-first. Each package's
+  // verified final identity is emitted immediately after its own final-tag
+  // verification, so a partial failure still reports the package that finished
+  // and the existing idempotent recovery can resume the remaining one.
   const outputDirectory = dryRun ? '' : mkdtempSync(path.join(tmpdir(), 'happier-plugin-sdk-pair-publish-'));
   try {
-    for (const [tarball, tag, output] of [
-      [sdkTarball, stagingTag, ''],
-      [uiTarball, stagingTag, ''],
-      [sdkTarball, finalTag, outputDirectory ? path.join(outputDirectory, 'plugin-sdk') : ''],
-      [uiTarball, finalTag, outputDirectory ? path.join(outputDirectory, 'plugin-ui') : ''],
+    for (const [tarball, tag] of [
+      [sdkTarball, stagingTag],
+      [uiTarball, stagingTag],
     ]) {
       invokeCanonicalPublisher({
         repoRoot,
@@ -212,15 +210,31 @@ function main() {
         tarball,
         tag,
         dryRun,
-        githubOutput: output,
+        githubOutput: '',
         npmVersion,
         authorizedSha,
       });
     }
-    if (identities) {
-      const sdk = readPublishedIdentity(path.join(outputDirectory, 'plugin-sdk'), identities.sdk);
-      const ui = readPublishedIdentity(path.join(outputDirectory, 'plugin-ui'), identities.ui);
-      writePairPublicationOutput(githubOutput, sdk, ui);
+    /** @type {Array<['plugin_sdk' | 'plugin_ui', string, { name: string; version: string } | null]>} */
+    const finalPublications = [
+      ['plugin_sdk', sdkTarball, identities?.sdk ?? null],
+      ['plugin_ui', uiTarball, identities?.ui ?? null],
+    ];
+    for (const [packageKey, tarball, expected] of finalPublications) {
+      const packageOutput = outputDirectory ? path.join(outputDirectory, packageKey) : '';
+      invokeCanonicalPublisher({
+        repoRoot,
+        channel,
+        tarball,
+        tag: finalTag,
+        dryRun,
+        githubOutput: packageOutput,
+        npmVersion,
+        authorizedSha,
+      });
+      if (expected) {
+        writePairPublicationOutput(githubOutput, packageKey, readPublishedIdentity(packageOutput, expected));
+      }
     }
   } finally {
     if (outputDirectory) rmSync(outputDirectory, { recursive: true, force: true });

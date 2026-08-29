@@ -148,6 +148,69 @@ test('npm-release rejects an ordinarily dirty real pack+publish before pipeline-
   }
 });
 
+test('local public SDK publication verifies successful exact-SHA CI before loading release secrets', async () => {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-npm-release-public-sdk-ci-'));
+  const authorizedSha = 'a'.repeat(40);
+  const ghPath = join(temporaryRoot, 'gh');
+  const ghInvokedPath = join(temporaryRoot, 'gh-invoked');
+  const eventsPath = join(temporaryRoot, 'events');
+  try {
+    const trapPath = join(temporaryRoot, 'pipeline-env-access-trap.cjs');
+    const pipelineEnvInvokedPath = join(temporaryRoot, 'pipeline-env-invoked');
+    await writeFile(trapPath, `const fs = require('node:fs');
+const { syncBuiltinESMExports } = require('node:module');
+const originalExistsSync = fs.existsSync;
+fs.existsSync = function existsSync(pathLike) {
+  if (String(pathLike).endsWith('.env.pipeline.local')) {
+    fs.writeFileSync(${JSON.stringify(pipelineEnvInvokedPath)}, 'invoked');
+    fs.appendFileSync(${JSON.stringify(eventsPath)}, 'pipeline-env\\n');
+    throw new Error('TEST_PIPELINE_ENV_LOADED');
+  }
+  return originalExistsSync.call(this, pathLike);
+};
+syncBuiltinESMExports();
+`);
+    await writeGitStatusFixture(temporaryRoot);
+    await writeFile(ghPath, `#!/bin/sh
+printf invoked > ${JSON.stringify(ghInvokedPath)}
+printf 'gh\n' >> ${JSON.stringify(eventsPath)}
+cat <<'JSON'
+{"workflow_runs":[{"id":123,"head_sha":"${authorizedSha}","head_branch":"preview","event":"push","status":"completed","conclusion":"success","head_repository":{"full_name":"happier-dev/happier"},"html_url":"https://github.com/happier-dev/happier/actions/runs/123"}]}
+JSON
+`, { mode: 0o755 });
+
+    const result = spawnSync(process.execPath, [
+      '--require', trapPath,
+      'scripts/pipeline/run.mjs',
+      'npm-release',
+      '--channel', 'preview',
+      '--publish-sdk', 'true',
+      '--mode', 'pack+publish',
+      '--authorized-sha', authorizedSha,
+      '--secrets-source', 'keychain',
+      '--keychain-service', 'test-only-no-secret',
+    ], {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        PATH: `${temporaryRoot}:${process.env.PATH ?? ''}`,
+        GITHUB_REPOSITORY: 'happier-dev/happier',
+        HAPPIER_TEST_GIT_HEAD: authorizedSha,
+        HAPPIER_TEST_GIT_STATUS: '',
+      },
+      encoding: 'utf8',
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /TEST_PIPELINE_ENV_LOADED/);
+    assert.equal(await readFile(ghInvokedPath, 'utf8'), 'invoked');
+    assert.equal(await readFile(pipelineEnvInvokedPath, 'utf8'), 'invoked');
+    assert.equal(await readFile(eventsPath, 'utf8'), 'gh\npipeline-env\n');
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
 test('npm-release rejects dirty real pack+publish before secrets', async () => {
   const temporaryRoot = await mkdtemp(join(tmpdir(), 'happier-npm-release-dirty-publication-'));
   const securityPath = join(temporaryRoot, 'security');

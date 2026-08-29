@@ -359,7 +359,7 @@ test('external authors serialize a target point and arbitrary same-plugin Action
         required: true,
         input: { kind: 'protocolDefined', schema: connectionInputSchema },
         resultSchema: connectionResultSchema,
-        action: { surface: 'plugin', dangerLevel: 'safe' },
+        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
       },
     },
   });
@@ -418,7 +418,7 @@ test('external authors serialize a target point and arbitrary same-plugin Action
           required: true,
           input: { kind: 'protocolDefined', schema: inputSchema },
           resultSchema,
-          action: { surface: 'plugin', dangerLevel: 'safe' },
+          action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
       },
     }],

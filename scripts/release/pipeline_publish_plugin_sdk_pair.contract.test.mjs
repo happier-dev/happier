@@ -63,6 +63,10 @@ if (args[0] === 'dist-tag' && args[1] === 'add') {
   const at = args[2].lastIndexOf('@');
   const name = args[2].slice(0, at);
   const version = args[2].slice(at + 1);
+  if ((state.failTagAdds ?? []).includes(name)) {
+    process.stderr.write('npm ERR! dist-tag add refused\\n');
+    process.exit(1);
+  }
   state.tags[name] = { ...(state.tags[name] ?? {}), [args[3]]: version };
   persist();
   process.stdout.write('tagged\\n');
@@ -132,4 +136,97 @@ test('plugin SDK pair publisher accepts an exact release-admitted public candida
 
   assert.equal(error, undefined);
   assert.equal(fs.existsSync(outputPath), true, 'an exact admitted SDK pair should emit package identities');
+  const output = fs.readFileSync(outputPath, 'utf8');
+  assert.match(output, /plugin_sdk_result=success/u);
+  assert.match(output, /plugin_sdk_version=0\.1\.0-preview\.7/u);
+  assert.match(output, /plugin_sdk_integrity=sha512-/u);
+  assert.match(output, /plugin_ui_result=success/u);
+  assert.match(output, /plugin_ui_version=0\.1\.0-preview\.7/u);
+  assert.match(output, /plugin_ui_integrity=sha512-/u);
+  const sdkResultIndex = output.indexOf('plugin_sdk_result=success');
+  const uiResultIndex = output.indexOf('plugin_ui_result=success');
+  assert.ok(sdkResultIndex >= 0 && uiResultIndex > sdkResultIndex, 'each verified identity is emitted immediately after its own final-tag verification, SDK-first');
+});
+
+test('plugin SDK pair publisher refuses a real publication without an admitted exact source SHA before npm is contacted', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-no-admission-'));
+  const version = '0.1.0-preview.7';
+  createTarball(tempDir, '@happier-dev/plugin-sdk', version);
+  createTarball(tempDir, '@happier-dev/plugin-ui', version);
+  const outputPath = path.join(tempDir, 'github-output');
+  const statePath = path.join(tempDir, 'npm-state.json');
+  fs.writeFileSync(statePath, JSON.stringify({ integrities: {}, tags: {} }), 'utf8');
+  const binDir = writeNpmStub(tempDir);
+
+  let error;
+  try {
+    execFileSync(process.execPath, [
+      resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-plugin-sdk-pair.mjs'),
+      '--channel', 'preview',
+      '--tarball-dir', tempDir,
+      '--npm-version', '',
+      '--github-output', outputPath,
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`, NPM_PAIR_STATE: statePath, GITHUB_ACTIONS: 'false' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.notEqual(error, undefined);
+  assert.match(
+    `${String(error?.message ?? '')}\n${String(error?.stderr ?? '')}`,
+    /release-admitted exact source SHA/u,
+  );
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(state.calls ?? 0, 0, 'admission must reject before any npm operation');
+});
+
+test('plugin SDK pair publisher reports the verified SDK identity when the UI final tag fails', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-plugin-sdk-pair-partial-'));
+  const version = '0.1.0-preview.7';
+  const sdkTarball = createTarball(tempDir, '@happier-dev/plugin-sdk', version);
+  const uiTarball = createTarball(tempDir, '@happier-dev/plugin-ui', version);
+  const outputPath = path.join(tempDir, 'github-output');
+  const statePath = path.join(tempDir, 'npm-state.json');
+  fs.writeFileSync(statePath, JSON.stringify({
+    integrities: {},
+    // Staging tags already point at the pair so the run reaches both final tags.
+    tags: {
+      '@happier-dev/plugin-sdk': { 'next-staging': version },
+      '@happier-dev/plugin-ui': { 'next-staging': version },
+    },
+    failTagAdds: ['@happier-dev/plugin-ui'],
+  }), 'utf8');
+  const binDir = writeNpmStub(tempDir);
+
+  let error;
+  try {
+    execFileSync(process.execPath, [
+      resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'publish-plugin-sdk-pair.mjs'),
+      '--channel', 'preview',
+      '--sdk-tarball', sdkTarball,
+      '--ui-tarball', uiTarball,
+      '--npm-version', '',
+      '--authorized-sha', 'a'.repeat(40),
+      '--github-output', outputPath,
+    ], {
+      cwd: repoRoot,
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`, NPM_PAIR_STATE: statePath, GITHUB_ACTIONS: 'false' },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (caught) {
+    error = caught;
+  }
+
+  assert.notEqual(error, undefined, 'a failed UI final tag must fail the publication');
+  const output = fs.readFileSync(outputPath, 'utf8');
+  assert.match(output, /plugin_sdk_result=success/u, 'the verified SDK identity is reported independently of the later UI failure');
+  assert.match(output, /plugin_sdk_version=0\.1\.0-preview\.7/u);
+  assert.match(output, /plugin_sdk_integrity=sha512-/u);
+  assert.doesNotMatch(output, /plugin_ui_result=/u);
 });

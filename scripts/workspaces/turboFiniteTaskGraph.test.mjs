@@ -128,7 +128,7 @@ test('the finite Turbo graph is activated through the current package manager wi
   );
   assert.equal(
     pluginSdk.scripts['api:finite:prepared'],
-    'node ./scripts/apiSurfaceCli.mjs --materialize-source --check && yarn -s check:api-governance:prepared',
+    'node ../../scripts/api-governance/cli.mjs --profile plugin-sdk --check',
   );
   assert.equal(pluginSdk.scripts['test:finite'], 'yarn -s test:prepared');
   assert.equal(

@@ -198,11 +198,79 @@ export function validateTerminalNativePackagingGateDetails(input: Readonly<{
       }
       break;
     }
-    case 'repeatable-package-build':
-      exactKeys(['firstBinarySha256', 'secondBinarySha256', 'reproducible']);
-      binary('firstBinarySha256'); binary('secondBinarySha256');
-      if (details.reproducible !== true) errors.push('reproducible must be true');
+    case 'repeatable-package-build': {
+      if (input.rendererId === 'android-termux') {
+        exactKeys(['firstBinarySha256', 'secondBinarySha256', 'reproducible']);
+        binary('firstBinarySha256'); binary('secondBinarySha256');
+        if (details.reproducible !== true) errors.push('reproducible must be true');
+        break;
+      }
+      exactKeys([
+        'buildCommandSha256', 'buildEnvironmentSha256', 'firstBuild', 'secondBuild',
+        'artifactHashesEqual', 'toolchainNondeterminismObserved',
+      ]);
+      if (!isSha256(details.buildCommandSha256)) errors.push('buildCommandSha256 must be a SHA-256');
+      if (!isSha256(details.buildEnvironmentSha256)) errors.push('buildEnvironmentSha256 must be a SHA-256');
+      const builds = [details.firstBuild, details.secondBuild];
+      for (const [index, build] of builds.entries()) {
+        if (!isObject(build)) {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'} must be an object`);
+          continue;
+        }
+        const expectedBuildKeys = [
+          'binaryArtifactId', 'binarySha256', 'buildLogArtifactId', 'buildLogSha256',
+          'buildSucceeded', 'inspection',
+        ].sort();
+        const actualBuildKeys = Object.keys(build).sort();
+        if (actualBuildKeys.length !== expectedBuildKeys.length
+          || actualBuildKeys.some((key, keyIndex) => key !== expectedBuildKeys[keyIndex])) {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'} keys must equal ${expectedBuildKeys.join(',')}`);
+        }
+        for (const key of ['binaryArtifactId', 'buildLogArtifactId']) {
+          if (typeof build[key] !== 'string' || String(build[key]).trim().length === 0) {
+            errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.${key} must be non-empty`);
+          }
+        }
+        for (const key of ['binarySha256', 'buildLogSha256']) {
+          if (!isSha256(build[key])) errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.${key} must be a SHA-256`);
+        }
+        if (build.buildSucceeded !== true) errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.buildSucceeded must be true`);
+        if (!isObject(build.inspection)) {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection must be an object`);
+          continue;
+        }
+        const expectedInspectionKeys = [
+          'format', 'applicationId', 'version', 'buildNumber', 'architectures', 'metadataSha256',
+          'executable', 'codeSignaturePresent', 'provisioningProfilePresent',
+        ].sort();
+        const actualInspectionKeys = Object.keys(build.inspection).sort();
+        if (actualInspectionKeys.length !== expectedInspectionKeys.length
+          || actualInspectionKeys.some((key, keyIndex) => key !== expectedInspectionKeys[keyIndex])) {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection keys must equal ${expectedInspectionKeys.join(',')}`);
+        }
+        if (!isSha256(build.inspection.metadataSha256)) errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection.metadataSha256 must be a SHA-256`);
+        if (!isStringArray(build.inspection.architectures) || build.inspection.architectures.length === 0) {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection.architectures must be non-empty`);
+        }
+        for (const key of ['format', 'applicationId', 'version', 'buildNumber', 'executable']) {
+          if (typeof build.inspection[key] !== 'string' || String(build.inspection[key]).trim().length === 0) {
+            errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection.${key} must be non-empty`);
+          }
+        }
+        if (typeof build.inspection.codeSignaturePresent !== 'boolean'
+          || typeof build.inspection.provisioningProfilePresent !== 'boolean') {
+          errors.push(`${index === 0 ? 'firstBuild' : 'secondBuild'}.inspection signature facts must be boolean`);
+        }
+      }
+      if (isObject(details.firstBuild) && isObject(details.secondBuild)) {
+        const hashesEqual = details.firstBuild.binarySha256 === details.secondBuild.binarySha256;
+        if (details.artifactHashesEqual !== hashesEqual) errors.push('artifactHashesEqual must match the recorded binary hashes');
+        if (details.toolchainNondeterminismObserved !== !hashesEqual) {
+          errors.push('toolchainNondeterminismObserved must be true exactly when iOS artifact hashes differ');
+        }
+      }
       break;
+    }
     case 'checksum-pinned-artifact':
       exactKeys(['expectedDependencyChecksumSha256', 'observedDependencyChecksumSha256', 'dependencyClosureSha256']);
       if (details.expectedDependencyChecksumSha256 !== input.dependencyPin.dependencyChecksumSha256

@@ -212,6 +212,7 @@ function representativeAppPackage(input: Readonly<{
   version: string;
   buildNumber: string;
   identity: Buffer;
+  toolchainMarker?: string;
 }>): Readonly<{ bytes: Buffer; metadataSha256: string }> {
   if (input.renderer === 'android-termux') {
     const manifest = androidBinaryManifest(input.applicationId, input.version, input.buildNumber);
@@ -234,6 +235,9 @@ function representativeAppPackage(input: Readonly<{
       { name: 'Happier.app/Happier', contents: thinMachO() },
       { name: 'Happier.app/_CodeSignature/CodeResources', contents: Buffer.from('adhoc') },
       { name: 'Happier.app/happier-terminal-native-build-identity.json', contents: input.identity },
+      ...(input.toolchainMarker
+        ? [{ name: 'Happier.app/toolchain-output.txt', contents: Buffer.from(input.toolchainMarker) }]
+        : []),
     ]),
   };
 }
@@ -274,6 +278,7 @@ function packagingGateDetails(
   binarySha256: string,
   pin: TerminalNativeDependencyPin,
   packageFacts: Readonly<{ metadataSha256: string; applicationId: string; version: string; buildNumber: string }>,
+  iosRepeatabilityDetails?: Record<string, unknown>,
 ): Record<string, unknown> {
   switch (gateId) {
     case 'platform-package-inspection':
@@ -291,6 +296,10 @@ function packagingGateDetails(
         dexFileCount: 1, nativeLibraryCount: 1, resourcesPresent: true,
       };
     case 'repeatable-package-build':
+      if (renderer === 'ios-ghosttykit') {
+        if (!iosRepeatabilityDetails) throw new Error('missing iOS repeatability fixture details');
+        return iosRepeatabilityDetails;
+      }
       return { firstBinarySha256: binarySha256, secondBinarySha256: binarySha256, reproducible: true };
     case 'checksum-pinned-artifact':
       return {
@@ -353,7 +362,10 @@ function actionDetails(id: TerminalNativeDeviceActionId, renderer: TerminalNativ
   };
 }
 
-function createFixture(renderer: TerminalNativeDeviceRenderer): Fixture {
+function createFixture(
+  renderer: TerminalNativeDeviceRenderer,
+  fixtureOptions: Readonly<{ iosRepeatHashesDiffer?: boolean; iosSecondBuildSucceeded?: boolean }> = {},
+): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'term-evidence-v2-'));
   const recipe = getTerminalNativeDeviceRecipe(renderer);
   const runId = `${renderer}-run-v2`;
@@ -427,15 +439,73 @@ function createFixture(renderer: TerminalNativeDeviceRenderer): Fixture {
     Buffer.from(terminalNativeCaptureSigningPayload(unsignedBuildIdentity)),
     captureKeys.privateKey,
   ).toString('base64');
+  const embeddedIdentityBytes = Buffer.from(terminalEvidenceCanonicalJson({ ...unsignedBuildIdentity, signature: buildIdentitySignature }));
   const packageFacts = representativeAppPackage({
     renderer,
     applicationId,
     version: '0.0.0-qa',
     buildNumber: '123',
-    identity: Buffer.from(terminalEvidenceCanonicalJson({ ...unsignedBuildIdentity, signature: buildIdentitySignature })),
+    identity: embeddedIdentityBytes,
   });
   const appBytes = packageFacts.bytes;
   addArtifact('app-binary', 'app-binary', 'application/octet-stream', appBytes, START);
+  let iosRepeatabilityDetails: Record<string, unknown> | undefined;
+  if (renderer === 'ios-ghosttykit') {
+    const repeatBytes = fixtureOptions.iosRepeatHashesDiffer
+      ? representativeAppPackage({
+        renderer,
+        applicationId,
+        version: '0.0.0-qa',
+        buildNumber: '123',
+        identity: embeddedIdentityBytes,
+        toolchainMarker: 'different nondeterministic toolchain output',
+      }).bytes
+      : appBytes;
+    addArtifact('app-binary-repeat', 'app-binary', 'application/octet-stream', repeatBytes, START);
+    addArtifact('build-log-first', 'log', 'text/plain', 'xcodebuild\n** BUILD SUCCEEDED **\n', START);
+    addArtifact(
+      'build-log-second',
+      'log',
+      'text/plain',
+      fixtureOptions.iosSecondBuildSucceeded === false
+        ? 'xcodebuild\n** BUILD FAILED **\n'
+        : 'xcodebuild\n** BUILD SUCCEEDED **\n',
+      START,
+    );
+    const inspectionFacts = (artifactId: string) => {
+      const inspection = inspectTerminalNativeAppPackage(artifactPaths.get(artifactId)!, 'ios');
+      return {
+        format: inspection.format,
+        applicationId: inspection.applicationId,
+        version: inspection.version,
+        buildNumber: inspection.buildNumber,
+        architectures: inspection.architectures,
+        metadataSha256: inspection.metadataSha256,
+        executable: inspection.executable,
+        codeSignaturePresent: inspection.codeSignaturePresent,
+        provisioningProfilePresent: inspection.provisioningProfilePresent,
+      };
+    };
+    const build = (binaryArtifactId: string, buildLogArtifactId: string) => ({
+      binaryArtifactId,
+      binarySha256: artifacts.find((artifact) => artifact.id === binaryArtifactId)!.sha256,
+      buildLogArtifactId,
+      buildLogSha256: artifacts.find((artifact) => artifact.id === buildLogArtifactId)!.sha256,
+      buildSucceeded: true,
+      inspection: inspectionFacts(binaryArtifactId),
+    });
+    const firstBuild = build('app-binary', 'build-log-first');
+    const secondBuild = build('app-binary-repeat', 'build-log-second');
+    const hashesEqual = firstBuild.binarySha256 === secondBuild.binarySha256;
+    iosRepeatabilityDetails = {
+      buildCommandSha256: sha('xcodebuild canonical release invocation'),
+      buildEnvironmentSha256: sha('canonical TERM iOS QA environment'),
+      firstBuild,
+      secondBuild,
+      artifactHashesEqual: hashesEqual,
+      toolchainNondeterminismObserved: !hashesEqual,
+    };
+  }
   const sourceState = provisionalSourceState;
   addArtifact('source-state', 'source-state', 'application/json', terminalEvidenceCanonicalJson(sourceState), START);
   const sourceStateSha = artifacts.find((artifact) => artifact.id === 'source-state')!.sha256;
@@ -454,7 +524,7 @@ function createFixture(renderer: TerminalNativeDeviceRenderer): Fixture {
         applicationId,
         version: '0.0.0-qa',
         buildNumber: '123',
-      }),
+      }, iosRepeatabilityDetails),
     });
     addArtifact(reportArtifactId, 'packaging-gate-report', 'application/json', terminalEvidenceCanonicalJson(report), START);
     packagingReports[gateId] = {
@@ -1010,6 +1080,45 @@ describe('stress: TERM-7b evidence contract v2', () => {
     } finally { fixture.cleanup(); }
   });
 
+  it('rejects a bare iOS reproducible assertion without two retained build artifacts and inspections', () => {
+    const fixture = createFixture('ios-ghosttykit');
+    try {
+      const gateArtifact = fixture.evidence.artifacts.find((artifact) => artifact.id === 'packaging-gate-repeatable-package-build')!;
+      const gateReport = JSON.parse(readFileSync(join(fixture.root, gateArtifact.path), 'utf8'));
+      gateReport.details = {
+        firstBinarySha256: fixture.evidence.app.binarySha256,
+        secondBinarySha256: fixture.evidence.app.binarySha256,
+        reproducible: true,
+      };
+      fixture.rewriteArtifact(gateArtifact.id, gateReport);
+      expect(validate(fixture).issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'packaging-gate-details-invalid' }),
+      ]));
+    } finally { fixture.cleanup(); }
+  });
+
+  it('accepts two inspected iOS builds with stable signed inputs while recording toolchain hash variance', () => {
+    const fixture = createFixture('ios-ghosttykit', { iosRepeatHashesDiffer: true });
+    try {
+      const result = validate(fixture);
+      expect(result, JSON.stringify(result.issues, null, 2)).toMatchObject({
+        schemaValid: true,
+        deviceAcceptanceReady: true,
+        releaseApprovalReady: true,
+        accepted: true,
+      });
+    } finally { fixture.cleanup(); }
+  });
+
+  it('rejects iOS repeatability evidence whose retained build log lacks Xcode success', () => {
+    const fixture = createFixture('ios-ghosttykit', { iosSecondBuildSucceeded: false });
+    try {
+      expect(validate(fixture).issues).toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'ios-repeatability-build-not-proven' }),
+      ]));
+    } finally { fixture.cleanup(); }
+  });
+
   it('produces a canonical source-state inventory from a build root', async () => {
     const root = mkdtempSync(join(tmpdir(), 'term-source-state-'));
     try {
@@ -1204,7 +1313,7 @@ describe('stress: TERM-7b evidence contract v2', () => {
     const fixture = createFixture('android-termux');
     try {
       fixture.evidence.externalApproval.status = 'pending';
-      fixture.evidence.externalApproval.authority = 'pending-release-owner';
+      fixture.evidence.externalApproval.authority = null;
       fixture.evidence.externalApproval.approvalArtifactId = null;
       const result = validate(fixture);
       expect(result).toMatchObject({ schemaValid: true, deviceAcceptanceReady: true, releaseApprovalReady: false, accepted: false });

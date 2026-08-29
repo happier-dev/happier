@@ -516,13 +516,13 @@ async function main() {
   });
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
-  if (serverComponentName === 'happier-server-light') {
-    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
-    if (runtimeBackedStart) {
+  if (serverComponentName === 'happier-server-light' || dbProvider === 'sqlite' || dbProvider === 'pglite') {
+    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir, serverComponentName });
+    if (runtimeBackedStart && dbProvider === 'sqlite') {
       applyRuntimeServerLightSqliteEnv({ env: serverEnv, serverDir });
     }
 
-    if (!runtimeBackedStart && !startupDecision.adoptedServer) {
+    if (serverComponentName === 'happier-server-light' && !runtimeBackedStart && !startupDecision.adoptedServer) {
       // Source-backed starts ensure the light DB schema exists before daemon startup.
       const acct = await getAccountCountForServerComponent({
         serverComponentName,
@@ -531,7 +531,7 @@ async function main() {
         bestEffort: Boolean(serverAlreadyRunning && !restart),
       });
       serverLightAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
-    } else {
+    } else if (serverComponentName === 'happier-server-light') {
       const acct = await probeExistingAccountCountForServerComponent({
         serverComponentName,
         serverDir,

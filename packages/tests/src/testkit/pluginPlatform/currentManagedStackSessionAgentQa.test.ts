@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assertCurrentManagedStackSessionAgentIdentity,
+  buildCurrentManagedStackSessionAgentInstallArgs,
   buildCurrentManagedStackSessionAgentSelectors,
   CURRENT_SOURCE_SESSION_AGENT_ASSISTANT_TEXT,
   CURRENT_SOURCE_SESSION_AGENT_CONFIRMATION_TITLE,
@@ -131,6 +132,17 @@ function fakePostJson(params: Readonly<{
 }
 
 describe('current-source Session Agent harness boundaries', () => {
+  it('installs through the canonical headless public development command', () => {
+    expect(buildCurrentManagedStackSessionAgentInstallArgs('/tmp/external-session-agent')).toEqual([
+      'plugins',
+      'install',
+      '/tmp/external-session-agent',
+      '--dev',
+      '--trust',
+      '--json',
+    ]);
+  });
+
   it('derives the exact qualified identity and stable client selectors from one owner', () => {
     expect(CURRENT_SOURCE_SESSION_AGENT_QUALIFIED_TARGET_ID)
       .toBe('agent:examples.session-agent/session-agent');
@@ -256,28 +268,45 @@ describe('current-source Session Agent harness boundaries', () => {
     })).toBe(2);
   });
 
-  it('keeps the mobile Session Agent flow candidate-free and terminal on cancellation', () => {
-    const flow = readFileSync(
-      new URL('../../../../suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent.yaml', import.meta.url),
+  it('keeps the mobile Session Agent flows candidate-free, split at create/send, and terminal on cancellation', () => {
+    const sendFlow = readFileSync(
+      new URL('../../../suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent-send.yaml', import.meta.url),
       'utf8',
     );
-    expect(flow).toContain('file: ../_shared/gotoNewSessionComposer.yaml');
-    expect(flow).toContain('id: agent-input-agent-chip');
-    expect(flow).toContain('id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}');
-    expect(flow).toContain('id: new-session-composer-input');
-    expect(flow).toContain('id: new-session-composer-send');
-    expect(flow).toContain('id: permission-footer.allow');
-    expect(flow).toContain('id: session-composer-send');
-    expect(flow).toContain('id: agent-input-abort');
-    expect(flow).toContain('visible: ${HAPPIER_E2E_SESSION_AGENT_ASSISTANT_TEXT}');
+    const transcriptFlow = readFileSync(
+      new URL('../../../suites/mobile-e2e/flows/plugin-platform-current-source/managed-session-agent-transcript.yaml', import.meta.url),
+      'utf8',
+    );
+    // Create/send half: shared composer entry, exact chip-picker selection,
+    // prompt, and the send's own custody proof. It never asserts any
+    // downstream confirmation/recovery fact, so the owning CLI can arm exact
+    // cleanup at the landed create/send custody boundary.
+    expect(sendFlow).toContain('file: ../_shared/gotoNewSessionComposer.yaml');
+    expect(sendFlow).toContain('id: agent-input-agent-chip');
+    expect(sendFlow).toContain('id: ${HAPPIER_E2E_SESSION_AGENT_CHIP_PICKER_OPTION_ID}');
+    expect(sendFlow).toContain('id: new-session-composer-input');
+    expect(sendFlow).toContain('id: new-session-composer-send');
+    expect(sendFlow).toContain('notVisible');
+    expect(sendFlow).not.toContain('permission-footer.allow');
+    expect(sendFlow).not.toContain('HAPPIER_E2E_SESSION_AGENT_CANCEL_PROMPT');
+    expect(sendFlow).not.toContain('HAPPIER_E2E_SESSION_AGENT_RECOVERY_PROMPT');
+    // Downstream half: host confirmation, assistant settlement, a later
+    // cancelled turn, and recovery on the same Session.
+    expect(transcriptFlow).toContain('id: permission-footer.allow');
+    expect(transcriptFlow).toContain('id: session-composer-input');
+    expect(transcriptFlow).toContain('id: session-composer-send');
+    expect(transcriptFlow).toContain('id: agent-input-abort');
+    expect(transcriptFlow).toContain('visible: ${HAPPIER_E2E_SESSION_AGENT_ASSISTANT_TEXT}');
+    expect(transcriptFlow).not.toContain('new-session-composer-send');
+    expect(transcriptFlow).not.toContain('gotoNewSessionComposer');
     // Cancellation terminality is asserted on the device with the canonical
     // bounded notVisible wait, not assumed: one abort tap plus one bounded
     // wait for the abort affordance to disappear.
-    const afterCancel = flow.split('id: agent-input-abort')[1];
+    const afterCancel = transcriptFlow.split('id: agent-input-abort')[1];
     expect(afterCancel).toContain('notVisible');
     expect(afterCancel).toContain('id: permission-footer.allow');
-    expect(flow.split('id: agent-input-abort')).toHaveLength(3);
-    expect(flow).not.toMatch(/tarball|\.tgz/u);
+    expect(transcriptFlow.split('id: agent-input-abort')).toHaveLength(3);
+    expect(`${sendFlow}\n${transcriptFlow}`).not.toMatch(/tarball|\.tgz/u);
   });
 
   it('detects confirmation settlement and cancellation terminality in the desktop probe scripts', () => {

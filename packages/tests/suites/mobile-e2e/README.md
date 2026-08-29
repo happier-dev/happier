@@ -131,16 +131,19 @@ The wrapper refuses an unqualified device and rejects conflicting environment
 and `--udid`/`--device` selectors. The same exact selector drives Maestro and
 the installed app-bundle/APK attestation.
 
-The row also runs the canonical external Session Agent journey
-(`managed-session-agent.yaml`) for the deterministic public example
+The row also runs the canonical external Session Agent journey for the
+deterministic public example
 (`packages/plugin-sdk/examples/session-agent`, qualified identity
 `agent:examples.session-agent/session-agent`). The wrapper installs the
 example through its own managed author commands and the canonical dev-and-trust
-daemon path, then the flow selects it through the exact chip-picker option,
-sends a prompt, settles the host confirmation, observes the assistant
-settlement, cancels a later pending confirmation (`agent-input-abort`) and
-asserts terminality on-device, and proves the Agent still serves a new turn.
-The disposable Session this window creates is attributed and deleted exactly
+daemon path. The journey is split at its landed create/send custody boundary
+exactly like the Composer handoff: `managed-session-agent-send.yaml` selects
+the example through the exact chip-picker option and sends a prompt, then
+`managed-session-agent-transcript.yaml` settles the host confirmation,
+observes the assistant settlement, cancels a later pending confirmation
+(`agent-input-abort`) and asserts terminality on-device, and proves the Agent
+still serves a new turn. The disposable Session this window creates is armed
+from the exact creation/send fact between the two flows and deleted exactly
 like the Composer flow's Session.
 
 The maintained automated row now mounts the public external RN surface and its

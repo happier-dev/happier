@@ -6,7 +6,13 @@ import type {
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { createCurrentSourceQaAgentRuntime } from '../../../fixtures/plugin-platform/current-source-native-public/agent/deterministicAgent';
+import {
+  QA_REFERENCE_CANDIDATE_ID,
+  QA_REFERENCE_CONTEXT,
+  QA_REFERENCE_LABEL,
+  QA_REFERENCE_LOCAL_ID,
+  createCurrentSourceQaAgentRuntime,
+} from '../../../fixtures/plugin-platform/current-source-native-public/agent/deterministicAgent';
 import { QA_REVISION } from '../../../fixtures/plugin-platform/current-source-native-public/revision';
 
 /**
@@ -63,10 +69,10 @@ function encodeModelText(value: string): string {
 function exactComposerFactsPromptText(): string {
   return [
     `reference_plugin_id=${encodeModelText(PLUGIN_ID)}`,
-    `reference_local_id=${encodeModelText('qa-references')}`,
-    `candidate_id=${encodeModelText('qa:1')}`,
-    `label=${encodeModelText('Current source QA reference')}`,
-    `context=${encodeModelText('Current source native QA reference context.')}`,
+    `reference_local_id=${encodeModelText(QA_REFERENCE_LOCAL_ID)}`,
+    `candidate_id=${encodeModelText(QA_REFERENCE_CANDIDATE_ID)}`,
+    `label=${encodeModelText(QA_REFERENCE_LABEL)}`,
+    `context=${encodeModelText(QA_REFERENCE_CONTEXT)}`,
   ].join('\n');
 }
 

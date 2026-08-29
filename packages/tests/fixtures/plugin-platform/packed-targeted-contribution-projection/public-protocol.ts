@@ -25,7 +25,7 @@ export const packedTargetedContributionProtocol = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: packedTargetedSetupResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
   surfaces: {

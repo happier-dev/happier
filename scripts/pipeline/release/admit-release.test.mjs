@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  admitNpmPublication,
   admitPublicSdkPublication,
   admitPublicSdkRelease,
   admitRelease,
   publicSdkReleaseApprovalRequired,
-  resolvePublicNpmPackageNames,
 } from './admit-release.mjs';
 
 const base = {
@@ -67,7 +67,7 @@ test('public SDK publication retains first-publication and breaking-change appro
   }), { admitted: true });
 });
 
-test('npm publication consumes the release-dispatch source identity', () => {
+test('npm publication consumes the release-admitted exact source identity', () => {
   const sourceSha = 'a'.repeat(40);
   assert.throws(() => admitRelease({
     ...base,
@@ -76,9 +76,8 @@ test('npm publication consumes the release-dispatch source identity', () => {
       dryRun: false,
       authorizedSha: '',
       checkedOutSha: sourceSha,
-      packageNames: ['@happier-dev/plugin-sdk'],
     },
-  }), /release-dispatch source SHA/);
+  }), /release-admitted exact source SHA/);
   assert.throws(() => admitRelease({
     ...base,
     npmPublication: {
@@ -86,7 +85,6 @@ test('npm publication consumes the release-dispatch source identity', () => {
       dryRun: false,
       authorizedSha: sourceSha,
       checkedOutSha: 'b'.repeat(40),
-      packageNames: ['@happier-dev/plugin-sdk'],
     },
   }), /does not match the checked-out source/);
   assert.deepEqual(admitRelease({
@@ -96,43 +94,25 @@ test('npm publication consumes the release-dispatch source identity', () => {
       dryRun: false,
       authorizedSha: sourceSha,
       checkedOutSha: sourceSha,
-      packageNames: ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui'],
     },
   }), { admitted: true });
 });
 
-test('the public npm package names one release selection publishes have a single owner', () => {
-  assert.deepEqual(resolvePublicNpmPackageNames({}), []);
+test('pack-only and dry-run stay free of the publication mutation gate', () => {
+  // Pack-only prepares candidate tarballs without any publication mutation.
   assert.deepEqual(
-    resolvePublicNpmPackageNames({ pluginSdk: true, sdk: true, channelsProtocol: true }),
-    ['@happier-dev/plugin-sdk', '@happier-dev/plugin-ui', '@happier-dev/sdk', '@happier-dev/channels-protocol'],
+    admitNpmPublication({ mode: 'pack', dryRun: false, authorizedSha: '' }),
+    { admitted: true, authorizedSha: null },
   );
+  // A dry-run is release planning, not a credentialed operation.
   assert.deepEqual(
-    resolvePublicNpmPackageNames({ channelsProtocol: true }),
-    ['@happier-dev/channels-protocol'],
+    admitNpmPublication({ mode: 'pack+publish', dryRun: true, authorizedSha: '' }),
+    { admitted: true, authorizedSha: null },
   );
-
-  const sourceSha = 'c'.repeat(40);
-  const npmPublication = {
-    mode: 'pack+publish',
-    dryRun: false,
-    authorizedSha: sourceSha,
-    checkedOutSha: sourceSha,
-  };
-
-  // Public packages are governed by their executable API/package checks and
-  // approved release classification, not an unavailable synthetic gate.
-  assert.deepEqual(admitRelease({
-    ...base,
-    npmPublication: { ...npmPublication, packageNames: resolvePublicNpmPackageNames({ channelsProtocol: true }) },
-  }), { admitted: true });
-
-  // Non-public packages stay publishable: the readiness owner must be able to
-  // stay silent, or it proves nothing when it fires.
-  assert.deepEqual(admitRelease({
-    ...base,
-    npmPublication: { ...npmPublication, packageNames: ['@happier-dev/relay-server', '@happier-dev/cli'] },
-  }), { admitted: true });
+  assert.throws(
+    () => admitNpmPublication({ mode: 'pack+publish', dryRun: false, authorizedSha: '' }),
+    /release-admitted exact source SHA/,
+  );
 });
 
 function publicSdkAdmission(overrides = {}) {

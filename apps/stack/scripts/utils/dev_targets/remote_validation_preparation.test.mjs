@@ -5,7 +5,7 @@ import { prepareRemoteValidationWorkspace } from './remote_validation_preparatio
 
 test('remote validation preparation delegates component dependency outputs to the canonical workspace owner', async () => {
   const calls = [];
-  const publisherCalls = [];
+  const publicationCalls = [];
   const result = await prepareRemoteValidationWorkspace({
     repoDir: '/remote/happier',
     componentRelativeDir: 'apps/cli',
@@ -19,10 +19,13 @@ test('remote validation preparation delegates component dependency outputs to th
     loadCliBuildOwner: async () => ({
       resolveCliBundledWorkspacePackageNames: (options) => {
         assert.deepEqual(options, { repoRoot: '/remote/happier' });
-        return ['plugins-codex', 'plugins-claude'];
+        // Exact mixed CLI bundled selection shape: host workspaces plus bundled
+        // plugins, as produced by the canonical bundled workspace resolver.
+        return ['protocol', 'agents', 'plugins-codex', 'plugins-claude'];
       },
-      runCanonicalBundledPluginArtifactPublisher: async (options) => {
-        publisherCalls.push(options);
+      publishBundledPluginArtifactsAfterWorkspaceBuild: async (options) => {
+        publicationCalls.push(options);
+        return true;
       },
     }),
   });
@@ -36,11 +39,11 @@ test('remote validation preparation delegates component dependency outputs to th
     built: ['@happier-dev/plugins-codex'],
     skipped: [],
   });
-  assert.deepEqual(publisherCalls, [{
+  assert.deepEqual(publicationCalls, [{
     repoRoot: '/remote/happier',
-    workspaceNames: ['plugins-codex', 'plugins-claude'],
+    workspaceNames: ['protocol', 'agents', 'plugins-codex', 'plugins-claude'],
     env: { TEST_ENV: '1' },
-    mode: 'write',
+    bundledPluginArtifactPublication: { mode: 'write' },
   }]);
 });
 
@@ -72,9 +75,10 @@ test('remote UI validation prepares the complete CLI plugin closure before publi
       },
     }),
     loadCliBuildOwner: async () => ({
-      resolveCliBundledWorkspacePackageNames: () => ['plugins-codex'],
-      runCanonicalBundledPluginArtifactPublisher: async () => {
+      resolveCliBundledWorkspacePackageNames: () => ['protocol', 'plugins-codex'],
+      publishBundledPluginArtifactsAfterWorkspaceBuild: async () => {
         events.push('publish');
+        return true;
       },
     }),
   });

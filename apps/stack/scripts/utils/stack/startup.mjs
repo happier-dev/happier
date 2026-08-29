@@ -4,7 +4,7 @@ import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs'
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForDbProvider } from '../server/prisma_client_import.mjs';
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
 import { applyEffectiveDbProviderEnv } from '../server/effective_db_provider.mjs';
 import { applyHappyServerMigrations } from '../server/infra/happy_server_infra.mjs';
@@ -42,9 +42,17 @@ function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
   });
 }
 
-async function probeAccountCount({ serverComponentName, serverDir, env, lightDbProvider = 'sqlite', dbProvider = lightDbProvider }) {
+async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
+  const runEnv = dbProvider === 'sqlite' && !(env?.DATABASE_URL ?? '').toString().trim()
+    ? (() => {
+        const dataDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DATA_DIR, env?.HAPPY_SERVER_LIGHT_DATA_DIR);
+        return dataDir
+          ? { ...env, DATABASE_URL: resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) }
+          : env;
+      })()
+    : env;
   const probe =
-    serverComponentName === 'happier-server-light' && lightDbProvider === 'pglite'
+    dbProvider === 'pglite'
       ? `
 		let db;
 	  let pglite;
@@ -98,7 +106,7 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
 	    } catch {}
 		}
 		`.trim()
-      : serverComponentName === 'happier-server-light'
+      : dbProvider === 'sqlite'
       ? `
 	 	let db;
 		try {
@@ -108,8 +116,7 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
       const dataDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
       const dataDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
       const dataDir = dataDirPrimary || dataDirLegacy;
-      const fromEnv = (process.env.DATABASE_URL ?? '').toString().trim();
-      const url = fromEnv;
+      const url = (process.env.DATABASE_URL ?? '').toString().trim();
       if (!url) throw new Error('Missing DATABASE_URL and HAPPIER_SERVER_LIGHT_DATA_DIR or HAPPY_SERVER_LIGHT_DATA_DIR for sqlite probe');
       process.env.DATABASE_URL = url;
 		  db = new PrismaClient();
@@ -161,7 +168,7 @@ async function probeAccountCount({ serverComponentName, serverDir, env, lightDbP
 		}
 		`.trim();
 
-  const out = await runCapture(process.execPath, ['--input-type=module', '-e', probe], { cwd: serverDir, env, timeoutMs: 15_000 });
+  const out = await runCapture(process.execPath, ['--input-type=module', '-e', probe], { cwd: serverDir, env: runEnv, timeoutMs: 15_000 });
   const parsed = out.trim() ? JSON.parse(out.trim()) : {};
   if (parsed?.error) {
     const e = new Error(parsed.error.message || 'unknown prisma probe error');
@@ -183,23 +190,9 @@ export async function probeExistingAccountCountForServerComponent({
       env,
       targetEnv: { ...env },
     });
-    const lightDbProvider = serverComponentName === 'happier-server-light' ? dbProvider : 'sqlite';
-    const probeEnv = { ...env };
-    if (
-      serverComponentName === 'happier-server-light' &&
-      lightDbProvider === 'sqlite' &&
-      !(probeEnv.DATABASE_URL ?? '').toString().trim()
-    ) {
-      const dataDir = firstNonEmptyEnv(probeEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, probeEnv.HAPPY_SERVER_LIGHT_DATA_DIR);
-      if (dataDir) {
-        probeEnv.DATABASE_URL = resolveSqliteDatabaseUrlForDataDir({ dataDir, env: probeEnv });
-      }
-    }
     const accountCount = await probeAccountCount({
-      serverComponentName,
       serverDir,
-      env: probeEnv,
-      lightDbProvider,
+      env,
       dbProvider,
     });
     return { ok: true, accountCount };
@@ -295,7 +288,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
   }
 
   const probe = async () =>
-    await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env: runEnv, lightDbProvider });
+    await probeAccountCount({ serverDir, env: runEnv, dbProvider: lightDbProvider });
   // Apply provider-specific light migrations:
   // - sqlite: prisma/sqlite/schema.prisma
   // - pglite: embedded Postgres + pglite socket
@@ -303,9 +296,8 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
   // IMPORTANT:
   // If the server is already running with pglite, it may hold the DB open (single-connection).
   // When bestEffort=true (used for heuristics), skip migrations and only probe.
-  const migrateScript = lightDbProvider === 'pglite' ? 'migrate:light:deploy' : 'migrate:sqlite:deploy';
   if (!bestEffort) {
-    await pmExecBin({ dir: serverDir, bin: migrateScript, args: [], env: runEnv });
+    await applyHappyServerMigrations({ serverDir, env: runEnv, dbProvider: lightDbProvider });
   }
 
   // 2) Probe account count (used for auth seeding heuristics).
@@ -318,7 +310,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
       if (bestEffort) {
         return { ok: false, migrated: true, accountCount: null, error: 'server-light schema not ready (missing tables)' };
       }
-      throw new Error(`[server-light] schema not ready after ${migrateScript} (missing tables).`);
+      throw new Error(`[server-light] schema not ready after ${lightDbProvider} migration (missing tables).`);
     }
     if (bestEffort) {
       return { ok: false, migrated: true, accountCount: null, error: msg };
@@ -337,7 +329,7 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
   await ensureDepsInstalled(serverDir, 'happier-server', { env });
 
   try {
-    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env, dbProvider });
+    const accountCount = await probeAccountCount({ serverDir, env, dbProvider });
     return { ok: true, migrated: false, accountCount };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -345,7 +337,7 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
       throw e;
     }
     await applyHappyServerMigrations({ serverDir, env, dbProvider });
-    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env, dbProvider });
+    const accountCount = await probeAccountCount({ serverDir, env, dbProvider });
     return { ok: true, migrated: true, accountCount };
   }
 }

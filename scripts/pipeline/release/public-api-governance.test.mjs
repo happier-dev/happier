@@ -10,6 +10,7 @@ import {
   preparePublicApiGovernance,
   renderPublicApiReleaseComparison,
   resolvePreviousPublishedApiInventory,
+  summarizePublicApiReleaseComparison,
 } from './public-api-governance.mjs';
 
 function inventory(symbols) {
@@ -72,6 +73,52 @@ test('public API comparator reports mechanical symbol and declaration facts with
     humanReviewRequired: true,
     versionDecision: 'human_required',
   });
+});
+
+test('public API comparison retains every changed declaration-block identity and bounds only the labeled display sample', () => {
+  const names = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'];
+  const declarationBlock = (name, field) => [
+    '### `.` — `' + name + '` (type)',
+    '',
+    '```ts',
+    'type ' + name + ' = { ' + field + '; };',
+    '```',
+    '',
+  ].join('\n');
+  const report = comparePublicApiReleaseRecords({
+    packageName: '@happier-dev/example',
+    candidateVersion: '0.1.0-preview.2',
+    previousVersion: '0.1.0-preview.1',
+    previousInventory: inventory(names.map((name) => ({ specifier: '.', exportName: name, kind: 'type' }))),
+    candidateInventory: inventory(names.map((name) => ({ specifier: '.', exportName: name, kind: 'type' }))),
+    previousDeclarations: [
+      '# Example API',
+      '',
+      ...names.map((name) => declarationBlock(name, 'flag?: boolean')),
+    ].join('\n'),
+    candidateDeclarations: [
+      '# Example API',
+      '',
+      ...names.map((name) => declarationBlock(name, 'flag: boolean')),
+    ].join('\n'),
+  });
+
+  assert.deepEqual(report.facts.changedDeclarationBlocks, [
+    '. — Five (type)',
+    '. — Four (type)',
+    '. — One (type)',
+    '. — Six (type)',
+    '. — Three (type)',
+    '. — Two (type)',
+  ]);
+  assert.equal(summarizePublicApiReleaseComparison(report).changedDeclarationBlocks, 6);
+  assert.equal(report.disposition.humanReviewRequired, true);
+
+  const rendered = renderPublicApiReleaseComparison(report);
+  assert.match(rendered, /changed-declaration-blocks=6/u);
+  assert.match(rendered, /declaration review: [^\n]*Five \(type\)/u);
+  assert.match(rendered, /… and 1 more changed declaration blocks \(6 total\)/u);
+  assert.doesNotMatch(rendered, /— Two \(type\)/u);
 });
 
 test('public API comparator leaves a first publication explicitly dormant rather than inventing history', () => {

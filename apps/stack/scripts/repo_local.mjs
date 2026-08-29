@@ -449,16 +449,19 @@ async function main() {
 	      if (dbTransition.reason === 'missing_mysql_database_url') {
 	        throw new Error('[repo-local] mysql requires an explicit DATABASE_URL');
 	      }
+	      if (dbTransition.reason === 'missing_postgres_database_url') {
+	        throw new Error('[repo-local] postgres requires an explicit DATABASE_URL with the light preset');
+	      }
+	      if (dbTransition.reason === 'invalid_postgres_database_url') {
+	        throw new Error('[repo-local] postgres DATABASE_URL must use postgres:// or postgresql://');
+	      }
 	      throw new Error(`[repo-local] invalid DB provider for ${serverComponent}: ${dbTransition.input ?? dbTransition.reason}`);
 	    }
 	    effectiveEnv.HAPPIER_STACK_SERVER_COMPONENT = serverComponent;
 	    effectiveEnv.HAPPIER_DB_PROVIDER = dbTransition.provider;
 	    delete effectiveEnv.HAPPY_DB_PROVIDER;
-	    const persistedDatabaseUrl = String(existingStacklessEnv.DATABASE_URL ?? '').trim();
-	    if (dbTransition.provider === 'mysql') {
+	    if (dbTransition.databaseUrl) {
 	      effectiveEnv.DATABASE_URL = dbTransition.databaseUrl;
-	    } else if (dbTransition.provider === 'postgres' && !dbTransition.removeDatabaseUrl && persistedDatabaseUrl) {
-	      effectiveEnv.DATABASE_URL = persistedDatabaseUrl;
 	    } else {
 	      delete effectiveEnv.DATABASE_URL;
 	    }
@@ -511,7 +514,7 @@ async function main() {
       HAPPIER_STACK_REPO_DIR: repoRoot,
       HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
       HAPPIER_DB_PROVIDER: dbTransition.provider,
-      ...(dbTransition.provider === 'mysql' ? { DATABASE_URL: dbTransition.databaseUrl } : {}),
+      ...(dbTransition.databaseUrl ? { DATABASE_URL: dbTransition.databaseUrl } : {}),
       HAPPIER_STACK_CLI_HOME_DIR: stacklessCliHomeDir,
       HAPPIER_STACK_SERVER_PORT_BASE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_BASE,
       HAPPIER_STACK_SERVER_PORT_RANGE: effectiveEnv.HAPPIER_STACK_SERVER_PORT_RANGE,

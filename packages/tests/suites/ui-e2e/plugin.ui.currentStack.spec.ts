@@ -15,6 +15,7 @@ import {
   type CurrentManagedStackPluginUiContext,
 } from '../../src/testkit/pluginPlatform/currentManagedStackPluginUiQa';
 import { createSession } from '../../src/testkit/sessions';
+import { selectNewSessionAgent } from '../../src/testkit/uiE2e/selectNewSessionAgent';
 import {
   gotoDomContentLoadedWithRetries,
   waitForAuthenticatedRouteUi,
@@ -242,6 +243,8 @@ test.describe('current managed Stack Plugin UI', () => {
     ];
     let disposableSessionId: string | null = null;
     let newSessionDraftId: string | null = null;
+    let v2NewSessionDraftId: string | null = null;
+    let v2DisposableSessionId: string | null = null;
     let journeyError: unknown = null;
     const visitPluginRoute = async (params: Readonly<{
       path: string;
@@ -289,19 +292,11 @@ test.describe('current managed Stack Plugin UI', () => {
       await expect(boundary).toHaveAttribute('data-plugin-machine-id', context.daemon.machineId);
       await expect(boundary).toHaveAttribute('data-plugin-server-id', context.account.uiServerId);
     };
-    const exerciseComposerScope = async (params: Readonly<{
-      routeUrl: string;
-      expectedPathname: string;
+    const assertComposerScope = async (params: Readonly<{
       inputTestId: 'new-session-composer-input' | 'session-composer-input';
+      attachmentLabel: string;
+      referenceLabel: string;
     }>): Promise<void> => {
-      await gotoDomContentLoadedWithRetries(page, params.routeUrl, 180_000);
-      await waitForAuthenticatedRouteUi({
-        page,
-        expectedPathname: params.expectedPathname,
-        requiredTestIds: [params.inputTestId],
-        targetUrl: params.routeUrl,
-        timeoutMs: 180_000,
-      });
       await expect(page.getByTestId(fixture.sentinels.composerRegion)).toBeVisible({ timeout: 180_000 });
       const control = page.getByTestId(fixture.sentinels.composerControl);
       await expect(control).toBeVisible({ timeout: 180_000 });
@@ -309,11 +304,14 @@ test.describe('current managed Stack Plugin UI', () => {
       const choice = page.getByText(fixture.sentinels.composerChoiceLabel, { exact: true }).last();
       await expect(choice).toBeVisible({ timeout: 60_000 });
       await choice.click();
-      await expect(page.getByText(fixture.sentinels.composerAttachmentV1, { exact: true })).toBeVisible({ timeout: 60_000 });
+      // The attachment badge and reference token carry exactly the requested
+      // generation's labels; a v2 assertion here can only pass if the loaded
+      // projection really is that generation.
+      await expect(page.getByText(params.attachmentLabel, { exact: true })).toBeVisible({ timeout: 60_000 });
 
       const input = page.locator(`textarea[data-testid="${params.inputTestId}"]:visible`).first();
       await expect(input).toHaveValue('@qa-ref');
-      await expect(page.getByText(fixture.sentinels.composerReference, { exact: true }).last()).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByText(params.referenceLabel, { exact: true }).last()).toBeVisible({ timeout: 60_000 });
     };
 
     try {
@@ -347,18 +345,30 @@ test.describe('current managed Stack Plugin UI', () => {
       const newSessionRoute = new URL(withQaUiBase(context.uiUrl, '/new'));
       newSessionRoute.searchParams.set('draftId', newSessionDraftId);
       const newSessionUrl = ensureQaUiUrlHasHmrDisabled(newSessionRoute.toString());
-      await exerciseComposerScope({
-        routeUrl: newSessionUrl,
+      await gotoDomContentLoadedWithRetries(page, newSessionUrl, 180_000);
+      await waitForAuthenticatedRouteUi({
+        page,
         expectedPathname: '/new',
+        requiredTestIds: ['new-session-composer-input'],
+        targetUrl: newSessionUrl,
+        timeoutMs: 180_000,
+      });
+      await assertComposerScope({
         inputTestId: 'new-session-composer-input',
+        attachmentLabel: fixture.sentinels.composerAttachmentV1,
+        referenceLabel: fixture.sentinels.composerReferenceV1,
       });
       expect(new URL(page.url()).searchParams.get('draftId')).toBe(newSessionDraftId);
 
       disposableSessionId = await createDisposablePlainSession({ context });
-      await exerciseComposerScope({
-        routeUrl: ensureQaUiUrlHasHmrDisabled(withQaUiBase(context.uiUrl, `/session/${disposableSessionId}`)),
-        expectedPathname: `/session/${disposableSessionId}`,
+      await visitPluginRoute({
+        path: `/session/${disposableSessionId}`,
+        requiredTestId: 'session-composer-input',
+      });
+      await assertComposerScope({
         inputTestId: 'session-composer-input',
+        attachmentLabel: fixture.sentinels.composerAttachmentV1,
+        referenceLabel: fixture.sentinels.composerReferenceV1,
       });
 
       const reloaded = await fixture.applyV2();
@@ -368,6 +378,47 @@ test.describe('current managed Stack Plugin UI', () => {
       expect(v2HostedArtifact.digest).not.toBe(v1HostedArtifact.digest);
       expect(reloaded.appliedGeneration).not.toBe(fixture.installed.appliedGeneration);
       generations.push({ phase: 'reloaded', generation: reloaded.appliedGeneration });
+
+      // Fresh post-update Composer dispatch through the real UI path: the
+      // deterministic fixture Agent is selected on a new QA-owned draft, the
+      // v2 control resolves the qa:v2 reference and v2 attachment facts, and
+      // a real send settles a fresh transcript. The deterministic Agent
+      // rejects another generation's facts before input acceptance, so this
+      // transcript can only exist if the reloaded v2 projection resolved and
+      // adopted exactly its own generation.
+      v2NewSessionDraftId = randomUUID();
+      const v2NewSessionRoute = new URL(withQaUiBase(context.uiUrl, '/new'));
+      v2NewSessionRoute.searchParams.set('draftId', v2NewSessionDraftId);
+      const v2NewSessionUrl = ensureQaUiUrlHasHmrDisabled(v2NewSessionRoute.toString());
+      await gotoDomContentLoadedWithRetries(page, v2NewSessionUrl, 180_000);
+      await waitForAuthenticatedRouteUi({
+        page,
+        expectedPathname: '/new',
+        requiredTestIds: ['new-session-composer-input'],
+        targetUrl: v2NewSessionUrl,
+        timeoutMs: 180_000,
+      });
+      await selectNewSessionAgent({
+        page,
+        agentId: `agent:${fixture.pluginId}/qa-agent`,
+        label: fixture.sentinels.agentTitle,
+      });
+      await assertComposerScope({
+        inputTestId: 'new-session-composer-input',
+        attachmentLabel: fixture.sentinels.composerAttachmentV2,
+        referenceLabel: fixture.sentinels.composerReferenceV2,
+      });
+      expect(new URL(page.url()).searchParams.get('draftId')).toBe(v2NewSessionDraftId);
+      await page.getByTestId('new-session-composer-send').first().click();
+      // Send custody: a landed send leaves the New Session screen for the
+      // created Session's route.
+      await expect(page).toHaveURL(/\/session\/[^/?#]+/u, { timeout: 120_000 });
+      v2DisposableSessionId = new URL(page.url()).pathname.split('/')[2] ?? null;
+      // Fresh v2 transcript: the settled turn proves the dispatch resolved
+      // and adopted exactly qa:v2 attachment facts.
+      await expect(page.getByText(fixture.sentinels.transcriptSentinel).first()).toBeVisible({ timeout: 120_000 });
+      await expect(page.getByText(fixture.sentinels.composerAttachmentV2, { exact: true })).toBeVisible({ timeout: 120_000 });
+
       await visitNative({
         revision: 'v2',
         generation: reloaded.contributionProjectionGeneration,
@@ -441,12 +492,30 @@ test.describe('current managed Stack Plugin UI', () => {
             : error;
         }
       }
+      if (v2NewSessionDraftId) {
+        try {
+          await deleteCurrentManagedStackNewSessionDraft(context, v2NewSessionDraftId);
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError([cleanupError, error], 'Plugin fixture and fresh v2 New Session draft cleanup both failed')
+            : error;
+        }
+      }
       if (disposableSessionId) {
         try {
           await deleteCurrentManagedStackSession(context, disposableSessionId);
         } catch (error) {
           cleanupError = cleanupError
             ? new AggregateError([cleanupError, error], 'Plugin fixture and disposable Session cleanup both failed')
+            : error;
+        }
+      }
+      if (v2DisposableSessionId) {
+        try {
+          await deleteCurrentManagedStackSession(context, v2DisposableSessionId);
+        } catch (error) {
+          cleanupError = cleanupError
+            ? new AggregateError([cleanupError, error], 'Plugin fixture and fresh v2 disposable Session cleanup both failed')
             : error;
         }
       }
