@@ -120,10 +120,8 @@ test('dev cold-start delegates CLI build admission exclusively to the daemon lau
 
 test('dev reaches Expo before starting remote development targets', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
-  const expoStartIndex = source.lastIndexOf('(await ensureDevExpoServer({');
-  const devTargetsStartIndex = source.indexOf(
-    'devTargetsController = startStackDevTargetsInBackground({',
-  );
+  const expoStartIndex = source.lastIndexOf('await ensureDevExpoServer({');
+  const devTargetsStartIndex = source.lastIndexOf('startStackDevTargetsInBackground(');
 
   assert.notEqual(expoStartIndex, -1, 'expected the canonical Expo startup call');
   assert.notEqual(devTargetsStartIndex, -1, 'expected background dev-target startup');

@@ -7470,6 +7470,7 @@ function createLoopbackMachineTransferChannels() {
         registered.set(method, handler);
       },
     } as any;
+    const transferId = 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file';
 
     try {
       registerMachineSessionHandoffRpcHandlers({
@@ -7494,13 +7495,13 @@ function createLoopbackMachineTransferChannels() {
         targetPath: '/repo',
         handoffMetadataV2: {
           providerBundleTransferPublication: {
-            transferId: 'session-handoff:handoff_invalid_direct_peer_workspace_artifacts:provider-bundle-file',
+            transferId,
             sizeBytes: 0,
             manifestHash: `sha256:${'0'.repeat(64)}`,
             endpointCandidates: [
               {
                 kind: 'http',
-                url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+                url: buildDirectPeerEndpointCandidate({ transferId }).url,
                 authorizationToken: 'test-token',
                 expiresAt: Date.now() + 30_000,
               },
@@ -7510,7 +7511,7 @@ function createLoopbackMachineTransferChannels() {
         endpointCandidates: [
           {
             kind: 'http',
-            url: buildDirectPeerEndpointCandidate({ transferId: 'handoff_invalid_direct_peer_workspace_artifacts' }).url,
+            url: buildDirectPeerEndpointCandidate({ transferId }).url,
             authorizationToken: 'test-token',
             expiresAt: Date.now() + 30_000,
           },

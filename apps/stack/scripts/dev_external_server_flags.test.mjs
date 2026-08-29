@@ -208,7 +208,7 @@ test('configured dev targets fail closed when dev uses an external server', asyn
       },
     });
     assert.equal(res.code, 1);
-    assert.match(res.stderr, /configured dev targets require the local Stack server/);
+    assert.match(res.stderr, /remote runtime placement cannot consume an external --server-url/);
   } finally {
     await rm(storageDir, { recursive: true, force: true });
   }
