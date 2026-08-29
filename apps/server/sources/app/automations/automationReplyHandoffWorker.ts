@@ -174,7 +174,7 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
     let timer: ReturnType<typeof setTimeout> | null = null;
     let active: Promise<void> | null = null;
 
-    const schedule = async (): Promise<void> => {
+    const schedule = async (lastPass: Readonly<{ progressed: boolean }>): Promise<void> => {
         if (stopped) return;
         const now = new Date();
         let nextDueAt: Date | null = null;
@@ -187,7 +187,9 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
         if (stopped) return;
         const dueDelay = nextDueAt === null
             ? idlePollMs
-            : Math.max(0, nextDueAt.getTime() - now.getTime());
+            : nextDueAt.getTime() <= now.getTime() && !lastPass.progressed
+                ? idlePollMs
+                : Math.max(0, nextDueAt.getTime() - now.getTime());
         timer = setTimeout(() => {
             timer = null;
             void trigger();
@@ -198,17 +200,22 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
     const trigger = async (): Promise<void> => {
         if (stopped || active) return;
         active = (async () => {
+            let progressed = false;
             try {
-                await runAutomationReplyHandoffWorkerPass({
+                const pass = await runAutomationReplyHandoffWorkerPass({
                     now: new Date(),
                     dispatch: params.dispatch,
                 });
+                // A claim is the worker's durable progress boundary. If no
+                // claim completed (including a thrown pass), an overdue row
+                // must not create a zero-delay retry loop.
+                progressed = pass.claimed;
             } catch {
                 warnWorkerFailure("pass");
                 // The durable claim remains recoverable when dispatch or DB work fails.
             } finally {
                 active = null;
-                await schedule();
+                await schedule({ progressed });
             }
         })();
         await active;

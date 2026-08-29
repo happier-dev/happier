@@ -1,6 +1,7 @@
 import {
     ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS,
     AccountEncryptionMigrateAutomationsDirectiveSchema,
+    AutomationTriggerIdSchema,
     deriveAutomationOccurrenceKeyV1,
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -47,7 +48,7 @@ function buildTriggerDefinitionEnvelope(params: Readonly<{
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        triggerId: params.triggerId,
+        triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
         triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
@@ -1899,6 +1900,87 @@ describe("Automation account-encryption Run migration (integration)", () => {
         );
     });
 
+    it("includes failure-detail-only Runs in the transition census without treating legacy error text as private content", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const automation = await db.automation.create({
+            data: {
+                accountId: account.id,
+                name: "Failure-detail-only transition census",
+                enabled: false,
+                targetType: "new_session",
+                templateCiphertext: buildPlainTemplate("failure-detail-only census"),
+                templateVersion: 1,
+            },
+            select: { id: true },
+        });
+        const occurredAt = new Date("2026-08-27T10:00:00.000Z");
+        const failureOnlyRunId = "run-failure-detail-only-census";
+        const failureDetailEnvelope = JSON.stringify(
+            sealAutomationRunFailureDetailStoredEnvelopeV1({
+                mode: "plain",
+                correspondence: {
+                    automationId: automation.id,
+                    runId: failureOnlyRunId,
+                },
+                detail: "private failure detail without another Run envelope",
+            }),
+        );
+        await db.automationRun.createMany({
+            data: [
+                {
+                    id: failureOnlyRunId,
+                    accountId: account.id,
+                    automationId: automation.id,
+                    state: "failed",
+                    causeKind: "manual",
+                    causeOccurredAt: occurredAt,
+                    errorCode: "worker_failed",
+                    errorMessage: failureDetailEnvelope,
+                    scheduledAt: occurredAt,
+                    dueAt: occurredAt,
+                    finishedAt: occurredAt,
+                },
+                {
+                    id: "run-legacy-public-error-census",
+                    accountId: account.id,
+                    automationId: automation.id,
+                    state: "failed",
+                    causeKind: "manual",
+                    causeOccurredAt: occurredAt,
+                    errorCode: "legacy_failure",
+                    errorMessage: "released V2 public error text",
+                    scheduledAt: occurredAt,
+                    dueAt: occurredAt,
+                    finishedAt: occurredAt,
+                },
+            ],
+        });
+
+        const inspected = await inTx(async (tx) =>
+            await inspectAutomationAccountEncryptionTransitionInTx({
+                tx,
+                accountId: account.id,
+                sourceMode: "plain",
+            }),
+        );
+
+        expect(inspected.status).toBe("complete");
+        if (inspected.status !== "complete") {
+            throw new Error("Expected failure-detail-only census inspection to complete");
+        }
+        const runItems = inspected.page.items.filter((item) => item.kind === "run");
+        expect(runItems).toHaveLength(1);
+        expect(runItems[0]).toMatchObject({
+            runId: failureOnlyRunId,
+            source: { failureDetailEnvelope },
+        });
+        expect(inspected.page.runCount).toBe(1);
+        expect(inspected.page.nextCursor).toBeUndefined();
+    });
+
     it("pages more than 500 current retained Runs and reapplies exact Event and Conversation evidence witnesses", async () => {
         const account = await db.account.create({
             data: {
@@ -2229,9 +2311,19 @@ describe("Automation account-encryption Run migration (integration)", () => {
                 detail: "plain current-page failure detail",
             }),
         );
+        const plainEventEvidenceValue = {
+            ...buildPlainEventEvidence(),
+            occurrenceId: "current-page-event-witness",
+        };
         const plainEventEvidence = JSON.stringify({
             t: "plain",
-            v: buildPlainEventEvidence(),
+            v: plainEventEvidenceValue,
+        });
+        const plainEventExecutionInput = buildStrictPlainExecutionInput({
+            templateVersion: 1,
+            prompt: "plain current-page Event execution",
+            evidence: plainEventEvidenceValue,
+            assignmentMachineIds: ["machine-account-encryption-migration"],
         });
         const toPlainStageItem = {
             kind: "run" as const,
@@ -2239,11 +2331,14 @@ describe("Automation account-encryption Run migration (integration)", () => {
             automationId: eventWitness.automationId,
             expectedRevision: eventWitness.revision + 1,
             cause: eventWitness.cause,
-            source: rekeyedEventStageItem.target,
+            source: {
+                ...rekeyedEventStageItem.target,
+                summaryCiphertext: null,
+            },
             target: {
                 triggerEvidenceEnvelope: plainEventEvidence,
                 occurrenceEvidenceEqualityTag: null,
-                executionInputEnvelope: null,
+                executionInputEnvelope: plainEventExecutionInput,
                 resultEnvelope: null,
                 replyContextEnvelope: null,
                 replyHandoffReceiptEnvelope: null,

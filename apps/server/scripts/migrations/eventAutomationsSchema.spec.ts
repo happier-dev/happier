@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -36,11 +36,19 @@ function normalizeSql(sql: string): string {
 }
 
 function namedCheck(sql: string, name: string): string {
-    const marker = new RegExp(
-        `CONSTRAINT\\s+[\`\"]?${name}[\`\"]?\\s+CHECK\\s*\\(`,
-        "i",
-    ).exec(sql);
-    if (marker?.index === undefined) throw new Error(`constraint ${name} not found`);
+    // One consolidated migration owns each dialect's final shape, so every
+    // named CHECK must be declared exactly once in it; a second declaration
+    // would reintroduce a forward rebuild transition.
+    const matches = [
+        ...sql.matchAll(new RegExp(
+            `CONSTRAINT\\s+[\`\"]?${name}[\`\"]?\\s+CHECK\\s*\\(`,
+            "gi",
+        )),
+    ];
+    const marker = matches[0];
+    if (matches.length !== 1 || marker?.index === undefined) {
+        throw new Error(`constraint ${name} must be declared exactly once (found ${matches.length})`);
+    }
     const openingParen = sql.indexOf("(", marker.index + marker[0].length - 1);
     let depth = 0;
     let quote: "'" | "\"" | "`" | null = null;
@@ -124,6 +132,23 @@ function topLevelArmContaining(check: string, markers: readonly string[]): strin
     const arm = arms.find((candidate) => markers.every((marker) => candidate.includes(marker)));
     if (arm === undefined) throw new Error(`${markers.join(" + ")} arm not found`);
     return arm;
+}
+
+const replyHandoffDueIndexName = "AutomationRun_replyHandoffState_replyHandoffDueAt_idx";
+
+function createsReplyHandoffDueIndex(sql: string): boolean {
+    const columns = `\\(\\s*[\`"]?replyHandoffState[\`"]?\\s*,\\s*[\`"]?replyHandoffDueAt[\`"]?\\s*\\)`;
+    return new RegExp(
+        `CREATE\\s+INDEX\\s+[\`"]?${replyHandoffDueIndexName}[\`"]?\\s+ON\\s+[\`"]?AutomationRun[\`"]?\\s*${columns}`,
+        "i",
+    ).test(sql) || new RegExp(
+        `ADD\\s+INDEX\\s+[\`"]?${replyHandoffDueIndexName}[\`"]?\\s*${columns}`,
+        "i",
+    ).test(sql);
+}
+
+function migrationIdOf(migrationPath: string): string {
+    return migrationPath.split("/").at(-2)!;
 }
 
 async function applySqliteMigrationThroughCanonicalExecutor(
@@ -219,7 +244,26 @@ describe("Automation trigger-set persistence contract", () => {
         expect(schema).not.toContain("contentRemovedAt");
         expect(claimReceipt).toMatch(/^\s*runId\s+String\?/m);
         expect(claimReceipt).toMatch(/^\s*claimedAttempt\s+Int\?/m);
+        // The signed claim receipt carries the exact committed post-claim
+        // Account witness: present for every claimed outcome, absent for
+        // every empty outcome.
+        expect(claimReceipt).toMatch(
+            /^\s*accountCurrentnessWitnessJson\s+String\?(?:\s+@db\.LongText)?\s*$/m,
+        );
+        expect(claimReceipt).toMatch(
+            /^\s*claimResultJson\s+String(?:\s+@db\.LongText)?\s*$/m,
+        );
         expect(claimReceipt).toContain("@@index([expiresAt])");
+        // Runs own immutable cause identity. A mutable Trigger relation would
+        // either prevent trigger deletion or SET NULL a field the trigger
+        // cause arm requires. Schedule scans use the indexed scalar triggerId
+        // through the incumbent Run owner instead.
+        expect(trigger).not.toMatch(/^\s*runs\s+AutomationRun\[\]\s*$/m);
+        expect(run).not.toMatch(/^\s*trigger\s+AutomationTrigger\??\s+@relation\(/m);
+        expect(run).toContain("@@index([triggerId, state])");
+        // The reply-handoff worker discovers unresolved delivery attention
+        // through this indexed pair; every dialect schema declares it.
+        expect(run).toContain("@@index([replyHandoffState, replyHandoffDueAt])");
         expect(run).not.toMatch(/^\s*origin(?:Kind|OccurredAt|SourceSelectorId)\s+/m);
         expect(run).not.toMatch(/^\s*claimRequestNonceDigest\s+/m);
         expect(run).toContain("@@unique([triggerId, occurrenceKey])");
@@ -264,6 +308,16 @@ describe("Automation trigger-set persistence contract", () => {
         expect(normalized).toContain("CREATE TABLE AutomationRunAssignment");
         expect(normalized).toContain("CREATE TABLE AutomationWorkerClaimReceipt");
         expect(normalized).toContain("AutomationWorkerClaimReceipt_outcome_check");
+        const outcomeCheck = namedCheck(sql, "AutomationWorkerClaimReceipt_outcome_check");
+        // A claimed outcome is durably bound to its committed post-claim
+        // witness; an empty outcome never carries one.
+        expect(outcomeCheck).toContain("accountCurrentnessWitnessJson IS NULL");
+        expect(outcomeCheck).toContain("accountCurrentnessWitnessJson IS NOT NULL");
+        // Historical Runs must retain their immutable trigger cause after the
+        // mutable definition is soft-deleted. The scalar index supports the
+        // schedule worker without coupling Run history to Trigger lifecycle.
+        expect(normalized).not.toContain("AutomationRun_triggerId_fkey");
+        expect(normalized).toContain("AutomationRun_triggerId_state_idx");
         expect(normalized).not.toContain("claimRequestNonceDigest");
         expect(normalized).toContain("CREATE TABLE AutomationEventSourceStatus");
         expect(normalized).toContain("CREATE TABLE AutomationEventSourceCatalogStatus");
@@ -352,12 +406,57 @@ describe("Automation trigger-set persistence contract", () => {
     it.each(migrationPaths)("retains reply identity without a second Run-compaction state in %s", async (migrationPath) => {
         const replyCheck = namedCheck(await read(migrationPath), "AutomationRun_reply_handoff_arm_check");
         expect(replyCheck).toMatch(
-            /causeKind = 'conversation'.*replyContextEnvelope IS NOT NULL.*replyHandoffActionPluginId IS NOT NULL.*replyHandoffId IS NOT NULL/s,
+            /causeKind = 'conversation'.*replyContextEnvelope IS NOT NULL.*replyHandoffActionPluginId IS NOT NULL.*replyHandoffId IS NOT NULL.*replyHandoffState <> 'none'/s,
         );
         expect(replyCheck).toMatch(
-            /causeKind IN \('trigger', 'manual'\).*replyContextEnvelope IS NULL.*replyHandoffId IS NULL.*replyHandoffState = 'none'/s,
+            /causeKind IN \('trigger', 'manual', 'conversation'\).*replyContextEnvelope IS NULL.*replyHandoffId IS NULL.*replyHandoffState = 'none'/s,
         );
         expect(replyCheck).not.toContain("contentRemovedAt");
+    });
+
+    it("creates the reply-handoff due index exactly once per provider through the single consolidated owner", async () => {
+        const ledgerDirectories = [
+            "prisma/migrations",
+            "prisma/sqlite/migrations",
+            "prisma/mysql/migrations",
+        ] as const;
+        for (const [index, directory] of ledgerDirectories.entries()) {
+            const ledgerRoot = join(serverRoot, directory);
+            const creating: string[] = [];
+            for (const entry of await readdir(ledgerRoot, { withFileTypes: true })) {
+                if (!entry.isDirectory()) continue;
+                const sql = await readFile(join(ledgerRoot, entry.name, "migration.sql"), "utf8")
+                    .catch(() => null);
+                if (sql !== null && createsReplyHandoffDueIndex(sql)) creating.push(entry.name);
+            }
+            expect(creating, directory).toEqual([migrationIdOf(migrationPaths[index]!)]);
+        }
+    });
+
+    it("executes the PostgreSQL reply-handoff due index statement against the canonical columns", async () => {
+        const statement = (await read(migrationPaths[0])).match(new RegExp(
+            `CREATE\\s+INDEX\\s+"${replyHandoffDueIndexName}"[\\s\\S]*?;`,
+            "i",
+        ))?.[0];
+        expect(statement).toBeDefined();
+        const db = new PGlite();
+        try {
+            await db.exec(`CREATE TABLE "AutomationRun" (
+                "id" TEXT NOT NULL PRIMARY KEY,
+                "replyHandoffState" TEXT NOT NULL DEFAULT 'none',
+                "replyHandoffDueAt" TIMESTAMP(3)
+            );`);
+            await db.exec(statement!);
+            const indexes = await db.query<{ indexname: string; indexdef: string }>(
+                "SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'AutomationRun'",
+            );
+            const created = indexes.rows.find((row) => row.indexname === replyHandoffDueIndexName);
+            expect(created).toBeDefined();
+            expect(created?.indexdef).toContain("replyHandoffState");
+            expect(created?.indexdef).toContain("replyHandoffDueAt");
+        } finally {
+            await db.close();
+        }
     });
 
     it("keeps MySQL identities portable without weakening canonical equality", async () => {
@@ -756,6 +855,15 @@ describe("Automation trigger-set executable migration", () => {
                     'installation', 'materialization', 'handoff-a', 'awaitingResult',
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             `);
+            const noHandoffOccurrenceKey = "N".repeat(43);
+            await db.exec(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('conversation-no-handoff', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP,
+                    '${noHandoffOccurrenceKey}', '{"t":"plain","v":{}}', '{}',
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `);
             const appOwnedOccurrenceKey = "D".repeat(43);
             await db.exec(`
                 INSERT INTO "AutomationRun" (
@@ -863,15 +971,15 @@ describe("Automation trigger-set executable migration", () => {
             const postgresReplayFingerprint = "P".repeat(43);
             await db.exec(`
                 INSERT INTO "AutomationWorkerClaimReceipt" (
-                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                    "id", "accountId", "machineId", "machineInstallationId", "claimResultJson", "expiresAt"
                 ) VALUES ('${postgresReplayFingerprint}', 'account', 'machine-enabled',
-                    'installation-enabled', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                    'installation-enabled', '{"v":1,"run":null}', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
             `);
             await expect(db.exec(`
                 INSERT INTO "AutomationWorkerClaimReceipt" (
-                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                    "id", "accountId", "machineId", "machineInstallationId", "claimResultJson", "expiresAt"
                 ) VALUES ('${postgresReplayFingerprint}', 'account', 'machine-enabled',
-                    'installation-enabled', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
+                    'installation-enabled', '{"v":1,"run":null}', CURRENT_TIMESTAMP + INTERVAL '5 minutes')
             `)).rejects.toThrow();
         } finally {
             await db.close();
@@ -991,6 +1099,14 @@ describe("Automation trigger-set executable migration", () => {
                     'installation', 'materialization', 'handoff-d', 'awaitingResult',
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             `).run(appOwnedOccurrenceKey);
+            const noHandoffOccurrenceKey = "N".repeat(43);
+            db.prepare(`
+                INSERT INTO "AutomationRun" (
+                    "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
+                    "triggerEvidenceEnvelope", "executionInputEnvelope", "scheduledAt", "dueAt", "updatedAt"
+                ) VALUES ('conversation-no-handoff', 'automation', 'account', 'conversation', CURRENT_TIMESTAMP,
+                    ?, '{"t":"plain","v":{}}', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            `).run(noHandoffOccurrenceKey);
             expect(() => db.prepare(`
                 INSERT INTO "AutomationRun" (
                     "id", "automationId", "accountId", "causeKind", "causeOccurredAt", "occurrenceKey",
@@ -1098,15 +1214,15 @@ describe("Automation trigger-set executable migration", () => {
             const replayFingerprint = "R".repeat(43);
             db.exec(`
                 INSERT INTO "AutomationWorkerClaimReceipt" (
-                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                    "id", "accountId", "machineId", "machineInstallationId", "claimResultJson", "expiresAt"
                 ) VALUES ('${replayFingerprint}', 'account', 'machine-enabled',
-                    'installation-enabled', datetime('now', '+5 minutes'))
+                    'installation-enabled', '{"v":1,"run":null}', datetime('now', '+5 minutes'))
             `);
             expect(() => db.exec(`
                 INSERT INTO "AutomationWorkerClaimReceipt" (
-                    "id", "accountId", "machineId", "machineInstallationId", "expiresAt"
+                    "id", "accountId", "machineId", "machineInstallationId", "claimResultJson", "expiresAt"
                 ) VALUES ('${replayFingerprint}', 'account', 'machine-enabled',
-                    'installation-enabled', datetime('now', '+5 minutes'))
+                    'installation-enabled', '{"v":1,"run":null}', datetime('now', '+5 minutes'))
             `)).toThrow();
             expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
         } finally {
@@ -1114,7 +1230,7 @@ describe("Automation trigger-set executable migration", () => {
         }
     });
 
-    it("deploys the SQLite migration twice and converges on one applied ledger record", async () => {
+    it("deploys the consolidated SQLite migration twice and converges on exactly one applied ledger record", async () => {
         const db = createSqlitePredecessor();
         try {
             const sql = await read(migrationPaths[1]);
@@ -1123,12 +1239,16 @@ describe("Automation trigger-set executable migration", () => {
             // same checksum, no duplicate DDL, schema unchanged.
             await applySqliteMigrationThroughCanonicalExecutor(db, sql);
             expect(db.prepare(`
-                SELECT migration_name, checksum FROM _prisma_migrations
-                WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL AND migration_name = ?
-            `).all(migrationId)).toHaveLength(1);
+                SELECT migration_name FROM _prisma_migrations
+                WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL
+            `).all()).toEqual([{ migration_name: migrationId }]);
             expect(db.prepare(`
                 SELECT count(*) AS count FROM sqlite_master
                 WHERE type = 'table' AND name = 'AutomationWorkerClaimReceipt'
+            `).get()).toEqual({ count: 1 });
+            expect(db.prepare(`
+                SELECT count(*) AS count FROM sqlite_master
+                WHERE type = 'table' AND name = 'AutomationRun'
             `).get()).toEqual({ count: 1 });
         } finally {
             db.close();

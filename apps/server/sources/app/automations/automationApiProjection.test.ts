@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
@@ -33,6 +34,7 @@ const ACCOUNT_CURRENTNESS = {
 const EVENT_SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
     "00000000-0000-4000-8000-000000000001",
 );
+const EVENT_TRIGGER_ID = AutomationTriggerIdSchema.parse("trigger-event");
 
 const V2_TEMPLATE_CIPHERTEXT = JSON.stringify({
     kind: "happier_automation_template_plain_v1",
@@ -148,7 +150,7 @@ function eventAutomation() {
         id: "automation-event",
         triggers: [{
             ...scheduleAutomation().triggers[0],
-            id: "trigger-event",
+            id: EVENT_TRIGGER_ID,
             automationId: "automation-event",
             kind: "pluginEvent" as const,
             scheduleKind: null,
@@ -166,7 +168,7 @@ function eventAutomation() {
                 binding: {
                     v: 1,
                     automationId: "automation-event",
-                    triggerId: "trigger-event",
+                    triggerId: EVENT_TRIGGER_ID,
                     triggerRevision: 1,
                     triggerKind: "pluginEvent",
                     eventRef: {
@@ -197,7 +199,7 @@ function eventStatusProjection() {
         },
         sourceStatus: {
             automationId: "automation-event",
-            triggerId: "trigger-event",
+            triggerId: EVENT_TRIGGER_ID,
             triggerRevision: 1,
             eventRef: { pluginId: "com.example.github", localId: "issue-opened" },
             sourceSelectorId: EVENT_SOURCE_SELECTOR_ID,
@@ -433,6 +435,7 @@ describe("Automation API projections", () => {
             new Map(),
             [{
                 id: "trigger-retired",
+                automationId: "automation-event",
                 kind: "sessionLifecycle",
                 revision: 7,
                 retiredAt: DATE,

@@ -110,14 +110,10 @@ if [ "$should_migrate" = "1" ] && [ "$migrations_enabled" = "1" ]; then
 
   i=1
   while [ "$i" -le "$attempts" ]; do
-    if [ "$provider" = "pglite" ]; then
-      migration_command="migrate:light:deploy"
-    elif [ "$provider" = "sqlite" ]; then
-      migration_command="migrate:sqlite:deploy"
-    elif [ "$provider" = "mysql" ]; then
-      migration_command="migrate:mysql:deploy"
+    if [ -n "$server_binary" ]; then
+      migration_command="happier-server-migrate"
     else
-      migration_command="migrate:full:deploy"
+      migration_command="migrate:deploy"
     fi
     echo "[entrypoint] Running ${migration_command} (${provider}) (attempt $i/$attempts)..."
 
@@ -129,15 +125,7 @@ if [ "$should_migrate" = "1" ] && [ "$migrations_enabled" = "1" ]; then
       fi
       out="$("$migration_binary" 2>&1)" && status=0 || status=$?
     else
-      if [ "$provider" = "pglite" ]; then
-        out="$(yarn --cwd apps/server migrate:light:deploy 2>&1)" && status=0 || status=$?
-      elif [ "$provider" = "sqlite" ]; then
-        out="$(yarn --cwd apps/server migrate:sqlite:deploy 2>&1)" && status=0 || status=$?
-      elif [ "$provider" = "mysql" ]; then
-        out="$(yarn --cwd apps/server migrate:mysql:deploy 2>&1)" && status=0 || status=$?
-      else
-        out="$(yarn --cwd apps/server migrate:full:deploy 2>&1)" && status=0 || status=$?
-      fi
+      out="$(yarn --cwd apps/server migrate:deploy 2>&1)" && status=0 || status=$?
     fi
     if [ "$status" -eq 0 ]; then
       printf "%s\n" "$out"

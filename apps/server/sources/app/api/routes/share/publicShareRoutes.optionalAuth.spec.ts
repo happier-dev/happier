@@ -10,7 +10,15 @@ vi.mock("@/app/auth/auth", () => ({
     auth: { verifyToken },
 }));
 
-const logPublicShareAccess = vi.fn(async () => {});
+// Mirrors the production logPublicShareAccess contract (accessLogger.ts) so
+// call-argument assertions type-check instead of widening to a zero-arg mock.
+const logPublicShareAccess = vi.fn(async (
+    _publicShareId: string,
+    _userId: string | null,
+    _ipAddress?: string,
+    _userAgent?: string,
+    _writer?: unknown,
+) => {});
 vi.mock("@/app/share/accessLogger", () => ({
     logPublicShareAccess,
     getIpAddress: vi.fn(() => "1.2.3.4"),

@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import {
     AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1,
     AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
+    AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationConversationActionHttpPathsV1,
     AutomationConversationActionHttpRequestSchemasV1,
     AutomationConversationAdmitResultV1Schema,
@@ -13,12 +14,15 @@ import {
     AutomationEventActionHttpRequestSchemasV1,
     AutomationEventStoredDefinitionsReadHttpRequestV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     buildAutomationConversationOccurrenceEvidenceV1,
     createPluginInstallationManifestPublisherSigningInputV1,
     deriveAutomationOccurrenceKeyV1,
     normalizePluginReleaseFactsV1,
     parseAutomationRunExecutionRecipeV1,
+    PluginJsonValueV2Schema,
+    readDeclaredPackageAssetsV1,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
     sealAutomationRunResultStoredEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -56,13 +60,14 @@ const MACHINE_INSTALLATION_ID = "installation-channels-provider-composed";
 const MATERIALIZATION_ID = "materialization-channels-provider-composed";
 const SERVER_IDENTITY_ID = "srv_channelsProviderComposed01";
 const AUTOMATION_ID = "automation-channels-provider-composed";
-const TRIGGER_ID = "trigger-channels-provider-composed";
+const TRIGGER_ID = AutomationTriggerIdSchema.parse("trigger-channels-provider-composed");
 const COMPOSED_SCHEDULE_TRIGGER_A_ID = "trigger-composed-schedule-a";
 const COMPOSED_SCHEDULE_TRIGGER_B_ID = "trigger-composed-schedule-b";
 const COMPOSED_ZERO_TRIGGER_AUTOMATION_ID = "automation-composed-zero-trigger";
 const COMPOSED_CONNECTION_ID = "connection-telegram";
 const COMPOSED_BINDING_ID = "binding-composed-1";
 const COMPOSED_CONVERSATION_OCCURRENCE_ID = "conversation:composed:custody:1";
+const COMPOSED_SESSION_ID = "session-channels-provider-composed";
 const CHANNELS_MATERIALIZATION_ID = "channels-materialization";
 const CHANNELS_RESULT_DELIVERY_ACTION_LOCAL_ID = "automation/result-deliver-v1";
 const CHANNELS_INGRESS_CONTRIBUTION_LOCAL_ID = "provider/observation-ingest-v1";
@@ -106,12 +111,12 @@ function createSignedPublisherHeader(params: Readonly<{
         nonce: randomUUID(),
         method: "POST" as const,
         path: params.path,
-        bodySha256: createHash("sha256")
+        bodySha256Base64Url: createHash("sha256")
             .update(stringifyPluginInstallationManifestCanonicalJsonV1(params.body))
-            .digest("hex"),
+            .digest("base64url"),
     };
     const signature = tweetnacl.sign.detached(
-        createPluginInstallationManifestPublisherSigningInputV1(proof),
+        createPluginInstallationManifestPublisherSigningInputV1({ proof }),
         params.keyPair.secretKey,
     );
     return Buffer.from(JSON.stringify({
@@ -214,7 +219,11 @@ function createChannelsCollection(...initialRows: JsonRecord[]) {
                 if (operation.kind === "assert") {
                     const rowId = requiredString(operation.rowId, "assert row id");
                     const current = snapshot.get(rowId);
-                    if (current?.revision !== operation.expectedRevision || current.deleted === true) {
+                    if (
+                        current === undefined
+                        || current.revision !== operation.expectedRevision
+                        || current.deleted === true
+                    ) {
                         return { status: "conflict" as const, conflicts: [{ rowId }] };
                     }
                     continue;
@@ -236,7 +245,11 @@ function createChannelsCollection(...initialRows: JsonRecord[]) {
                 if (operation.kind === "delete") {
                     const rowId = requiredString(operation.rowId, "delete row id");
                     const current = snapshot.get(rowId);
-                    if (current?.revision !== operation.expectedRevision || current.deleted === true) {
+                    if (
+                        current === undefined
+                        || current.revision !== operation.expectedRevision
+                        || current.deleted === true
+                    ) {
                         return { status: "conflict" as const, conflicts: [{ rowId }] };
                     }
                     snapshot.set(rowId, stateRow(current.value, current.revision + 1, true));
@@ -259,17 +272,11 @@ function strictRecipe(): string {
         templateVersion: 1,
         template: { t: "plain", v: { v: 1, prompt: "Handle the observed provider message" } },
         triggerEvidence: null,
-        target: {
-            kind: "newSession",
-            spawn: {
-                executionTarget: { serverId: "server-channels-provider-composed", machineId: MACHINE_ID },
-                directory: "/tmp/channels-provider-composed",
-                agentTarget: {
-                    kind: "agent",
-                    identity: { pluginId: "happier.agent.codex", localId: "codex" },
-                },
-            },
-        },
+        // This boundary exercises Event/Conversation admission and result
+        // custody, not Session-spawn acknowledgement. An existing-Session
+        // target lets the canonical Run owner settle without fabricating the
+        // Session-owned creation tag required by a strict new-Session recipe.
+        target: { kind: "existingSession", sessionId: COMPOSED_SESSION_ID },
     });
     if (result.kind !== "available") throw new Error("composed Event recipe must be valid");
     return result.serialized;
@@ -298,7 +305,10 @@ type ProviderScenario = Readonly<{
     admit(input: unknown, context: unknown): Promise<unknown>;
 }>;
 
-async function loadScenario(kind: "telegram" | "discord"): Promise<ProviderScenario> {
+async function loadScenario(
+    kind: "telegram" | "discord",
+    opts: Readonly<{ discordSelfEcho?: boolean }> = {},
+): Promise<ProviderScenario> {
     if (kind === "telegram") {
         const [plugin, actions, events, constants] = await Promise.all([
             import(/* @vite-ignore */ new URL(
@@ -445,17 +455,23 @@ async function loadScenario(kind: "telegram" | "discord"): Promise<ProviderScena
             import.meta.url,
         ).href),
     ]);
+    const selfEcho = opts.discordSelfEcho === true;
     const parsed = message.parseDiscordMessageDispatch({
         event: "MESSAGE_CREATE",
         payload: {
-            id: "9001",
+            id: selfEcho ? "9002" : "9001",
             channel_id: "4242",
             guild_id: "7777",
             timestamp: new Date(Date.now() - 1_000).toISOString(),
             type: 0,
-            content: "ship it",
-            author: { id: "77", bot: false, username: "Ada" },
-            mentions: [{ id: "bot-1" }],
+            // The real Gateway delivers the integration's own result deliveries
+            // with the bot itself as author; the projection must classify that
+            // actor as integration-self so the census can drop the Event arm.
+            content: selfEcho ? "Automation result delivered into the watched channel" : "ship it",
+            author: selfEcho
+                ? { id: "bot-1", bot: true, username: "Happier" }
+                : { id: "77", bot: false, username: "Ada" },
+            mentions: selfEcho ? [] : [{ id: "bot-1" }],
             attachments: [],
             embeds: [],
         },
@@ -475,16 +491,31 @@ async function loadScenario(kind: "telegram" | "discord"): Promise<ProviderScena
         applicationId: "123",
         observation: normalized,
     });
-    if (candidate === null) throw new Error("Discord composed fixture did not produce an Event candidate");
+    if (selfEcho) {
+        if (candidate !== null) {
+            throw new Error("Discord integration-self echo must not produce an Event candidate");
+        }
+    } else if (candidate === null) {
+        throw new Error("Discord composed fixture did not produce an Event candidate");
+    }
+    const fallbackSourceConfig = { v: 1, applicationId: "123", channelId: "4242" } as const;
+    const projectedEventPayload = candidate === null
+        ? event.createDiscordAutomationMessagePayload({ observation: normalized.observation })
+        : candidate.payload;
+    if (projectedEventPayload === null) {
+        throw new Error("Discord self-echo payload projection failed");
+    }
     return {
         pluginId: "happier.channel.discord",
         manifest: plugin.PLUGIN_MANIFEST,
         eventLocalId: event.DISCORD_AUTOMATION_MESSAGE_EVENT_ID,
         admitActionLocalId: event.DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
         contributionId: "discord-provider",
-        sourceInstanceId: candidate.sourceInstanceId,
-        sourceConfig: { v: 1, applicationId: "123", channelId: "4242" },
-        eventPayload: candidate.payload,
+        sourceInstanceId: candidate === null
+            ? event.createDiscordAutomationMessageSourceInstanceId(fallbackSourceConfig)
+            : candidate.sourceInstanceId,
+        sourceConfig: fallbackSourceConfig,
+        eventPayload: projectedEventPayload,
         occurrenceId: normalized.observation.occurrenceId,
         occurredAt: normalized.observation.occurredAt,
         observation: { observation: normalized, eventCandidate: candidate },
@@ -545,6 +576,8 @@ function providerContributionProjection(scenario: ProviderScenario) {
 }
 
 function pluginReleaseFacts(scenario: ProviderScenario) {
+    const declaredAssets = readDeclaredPackageAssetsV1(scenario.manifest);
+    if (declaredAssets === null) throw new Error("provider manifest package assets are invalid");
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: scenario.pluginId, version: VERSION },
         archiveDigestSha256: `sha256:${"c".repeat(64)}`,
@@ -553,9 +586,22 @@ function pluginReleaseFacts(scenario: ProviderScenario) {
         uiSlots: [],
         packageAssetArchive: {
             archiveDigestSha256: `sha256:${"d".repeat(64)}`,
-            resources: [],
+            resources: declaredAssets.map((asset) => ({
+                ...asset,
+                byteSize: 0,
+                digestSha256: `sha256:${"0".repeat(64)}`,
+            })),
         },
     });
+}
+
+async function requireAdoptedDefinitionSet(
+    adoptedSet: Readonly<{ refresh(): Promise<unknown> }>,
+): Promise<void> {
+    const result = await adoptedSet.refresh();
+    if (!isRecord(result) || result.kind !== "adopted") {
+        throw new Error(`Automation Event definition adoption failed: ${JSON.stringify(result)}`);
+    }
 }
 
 function triggerEnvelope(scenario: ProviderScenario): string {
@@ -602,6 +648,8 @@ describe("Channels first-party provider Automation Event composition", () => {
             () => db.automationRun.deleteMany(),
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
+            () => db.sessionTurn.deleteMany(),
+            () => db.session.deleteMany(),
             () => db.pluginMachineMaterialization.deleteMany(),
             () => db.accountPluginIntent.deleteMany(),
             () => db.accountPluginRelease.deleteMany(),
@@ -616,6 +664,9 @@ describe("Channels first-party provider Automation Event composition", () => {
             const release = pluginReleaseFacts(scenario);
             const keyPair = tweetnacl.sign.keyPair();
             await db.account.create({ data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" } });
+            await db.session.create({
+                data: { id: COMPOSED_SESSION_ID, accountId: ACCOUNT_ID, tag: "channels-provider-composed", metadata: "{}" },
+            });
             await db.automationEventCatalogState.create({
                 data: { accountId: ACCOUNT_ID, eventSourceDefinitionsRevision: 0n },
             });
@@ -673,7 +724,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                     accountId: ACCOUNT_ID,
                     name: `${provider} composed Event`,
                     enabled: true,
-                    targetType: "new_session",
+                    targetType: "existing_session",
                     templateCiphertext: strictRecipe(),
                     templateVersion: 1,
                     assignments: { create: { machineId: MACHINE_ID, enabled: true } },
@@ -755,17 +806,19 @@ describe("Channels first-party provider Automation Event composition", () => {
                 const adoptedSet = createAdoptedSet({
                     credentials,
                     caller: materialization,
+                    immutableGenerationId: PROVIDER_GENERATION,
                     transport: { kind: "checkpointedPull" },
                     generationSignal: new AbortController().signal,
                     isGenerationCurrent: () => true,
                     revalidateCallerMaterialization: async () => true,
+                    revalidateCallerImmutableGeneration: async () => true,
                     readStoredDefinitions: async (params: JsonRecord) => {
                         if (!isRecord(params.caller) || !isRecord(params.input)) {
                             throw new Error("stored definition request is invalid");
                         }
                         const body = AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse({
                             v: 1,
-                            caller: { pluginId: params.caller.pluginId, materialization: params.caller },
+                            caller: params.caller,
                             input: params.input,
                         });
                         const response = await injectSigned(
@@ -778,7 +831,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                     resolveAccountEncryptionCurrentness: readCurrentness,
                     resolveAccountEncryptionMaterial: async () => null,
                 });
-                await expect(adoptedSet.refresh()).resolves.toMatchObject({ kind: "adopted" });
+                await requireAdoptedDefinitionSet(adoptedSet);
 
                 let loseFirstAdmissionResponse = true;
                 let admissionRouteCalls = 0;
@@ -990,10 +1043,17 @@ describe("Channels first-party provider Automation Event composition", () => {
                     && row.value.payload.lifecycle.phase === "retryDue"
                 ))).toBe(true);
 
-                const dueWork = await ingressModule.runConversationIngressDueWorkForInvocation(
-                    { now: Date.now() + 60_000, limit: 10 },
-                    channelsContext,
-                );
+                const retryNow = Date.now() + 60_000;
+                const nowSpy = vi.spyOn(Date, "now").mockReturnValue(retryNow);
+                let dueWork: number;
+                try {
+                    dueWork = await ingressModule.runConversationIngressDueWorkForInvocation(
+                        { now: retryNow, limit: 10 },
+                        channelsContext,
+                    );
+                } finally {
+                    nowSpy.mockRestore();
+                }
                 expect(dueWork).toBe(1);
                 expect(admissionRouteCalls).toBe(2);
                 expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
@@ -1026,8 +1086,8 @@ describe("Channels first-party provider Automation Event composition", () => {
     // boundary fixtures, matching the existing lanes in this file.
     // ---------------------------------------------------------------------
 
-    function strictRecipeVersioned(templateVersion: number): string {
-        const result = serializeAutomationStoredDefinitionExecutionRecipeV1({
+    function definitionRecipeVersioned(templateVersion: number) {
+        return AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
             v: 1,
             templateVersion,
             template: {
@@ -1047,6 +1107,12 @@ describe("Channels first-party provider Automation Event composition", () => {
                 },
             },
         });
+    }
+
+    function strictRecipeVersioned(templateVersion: number): string {
+        const result = serializeAutomationStoredDefinitionExecutionRecipeV1(
+            definitionRecipeVersioned(templateVersion),
+        );
         if (result.kind !== "available") throw new Error("composed Event recipe must be valid");
         return result.serialized;
     }
@@ -1096,6 +1162,9 @@ describe("Channels first-party provider Automation Event composition", () => {
         const release = pluginReleaseFacts(scenario);
         const keyPair = tweetnacl.sign.keyPair();
         await db.account.create({ data: { id: ACCOUNT_ID, publicKey: null, encryptionMode: "plain" } });
+        await db.session.create({
+            data: { id: COMPOSED_SESSION_ID, accountId: ACCOUNT_ID, tag: "channels-provider-composed", metadata: "{}" },
+        });
         await db.automationEventCatalogState.create({
             data: { accountId: ACCOUNT_ID, eventSourceDefinitionsRevision: 0n },
         });
@@ -1278,17 +1347,19 @@ describe("Channels first-party provider Automation Event composition", () => {
             const adoptedSet = createAdoptedSet({
                 credentials,
                 caller: materialization,
+                immutableGenerationId: PROVIDER_GENERATION,
                 transport: { kind: "checkpointedPull" },
                 generationSignal: new AbortController().signal,
                 isGenerationCurrent: () => true,
                 revalidateCallerMaterialization: async () => true,
+                revalidateCallerImmutableGeneration: async () => true,
                 readStoredDefinitions: async (storedParams: JsonRecord) => {
                     if (!isRecord(storedParams.caller) || !isRecord(storedParams.input)) {
                         throw new Error("stored definition request is invalid");
                     }
                     const body = AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse({
                         v: 1,
-                        caller: { pluginId: storedParams.caller.pluginId, materialization: storedParams.caller },
+                        caller: storedParams.caller,
                         input: storedParams.input,
                     });
                     const response = await injectSigned(
@@ -1301,7 +1372,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
                 resolveAccountEncryptionMaterial: async () => null,
             });
-            await expect(adoptedSet.refresh()).resolves.toMatchObject({ kind: "adopted" });
+            await requireAdoptedDefinitionSet(adoptedSet);
 
             const executor = createExecutor({
                 credentials,
@@ -1568,7 +1639,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             accountId: ACCOUNT_ID,
             automationId: AUTOMATION_ID,
             expectedTemplateVersion: 1,
-            input: { executionRecipe: strictRecipeVersioned(2) },
+            input: { executionRecipe: definitionRecipeVersioned(2) },
         })).resolves.toMatchObject({ templateVersion: 2 });
         expect(await readTriggers()).toEqual(triggersBeforeEdit);
         for (const run of scheduleRuns) {
@@ -1605,7 +1676,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             && row.value.terminal === true
         ))).toBe(true);
 
-        // Run Now is an invocation origin, not a trigger: no trigger row is
+        // Run Now is an invocation cause, not a trigger: no trigger row is
         // invented or disturbed and the current recipe is frozen.
         await expect(runAutomationNow({
             accountId: ACCOUNT_ID,
@@ -1625,7 +1696,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 automationId: COMPOSED_ZERO_TRIGGER_AUTOMATION_ID,
                 name: "Composed zero trigger",
                 enabled: true,
-                executionRecipe: strictRecipeVersioned(2),
+                executionRecipe: definitionRecipeVersioned(1),
                 assignments: [{ machineId: MACHINE_ID, enabled: true, priority: 0 }],
                 triggers: [],
             },
@@ -1653,7 +1724,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 accountId: ACCOUNT_ID,
                 name: "Composed custody loop",
                 enabled: true,
-                targetType: "new_session",
+                targetType: "existing_session",
                 templateCiphertext: strictRecipe(),
                 templateVersion: 1,
                 assignments: { create: { machineId: MACHINE_ID, enabled: true } },
@@ -1663,7 +1734,7 @@ describe("Channels first-party provider Automation Event composition", () => {
 
         // One canonical persisted Channels binding routes the connection to this
         // Automation with verified final-result delivery.
-        const routeOpaqueContext = {
+        const routeOpaqueContext = PluginJsonValueV2Schema.parse({
             v: 1,
             kind: "conversationAutomationResultDelivery",
             connectionId: COMPOSED_CONNECTION_ID,
@@ -1674,7 +1745,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             endpoint: scenario.endpoint,
             reply: { providerMessageId: "9" },
             linkPreviewPolicy: "suppress",
-        };
+        });
         const bindingRowValue = {
             id: COMPOSED_BINDING_ID,
             "record-kind": "binding",
@@ -1858,6 +1929,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 attempt: claim.run.attempt,
                 accountCurrentness: claim.accountCurrentness,
             });
+            if (started === null) throw new Error("claimed composed Run did not start");
             const resultEnvelope = claim.run.causeKind === "conversation"
                 ? JSON.stringify(sealAutomationRunResultStoredEnvelopeV1({
                     mode: "plain",
@@ -2013,5 +2085,608 @@ describe("Channels first-party provider Automation Event composition", () => {
             row.value["record-kind"] !== "ingress-obligation"
             || row.value.terminal === true
         ))).toBe(true);
+    }, 120_000);
+
+    it("excludes the Discord integration's own echo at the census while the adjacent human occurrence admits one Run", async () => {
+        const humanScenario = await loadScenario("discord");
+        const selfScenario = await loadScenario("discord", { discordSelfEcho: true });
+        const keyPair = await seedComposedProviderFixture(humanScenario);
+        await db.automation.create({
+            data: {
+                id: AUTOMATION_ID,
+                accountId: ACCOUNT_ID,
+                name: "Discord self-echo composed Event",
+                enabled: true,
+                targetType: "existing_session",
+                templateCiphertext: strictRecipe(),
+                templateVersion: 1,
+                assignments: { create: { machineId: MACHINE_ID, enabled: true } },
+                triggers: { create: [pluginEventTriggerRow(humanScenario)] },
+            },
+        });
+
+        const cliModules = await Promise.all([
+            import(/* @vite-ignore */ new URL(
+                "../../../../cli/src/plugins/runtime/automations/automationEventActionExecutor.ts",
+                import.meta.url,
+            ).href),
+            import(/* @vite-ignore */ new URL(
+                "../../../../cli/src/plugins/runtime/automations/automationEventAdoptedDefinitionSetHost.ts",
+                import.meta.url,
+            ).href),
+        ]);
+        const createExecutor = cliModules[0].createAutomationEventActionExecutor as (
+            input: JsonRecord,
+        ) => DynamicExecutor;
+        const createAdoptedSet = cliModules[1].createAutomationEventAdoptedDefinitionSetHostV1 as (
+            input: JsonRecord,
+        ) => JsonRecord & Readonly<{ refresh(): Promise<unknown> }>;
+        const materialization = {
+            pluginId: humanScenario.pluginId,
+            machineId: MACHINE_ID,
+            materializationId: MATERIALIZATION_ID,
+        };
+        const credentials = {
+            token: "channels-provider-composed-token",
+            encryption: { type: "legacy" as const, secret: new Uint8Array(32).fill(9) },
+        };
+        const app = createAuthenticatedTestApp();
+        registerAutomationEventRoutes(app as never);
+        await app.ready();
+        try {
+            const injectSigned = async (path: string, body: unknown) => await app.inject({
+                method: "POST",
+                url: path,
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": ACCOUNT_ID,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                        body,
+                        keyPair,
+                        path,
+                    }),
+                },
+                payload: body,
+            });
+            const adoptedSet = createAdoptedSet({
+                credentials,
+                caller: materialization,
+                immutableGenerationId: PROVIDER_GENERATION,
+                transport: { kind: "checkpointedPull" },
+                generationSignal: new AbortController().signal,
+                isGenerationCurrent: () => true,
+                revalidateCallerMaterialization: async () => true,
+                revalidateCallerImmutableGeneration: async () => true,
+                readStoredDefinitions: async (params: JsonRecord) => {
+                    if (!isRecord(params.caller) || !isRecord(params.input)) {
+                        throw new Error("stored definition request is invalid");
+                    }
+                    const body = AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse({
+                        v: 1,
+                        caller: params.caller,
+                        input: params.input,
+                    });
+                    const response = await injectSigned(
+                        AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1,
+                        body,
+                    );
+                    expect(response.statusCode).toBe(200);
+                    return response.json();
+                },
+                resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
+                resolveAccountEncryptionMaterial: async () => null,
+            });
+            await requireAdoptedDefinitionSet(adoptedSet);
+            const executor = createExecutor({
+                credentials,
+                revalidateCallerMaterialization: async () => true,
+                revalidateCallerImmutableGeneration: async () => true,
+                resolveAccountId: async () => ACCOUNT_ID,
+                resolveAdoptedDefinitionSet: () => adoptedSet,
+                transport: {
+                    execute: async (actionId: string, request: unknown) => {
+                        if (!(actionId in AutomationEventActionHttpRequestSchemasV1)) {
+                            throw new Error(`unexpected Automation action ${actionId}`);
+                        }
+                        const body = AutomationEventActionHttpRequestSchemasV1[
+                            actionId as keyof typeof AutomationEventActionHttpRequestSchemasV1
+                        ].parse(request);
+                        const path = AutomationEventActionHttpPathsV1[
+                            actionId as keyof typeof AutomationEventActionHttpPathsV1
+                        ];
+                        const response = await injectSigned(path, body);
+                        expect(response.statusCode).toBe(200);
+                        return response.json();
+                    },
+                },
+            });
+
+            const connectionId = "connection-discord";
+            const connection = await (async () => {
+                const fixtureModule = await import(/* @vite-ignore */ new URL(
+                    "../../../../../packages/plugins/channels/src/testkit/currentConnectionFixture.ts",
+                    import.meta.url,
+                ).href) as {
+                    createCurrentConversationConnectionFixture: (input: JsonRecord) => JsonRecord;
+                };
+                return fixtureModule.createCurrentConversationConnectionFixture({
+                    connectionId,
+                    authority: {
+                        providerPluginId: humanScenario.pluginId,
+                        providerContributionSelection: {
+                            contributionId: humanScenario.contributionId,
+                            immutableGenerationId: PROVIDER_GENERATION,
+                        },
+                        providerSetupInput: { source: "composed-test" },
+                        credentialRef: humanScenario.credentialRef,
+                        transportOrigin: {
+                            serverIdentityId: SERVER_IDENTITY_ID,
+                            materializationRef: materialization,
+                        },
+                        providerConnectionKey: humanScenario.providerConnectionKey,
+                        providerConfig: humanScenario.providerConfig,
+                        routingIdentityKey: "r".repeat(43),
+                        integrationPrincipal: humanScenario.integrationPrincipal,
+                        authorityEpoch: 4,
+                    },
+                    transport: humanScenario.connectionTransport,
+                    overlapSafety: "safe",
+                    replayContinuity: humanScenario.replayContinuity,
+                    outboundTextLimit: { maximum: 4_096, unit: "utf8Bytes" },
+                });
+            })();
+            const channels = createChannelsCollection(connection);
+            let currentScenario = selfScenario;
+            const channelsContext = {
+                invokedAtMs: Date.now(),
+                plugin: { id: CHANNELS_PLUGIN_ID, version: VERSION },
+                contribution: {
+                    id: "provider/observation-ingest-v1",
+                    qualifiedId: `${CHANNELS_PLUGIN_ID}/actions/provider/observation-ingest-v1`,
+                },
+                surface: "plugin",
+                caller: {
+                    kind: "plugin",
+                    pluginId: humanScenario.pluginId,
+                    contribution: {
+                        id: "gateway",
+                        qualifiedId: `${humanScenario.pluginId}/backgroundServices/provider-observer`,
+                    },
+                    materialization,
+                },
+                signal: new AbortController().signal,
+                services: {
+                    storage: { account: { collection: () => channels.collection } },
+                    sessions: { get: async () => null },
+                    targetedContributions: {
+                        observeForSelf: () => ({
+                            dispose() {},
+                            readCurrent: async () => ({
+                                generation: CHANNELS_GENERATION,
+                                contributions: [providerContributionProjection(humanScenario)],
+                            }),
+                        }),
+                    },
+                    actions: {
+                        execute: async () => {
+                            throw new Error("unexpected generic Channels action");
+                        },
+                        executeAdmittedTargetedOperationWithExecutionOrigin: async (
+                            operation: JsonRecord,
+                            actionInput: unknown,
+                        ) => {
+                            if (!isRecord(operation.identity)) {
+                                throw new Error("unexpected provider operation");
+                            }
+                            if (operation.identity.role !== "automationEventAdmit") {
+                                throw new Error("unexpected provider operation");
+                            }
+                            const scenario = currentScenario;
+                            return {
+                                result: await scenario.admit(actionInput, {
+                                    plugin: { id: scenario.pluginId, version: VERSION },
+                                    contribution: {
+                                        id: scenario.admitActionLocalId,
+                                        qualifiedId: `${scenario.pluginId}/actions/${scenario.admitActionLocalId}`,
+                                    },
+                                    surface: "plugin",
+                                    caller: {
+                                        kind: "plugin",
+                                        pluginId: CHANNELS_PLUGIN_ID,
+                                        contribution: {
+                                            id: "provider/observation-ingest-v1",
+                                            qualifiedId: `${CHANNELS_PLUGIN_ID}/actions/provider/observation-ingest-v1`,
+                                        },
+                                        materialization: {
+                                            pluginId: CHANNELS_PLUGIN_ID,
+                                            machineId: MACHINE_ID,
+                                            materializationId: CHANNELS_MATERIALIZATION_ID,
+                                        },
+                                    },
+                                    signal: new AbortController().signal,
+                                    services: {
+                                        actions: {
+                                            execute: async (actionId: string, actionInputInner: unknown) => await executor({
+                                                actionId,
+                                                input: actionInputInner,
+                                                caller: {
+                                                    kind: "plugin",
+                                                    pluginId: scenario.pluginId,
+                                                    contributionLocalId: scenario.admitActionLocalId,
+                                                    immutableGenerationId: PROVIDER_GENERATION,
+                                                    materialization,
+                                                },
+                                            }),
+                                        },
+                                        logger: { debug() {}, info() {}, warn() {}, error() {} },
+                                    },
+                                }),
+                                executionOrigin: {
+                                    serverIdentityId: SERVER_IDENTITY_ID,
+                                    materializationRef: materialization,
+                                },
+                            };
+                        },
+                    },
+                },
+            };
+            const ingressModule = await import(/* @vite-ignore */ new URL(
+                "../../../../../packages/plugins/channels/src/ingress.ts",
+                import.meta.url,
+            ).href) as {
+                ingestConversationProviderObservationForInvocation: (
+                    input: JsonRecord,
+                    context: unknown,
+                ) => Promise<void>;
+            };
+
+            // The integration's own Gateway echo — the same entry the real
+            // worker builds with a null Event candidate — traverses the one
+            // census/checkpoint owner and settles checkpoint-safe with zero
+            // Event custody and zero Runs.
+            await expect(ingressModule.ingestConversationProviderObservationForInvocation(
+                { connectionId, entry: selfScenario.observation },
+                channelsContext,
+            )).resolves.toBeUndefined();
+            expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
+            expect([...channels.rows.values()].filter((row) => (
+                row.deleted !== true && row.value["record-kind"] === "ingress-obligation"
+            ))).toHaveLength(0);
+
+            // The adjacent human occurrence in the same channel admits exactly
+            // one Run through the same census and the provider's admit Action.
+            currentScenario = humanScenario;
+            await expect(ingressModule.ingestConversationProviderObservationForInvocation(
+                { connectionId, entry: humanScenario.observation },
+                channelsContext,
+            )).resolves.toBeUndefined();
+            expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
+            const admittedRun = await db.automationRun.findFirstOrThrow({
+                where: { accountId: ACCOUNT_ID },
+                select: { triggerId: true, causeKind: true, causeTriggerKind: true, state: true },
+            });
+            expect(admittedRun).toMatchObject({
+                triggerId: TRIGGER_ID,
+                causeKind: "trigger",
+                causeTriggerKind: "pluginEvent",
+                state: "queued",
+            });
+            expect([...channels.rows.values()].some((row) => (
+                row.deleted !== true
+                && row.value["record-kind"] === "ingress-obligation"
+                && row.value.terminal === true
+            ))).toBe(true);
+        } finally {
+            await app.close();
+        }
+    }, 120_000);
+
+    it("rejoins the same Conversation handoff deterministically when the daemon custody response is lost", async () => {
+        const scenario = await loadScenario("telegram");
+        const keyPair = await seedComposedProviderFixture(scenario);
+        await seedChannelsCoreReleaseFixture();
+        await db.automation.create({
+            data: {
+                id: AUTOMATION_ID,
+                accountId: ACCOUNT_ID,
+                name: "Composed custody response-loss loop",
+                enabled: true,
+                targetType: "existing_session",
+                templateCiphertext: strictRecipe(),
+                templateVersion: 1,
+                assignments: { create: { machineId: MACHINE_ID, enabled: true } },
+                triggers: { create: [pluginEventTriggerRow(scenario)] },
+            },
+        });
+
+        const routeOpaqueContext = PluginJsonValueV2Schema.parse({
+            v: 1,
+            kind: "conversationAutomationResultDelivery",
+            connectionId: COMPOSED_CONNECTION_ID,
+            bindingId: COMPOSED_BINDING_ID,
+            bindingRevision: 1,
+            connectionAuthorityEpoch: 4,
+            bindingAuthorityEpoch: 1,
+            endpoint: scenario.endpoint,
+            reply: { providerMessageId: "9" },
+            linkPreviewPolicy: "suppress",
+        });
+        const bindingRowValue = {
+            id: COMPOSED_BINDING_ID,
+            "record-kind": "binding",
+            v: 1,
+            "connection-id": COMPOSED_CONNECTION_ID,
+            "binding-id": COMPOSED_BINDING_ID,
+            "created-at": 1_000,
+            "updated-at": 1_000,
+            payload: {
+                endpoint: scenario.endpoint,
+                target: {
+                    kind: "automation",
+                    automationId: AUTOMATION_ID,
+                    policy: { resultDelivery: "finalResult" },
+                },
+                allowedPrincipalIds: ["person-1"],
+                allowBotSenders: false,
+                inputMode: "allAllowedMessages",
+                inboundDebounceMs: 750,
+                linkPreviewPolicy: "suppress",
+                senderFeedback: "off",
+                authorityEpoch: 1,
+                enabled: true,
+                deletionState: "none",
+            },
+        };
+
+        let conversationRunId: string | null = null;
+        const composed = await admitOneTelegramEventOccurrence({
+            scenario,
+            keyPair,
+            initialChannelsRows: [bindingRowValue],
+            whileAppOpen: async ({ injectSigned }) => {
+                const conversationCaller = {
+                    pluginId: CHANNELS_PLUGIN_ID,
+                    contributionLocalId: CHANNELS_INGRESS_CONTRIBUTION_LOCAL_ID,
+                    materialization: {
+                        pluginId: CHANNELS_PLUGIN_ID,
+                        machineId: MACHINE_ID,
+                        materializationId: CHANNELS_MATERIALIZATION_ID,
+                    },
+                    immutableGenerationId: CHANNELS_GENERATION,
+                };
+                const occurredAt = Date.now() - 500;
+                const resultDelivery = {
+                    kind: "finalResult",
+                    actionRef: {
+                        pluginId: CHANNELS_PLUGIN_ID,
+                        localId: CHANNELS_RESULT_DELIVERY_ACTION_LOCAL_ID,
+                    },
+                    opaqueContext: routeOpaqueContext,
+                } as const;
+                const occurrenceKey = deriveAutomationOccurrenceKeyV1(
+                    buildAutomationConversationOccurrenceEvidenceV1({
+                        accountMode: "plain",
+                        bindingId: COMPOSED_BINDING_ID,
+                        occurrenceId: COMPOSED_CONVERSATION_OCCURRENCE_ID,
+                        occurredAt,
+                        caller: {
+                            pluginId: CHANNELS_PLUGIN_ID,
+                            contributionLocalId: CHANNELS_INGRESS_CONTRIBUTION_LOCAL_ID,
+                            machineId: MACHINE_ID,
+                        },
+                        sender: { id: "person-1" },
+                        text: "Run the response-loss custody loop",
+                        resultDelivery,
+                    }),
+                );
+                const admitBody = AutomationConversationActionHttpRequestSchemasV1["automation.conversation.admit"].parse({
+                    v: 1,
+                    caller: conversationCaller,
+                    input: {
+                        automationId: AUTOMATION_ID,
+                        bindingId: COMPOSED_BINDING_ID,
+                        occurrenceId: COMPOSED_CONVERSATION_OCCURRENCE_ID,
+                        occurredAt,
+                        sender: { id: "person-1" },
+                        text: "Run the response-loss custody loop",
+                        resultDelivery,
+                    },
+                    replyHandoff: {
+                        actionRef: {
+                            pluginId: CHANNELS_PLUGIN_ID,
+                            localId: CHANNELS_RESULT_DELIVERY_ACTION_LOCAL_ID,
+                        },
+                        replyContextEnvelope: sealAutomationConversationReplyContextStoredEnvelopeV1({
+                            mode: "plain",
+                            correspondence: { automationId: AUTOMATION_ID, occurrenceKey },
+                            opaqueContext: routeOpaqueContext,
+                        }),
+                    },
+                });
+                const admitted = await injectSigned(
+                    AutomationConversationActionHttpPathsV1["automation.conversation.admit"],
+                    admitBody,
+                );
+                expect(admitted.statusCode).toBe(200);
+                const admission = AutomationConversationAdmitResultV1Schema.parse(admitted.json());
+                expect(admission).toMatchObject({ kind: "admitted", checkpointSafe: true });
+                if (admission.kind === "admitted") conversationRunId = admission.runId;
+            },
+        });
+        if (conversationRunId === null) throw new Error("composed conversation Run was not admitted");
+        const conversationRunIdResolved: string = conversationRunId;
+        const handoffId = `automation-reply-handoff:${conversationRunIdResolved}`;
+
+        for (let claimIndex = 0; claimIndex < 2; claimIndex += 1) {
+            const claim = await claimAutomationRun({
+                accountId: ACCOUNT_ID,
+                machineId: MACHINE_ID,
+                leaseDurationMs: 30_000,
+                claimRequest: {
+                    machineInstallationId: MACHINE_INSTALLATION_ID,
+                    nonce: `response-loss-claim-${claimIndex}`,
+                    expiresAt: new Date(Date.now() + 300_000),
+                },
+            });
+            if (!claim.run || !claim.accountCurrentness) break;
+            if (claim.run.causeKind !== "conversation") continue;
+            const started = await startAutomationRun({
+                accountId: ACCOUNT_ID,
+                runId: claim.run.id,
+                machineId: MACHINE_ID,
+                attempt: claim.run.attempt,
+                accountCurrentness: claim.accountCurrentness,
+            });
+            if (started === null) throw new Error("claimed response-loss Run did not start");
+            await expect(succeedAutomationRun({
+                accountId: ACCOUNT_ID,
+                runId: claim.run.id,
+                machineId: MACHINE_ID,
+                attempt: claim.run.attempt,
+                accountCurrentness: started.accountCurrentness,
+                resultEnvelope: JSON.stringify(sealAutomationRunResultStoredEnvelopeV1({
+                    mode: "plain",
+                    correspondence: {
+                        accountId: ACCOUNT_ID,
+                        automationId: AUTOMATION_ID,
+                        runId: claim.run.id,
+                        handoffId: `automation-reply-handoff:${claim.run.id}`,
+                    },
+                    result: { v: 1, kind: "text", text: "Response-loss custody reply" },
+                })),
+            })).resolves.toMatchObject({ id: claim.run.id, state: "succeeded" });
+        }
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: conversationRunIdResolved },
+            select: { replyHandoffState: true },
+        })).resolves.toMatchObject({ replyHandoffState: "ready" });
+
+        const custodyModules = await Promise.all([
+            import(/* @vite-ignore */ new URL(
+                "../../../../cli/src/rpc/handlers/automationReplyHandoff.ts",
+                import.meta.url,
+            ).href),
+            import(/* @vite-ignore */ new URL(
+                "../../../../../packages/plugins/channels/src/automationResultDelivery.ts",
+                import.meta.url,
+            ).href),
+            import(/* @vite-ignore */ new URL(
+                "../../../../../packages/plugins/channels/src/collections.ts",
+                import.meta.url,
+            ).href),
+        ]);
+        const handlerModule = custodyModules[0] as {
+            registerAutomationReplyHandoffRpcHandler: (registrar: unknown, options: Record<string, unknown>) => void;
+        };
+        const deliverCustody = custodyModules[1]
+            .deliverConversationAutomationResultForInvocation as (
+                input: unknown,
+                context: Record<string, unknown>,
+            ) => Promise<unknown>;
+        const collectionsModule = custodyModules[2] as {
+            CHANNEL_STATE_COLLECTION: unknown;
+            CHANNEL_DELIVERIES_COLLECTION: unknown;
+        };
+        const deliveries = createChannelsCollection();
+        const stateCollection = composed.channels.collection;
+        const handlers = new Map<string, (
+            raw: unknown,
+            context?: Readonly<{ signal?: AbortSignal }>,
+        ) => Promise<unknown>>();
+        handlerModule.registerAutomationReplyHandoffRpcHandler(
+            {
+                registerHandler: (method: string, handler: (raw: unknown, context?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>) => {
+                    handlers.set(method, handler);
+                },
+            },
+            {
+                machineId: MACHINE_ID,
+                resolveAccountId: async () => ACCOUNT_ID,
+                resolveInstallationId: async () => MACHINE_INSTALLATION_ID,
+                resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
+                resolveAccountEncryptionMaterial: async () => null,
+                resolveCurrentTargetMaterializationId: async () => CHANNELS_MATERIALIZATION_ID,
+                acquireRuntimeLease: async () => ({
+                    registry: null,
+                    release: async () => {},
+                }) as never,
+                executeContributedAction: async (invocation: Readonly<{
+                    input: unknown;
+                    context: Record<string, unknown>;
+                }>) => ({
+                    matched: true,
+                    result: {
+                        ok: true,
+                        result: await deliverCustody(invocation.input, {
+                            ...invocation.context,
+                            services: {
+                                storage: {
+                                    account: {
+                                        collection: (requested: unknown) => requested === collectionsModule.CHANNEL_DELIVERIES_COLLECTION
+                                            ? deliveries.collection
+                                            : stateCollection,
+                                    },
+                                },
+                            },
+                        }),
+                    },
+                }),
+            },
+        );
+        const dispatchHandler = handlers.get(AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1);
+        if (dispatchHandler === undefined) throw new Error("composed handoff receiver was not registered");
+
+        // First dispatch: the real daemon handler commits custody, then the
+        // RPC response is lost before it reaches the server worker.
+        let dispatchCalls = 0;
+        const dispatch = async (request: unknown) => {
+            dispatchCalls += 1;
+            const result = await dispatchHandler(request, {
+                signal: new AbortController().signal,
+            }) as AutomationReplyHandoffDispatchResultV1;
+            if (dispatchCalls === 1) {
+                throw new Error("simulated RPC response loss after custody committed");
+            }
+            return result;
+        };
+        const firstPass = await runAutomationReplyHandoffWorkerPass({
+            now: new Date(),
+            dispatch,
+        });
+        expect(firstPass).toMatchObject({ claimed: true, settled: true });
+        expect(dispatchCalls).toBe(1);
+        // The custody row is durable even though its settlement never arrived.
+        const custodyAfterLoss = [...deliveries.rows.values()].filter((row) => row.deleted !== true);
+        expect(custodyAfterLoss).toHaveLength(1);
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: conversationRunIdResolved },
+            select: { replyHandoffState: true, replyHandoffAttempt: true },
+        })).resolves.toMatchObject({ replyHandoffState: "ready", replyHandoffAttempt: 1 });
+
+        // The retry re-leases the SAME handoff id; the deterministic custody
+        // writer rejoins the existing row instead of creating a second one.
+        const retryPass = await runAutomationReplyHandoffWorkerPass({
+            now: new Date(Date.now() + 60_000),
+            dispatch,
+        });
+        expect(retryPass).toMatchObject({ claimed: true, settled: true });
+        expect(dispatchCalls).toBe(2);
+        expect([...deliveries.rows.values()].filter((row) => row.deleted !== true)).toHaveLength(1);
+        const settledRun = await db.automationRun.findUniqueOrThrow({
+            where: { id: conversationRunIdResolved },
+            select: { replyHandoffState: true, replyHandoffAttempt: true, replyHandoffReceiptEnvelope: true },
+        });
+        expect(settledRun.replyHandoffState).toBe("accepted");
+        expect(settledRun.replyHandoffAttempt).toBe(2);
+        const receipt = JSON.parse(settledRun.replyHandoffReceiptEnvelope ?? "null") as JsonRecord;
+        expect(receipt).toMatchObject({ t: "plain" });
+        const receiptValue = receipt.v as JsonRecord;
+        expect(receiptValue).toMatchObject({
+            correspondence: { runId: conversationRunIdResolved, handoffId },
+            result: {
+                kind: "accepted",
+                custodyId: custodyAfterLoss[0]!.rowId,
+            },
+        });
     }, 120_000);
 });

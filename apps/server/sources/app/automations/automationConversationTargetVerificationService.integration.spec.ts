@@ -27,6 +27,7 @@ const caller = {
     machineId: MACHINE_ID,
     machineInstallationId: MACHINE_INSTALLATION_ID,
     materializationId: MATERIALIZATION_ID,
+    immutableGenerationId: "generation-conversation-target-verifier",
 } as const;
 
 const releaseFacts = normalizePluginReleaseFactsV1({
@@ -285,6 +286,7 @@ describe("Automation conversation target verification database boundary", () => 
                 machineId: MACHINE_ID,
                 machineInstallationId: MACHINE_INSTALLATION_ID,
                 materializationId: "materialization-acme-slack-bridge",
+                immutableGenerationId: "generation-acme-slack-bridge",
             },
             input: {
                 automationId: "automation-schedule-owned",

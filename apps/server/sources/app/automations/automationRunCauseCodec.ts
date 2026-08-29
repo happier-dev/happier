@@ -5,7 +5,7 @@ import {
 
 import type { AutomationRunItem } from "./automationTypes";
 
-type CauseRow = Pick<AutomationRunItem,
+export type CauseRow = Pick<AutomationRunItem,
     | "triggerId"
     | "causeKind"
     | "causeTriggerKind"
@@ -82,6 +82,19 @@ export function decodeAutomationRunCause(row: CauseRow): AutomationRunCause {
         });
     }
     throw new Error("Automation trigger cause has no valid trigger kind");
+}
+
+/**
+ * The one durable-cause to retained-V2 frozen-origin projection. The released
+ * V2 seam reads this mapping wherever it must name a Run's predecessor origin;
+ * no caller keeps a private copy of the decision.
+ */
+export function retainedV2OriginKindForRun(run: CauseRow): "scheduled" | "manual" | undefined {
+    const cause = decodeAutomationRunCause(run);
+    if (cause.kind === "manual") return "manual";
+    return cause.kind === "trigger" && cause.triggerKind === "schedule"
+        ? "scheduled"
+        : undefined;
 }
 
 /** The sole immutable cause to physical-row encoder. */

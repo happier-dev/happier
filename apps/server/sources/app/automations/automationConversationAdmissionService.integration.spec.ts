@@ -12,11 +12,13 @@ import {
     normalizePluginReleaseFactsV1,
     openAutomationConversationReplyContextStoredEnvelopeV1,
     parseAutomationRunExecutionRecipeV1,
+    parseAutomationStoredDefinitionExecutionRecipeV1,
     sealAccountScopedBlobCiphertext,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
     sealAutomationOccurrenceTriggerEvidenceEnvelopeV1,
     sealAutomationRunTriggerEvidenceEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    serializeAutomationRunExecutionRecipeV1,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
     type AutomationConversationResultDeliveryV1,
     type PluginJsonValueV2,
@@ -25,6 +27,7 @@ import {
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
+import { encodePlainAutomationOccurrenceEvidence } from "./automationOccurrencePersistence";
 import {
     claimNextAutomationReplyHandoff,
     findNextAutomationReplyHandoffDueAt,
@@ -368,6 +371,77 @@ function encryptedConversationHostEvidence(params: Readonly<{
     };
 }
 
+/**
+ * The current Conversation definition recipe the capacity seeds freeze. It is
+ * read through the canonical stored-definition owner so a queued capacity row
+ * carries exactly the frozen input the plain admission writer would produce
+ * for this Automation.
+ */
+const CONVERSATION_CAPACITY_DEFINITION_RECIPE = (() => {
+    const definition = parseAutomationStoredDefinitionExecutionRecipeV1(
+        strictConversationRunRecipe(),
+    );
+    if (definition.kind !== "available") {
+        throw new Error("Capacity seed must read the current Conversation definition recipe");
+    }
+    return definition.recipe;
+})();
+
+/**
+ * One truthful queued Conversation capacity row. Capacity occupancy satisfies
+ * the same physical nonterminal frozen-input invariant as admitted Runs: the
+ * seed freezes the current definition recipe together with the row's own
+ * immutable occurrence evidence, its derived occurrence key, and the plain
+ * stored evidence envelope, so no capacity row evades the database CHECK with
+ * missing or placeholder bytes.
+ */
+function conversationCapacityRunSeed(params: Readonly<{
+    id: string;
+    index: number;
+    now: Date;
+}>) {
+    const evidence = buildAutomationConversationOccurrenceEvidenceV1({
+        accountMode: "plain",
+        bindingId: BINDING_ID,
+        occurrenceId: `conversation-capacity-occurrence-${params.index}`,
+        occurredAt: params.now.getTime(),
+        caller: {
+            pluginId: caller.pluginId,
+            contributionLocalId: caller.contributionLocalId,
+            machineId: caller.machineId,
+        },
+        sender: { id: "sender-1" },
+        text: "Please summarize the latest change.",
+        resultDelivery: { kind: "none" },
+    });
+    const frozen = serializeAutomationRunExecutionRecipeV1({
+        ...CONVERSATION_CAPACITY_DEFINITION_RECIPE,
+        triggerEvidence: {
+            t: "plain" as const,
+            v: { ...evidence, observationReceivedAt: params.now.getTime() },
+        },
+        assignmentMachineIds: [],
+    });
+    if (frozen.kind !== "available") {
+        throw new Error("Capacity seed must freeze a valid strict Conversation recipe");
+    }
+    return {
+        id: params.id,
+        automationId: AUTOMATION_ID,
+        accountId: ACCOUNT_ID,
+        state: "queued" as const,
+        causeKind: "conversation" as const,
+        causeOccurredAt: params.now,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1(evidence),
+        legacyManualIdempotencyKey: null,
+        triggerEvidenceEnvelope: encodePlainAutomationOccurrenceEvidence(evidence),
+        executionInputEnvelope: frozen.serialized,
+        executionDispatchState: "notStarted" as const,
+        scheduledAt: params.now,
+        dueAt: params.now,
+    };
+}
+
 describe("Automation Conversation admission database boundary", () => {
     let harness: LightSqliteHarness | undefined;
 
@@ -460,6 +534,11 @@ describe("Automation Conversation admission database boundary", () => {
                 templateVersion: 3,
             },
         });
+        // Assignment-liveness: an enabled Automation must keep one enabled
+        // execution assignment or canonical admission refuses every occurrence.
+        await db.automationAssignment.create({
+            data: { automationId: AUTOMATION_ID, machineId: MACHINE_ID, enabled: true },
+        });
     });
 
     async function configurePlainExistingSessionTarget(): Promise<void> {
@@ -551,6 +630,21 @@ describe("Automation Conversation admission database boundary", () => {
             reason: "occurrenceConflict",
             checkpointSafe: false,
         });
+    });
+
+    it("keeps a corrupted zero-assignment Conversation occurrence retryable with its exact reason", async () => {
+        await db.automationAssignment.deleteMany({ where: { automationId: AUTOMATION_ID } });
+
+        await expect(admitAutomationConversationV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: conversationInput({ resultDelivery: { kind: "none" } }),
+        })).resolves.toEqual({
+            kind: "blocked",
+            reason: "noEnabledAssignment",
+            checkpointSafe: false,
+        });
+        await expect(db.automationRun.count({ where: { automationId: AUTOMATION_ID } })).resolves.toBe(0);
     });
 
     it("rejects final-result delivery for executionRun before persistence and admits the same request for a Session target", async () => {
@@ -786,19 +880,14 @@ describe("Automation Conversation admission database boundary", () => {
     it("releases Conversation Run capacity after an exhausted execution Run is terminally failed", async () => {
         const now = new Date();
         await db.automationRun.createMany({
-            data: Array.from({ length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT }, (_, index) => ({
-                id: `conversation-capacity-run-${index}`,
-                automationId: AUTOMATION_ID,
-                accountId: ACCOUNT_ID,
-                state: "queued" as const,
-                causeKind: "conversation" as const,
-                causeOccurredAt: now,
-                occurrenceKey: `conversation-capacity-occurrence-${index}`,
-                legacyManualIdempotencyKey: null,
-                triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
-                scheduledAt: now,
-                dueAt: now,
-            })),
+            data: Array.from(
+                { length: MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT },
+                (_, index) => conversationCapacityRunSeed({
+                    id: `conversation-capacity-run-${index}`,
+                    index,
+                    now,
+                }),
+            ),
         });
 
         const input = conversationInput({ resultDelivery: { kind: "none" } });
@@ -866,6 +955,9 @@ describe("Automation Conversation admission database boundary", () => {
                 templateCiphertext: strictConversationRunRecipe(),
                 templateVersion: 3,
             },
+        });
+        await db.automationAssignment.create({
+            data: { automationId: secondAutomationId, machineId: MACHINE_ID, enabled: true },
         });
         await db.automationTrigger.create({
             data: {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationValidationError } from "@/app/automations/automationValidation";
+import { AutomationTriggerIdSchema, deriveAutomationOccurrenceKeyV1 } from "@happier-dev/protocol";
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
@@ -22,6 +23,10 @@ const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_plain_v1",
     payload: { prompt: "daily sweep" },
 });
+const TEST_SCHEDULE_TRIGGER_ID = AutomationTriggerIdSchema.parse(
+    "7b99d778-5888-4675-b153-89714183abda",
+);
+const TEST_SCHEDULED_FOR = Date.parse("2026-02-12T10:00:00.000Z");
 
 const listAutomations = vi.fn(async (): Promise<unknown[]> => []);
 const getAutomation = vi.fn(async (): Promise<unknown | null> => null);
@@ -39,7 +44,7 @@ const createAutomation = vi.fn(async () => ({
     updatedAt: new Date("2026-02-12T10:00:00.000Z"),
     assignments: [{ machineId: "m1", enabled: true, priority: 0 }],
     triggers: [{
-        id: "trigger-1",
+        id: TEST_SCHEDULE_TRIGGER_ID,
         automationId: "a1",
         kind: "schedule",
         enabled: true,
@@ -88,7 +93,7 @@ const claimAutomationRun = vi.fn(async () => ({
         automationId: "a1",
         accountId: "u1",
         state: "claimed",
-        triggerId: "trigger-1",
+        triggerId: TEST_SCHEDULE_TRIGGER_ID,
         causeKind: "trigger",
         causeTriggerKind: "schedule",
         causeTriggerRevision: 1,
@@ -99,7 +104,10 @@ const claimAutomationRun = vi.fn(async () => ({
         causeSessionLifecycleEvent: null,
         causeSourceSessionId: null,
         causeSourceTurnId: null,
-        occurrenceKey: "schedule:trigger-1:2026-02-12T10:00:00.000Z",
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+            triggerId: TEST_SCHEDULE_TRIGGER_ID,
+            evidence: { v: 1, kind: "schedule", scheduledFor: TEST_SCHEDULED_FOR },
+        }),
         occurrenceEvidenceEqualityTag: null,
         causeSourceSelectorId: null,
         triggerEvidenceEnvelope: null,
@@ -201,6 +209,8 @@ describe("automationRoutes", () => {
         verifyPublisher.mockImplementation(async ({ request }: { request: any }) => ({
             machineId: request.body?.machineId ?? request.query?.machineId,
             installationId: "installation-1",
+            requestNonce: "automation-routes-request-nonce",
+            proofExpiresAt: new Date("2026-08-28T12:05:00.000Z"),
         }));
     });
 

@@ -14,6 +14,9 @@ import {
 import type { AutomationTargetType } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
 import {
+    hasCurrentMachineAccessForSessionInTx,
+} from "@/app/api/socket/sessionScopedBinding";
+import {
     parsePersistedSessionOwnerMetadataEnvelopeV1,
 } from "@/app/session/metadata/sessionOwnerMetadataPersistence";
 
@@ -108,6 +111,24 @@ function parseExistingSessionTemplate(params: Readonly<{
     };
 }
 
+/** Resolves the persisted Account-mode authority for layout-one Session owner content. */
+async function readSessionOwnerMetadataAccountModeTx(params: {
+    tx: Tx;
+    accountId: string;
+}): Promise<"e2ee" | "plain"> {
+    const account = await params.tx.account.findUnique({
+        where: { id: params.accountId },
+        select: { encryptionMode: true },
+    });
+    if (
+        account?.encryptionMode !== "plain"
+        && account?.encryptionMode !== "e2ee"
+    ) {
+        throw new AutomationValidationError("Account encryption mode is unavailable");
+    }
+    return account.encryptionMode;
+}
+
 export async function validateExistingSessionAutomationTargetTx(params: {
     tx: Tx;
     accountId: string;
@@ -171,29 +192,41 @@ export async function validateExistingSessionAutomationTargetTx(params: {
         );
     }
     if (session.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
-        const ownerEnvelope = params.accountMode
-            ? parsePersistedSessionOwnerMetadataEnvelopeV1({
-                metadataLayoutVersion:
-                    session.metadataLayoutVersion,
-                accountMode: params.accountMode,
-                ownerMetadata: session.ownerMetadata,
-                allowRetainedDevelopmentCiphertext: false,
-            })
-            : null;
+        // `params.accountMode` describes the Automation template candidate.
+        // During an Account transition that may already be the target mode,
+        // while this Session row still contains source-mode owner bytes. The
+        // persisted Account remains the sole authority for those current
+        // Session bytes until the transition owner flips it.
+        const accountMode = await readSessionOwnerMetadataAccountModeTx(params);
+        const ownerEnvelope = parsePersistedSessionOwnerMetadataEnvelopeV1({
+            metadataLayoutVersion: session.metadataLayoutVersion,
+            accountMode,
+            ownerMetadata: session.ownerMetadata,
+            allowRetainedDevelopmentCiphertext: false,
+        });
         if (
             !ownerEnvelope
-            || !params.accountMode
             || !validateSessionOwnerMetadataEnvelopeForAccountModeV1({
-                accountMode: params.accountMode,
+                accountMode,
                 envelope: ownerEnvelope,
             }).ok
         ) {
             throw new AutomationValidationError("existing session target metadata privacy upgrade required");
         }
-        // The server deliberately cannot open account-scoped owner metadata.
-        // A future owner-authenticated proof may supply this decision; shared
-        // metadata is never a resume/control authority substitute.
-        throw new AutomationValidationError("existing session target owner metadata is unavailable");
+        // The server deliberately cannot open account-scoped owner metadata. A
+        // layout-one target is proven through the existing owner-authenticated
+        // machine/Session access correspondence instead: an available Account
+        // machine currently hosts this Session. Shared metadata is never a
+        // resume/control authority substitute, and nothing is frozen here —
+        // the Run claim/start owners revalidate execution currentness.
+        if (!await hasCurrentMachineAccessForSessionInTx({
+            tx: params.tx,
+            accountId: params.accountId,
+            sessionId: session.id,
+        })) {
+            throw new AutomationValidationError("existing session target is unavailable for automation execution");
+        }
+        return;
     }
     if (session.metadataLayoutVersion !== 0) {
         throw new AutomationValidationError("existing session target metadata privacy upgrade required");

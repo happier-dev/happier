@@ -2,14 +2,14 @@ import { afterAll, afterEach, beforeAll, describe, it } from "vitest";
 
 import { db, initDbPostgres } from "@/storage/db";
 
-import { assertAllOriginAutomationRunMigrationToE2ee } from "./automationAccountEncryptionMigrationRuns.testkit";
+import { assertAllCauseAutomationRunMigrationToE2ee } from "./automationAccountEncryptionMigrationRuns.testkit";
 
 const provider = String(
     process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "",
 ).trim().toLowerCase();
 
 describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
-    "PostgreSQL Automation all-origin Account-transition participant contract",
+    "PostgreSQL Automation all-cause Account-transition participant contract",
     () => {
         let dbConnected = false;
         const accountIds = new Set<string>();
@@ -17,7 +17,7 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
         beforeAll(async () => {
             if (!process.env.DATABASE_URL) {
                 throw new Error(
-                    "Missing DATABASE_URL (required for the PostgreSQL all-origin Automation transition participant contract).",
+                    "Missing DATABASE_URL (required for the PostgreSQL all-cause Automation transition participant contract).",
                 );
             }
             initDbPostgres();
@@ -46,8 +46,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
             if (dbConnected) await db.$disconnect();
         });
 
-        it("uses the shared all-origin retained-Run migration-participant scenario", async () => {
-            await assertAllOriginAutomationRunMigrationToE2ee({
+        it("uses the shared all-cause retained-Run migration-participant scenario", async () => {
+            await assertAllCauseAutomationRunMigrationToE2ee({
                 onAccountCreated: (accountId) => accountIds.add(accountId),
             });
         });

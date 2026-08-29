@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     type AutomationV3Settings,
 } from "@happier-dev/protocol";
@@ -10,6 +11,7 @@ import { createRouteTestBuilder as createBaseRouteTestBuilder } from "../../test
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
+import { AutomationValidationError } from "@/app/automations/automationValidation";
 import type { ClearAutomationRunHistoryResult } from "@/app/automations/automationCrudService";
 import { PRESENT_USER_REQUIRED_ERROR } from "../../utils/requirePresentUser";
 
@@ -126,7 +128,7 @@ const eventAutomation = {
             binding: {
                 v: 1,
                 automationId: "automation-event-1",
-                triggerId: "trigger-event-1",
+                triggerId: AutomationTriggerIdSchema.parse("trigger-event-1"),
                 triggerRevision: 1,
                 triggerKind: "pluginEvent",
                 eventRef: {
@@ -1382,7 +1384,8 @@ describe("registerAutomationV3Routes", () => {
             everyMs: 999,
             timezone: null,
         }],
-    ] as const)("rejects a V3 %s schedule before persistence", async (_label, schedule) => {
+    ] as const)("maps a V3 %s schedule validation failure", async (_label, schedule) => {
+        createAutomation.mockRejectedValueOnce(new AutomationValidationError("Invalid Automation schedule"));
         const { registerAutomationV3Routes } = await import("./registerAutomationV3Routes");
         const route = createRouteTestBuilder({
             method: "POST",
@@ -1399,7 +1402,7 @@ describe("registerAutomationV3Routes", () => {
                 name: "Invalid V3 schedule",
                 enabled: true,
                 triggers: [{
-                    triggerId: "trigger-invalid-schedule-create",
+                    triggerId: AutomationTriggerIdSchema.parse("1f43c2d7-d7ec-4e2e-a3aa-cf4f930d22aa"),
                     trigger: { kind: "schedule", enabled: true, schedule },
                 }],
                 executionRecipe: scheduleExecutionRecipe,
@@ -1407,6 +1410,6 @@ describe("registerAutomationV3Routes", () => {
         });
 
         expect(reply.code).toHaveBeenCalledWith(400);
-        expect(createAutomation).not.toHaveBeenCalled();
+        expect(createAutomation).toHaveBeenCalledOnce();
     });
 });

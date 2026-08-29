@@ -178,6 +178,15 @@ async function createSessionLifecycleRaceFixture(label: string) {
             templateVersion: 1,
         },
     });
+    // Assignment-liveness: canonical admission refuses an enabled Automation
+    // whose execution-assignment set is empty.
+    const executionMachineId = `execution-${suffix}`;
+    await db.machine.create({
+        data: { id: executionMachineId, accountId, metadata: "{}" },
+    });
+    await db.automationAssignment.create({
+        data: { automationId, machineId: executionMachineId, enabled: true },
+    });
     const begun = await applySessionTurnMutation({
         actorUserId: accountId,
         mutation: { v: 1, sessionId, mutationId: `begin-${suffix}`, action: "begin", turnId, observedAt: Date.now() - 1_000 },

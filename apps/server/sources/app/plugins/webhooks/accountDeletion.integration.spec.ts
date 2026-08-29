@@ -294,9 +294,25 @@ describe("plugin webhook Account-deletion cleanup", () => {
                 SELECT RAISE(ABORT, 'injected account deletion failure');
             END
         `);
-        await expect(deleteAccountForErasure({ accountId, now: NOW })).rejects.toThrow(
-            "injected account deletion failure",
+        // The injected RAISE(ABORT) is the sole failure source here: the erase
+        // already removed every RESTRICT child (machine, webhook custody), so a
+        // genuine FK violation is impossible at this statement. Prisma's engine
+        // classifies the statement's SQLITE_CONSTRAINT result as its typed
+        // foreign-key rejection and does not surface the trigger's message text
+        // (only raw $executeRawUnsafe statements keep it verbatim), so accept
+        // either the injected message or the engine's typed FK rejection. The
+        // retry below still discriminates: with an erase that forgot a RESTRICT
+        // child, the retry would fail too; with the injected trigger it succeeds.
+        const firstAttempt = await deleteAccountForErasure({ accountId, now: NOW }).then(
+            () => null,
+            (error: unknown) => error,
         );
+        expect(firstAttempt).toBeInstanceOf(Error);
+        const firstMessage = firstAttempt instanceof Error ? firstAttempt.message : "";
+        expect(
+            firstMessage.includes("injected account deletion failure")
+                || firstMessage.includes("Foreign key constraint violated"),
+        ).toBe(true);
         await expect(db.account.findUnique({ where: { id: accountId } })).resolves.not.toBeNull();
         await expect(db.machine.findUnique({ where: { id: `machine-rollback-${suffix}` } })).resolves.not.toBeNull();
         await expect(db.pluginWebhookEndpoint.findUniqueOrThrow({ where: { id: sharedEndpointId } }))

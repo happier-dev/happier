@@ -7,7 +7,6 @@ import {
     finalizeDeletedAutomationsWithoutRetainedRunsTx,
 } from '@/app/automations/automationCrudService';
 import { emitAutomationUpsert } from '@/app/automations/automationChangePublisher';
-import { automationRunItemSelect } from '@/app/automations/automationPersistenceSelect';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 import type { RetentionRule } from '@/app/retention/runtime/retentionRuleRegistry';
 import { db } from '@/storage/db';
@@ -17,7 +16,14 @@ const ACCOUNT_DEFAULT_AUTOMATION_RUN_RETENTION_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const automationRunRetentionCandidateSelect = {
-    ...automationRunItemSelect,
+    // Retention needs only its deletion fence and the parent/account policy
+    // facts. Private execution, trigger, result, and reply envelopes remain
+    // with the Run detail/custody owners and are never materialized by a sweep.
+    id: true,
+    accountId: true,
+    automationId: true,
+    finishedAt: true,
+    revision: true,
     automation: {
         select: {
             id: true,

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { Tx } from '@/storage/inTx';
+
 import { deleteSessionTree } from './deleteSessionTree';
 
 describe('deleteSessionTree', () => {
@@ -22,7 +24,7 @@ describe('deleteSessionTree', () => {
             sessionMessage: { deleteMany: deleteMessages },
             usageReport: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             accessKey: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-        }, {
+        } as unknown as Tx, {
             sessionId: 'voice-history-session',
             sessionUpdatedAt: new Date('2026-07-01T00:00:00.000Z'),
             actorAccountId: 'account-1',

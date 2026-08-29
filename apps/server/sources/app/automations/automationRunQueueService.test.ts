@@ -281,6 +281,38 @@ describe("Automation Run queue admission", () => {
         expect(fixture.triggerUpdates).toEqual([]);
     });
 
+    it("admits no Run when the enabled definition has zero enabled assignments", async () => {
+        const dueAt = new Date("2026-08-27T12:00:00.000Z");
+        const fixture = txFixture({
+            assignments: [],
+            triggers: [{
+                id: "schedule-unassigned",
+                revision: 2,
+                scheduleKind: "interval",
+                scheduleExpr: null,
+                everyMs: 60_000,
+                timezone: null,
+                nextRunAt: dueAt,
+            }],
+        });
+
+        // Defense in depth: the definition writers reject an enabled
+        // Automation with zero enabled assignments; a corrupted or raced legacy
+        // row must yield a typed non-admission and no permanently unclaimable
+        // queued Run.
+        const result = await admitDueAutomationScheduleTriggerTx({
+            tx: fixture.tx,
+            triggerId: "schedule-unassigned",
+            expectedRevision: 2,
+            expectedNextRunAt: dueAt,
+            now: dueAt,
+        });
+
+        expect(result).toBeNull();
+        expect(fixture.created).toHaveLength(0);
+        expect(fixture.runAssignments).toHaveLength(0);
+    });
+
     it("freezes the due-time recipe and assignments and rejoins those bytes after later edits", async () => {
         const dueAt = new Date("2026-08-27T12:00:00.000Z");
         const fixture = txFixture({

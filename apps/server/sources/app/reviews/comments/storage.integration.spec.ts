@@ -12,7 +12,11 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
-    createPluginInstallationManifestPublisherSigningInputV1,
+    createSignedPluginInstallationPublisherHeader,
+    createTrustedMachineInstallation,
+} from "@/testkit/pluginInstallationPublisherTestkit";
+import {
+    GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     createReviewCommentPrincipalSigningInputV1,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
@@ -21,7 +25,6 @@ import {
     ReviewCommentGetResponseV1Schema,
     ReviewCommentListResponseV1Schema,
     ReviewCommentTransitionResponseV1Schema,
-    stringifyPluginInstallationManifestCanonicalJsonV1,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
     type ReviewCommentActorRefV1,
     type ReviewCommentCurrentIntentV1,
@@ -186,71 +189,6 @@ function createCurrentIntent(params: Readonly<{
     };
 }
 
-function createSignedPublisherHeader(params: Readonly<{
-    keyPair: tweetnacl.SignKeyPair;
-    machineId: string;
-    installationId: string;
-    path: string;
-    body?: unknown;
-    issuedAt?: number;
-    nonce?: string;
-}>): string {
-    const header = {
-        proof: {
-            v: 1 as const,
-            alg: "ed25519-machine-installation-v1" as const,
-            machineId: params.machineId,
-            installationId: params.installationId,
-            issuedAt: params.issuedAt ?? Date.now(),
-            nonce: params.nonce ?? "publisher-nonce-1",
-            method: "POST" as const,
-            path: params.path,
-            bodySha256Base64Url: createHash("sha256")
-                .update(stringifyPluginInstallationManifestCanonicalJsonV1(params.body ?? null))
-                .digest("base64url"),
-            signatureBase64Url: "",
-        },
-    };
-    const signingInput = createPluginInstallationManifestPublisherSigningInputV1({
-        proof: {
-            v: header.proof.v,
-            alg: header.proof.alg,
-            machineId: header.proof.machineId,
-            installationId: header.proof.installationId,
-            issuedAt: header.proof.issuedAt,
-            nonce: header.proof.nonce,
-            method: header.proof.method,
-            path: header.proof.path,
-            bodySha256Base64Url: header.proof.bodySha256Base64Url,
-        },
-    });
-    return encodePrincipalHeader({
-        proof: {
-            ...header.proof,
-            signatureBase64Url: Buffer.from(tweetnacl.sign.detached(signingInput, params.keyPair.secretKey)).toString("base64url"),
-        },
-    });
-}
-
-async function createTrustedMachine(params: Readonly<{
-    accountId: string;
-    machineId: string;
-    installationId: string;
-    keyPair: tweetnacl.SignKeyPair;
-}>): Promise<void> {
-    const installationPublicKey = new Uint8Array(tweetnacl.sign.publicKeyLength);
-    installationPublicKey.set(params.keyPair.publicKey);
-    await db.machine.create({
-        data: {
-            id: params.machineId,
-            accountId: params.accountId,
-            metadata: "{}",
-            installationId: params.installationId,
-            installationPublicKey,
-        },
-    });
-}
-
 describe("review comment durable storage", () => {
     let harness: LightSqliteHarness;
 
@@ -326,7 +264,7 @@ describe("review comment durable storage", () => {
                     snapshot: textSnapshot(),
                     body: "Null-check this value.",
                 }],
-                verdict: { kind: "comment", body: "Review summary" },
+                verdict: { kind: "comment" as const, body: "Review summary" },
             },
         };
 
@@ -893,7 +831,7 @@ describe("review comment durable storage", () => {
             },
             select: { id: true },
         });
-        await createTrustedMachine({
+        await createTrustedMachineInstallation({
             accountId: account.id,
             machineId: "machine-review-comments-trusted-grant",
             installationId: "installation-review-comments-trusted-grant",
@@ -910,6 +848,7 @@ describe("review comment durable storage", () => {
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project" as const, projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID, sessionId: "session-1" },
         };
@@ -918,7 +857,7 @@ describe("review comment durable storage", () => {
             method: "POST",
             url: "/v1/plugins/permissions/grants/request",
             headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                     keyPair: installationKeyPair,
                     machineId: "machine-review-comments-trusted-grant",
                     installationId: "installation-review-comments-trusted-grant",
@@ -1094,7 +1033,7 @@ describe("review comment durable storage", () => {
             },
             select: { id: true },
         });
-        await createTrustedMachine({
+        await createTrustedMachineInstallation({
             accountId: account.id,
             machineId: "machine-review-comments-external-grant-projection",
             installationId: "installation-review-comments-external-grant-projection",
@@ -1109,6 +1048,7 @@ describe("review comment durable storage", () => {
             pluginId: EXTERNAL_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: EXTERNAL_PLUGIN_ID, sessionId: "session-1" },
         };
@@ -1117,7 +1057,7 @@ describe("review comment durable storage", () => {
             method: "POST",
             url: "/v1/plugins/permissions/grants/request",
             headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                     keyPair: installationKeyPair,
                     machineId: "machine-review-comments-external-grant-projection",
                     installationId: "installation-review-comments-external-grant-projection",
@@ -1207,13 +1147,13 @@ describe("review comment durable storage", () => {
             },
             select: { id: true },
         });
-        await createTrustedMachine({
+        await createTrustedMachineInstallation({
             accountId: account.id,
             machineId: "machine-review-comments-projection-owner",
             installationId: "installation-review-comments-projection-owner",
             keyPair: projectionKeyPair,
         });
-        await createTrustedMachine({
+        await createTrustedMachineInstallation({
             accountId: account.id,
             machineId: "machine-review-comments-wrong-grant-caller",
             installationId: "installation-review-comments-wrong-grant-caller",
@@ -1229,7 +1169,7 @@ describe("review comment durable storage", () => {
             method: "POST",
             url: "/v1/plugins/permissions/grants/request",
             headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                     keyPair: projectionKeyPair,
                     machineId: "machine-review-comments-projection-owner",
                     installationId: "installation-review-comments-projection-owner",
@@ -1238,6 +1178,7 @@ describe("review comment durable storage", () => {
                         pluginId: EXTERNAL_PLUGIN_ID,
                         capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
                         targetScope: { kind: "project", projectId: "project-1" },
+                        subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
                         reason: "Publish approved review comments directly.",
                         requester: { kind: "plugin", pluginId: EXTERNAL_PLUGIN_ID, sessionId: "session-1" },
                     },
@@ -1247,6 +1188,7 @@ describe("review comment durable storage", () => {
                 pluginId: EXTERNAL_PLUGIN_ID,
                 capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
                 targetScope: { kind: "project", projectId: "project-1" },
+                subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
                 reason: "Publish approved review comments directly.",
                 requester: { kind: "plugin", pluginId: EXTERNAL_PLUGIN_ID, sessionId: "session-1" },
             },

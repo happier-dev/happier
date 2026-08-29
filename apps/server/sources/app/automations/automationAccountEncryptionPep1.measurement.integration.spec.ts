@@ -3,6 +3,7 @@ import {
     AutomationOccurrenceKeyV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     deriveAutomationOccurrenceEvidenceEqualityTagV1,
     deriveAutomationOccurrenceKeyV1,
     sealAutomationConversationReplyContextStoredEnvelopeV1,
@@ -11,6 +12,7 @@ import {
     sealAutomationRunResultStoredEnvelopeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     serializeAutomationRunExecutionRecipeV1,
+    type AutomationOccurrenceKeyV1,
     type PluginJsonValueV2,
 } from "@happier-dev/protocol";
 import { writeFile } from "node:fs/promises";
@@ -120,7 +122,7 @@ type MeasurementRunContent = Readonly<{
     causeEventLocalId: string | null;
     causeOccurredAt: Date;
     causeScheduledFor: Date | null;
-    occurrenceKey: string | null;
+    occurrenceKey: AutomationOccurrenceKeyV1 | null;
     causeSourceSelectorId: string | null;
     triggerEvidenceEnvelope: string | null;
     executionInputEnvelope: string;
@@ -150,7 +152,7 @@ function buildTriggerDefinitionEnvelope(params: Readonly<{
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        triggerId: params.triggerId,
+        triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
         triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
@@ -304,7 +306,6 @@ function sealReplyContextEnvelope(mode: "plain" | "e2ee"): string {
         return JSON.stringify(sealAutomationConversationReplyContextStoredEnvelopeV1({
             mode,
             correspondence: MEASUREMENT_REPLY_CONTEXT_CORRESPONDENCE,
-            templateVersion: 1,
             opaqueContext,
         }));
     }
@@ -313,7 +314,6 @@ function sealReplyContextEnvelope(mode: "plain" | "e2ee"): string {
         material: ACCOUNT_MATERIAL,
         randomBytes: deterministicRandomBytes,
         correspondence: MEASUREMENT_REPLY_CONTEXT_CORRESPONDENCE,
-        templateVersion: 1,
         opaqueContext,
     }));
 }
@@ -424,11 +424,9 @@ function buildSourceRunContent(index: number): MeasurementRunContent {
                     },
                 })
                 : null
-            : deriveAutomationOccurrenceKeyV1(
-                scenario === "pluginEventTrigger"
-                    ? { triggerId: EVENT_TRIGGER_ID, evidence }
-                    : evidence,
-            ),
+            : evidence.kind === "pluginEvent"
+                ? deriveAutomationOccurrenceKeyV1({ triggerId: EVENT_TRIGGER_ID, evidence })
+                : deriveAutomationOccurrenceKeyV1(evidence),
         causeSourceSelectorId: scenario === "pluginEventTrigger"
             ? SOURCE_SELECTOR_ID
             : null,

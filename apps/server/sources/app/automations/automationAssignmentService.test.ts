@@ -15,9 +15,11 @@ vi.mock("@/storage/db", () => ({
 }));
 
 import {
+    assertAutomationAssignmentLiveness,
     listDaemonAssignments,
     resolveAutomationAssignmentNextClaimAt,
 } from "./automationAssignmentService";
+import { AutomationValidationError } from "./automationValidation";
 
 describe("resolveAutomationAssignmentNextClaimAt", () => {
     beforeEach(() => {
@@ -325,5 +327,56 @@ describe("resolveAutomationAssignmentNextClaimAt", () => {
         expect(dbMocks.automations).toHaveBeenCalledWith(expect.objectContaining({
             where: { id: { in: ["automation-1"] }, accountId: "account-1" },
         }));
+    });
+});
+
+describe("assertAutomationAssignmentLiveness", () => {
+    it("requires an enabled Automation to own at least one enabled assignment", () => {
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [],
+        })).toThrow(AutomationValidationError);
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [{ machineId: "m1", enabled: false }],
+        })).toThrow(AutomationValidationError);
+    });
+
+    it("accepts enabled Automation with an enabled assignment and disabled drafts with none", () => {
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [
+                { machineId: "m1", enabled: false },
+                { machineId: "m2", enabled: true },
+            ],
+        })).not.toThrow();
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: false,
+            assignments: [],
+        })).not.toThrow();
+        // Assignment enablement defaults to enabled, matching persistence.
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [{ machineId: "m1" }],
+        })).not.toThrow();
+    });
+
+    it("dedupes repeated machineIds before counting enabled assignments", () => {
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [
+                { machineId: "m1", enabled: true },
+                // Persistence keeps the last entry per machineId, so the
+                // disabled repeat must win the dedupe decision.
+                { machineId: "m1", enabled: false },
+            ],
+        })).toThrow(AutomationValidationError);
+        expect(() => assertAutomationAssignmentLiveness({
+            enabled: true,
+            assignments: [
+                { machineId: "m1", enabled: false },
+                { machineId: "m1", enabled: true },
+            ],
+        })).not.toThrow();
     });
 });

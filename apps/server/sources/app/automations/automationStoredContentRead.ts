@@ -218,6 +218,17 @@ export type RetainedAutomationRunExecutionInputV2 = Readonly<{
         | Readonly<{ kind: "manual"; invokedAt: number }>;
 }>;
 
+/**
+ * Queryable persisted-bytes discriminator for retained V2 frozen input. The
+ * sole producer serializes the parsed schema with `JSON.stringify`, whose
+ * first field is the `kind` literal; current strict recipes serialize through
+ * the canonical-JSON owner with alphabetically sorted keys and can never start
+ * with this prefix. Candidate reads may prefilter on it, but the parsed
+ * predicate above remains the only admission decision.
+ */
+export const RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX =
+    '{"kind":"happier_automation_run_execution_input_v1"';
+
 function isExactObject(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
     const actual = Object.keys(value).sort();

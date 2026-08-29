@@ -5,6 +5,7 @@ import {
     AutomationRunResultStoredV1Schema,
     deriveSessionCreationTagV1,
     parseAutomationRunExecutionRecipeV1,
+    sameAutomationAccountContentIdentityV1,
     sameAutomationAccountCurrentnessWitnessV1,
     validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1,
     type AutomationAccountCurrentnessWitnessV1,
@@ -18,22 +19,20 @@ import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGua
 import { emitAutomationRunTransition } from "./automationChangePublisher";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
-import { decodeAutomationRunCause } from "./automationRunCauseCodec";
+import {
+    decodeAutomationRunCause,
+    retainedV2OriginKindForRun,
+} from "./automationRunCauseCodec";
 import { advanceAutomationScheduleCursorAfterTerminalRunTx } from "./automationRunQueueService";
 import { sanitizeAutomationErrorMessage } from "./automationSummaryService";
 import {
     assertAutomationRunFailureDetailEnvelopeOuterForMode,
     validateRetainedAutomationRunExecutionInputV2OuterForMode,
 } from "./automationStoredContentRead";
-import type { AutomationRunItem } from "./automationTypes";
-
-function retainedV2OriginKindForRun(run: AutomationRunItem): "scheduled" | "manual" | undefined {
-    const cause = decodeAutomationRunCause(run);
-    if (cause.kind === "manual") return "manual";
-    return cause.kind === "trigger" && cause.triggerKind === "schedule"
-        ? "scheduled"
-        : undefined;
-}
+import {
+    AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS,
+    type AutomationRunItem,
+} from "./automationTypes";
 
 function isConversationRun(run: AutomationRunItem): boolean {
     return decodeAutomationRunCause(run).kind === "conversation";
@@ -83,14 +82,15 @@ async function hasRequiredCurrentV2MachineTx(params: Readonly<{
 /**
  * Content-identity currentness for a decision taken *after* an external effect
  * already happened. `Account.seq` advances for every Account-scoped write,
- * including the cancellation that produced the terminality being reported and
+ * including the canonical Session creation a strict new-Session settlement
+ * reports, the cancellation that produced the terminality being reported, and
  * any unrelated Account mutation, so a post-effect report's witness is
- * routinely behind. Those readers compare the Account's mode and content-key
- * identity instead: they open no content under a new mode, and their write is
- * still gated by the exact machine/attempt/revision/lease Run CAS that
- * authorized the effect. An encryption-mode or content-key transition still
- * refuses them. Pre-effect and redispatch-permission decisions keep the exact
- * witness.
+ * routinely behind. Those terminal settlements compare the Account's mode and
+ * content-key identity instead — through the one Protocol comparison owner:
+ * they open no content under a new mode, and their write is still gated by the
+ * exact machine/attempt/revision/lease Run CAS that authorized the effect. An
+ * encryption-mode or content-key transition still refuses them. Pre-effect and
+ * redispatch-permission decisions keep the exact witness.
  */
 async function hasCompatibleAutomationAccountEncryptionTx(params: Readonly<{
     tx: Tx;
@@ -100,8 +100,7 @@ async function hasCompatibleAutomationAccountEncryptionTx(params: Readonly<{
     if (!params.expected) return true;
     const observed = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
     return observed !== null
-        && observed.mode === params.expected.mode
-        && observed.contentKeyFingerprint === params.expected.contentKeyFingerprint;
+        && sameAutomationAccountContentIdentityV1(observed, params.expected);
 }
 
 /**
@@ -485,13 +484,6 @@ async function settleSucceededAutomationRun(params: {
             machineId: params.machineId,
             requireV2RunRepresentability: params.requireV2RunRepresentability,
         })) return null;
-        if (!await hasExpectedAutomationAccountCurrentnessTx({
-            tx,
-            accountId: params.accountId,
-            expected: params.accountCurrentness,
-        })) {
-            return null;
-        }
         const now = new Date();
         const parsedResultEnvelope = parseAutomationRunResultEnvelope(
             params.resultEnvelope,
@@ -521,6 +513,30 @@ async function settleSucceededAutomationRun(params: {
             select: automationRunItemSelect,
         });
         if (!preflight) return null;
+        // The candidate is loaded under the exact Run authority first, then the
+        // witness is judged by the Run's state. A `running` success reports an
+        // external effect that already happened: for a strict new-Session
+        // target the canonical Session creation it reports is itself an
+        // Account write that advanced `Account.seq` past S, as does any
+        // unrelated Account mutation, so that post-effect report compares
+        // Account encryption identity instead of the stale sequence. A
+        // `claimed` success is a pre-start assertion with no authorized effect
+        // and keeps the exact claim witness, mirroring the claimed failure in
+        // the fail owner. The released-V2 adapter supplies no witness and
+        // stays outside this choice.
+        if (!await (preflight.state === "running"
+            ? hasCompatibleAutomationAccountEncryptionTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            })
+            : hasExpectedAutomationAccountCurrentnessTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            }))) {
+            return null;
+        }
         const strictNewSession = deriveStrictNewSessionCreationTag({
             automationId: preflight.automationId,
             runId: params.runId,
@@ -620,6 +636,7 @@ async function settleSucceededAutomationRun(params: {
                 claimedByMachineId: params.machineId,
                 attempt: preflight.attempt,
                 state: preflight.state,
+                revision: preflight.revision,
                 ...(params.requireV2RunRepresentability
                     ? { executionInputEnvelope: preflight.executionInputEnvelope }
                     : {}),
@@ -760,7 +777,7 @@ async function startAutomationRunInternal(params: {
         if (
             isExecutionRun
             && candidate.executionDispatchState === "retryWaiting"
-            && candidate.executionAttempt >= 3
+            && candidate.executionAttempt >= AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS
         ) {
             const terminalized = await tx.automationRun.updateMany({
                 where: {
@@ -807,7 +824,7 @@ async function startAutomationRunInternal(params: {
         if (
             isExecutionRun
             && (
-                candidate.executionAttempt >= 3
+                candidate.executionAttempt >= AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS
                 || (
                     candidate.executionDispatchState !== "notStarted"
                     && candidate.executionDispatchState !== "retryWaiting"
@@ -1088,7 +1105,7 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
         }
 
         const shouldRetry = params.outcome.kind === "noRunCreated"
-            && candidate.executionAttempt < 3;
+            && candidate.executionAttempt < AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS;
         const startedSettlement = params.outcome.kind === "started"
             ? resolveStartedExecutionDispatchSettlement(params.outcome)
             : null;
@@ -1288,7 +1305,13 @@ export async function succeedAutomationRun(params: {
     runId: string;
     machineId: string;
     attempt: number;
-    /** S: must equal the witness returned by the successful start. */
+    /**
+     * S: the post-start witness echoed unchanged from the successful start.
+     * A `running` settlement compares Account encryption identity against it —
+     * not the exact sequence, which the reported effect itself may have
+     * advanced; a `claimed` (pre-start) success claim keeps the exact claim
+     * witness. Either way the exact Run CAS owns whose report is accepted.
+     */
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     producedSessionId?: string | null;
     resultEnvelope?: string | null;
@@ -1510,11 +1533,23 @@ async function failAutomationRunInternal(params: {
             });
             return run as AutomationRunItem;
         }
-        if (!await hasExpectedAutomationAccountCurrentnessTx({
-            tx,
-            accountId: params.accountId,
-            expected: params.accountCurrentness,
-        })) {
+        // A `running` failure reports a post-start outcome: the start's target
+        // effect and any unrelated Account write may have advanced
+        // `Account.seq` past S, so it compares encryption identity under the
+        // same exact Run CAS as the success settlement. A `claimed` failure is
+        // a pre-effect decision — nothing has started — and keeps the exact
+        // claim witness.
+        if (!await (previousRun.state === "running"
+            ? hasCompatibleAutomationAccountEncryptionTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            })
+            : hasExpectedAutomationAccountCurrentnessTx({
+                tx,
+                accountId: params.accountId,
+                expected: params.accountCurrentness,
+            }))) {
             return null;
         }
         if (
@@ -1601,7 +1636,13 @@ export async function failAutomationRun(params: {
     runId: string;
     machineId: string;
     attempt: number;
-    /** S: must equal the witness returned by the successful start. */
+    /**
+     * S: the post-start witness echoed unchanged from the successful start.
+     * A `running` failure compares Account encryption identity against it —
+     * not the exact sequence, which the reported effect itself may have
+     * advanced; a `claimed` (pre-start) failure keeps the exact claim
+     * witness. Either way the exact Run CAS owns whose report is accepted.
+     */
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     producedSessionId?: string | null;
     errorCode?: string | null;

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { AutomationStoredDefinitionExecutionRecipeV1Schema } from "@happier-dev/protocol";
+import {
+    AutomationStoredDefinitionExecutionRecipeV1Schema,
+    AutomationTriggerIdSchema,
+} from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -9,6 +12,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import {
     createAutomation,
     deleteAutomationTrigger,
+    listAutomationRuns,
     reconcileAutomationDefinition,
     runAutomationNow,
     updateAutomation,
@@ -59,6 +63,10 @@ function intervalTrigger(everyMs: number) {
     return { ...intervalDefinition(everyMs), enabled: true };
 }
 
+function automationTriggerId() {
+    return AutomationTriggerIdSchema.parse(randomUUID());
+}
+
 function lifecycleDefinition(params: Readonly<{
     sourceSessionId: string;
     sourceTurnId: string;
@@ -97,6 +105,15 @@ function existingSessionExecutionRecipe(templateVersion: number, sessionId: stri
         triggerEvidence: null,
         target: { kind: "existingSession", sessionId },
     });
+}
+
+/** Creates one account machine for enabled-Automation assignment fixtures. */
+async function seedExecutionMachine(accountId: string): Promise<string> {
+    const machineId = `execution-machine-${randomUUID()}`;
+    await db.machine.create({
+        data: { id: machineId, accountId, metadata: "{}" },
+    });
+    return machineId;
 }
 
 async function seedActiveSourceTurn(accountId: string) {
@@ -166,6 +183,7 @@ describe("automation trigger-set CRUD", () => {
                 name: "Direct only",
                 enabled: true,
                 executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
                 triggers: [],
             },
         });
@@ -197,14 +215,15 @@ describe("automation trigger-set CRUD", () => {
                 enabled: false,
                 executionRecipe: executionRecipe(1),
                 triggers: [
-                    { triggerId: randomUUID(), trigger: intervalTrigger(60_000) },
-                    { triggerId: randomUUID(), trigger: intervalTrigger(120_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(120_000) },
                 ],
             },
         });
 
         expect(created.triggers).toHaveLength(2);
-        const [first, second] = created.triggers;
+        const first = created.triggers.find((trigger) => trigger.everyMs === 60_000);
+        const second = created.triggers.find((trigger) => trigger.everyMs === 120_000);
         expect(first).toMatchObject({ kind: "schedule", revision: 0, everyMs: 60_000 });
         expect(second).toMatchObject({ kind: "schedule", revision: 0, everyMs: 120_000 });
 
@@ -222,7 +241,8 @@ describe("automation trigger-set CRUD", () => {
         });
         expect(recipeEdited?.triggers.map(({ id, revision }) => ({ id, revision })))
             .toEqual(created.triggers.map(({ id, revision }) => ({ id, revision })));
-        expect(recipeEdited?.triggers[0]?.nextRunAt).toEqual(retainedNextRunAt);
+        expect(recipeEdited?.triggers.find((trigger) => trigger.id === first!.id)?.nextRunAt)
+            .toEqual(retainedNextRunAt);
 
         const unchangedTrigger = await updateAutomationTrigger({
             accountId: account.id,
@@ -231,7 +251,7 @@ describe("automation trigger-set CRUD", () => {
             expectedRevision: first!.revision,
             trigger: intervalDefinition(60_000),
         });
-        expect(unchangedTrigger?.triggers[0]).toMatchObject({
+        expect(unchangedTrigger?.triggers.find((trigger) => trigger.id === first!.id)).toMatchObject({
             id: first!.id,
             revision: first!.revision,
             nextRunAt: retainedNextRunAt,
@@ -245,12 +265,12 @@ describe("automation trigger-set CRUD", () => {
             trigger: intervalDefinition(180_000),
         });
         expect(triggerEdited?.triggers).toHaveLength(2);
-        expect(triggerEdited?.triggers[0]).toMatchObject({
+        expect(triggerEdited?.triggers.find((trigger) => trigger.id === first!.id)).toMatchObject({
             id: first!.id,
             revision: 1,
             everyMs: 180_000,
         });
-        expect(triggerEdited?.triggers[1]).toMatchObject({
+        expect(triggerEdited?.triggers.find((trigger) => trigger.id === second!.id)).toMatchObject({
             id: second!.id,
             revision: 0,
             everyMs: 120_000,
@@ -270,8 +290,8 @@ describe("automation trigger-set CRUD", () => {
                 enabled: false,
                 executionRecipe: executionRecipe(1),
                 triggers: [
-                    { triggerId: randomUUID(), trigger: intervalTrigger(60_000) },
-                    { triggerId: randomUUID(), trigger: intervalTrigger(120_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(120_000) },
                 ],
             },
         });
@@ -288,19 +308,19 @@ describe("automation trigger-set CRUD", () => {
                 triggers: [
                     {
                         kind: "existing",
-                        triggerId: first!.id,
+                        triggerId: AutomationTriggerIdSchema.parse(first!.id),
                         expectedRevision: first!.revision,
                         enabled: false,
                         trigger: intervalDefinition(180_000),
                     },
                     {
                         kind: "existing",
-                        triggerId: second!.id,
+                        triggerId: AutomationTriggerIdSchema.parse(second!.id),
                         expectedRevision: second!.revision,
                     },
                     {
                         kind: "new",
-                        triggerId: randomUUID(),
+                        triggerId: automationTriggerId(),
                         trigger: lifecycleTrigger({
                             sourceSessionId: "missing-source-session",
                             sourceTurnId: "missing-source-turn",
@@ -343,7 +363,8 @@ describe("automation trigger-set CRUD", () => {
                 name: "Historical schedule cause",
                 enabled: true,
                 executionRecipe: executionRecipe(1),
-                triggers: [{ triggerId: randomUUID(), trigger: intervalTrigger(60_000) }],
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
+                triggers: [{ triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) }],
             },
         });
         const trigger = created.triggers[0]!;
@@ -411,9 +432,10 @@ describe("automation trigger-set CRUD", () => {
                 name: "Disable all schedules",
                 enabled: true,
                 executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
                 triggers: [
-                    { triggerId: randomUUID(), trigger: intervalTrigger(60_000) },
-                    { triggerId: randomUUID(), trigger: intervalTrigger(120_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(120_000) },
                 ],
             },
         });
@@ -462,7 +484,7 @@ describe("automation trigger-set CRUD", () => {
                 enabled: false,
                 executionRecipe: executionRecipe(1),
                 triggers: [{
-                    triggerId: randomUUID(),
+                    triggerId: automationTriggerId(),
                     trigger: lifecycleTrigger({
                         sourceSessionId: source.sessionId,
                         sourceTurnId: source.turnId,
@@ -525,7 +547,7 @@ describe("automation trigger-set CRUD", () => {
                 enabled: false,
                 executionRecipe: executionRecipe(1),
                 triggers: [{
-                    triggerId: randomUUID(),
+                    triggerId: automationTriggerId(),
                     trigger: lifecycleTrigger({
                         sourceSessionId: staleSource.sessionId,
                         sourceTurnId: staleSource.turnId,
@@ -542,7 +564,7 @@ describe("automation trigger-set CRUD", () => {
                 enabled: false,
                 executionRecipe: executionRecipe(1),
                 triggers: [{
-                    triggerId: randomUUID(),
+                    triggerId: automationTriggerId(),
                     trigger: lifecycleTrigger({
                         sourceSessionId: source.sessionId,
                         sourceTurnId: source.turnId,
@@ -576,5 +598,107 @@ describe("automation trigger-set CRUD", () => {
             AutomationSessionLifecycleRegistrationValidationError,
         );
         expect(retargetError).toMatchObject({ code: "sourceMatchesExecutionTarget" });
+    });
+
+    it("pages Run history by stable trigger-aware anchors while triggers are edited and removed between reads", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Paged history",
+                enabled: true,
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
+                triggers: [
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) },
+                    { triggerId: automationTriggerId(), trigger: intervalTrigger(120_000) },
+                ],
+            },
+        });
+        const [first, second] = created.triggers;
+        const dueAt = new Date();
+        await db.automationTrigger.update({ where: { id: first!.id }, data: { nextRunAt: dueAt } });
+        await runAutomationScheduleWorkerPass({ now: dueAt });
+        const secondDueAt = new Date(dueAt.getTime() + 1);
+        await db.automationTrigger.update({ where: { id: second!.id }, data: { nextRunAt: secondDueAt } });
+        await runAutomationScheduleWorkerPass({ now: secondDueAt });
+        const manual = await runAutomationNow({ accountId: account.id, automationId: created.id });
+        expect(manual).toMatchObject({ triggerId: null, causeKind: "manual" });
+        const allRuns = await db.automationRun.findMany({
+            where: { automationId: created.id },
+            select: { id: true, triggerId: true, causeKind: true, causeTriggerKind: true, causeTriggerRevision: true },
+        });
+        expect(allRuns).toHaveLength(3);
+        const admissionById = new Map(allRuns.map((run) => [run.id, run]));
+
+        // The first page anchors on exact Run identity and carries per-page
+        // trigger currentness for every row.
+        const pageOne = await listAutomationRuns({
+            accountId: account.id,
+            automationId: created.id,
+            limit: 2,
+        });
+        expect(pageOne).not.toBeNull();
+        expect(pageOne!.runs).toHaveLength(2);
+        expect(pageOne!.nextCursor).toBe(pageOne!.runs[1]!.id);
+        expect(pageOne!.runs.every((run) => run.triggerRetired === false)).toBe(true);
+
+        // A trigger edit between page reads must not reshape Run pages: page
+        // membership anchors on the Run row, never on trigger state.
+        await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: second!.id,
+            expectedRevision: second!.revision,
+            trigger: intervalDefinition(240_000),
+        });
+        const pageTwo = await listAutomationRuns({
+            accountId: account.id,
+            automationId: created.id,
+            limit: 2,
+            cursor: pageOne!.nextCursor,
+        });
+        expect(pageTwo).not.toBeNull();
+        expect(pageTwo!.runs).toHaveLength(1);
+        expect(pageTwo!.nextCursor).toBeNull();
+        const pagedIds = [...pageOne!.runs, ...pageTwo!.runs].map((run) => run.id);
+        expect(new Set(pagedIds).size).toBe(3);
+        expect(new Set(pagedIds)).toEqual(new Set(allRuns.map((run) => run.id)));
+        for (const run of [...pageOne!.runs, ...pageTwo!.runs]) {
+            const admitted = admissionById.get(run.id)!;
+            expect(run.causeKind).toBe(admitted.causeKind);
+            expect(run.causeTriggerKind).toBe(admitted.causeTriggerKind);
+            expect(run.causeTriggerRevision).toBe(admitted.causeTriggerRevision);
+        }
+
+        // Removing one trigger between reads flips only that trigger's
+        // per-page retired fact; sibling and manual rows stay current and
+        // every immutable cause stays renderable.
+        await deleteAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: first!.id,
+            expectedRevision: first!.revision,
+        });
+        const repaged = await listAutomationRuns({
+            accountId: account.id,
+            automationId: created.id,
+            limit: 3,
+        });
+        expect(repaged).not.toBeNull();
+        expect(repaged!.runs).toHaveLength(3);
+        expect(repaged!.nextCursor).toBeNull();
+        const retiredById = new Map(repaged!.runs.map((run) => [run.id, run.triggerRetired]));
+        expect(retiredById.get(manual!.id)).toBe(false);
+        for (const run of repaged!.runs) {
+            const admitted = admissionById.get(run.id)!;
+            expect(run.triggerRetired).toBe(admitted.triggerId === first!.id);
+            expect(run.causeTriggerKind).toBe(admitted.causeTriggerKind);
+            expect(run.causeTriggerRevision).toBe(admitted.causeTriggerRevision);
+        }
     });
 });

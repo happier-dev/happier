@@ -68,4 +68,30 @@ describe("Automation reply handoff worker diagnostics", () => {
         expect(JSON.stringify(mocks.warn.mock.calls)).not.toContain(privateDetails);
         expect(mocks.findNextAutomationReplyHandoffDueAt).toHaveBeenCalledTimes(1);
     });
+
+    it.each(["throws", "no-ops"] as const)(
+        "uses the idle progress floor when a pass %s and leaves an overdue handoff",
+        async (passOutcome) => {
+            vi.useFakeTimers();
+            try {
+                if (passOutcome === "throws") {
+                    mocks.claimNextAutomationReplyHandoff.mockRejectedValueOnce(new Error("transient claim failure"));
+                }
+                mocks.findNextAutomationReplyHandoffDueAt.mockResolvedValue(new Date(0));
+
+                const worker = startAutomationReplyHandoffWorker({
+                    dispatch: vi.fn(),
+                    idlePollMs: 60_000,
+                });
+                await vi.advanceTimersByTimeAsync(1);
+
+                expect(mocks.claimNextAutomationReplyHandoff).toHaveBeenCalledTimes(1);
+                await vi.advanceTimersByTimeAsync(59_999);
+                expect(mocks.claimNextAutomationReplyHandoff).toHaveBeenCalledTimes(2);
+                await worker.stop();
+            } finally {
+                vi.useRealTimers();
+            }
+        },
+    );
 });

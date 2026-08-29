@@ -230,6 +230,20 @@ describe("Automation reply handoff worker", () => {
         })).resolves.toEqual({ replyHandoffState: "blocked", replyHandoffDueAt: null });
     });
 
+    it("blocks a stable pre-effect invalid dispatch request instead of retrying immutable claim bytes", async () => {
+        await seedReadyHandoff();
+
+        await runAutomationReplyHandoffWorkerPass({
+            now: NOW,
+            dispatch: async () => ({ kind: "unavailable", code: "invalidRequest" }),
+        });
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: RUN_ID },
+            select: { replyHandoffState: true, replyHandoffDueAt: true },
+        })).resolves.toEqual({ replyHandoffState: "blocked", replyHandoffDueAt: null });
+    });
+
     it("retries an Action execution failure because the target handler effect may be ambiguous", async () => {
         await seedReadyHandoff();
 

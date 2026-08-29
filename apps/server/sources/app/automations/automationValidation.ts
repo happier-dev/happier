@@ -90,7 +90,10 @@ function toMessage(error: z.ZodError): string {
     return `${path}: ${issue.message}`;
 }
 
-function normalizeAssignments(assignments: ReadonlyArray<AutomationAssignmentInput> | undefined): ReadonlyArray<AutomationAssignmentInput> | undefined {
+/** Canonical last-write-wins normalization shared by parsing, liveness, and persistence. */
+export function normalizeAutomationAssignments(
+    assignments: ReadonlyArray<AutomationAssignmentInput> | undefined,
+): ReadonlyArray<AutomationAssignmentInput> | undefined {
     if (!assignments) return undefined;
 
     const deduped = new Map<string, AutomationAssignmentInput>();
@@ -282,7 +285,7 @@ export function parseAutomationUpsertInput(
     return {
         ...parsed.data,
         schedule,
-        assignments: normalizeAssignments(parsed.data.assignments),
+        assignments: normalizeAutomationAssignments(parsed.data.assignments),
         ...(legacyTemplateEnvelopeAdmission
             ? { legacyTemplateEnvelopeAdmission }
             : {}),
@@ -329,7 +332,7 @@ export function parseAutomationPatchInput(
         return {
             ...parsed.data,
             ...(schedule ? { schedule } : {}),
-            assignments: normalizeAssignments(parsed.data.assignments),
+            assignments: normalizeAutomationAssignments(parsed.data.assignments),
             ...(legacyTemplateEnvelopeAdmission
                 ? { legacyTemplateEnvelopeAdmission }
                 : {}),
@@ -338,6 +341,6 @@ export function parseAutomationPatchInput(
     return {
         ...parsed.data,
         ...(schedule ? { schedule } : {}),
-        assignments: normalizeAssignments(parsed.data.assignments),
+        assignments: normalizeAutomationAssignments(parsed.data.assignments),
     };
 }

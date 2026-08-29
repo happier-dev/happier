@@ -3,6 +3,7 @@ import {
     AutomationEventAdmitHttpResultV1Schema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationStoredContentEnvelopeV1Schema,
+    AutomationTriggerIdSchema,
     compilePluginJsonSchema,
     buildAutomationPluginEventOccurrenceEvidenceV1,
     createCanonicalJsonSigningInput,
@@ -18,7 +19,10 @@ import {
     type AutomationEventAdmitHttpInputV1,
     type AutomationEventAdmitItemResultV1,
     type AutomationEventAdmitHttpResultV1,
-    type AutomationOccurrenceEvidenceV1,
+    type AutomationOccurrenceKeyV1,
+    type AutomationPluginEventOccurrenceEvidenceV1,
+    type AutomationSourceSelectorIdV1,
+    type AutomationTriggerId,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 
@@ -74,12 +78,12 @@ export class AutomationEventAdmissionError extends Error {
 type Candidate = Readonly<{
     groupKey: string;
     automationId: string;
-    triggerId: string;
+    triggerId: AutomationTriggerId;
     triggerRevision: number;
-    occurrenceKey: string;
-    sourceSelectorId: string;
+    occurrenceKey: AutomationOccurrenceKeyV1;
+    sourceSelectorId: AutomationSourceSelectorIdV1;
     occurredAt: Date;
-    evidence: AutomationOccurrenceEvidenceV1;
+    evidence: AutomationPluginEventOccurrenceEvidenceV1;
     occurrenceEvidenceEqualityTag: string | null;
     triggerEvidenceEnvelope: string;
     executionTriggerEvidenceEnvelope: string;
@@ -88,10 +92,10 @@ type Candidate = Readonly<{
 type EncryptedCandidate = Readonly<{
     group: DefinitionGroup<EncryptedDefinition>;
     automationId: string;
-    triggerId: string;
+    triggerId: AutomationTriggerId;
     triggerRevision: number;
-    occurrenceKey: string;
-    sourceSelectorId: string;
+    occurrenceKey: AutomationOccurrenceKeyV1;
+    sourceSelectorId: AutomationSourceSelectorIdV1;
     occurredAt: Date;
     occurrenceEvidenceEqualityTag: string;
     triggerEvidenceEnvelope: string;
@@ -182,7 +186,7 @@ function occurrenceLookupKey(triggerId: string, occurrenceKey: string): string {
     return JSON.stringify([triggerId, occurrenceKey]);
 }
 
-function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict"):
+function blocked(reason: "capacity" | "temporarilyUnavailable" | "occurrenceConflict" | "noEnabledAssignment"):
     AutomationEventAdmitItemResultV1 {
     return { kind: "blocked", reason, checkpointSafe: false };
 }
@@ -203,7 +207,11 @@ function ineligibleAdmissionResult(
     if (reason === "triggerRevisionMismatch") return refresh("definitionStale");
     if (reason === "triggerKindMismatch") return refresh("observationTargetChanged");
     if (reason === "capacity") return blocked("capacity");
+    if (reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
     if (reason === "definitionInvalid") return skipped("occurrenceRejected");
+    // Missing or disabled definitions are terminal for this observation and
+    // checkpoint-safe. Assignment liveness is handled above as retryable: a
+    // repaired definition must still be able to admit this exact occurrence.
     return skipped("definitionRetired");
 }
 
@@ -324,7 +332,7 @@ function existingEvidenceDisposition(params: Readonly<{
     triggerId: string;
     occurrenceKey: string;
     sourceSelectorId: string;
-    evidence: AutomationOccurrenceEvidenceV1;
+    evidence: AutomationPluginEventOccurrenceEvidenceV1;
 }>): "match" | "mismatch" | "unavailable" {
     if (
         params.row.triggerId !== params.triggerId
@@ -752,7 +760,7 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
             candidates.push({
                 group,
                 automationId: automation.id,
-                triggerId: trigger.id,
+                triggerId: AutomationTriggerIdSchema.parse(trigger.id),
                 triggerRevision: trigger.revision,
                 occurrenceKey: definition.occurrenceKey,
                 sourceSelectorId: definition.sourceSelectorId,
@@ -887,8 +895,8 @@ export async function admitAutomationEventV1(params: Readonly<{
         const groups = groupDefinitions(input);
         const missingGroups: DefinitionGroup[] = [];
         const occurrenceByGroupKey = new Map<string, Readonly<{
-            evidence: AutomationOccurrenceEvidenceV1;
-            occurrenceKey: string;
+            evidence: AutomationPluginEventOccurrenceEvidenceV1;
+            occurrenceKey: AutomationOccurrenceKeyV1;
         }>>();
         for (const group of groups) {
             const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({
@@ -1211,7 +1219,7 @@ export async function admitAutomationEventV1(params: Readonly<{
             candidates.push({
                 groupKey: group.key,
                 automationId: automation.id,
-                triggerId: trigger.id,
+                triggerId: AutomationTriggerIdSchema.parse(trigger.id),
                 triggerRevision: trigger.revision,
                 occurrenceKey,
                 sourceSelectorId: group.definition.sourceSelectorId,

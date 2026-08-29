@@ -104,7 +104,7 @@ describe("migrate.sqlite.deploy.ts", () => {
 
         const databasePath = join(lightDataDir, "happier-server-light.sqlite");
         expect(env.DATABASE_URL).toBe(
-            `${pathToFileURL(databasePath).href}?socket_timeout=30&connection_limit=1`,
+            `${pathToFileURL(databasePath).href}?socket_timeout=30&connection_limit=4`,
         );
         const db = new DatabaseSync(databasePath);
         try {

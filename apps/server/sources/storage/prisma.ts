@@ -79,14 +79,29 @@ export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: Node
     return withConnectionLimit(rawUrl, parsed);
 }
 
-export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
-    const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER)?.toString().trim().toLowerCase();
-    if (!raw) return fallback;
+export function parseDbProvider(rawValue: unknown): DbProvider | null {
+    const raw = rawValue?.toString().trim().toLowerCase();
+    if (!raw) return null;
     if (raw === "postgresql" || raw === "postgres") return "postgres";
     if (raw === "pglite") return "pglite";
     if (raw === "sqlite") return "sqlite";
     if (raw === "mysql") return "mysql";
-    return fallback;
+    return null;
+}
+
+export function getDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
+    const raw = env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER;
+    return parseDbProvider(raw) ?? fallback;
+}
+
+export function requireDbProviderFromEnv(env: NodeJS.ProcessEnv, fallback: DbProvider): DbProvider {
+    const raw = env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER;
+    if (raw === undefined || raw === null || !raw.toString().trim()) return fallback;
+    const provider = parseDbProvider(raw);
+    if (provider) return provider;
+    throw new Error(
+        `Unsupported HAPPIER_DB_PROVIDER/HAPPY_DB_PROVIDER: ${raw}. Supported: postgres|mysql|pglite|sqlite`,
+    );
 }
 
 export function resolveGeneratedClientEntrypoint(modulePath: string): string {
@@ -357,19 +372,44 @@ export function isPrismaErrorCode(err: unknown, code: string): boolean {
     return (err as any).code === code;
 }
 
+function readErrorMessageParts(err: unknown): string {
+    const parts: string[] = [];
+    if (err instanceof Error && typeof err.message === "string") {
+        parts.push(err.message);
+    } else if (err && typeof err === "object" && "message" in err) {
+        const value = (err as { message?: unknown }).message;
+        if (typeof value === "string") parts.push(value);
+    }
+    if (err && typeof err === "object" && "meta" in err) {
+        const metaMessage = (err as { meta?: { message?: unknown } }).meta?.message;
+        if (typeof metaMessage === "string") parts.push(metaMessage);
+    }
+    return parts.join("\n").toLowerCase();
+}
+
 export function isPrismaUniqueConstraintError(err: unknown): boolean {
     if (isPrismaErrorCode(err, "P2002")) {
         return true;
     }
-    if (!isPrismaErrorCode(err, "P2010")) {
-        return false;
+    if (isPrismaErrorCode(err, "P2010")) {
+        const rawCode = (err as { meta?: { code?: unknown } }).meta?.code;
+        if (
+            rawCode === 1062
+            || rawCode === 2067
+            || rawCode === "1062"
+            || rawCode === "2067"
+            || rawCode === "23505"
+        ) {
+            return true;
+        }
     }
-    const rawCode = (err as { meta?: { code?: unknown } }).meta?.code;
-    return rawCode === 1062
-        || rawCode === 2067
-        || rawCode === "1062"
-        || rawCode === "2067"
-        || rawCode === "23505";
+    // Raw writes may omit a driver code from Prisma's `meta`. Match only the
+    // native provider signatures so application text mentioning uniqueness is
+    // never treated as a database constraint violation.
+    const message = readErrorMessageParts(err);
+    return /\bunique constraint failed:/.test(message)
+        || /\bduplicate key value violates unique constraint\b/.test(message)
+        || /\bduplicate entry\b[^\n]*\bfor key\b/.test(message);
 }
 
 type SqliteJournalMode = "WAL" | "DELETE";

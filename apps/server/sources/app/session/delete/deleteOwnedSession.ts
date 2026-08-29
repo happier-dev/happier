@@ -1,4 +1,5 @@
 import { afterTx, inTx } from '@/storage/inTx';
+import type { Prisma } from '@prisma/client';
 import { log } from '@/utils/logging/log';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { tombstoneSessionDraftForLifecycleInTx } from '@/app/account/sessionDrafts/sessionDraftService';
@@ -28,7 +29,7 @@ export type DeleteOwnedSessionResult =
 
 type DeleteOwnedSessionCommonParams = Readonly<{
     sessionId: string;
-    sessionWhereGuard?: Record<string, unknown>;
+    sessionWhereGuard?: Prisma.SessionWhereInput;
 }>;
 
 export type DeleteOwnedSessionParams =
@@ -46,7 +47,7 @@ export async function deleteOwnedSession(
 ): Promise<DeleteOwnedSessionResult> {
     try {
         return await inTx(async (tx) => {
-            const session = await loadSessionDeleteRecipients(tx as any, {
+            const session = await loadSessionDeleteRecipients(tx, {
                 sessionId: params.sessionId,
                 ownerAccountId: params.ownerAccountId ?? null,
                 sessionWhereGuard: params.sessionWhereGuard,
@@ -68,8 +69,8 @@ export async function deleteOwnedSession(
             }
 
             const sessionDeleteWhere = {
-                ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : null),
-                ...(params.sessionWhereGuard ?? null),
+                ...(params.sessionWhereGuard ?? {}),
+                ...(params.ownerAccountId ? { accountId: params.ownerAccountId } : {}),
                 ...(isCallerInitiated
                     ? {
                         metadataLayoutVersion:
@@ -83,12 +84,12 @@ export async function deleteOwnedSession(
                 lifecycle: 'deleted',
             });
             for (const accountId of recipientAccountIds) {
-                await tombstoneSessionDraftForLifecycleInTx(tx as any, {
+                await tombstoneSessionDraftForLifecycleInTx(tx, {
                     accountId,
                     sessionId: params.sessionId,
                 });
             }
-            const deleted = await deleteSessionTree(tx as any, {
+            const deleted = await deleteSessionTree(tx, {
                 sessionId: params.sessionId,
                 sessionUpdatedAt: session.updatedAt,
                 actorAccountId: session.accountId,
@@ -96,7 +97,7 @@ export async function deleteOwnedSession(
                 sessionDeleteWhere: Object.keys(sessionDeleteWhere).length > 0 ? sessionDeleteWhere : undefined,
                 afterSessionWriteBoundary: async () => {
                     for (const accountId of recipientAccountIds) {
-                        const cursor = await markAccountChanged(tx as any, {
+                        const cursor = await markAccountChanged(tx, {
                             accountId,
                             kind: 'session',
                             entityId: params.sessionId,
@@ -107,7 +108,7 @@ export async function deleteOwnedSession(
                 },
             });
 
-            afterTx(tx as any, async () => {
+            afterTx(tx, async () => {
                 log(
                     {
                         module: 'session-delete',

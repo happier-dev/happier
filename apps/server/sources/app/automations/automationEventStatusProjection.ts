@@ -8,6 +8,7 @@ import {
 
 import { db } from "@/storage/db";
 
+import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
 import type { AutomationListItem, AutomationTriggerItem } from "./automationTypes";
 
 export type AutomationEventStatusProjection = Readonly<{
@@ -57,6 +58,7 @@ function sourceStatusFromRow(row: Readonly<{
     eventLocalId: string;
     sourceSelectorId: string;
     reporterMachineId: string;
+    reporterMachineInstallationId: string;
     reporterMaterializationId: string;
     reporterImmutableGenerationId: string;
     state: "uninitialized" | "baselined" | "observing" | "backingOff" | "attention";
@@ -151,45 +153,58 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
     }));
     if (eventEntries.length === 0) return projections;
     const eventEntryByTriggerId = new Map(eventEntries.map((entry) => [entry.trigger.id, entry]));
-    const durablePushEntries = eventEntries.filter(({ trigger }) => (
-        trigger.observationTransport === "durablePush"
-        && trigger.eventPluginId !== null
-        && trigger.webhookEndpointId !== null
-    ));
+    const durablePushEntries = eventEntries.flatMap(({ automation, trigger }) => {
+        if (
+            trigger.observationTransport !== "durablePush"
+            || trigger.eventPluginId === null
+            || trigger.webhookEndpointId === null
+        ) return [];
+        return [{
+            automation,
+            trigger,
+            eventPluginId: trigger.eventPluginId,
+            webhookEndpointId: trigger.webhookEndpointId,
+        }];
+    });
 
     const [sourceStatusRows, durablePushEndpoints] = await Promise.all([
-        db.automationEventSourceStatus.findMany({
-                where: { triggerId: { in: eventEntries.map(({ trigger }) => trigger.id) } },
-                select: {
-                    triggerId: true,
-                    triggerRevision: true,
-                    trigger: { select: { automationId: true } },
-                    eventPluginId: true,
-                    eventLocalId: true,
-                    sourceSelectorId: true,
-                    reporterMachineId: true,
-                    reporterMachineInstallationId: true,
-                    reporterMaterializationId: true,
-                    reporterImmutableGenerationId: true,
-                    state: true,
-                    code: true,
-                    lastObservedAt: true,
-                    lastDispositionAt: true,
-                    nextRetryAt: true,
-                    observedCount: true,
-                    admittedCount: true,
-                    skippedCount: true,
-                    revision: true,
-                },
-            }),
+        Promise.all(automationPortableQueryChunks({
+            values: eventEntries.map(({ trigger }) => trigger.id),
+            bindingsPerValue: 1,
+        }).map((chunk) => db.automationEventSourceStatus.findMany({
+            where: { triggerId: { in: [...chunk] } },
+            select: {
+                triggerId: true,
+                triggerRevision: true,
+                eventPluginId: true,
+                eventLocalId: true,
+                sourceSelectorId: true,
+                reporterMachineId: true,
+                reporterMachineInstallationId: true,
+                reporterMaterializationId: true,
+                reporterImmutableGenerationId: true,
+                state: true,
+                code: true,
+                lastObservedAt: true,
+                lastDispositionAt: true,
+                nextRetryAt: true,
+                observedCount: true,
+                admittedCount: true,
+                skippedCount: true,
+                revision: true,
+            },
+        }))).then((chunks) => chunks.flat()),
         durablePushEntries.length === 0
             ? Promise.resolve([])
-            : db.pluginWebhookEndpoint.findMany({
+            : Promise.all(automationPortableQueryChunks({
+                values: durablePushEntries,
+                bindingsPerValue: 4,
+            }).map((chunk) => db.pluginWebhookEndpoint.findMany({
                 where: {
-                    OR: durablePushEntries.map(({ automation, trigger }) => ({
-                        id: trigger.webhookEndpointId!,
+                    OR: chunk.map(({ automation, eventPluginId, webhookEndpointId }) => ({
+                        id: webhookEndpointId,
                         accountId: automation.accountId,
-                        pluginId: trigger.eventPluginId!,
+                        pluginId: eventPluginId,
                         enabled: true,
                         revokedAt: null,
                         releasedAt: null,
@@ -204,7 +219,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
                     targetMachineInstallationId: true,
                     targetMaterializationId: true,
                 },
-            }),
+            }))).then((chunks) => chunks.flat()),
     ]);
 
     const endpointById = new Map(durablePushEndpoints.map((endpoint) => [endpoint.id, endpoint]));
@@ -272,6 +287,11 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
     for (const row of sourceStatusRows) {
         const entry = eventEntryByTriggerId.get(row.triggerId);
         const currentReporter = currentReporterByTriggerId.get(row.triggerId);
+        // Mandatory reporter-generation provenance: the final DTO contract is
+        // non-null, so this owner narrows the physical possibility of an
+        // absent generation explicitly instead of defaulting it. A row that
+        // fails any currentness fact is not projected at all.
+        const reporterImmutableGenerationId: string | null = row.reporterImmutableGenerationId;
         if (
             !entry
             || entry.trigger.eventPluginId !== row.eventPluginId
@@ -282,19 +302,24 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
             || currentReporter.reporterMachineId !== row.reporterMachineId
             || currentReporter.reporterMachineInstallationId !== row.reporterMachineInstallationId
             || currentReporter.reporterMaterializationId !== row.reporterMaterializationId
+            || reporterImmutableGenerationId === null
         ) continue;
         sourceStatusByTriggerId.set(row.triggerId, sourceStatusFromRow({
             ...row,
-            automationId: row.trigger.automationId,
+            automationId: entry.automation.id,
             triggerRevision: row.triggerRevision,
+            reporterImmutableGenerationId,
         }));
     }
 
     const catalogRows = catalogLookups.size === 0
         ? []
-        : await db.automationEventSourceCatalogStatus.findMany({
+        : (await Promise.all(automationPortableQueryChunks({
+            values: [...catalogLookups.values()],
+            bindingsPerValue: 6,
+        }).map((chunk) => db.automationEventSourceCatalogStatus.findMany({
             where: {
-                OR: Array.from(catalogLookups.values()).map((lookup) => ({
+                OR: chunk.map((lookup) => ({
                     accountId: lookup.accountId,
                     eventPluginId: lookup.eventPluginId,
                     reporterMachineId: lookup.reporterMachineId,
@@ -316,7 +341,7 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
                 scanStartedAt: true,
                 nextRetryAt: true,
             },
-        });
+        })))).flat();
     const catalogStatusByLookupKey = new Map<string, AutomationEventSourceCatalogStatus>();
     for (const row of catalogRows) {
         catalogStatusByLookupKey.set(catalogStatusLookupKey({

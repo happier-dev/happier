@@ -4,9 +4,11 @@ import {
     AutomationStoredDefinitionExecutionRecipeV1Schema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     normalizePluginReleaseFactsV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
     PluginWebhookEndpointEnsureInputV1Schema,
+    type PluginJsonSchemaV2,
 } from "@happier-dev/protocol";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,7 +88,7 @@ function releaseFacts(params: Readonly<{ supportsDurablePush: boolean }>) {
         properties: { repositoryId: { type: "string" } },
         required: ["repositoryId"],
         additionalProperties: false,
-    } as const;
+    } satisfies PluginJsonSchemaV2;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: PLUGIN_ID, version: PLUGIN_VERSION },
         archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -288,7 +290,7 @@ function pullTrigger(params: Readonly<{
 }
 
 function triggerInput<T>(trigger: T) {
-    return { triggerId: randomUUID(), trigger };
+    return { triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger };
 }
 
 async function expectPluginEventTombstone(params: Readonly<{
@@ -410,6 +412,7 @@ describe("Automation durable-push authoring", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Repository webhooks",
                 description: null,
                 enabled: true,
@@ -452,7 +455,7 @@ describe("Automation durable-push authoring", () => {
             binding: {
                 v: 1,
                 automationId: created.id,
-                triggerId: createdTrigger.id,
+                triggerId: AutomationTriggerIdSchema.parse(createdTrigger.id),
                 triggerRevision: createdTrigger.revision,
                 triggerKind: "pluginEvent",
                 eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
@@ -478,6 +481,7 @@ describe("Automation durable-push authoring", () => {
         await expect(createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Wrong routing source",
                 description: null,
                 enabled: true,
@@ -497,6 +501,7 @@ describe("Automation durable-push authoring", () => {
         await expect(createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Revoked endpoint",
                 description: null,
                 enabled: true,
@@ -526,6 +531,7 @@ describe("Automation durable-push authoring", () => {
         await expect(createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Unconfirmed endpoint",
                 description: null,
                 enabled: true,
@@ -548,6 +554,7 @@ describe("Automation durable-push authoring", () => {
         await expect(createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Unsupported transport",
                 description: null,
                 enabled: true,
@@ -565,6 +572,7 @@ describe("Automation durable-push authoring", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Delete Event transports",
                 description: null,
                 enabled: true,
@@ -599,7 +607,7 @@ describe("Automation durable-push authoring", () => {
         await expectPluginEventTombstone({
             triggerId: pull.id,
             revision: pull.revision,
-            sourceSelectorId: pull.sourceSelectorId,
+            sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(pull.sourceSelectorId),
         });
 
         await expect(deleteAutomationTrigger({
@@ -611,7 +619,7 @@ describe("Automation durable-push authoring", () => {
         await expectPluginEventTombstone({
             triggerId: push.id,
             revision: push.revision,
-            sourceSelectorId: push.sourceSelectorId,
+            sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(push.sourceSelectorId),
         });
     });
 
@@ -621,6 +629,7 @@ describe("Automation durable-push authoring", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Reconcile Event transports",
                 description: "Both rows use the same tombstone arm",
                 enabled: true,
@@ -652,7 +661,7 @@ describe("Automation durable-push authoring", () => {
                 })),
                 triggers: [],
                 removedTriggers: created.triggers.map((trigger) => ({
-                    triggerId: trigger.id,
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
                     expectedRevision: trigger.revision,
                 })),
             },
@@ -665,7 +674,7 @@ describe("Automation durable-push authoring", () => {
             await expectPluginEventTombstone({
                 triggerId: trigger.id,
                 revision: trigger.revision,
-                sourceSelectorId: trigger.sourceSelectorId,
+                sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId),
             });
         }
     });
@@ -677,6 +686,7 @@ describe("Automation durable-push authoring", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Repository webhooks",
                 description: null,
                 enabled: true,

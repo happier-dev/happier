@@ -7,6 +7,7 @@ import {
     applyConfiguredDatabaseConnectionLimit,
     db,
     getDbProviderFromEnv,
+    requireDbProviderFromEnv,
     isPrismaErrorCode,
     isPrismaUniqueConstraintError,
 } from "./prisma";
@@ -127,11 +128,58 @@ describe("storage/prisma", () => {
         expect(isPrismaUniqueConstraintError({ code: "P2034", meta: { code: "23505" } })).toBe(false);
     });
 
+    it("recognizes SQLite raw-write unique violations that surface without a driver code in meta", () => {
+        expect(isPrismaUniqueConstraintError({
+            code: "P2010",
+            meta: {},
+            message: [
+                "Invalid `prisma.$executeRaw()` invocation:",
+                "Raw query failed. Code: `2067`. Message: `UNIQUE constraint failed: review_comment_publication_correlations.publication_correlation_id`",
+            ].join("\n"),
+        })).toBe(true);
+        expect(isPrismaUniqueConstraintError({
+            code: "P2010",
+            message: "UNIQUE constraint failed: review_comment_publication_correlations.publication_correlation_id",
+        })).toBe(true);
+        expect(isPrismaUniqueConstraintError(
+            new Error("UNIQUE constraint failed: review_comment_publication_correlations.publication_correlation_id"),
+        )).toBe(true);
+        expect(isPrismaUniqueConstraintError({
+            code: "P2010",
+            meta: {},
+            message: "Raw query failed. Code: `19`. Message: `FOREIGN KEY constraint failed`",
+        })).toBe(false);
+    });
+
+    it("recognizes only provider-specific raw unique-violation messages", () => {
+        expect(isPrismaUniqueConstraintError(
+            new Error('duplicate key value violates unique constraint "review_comment_publication_correlations_pkey"'),
+        )).toBe(true);
+        expect(isPrismaUniqueConstraintError(
+            new Error("Duplicate entry 'correlation-1' for key 'review_comment_publication_correlations.PRIMARY'"),
+        )).toBe(true);
+        expect(isPrismaUniqueConstraintError(
+            new Error("operation requires unique constraint semantics"),
+        )).toBe(false);
+        expect(isPrismaUniqueConstraintError(
+            new Error("CHECK constraint failed: review_comment_publication_correlations"),
+        )).toBe(false);
+        expect(isPrismaUniqueConstraintError(
+            new Error("FOREIGN KEY constraint failed"),
+        )).toBe(false);
+    });
+
     it("parses DB provider from env with a fallback", () => {
         expect(getDbProviderFromEnv({}, "postgres")).toBe("postgres");
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "mysql" }, "postgres")).toBe("mysql");
         expect(getDbProviderFromEnv({ HAPPIER_DB_PROVIDER: " sqlite " }, "postgres")).toBe("sqlite");
         expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "nope" }, "postgres")).toBe("postgres");
+    });
+
+    it("can require an explicitly configured DB provider", () => {
+        expect(requireDbProviderFromEnv({}, "sqlite")).toBe("sqlite");
+        expect(requireDbProviderFromEnv({ HAPPIER_DB_PROVIDER: "postgresql" }, "sqlite")).toBe("postgres");
+        expect(() => requireDbProviderFromEnv({ HAPPY_DB_PROVIDER: "postgress" }, "sqlite")).toThrow(/Unsupported/);
     });
 
     it("applies an explicit database connection limit from env to the database url", () => {

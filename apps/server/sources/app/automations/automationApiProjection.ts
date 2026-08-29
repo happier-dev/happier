@@ -33,6 +33,8 @@ import type {
     AutomationRunDetailItem,
     AutomationRunEventRow,
     AutomationRunItem,
+    AutomationRunV2ListItem,
+    AutomationRunV3ListItem,
     AutomationTargetType,
     AutomationTriggerItem,
 } from "./automationTypes";
@@ -64,9 +66,13 @@ function hasRetainedV2TemplateEnvelope(raw: string): boolean {
 }
 
 /** Released V2 represents exactly one retained schedule and nothing else. */
-export function isAutomationDefinitionRepresentableInV2(
-    item: AutomationListItem,
-): item is AutomationListItem & Readonly<{ targetType: AutomationLegacyTargetType }> {
+type AutomationV2RepresentabilityFacts = Pick<AutomationListItem, "targetType" | "templateCiphertext"> & Readonly<{
+    triggers: ReadonlyArray<Pick<AutomationTriggerItem, "kind" | "scheduleKind">>;
+}>;
+
+export function isAutomationDefinitionRepresentableInV2<T extends AutomationV2RepresentabilityFacts>(
+    item: T,
+): item is T & Readonly<{ targetType: AutomationLegacyTargetType }> {
     const trigger = item.triggers.length === 1 ? item.triggers[0] : undefined;
     return trigger?.kind === "schedule"
         && trigger.scheduleKind !== null
@@ -75,13 +81,13 @@ export function isAutomationDefinitionRepresentableInV2(
         && hasRetainedV2TemplateEnvelope(item.templateCiphertext);
 }
 
-function retainedV2CauseKind(item: AutomationRunItem): "scheduled" | "manual" | null {
+function retainedV2CauseKind(item: AutomationRunV2ListItem | AutomationRunItem): "scheduled" | "manual" | null {
     const cause = decodeAutomationRunCause(item);
     if (cause.kind === "manual") return "manual";
     return cause.kind === "trigger" && cause.triggerKind === "schedule" ? "scheduled" : null;
 }
 
-export function isAutomationRunV2Compatible(item: AutomationRunItem): boolean {
+export function isAutomationRunV2Compatible(item: AutomationRunV2ListItem | AutomationRunItem): boolean {
     const retainedV2OriginKind = retainedV2CauseKind(item);
     return retainedV2OriginKind !== null
         && item.executionInputEnvelope !== null
@@ -115,7 +121,7 @@ export function toAutomationV2ApiDto(item: AutomationListItem) {
     });
 }
 
-export function toAutomationRunV2ApiDto(item: AutomationRunItem) {
+export function toAutomationRunV2ApiDto(item: AutomationRunV2ListItem | AutomationRunItem) {
     if (!isAutomationRunV2Compatible(item)) {
         throw new Error("Automation Run is not representable by the V2 contract");
     }
@@ -308,11 +314,11 @@ export function toAutomationDefinitionDetailApiDto(
 }
 
 /** Sole public projection of immutable Run cause. */
-export function toAutomationRunCauseApiDto(item: AutomationRunItem) {
+export function toAutomationRunCauseApiDto(item: AutomationRunV3ListItem | AutomationRunItem) {
     return decodeAutomationRunCause(item);
 }
 
-export function toAutomationRunV3ListApiDto(item: AutomationRunItem) {
+export function toAutomationRunV3ListApiDto(item: AutomationRunV3ListItem | AutomationRunItem) {
     const triggerRetired = item.triggerId === null
         ? false
         : required(item.triggerRetired, "triggerRetired currentness projection");

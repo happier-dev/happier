@@ -20,6 +20,7 @@ import {
     AccountEncryptionMigrateAutomationsDirectiveSchema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     AutomationOccurrenceEvidenceEqualityTagV1Schema,
     AutomationOccurrenceEvidenceV1Schema,
     AutomationRunResultStoredV1Schema,
@@ -54,7 +55,7 @@ import {
     emitAutomationRunUpdated,
     emitAutomationUpsert,
 } from "./automationChangePublisher";
-import { replaceAutomationAssignmentsTx } from "./automationAssignmentService";
+import { assertAutomationAssignmentLiveness, replaceAutomationAssignmentsTx } from "./automationAssignmentService";
 import { ensureAutomationScheduleCursorsTx } from "./automationRunQueueService";
 import { admitAutomationRunTx } from "./automationRunAdmissionService";
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
@@ -64,8 +65,11 @@ import {
     isAutomationRunV2Compatible,
 } from "./automationApiProjection";
 import {
+    automationDefinitionListItemSelect,
     automationListItemSelect,
     automationRunDetailSelect,
+    automationRunV2ListItemSelect,
+    automationRunV3ListItemSelect,
     automationRunItemSelect,
     automationTriggerSelect,
 } from "./automationPersistenceSelect";
@@ -116,6 +120,8 @@ import type {
     AutomationCurrentUpsertInput,
     AutomationRunDetailItem,
     AutomationRunItem,
+    AutomationRunV2ListItem,
+    AutomationRunV3ListItem,
     AutomationScheduleInput,
     AutomationTriggerItem,
     AutomationTriggerKind,
@@ -245,6 +251,28 @@ function resolveScheduleDbFields(schedule: AutomationScheduleInput): AutomationS
         everyMs: null,
         timezone: validated.timezone ?? null,
     };
+}
+
+/**
+ * Public trigger definitions carry explicit nulls for the inactive schedule
+ * arm. Strip that representation detail before the canonical schedule parser
+ * so create rejoin and edit equality use the same persistence semantics as a
+ * direct schedule write.
+ */
+function resolveTriggerDefinitionScheduleDbFields(
+    schedule: Extract<AutomationTriggerDefinition, { kind: "schedule" }>["schedule"],
+): AutomationScheduleDbFields {
+    return resolveScheduleDbFields(schedule.kind === "interval"
+        ? {
+            kind: "interval",
+            everyMs: schedule.everyMs,
+            timezone: schedule.timezone,
+        }
+        : {
+            kind: "cron",
+            scheduleExpr: schedule.scheduleExpr,
+            timezone: schedule.timezone,
+        });
 }
 
 function hasSameAutomationScheduleFields(
@@ -519,7 +547,7 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        triggerId: params.triggerId,
+        triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
         triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: params.input.eventRef,
@@ -643,7 +671,7 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
  * every writer sets the whole group here rather than patching one arm.
  */
 async function resolveAutomationDurablePushServerIdentityId(
-    input: AutomationPluginEventWriteInput | null | undefined,
+    input: Pick<AutomationPluginEventWriteInput, "observationTransport"> | null | undefined,
 ): Promise<string | null> {
     return input?.observationTransport.kind === "durablePush"
         ? await getOrCreateServerIdentityId()
@@ -713,7 +741,7 @@ function sealPlainAutomationPluginEventDefinition(params: Readonly<{
         binding: {
             v: 1,
             automationId: params.automationId,
-            triggerId: params.triggerId,
+            triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
             triggerRevision: params.triggerRevision,
             triggerKind: "pluginEvent",
             eventRef: params.event.eventRef,
@@ -736,7 +764,7 @@ function readPlainAutomationPluginEventDefinition(
         triggerEventLocalId: trigger.eventLocalId,
         triggerSourceSelectorId: trigger.sourceSelectorId,
     });
-    if (!binding || trigger.definitionEnvelope === null) {
+    if (!binding || trigger.definitionEnvelope == null) {
         throw new AutomationValidationError(
             "Automation Event private definition is unavailable",
         );
@@ -835,7 +863,9 @@ function automationTriggerMatchesCreateInput(params: Readonly<{
     ) return false;
 
     if (requested.trigger.kind === "schedule") {
-        const schedule = resolveScheduleDbFields(requested.trigger.schedule);
+        const schedule = resolveTriggerDefinitionScheduleDbFields(
+            requested.trigger.schedule,
+        );
         return hasSameAutomationScheduleFields(existing, schedule);
     }
     if (requested.trigger.kind === "sessionLifecycle") {
@@ -848,7 +878,7 @@ function automationTriggerMatchesCreateInput(params: Readonly<{
         || existing.eventLocalId !== requested.trigger.eventRef.localId
         || existing.sourceContractVersion !== requested.trigger.sourceContractVersion
         || !automationPluginEventCreateTransportMatches(existing, requested.trigger)
-        || existing.definitionEnvelope === null
+        || existing.definitionEnvelope == null
     ) return false;
 
     if ("triggerDefinitionEnvelope" in requested.trigger) {
@@ -1142,58 +1172,40 @@ export type AutomationAccountEncryptionMigrationPostStateResult =
     | Readonly<{ status: "matched" }>
     | Readonly<{ status: "mismatch" }>;
 
-interface AutomationAccountEncryptionMigrationRow {
-    id: string;
-    enabled: boolean;
-    deletedAt: Date | null;
-    targetType: AutomationListItem["targetType"];
-    templateCiphertext: string;
-    templateVersion: number;
-    triggers: ReadonlyArray<{
-        id: string;
-        kind: AutomationTriggerKind;
-        enabled: boolean;
-        revision: number;
-        deletedAt: Date | null;
-        eventPluginId: string | null;
-        eventLocalId: string | null;
-        sourceSelectorId: string | null;
-        definitionEnvelope: string | null;
-    }>;
-    assignments: ReadonlyArray<{
-        machineId: string;
-        enabled: boolean;
-        updatedAt: Date;
-    }>;
-}
+const automationMigrationDefinitionSelect = {
+    id: true,
+    enabled: true,
+    deletedAt: true,
+    targetType: true,
+    templateCiphertext: true,
+    templateVersion: true,
+    triggers: {
+        where: { deletedAt: null },
+        select: {
+            id: true,
+            kind: true,
+            enabled: true,
+            revision: true,
+            deletedAt: true,
+            eventPluginId: true,
+            eventLocalId: true,
+            sourceSelectorId: true,
+            definitionEnvelope: true,
+        },
+        orderBy: { id: "asc" },
+    },
+    assignments: {
+        select: {
+            machineId: true,
+            enabled: true,
+            updatedAt: true,
+        },
+    },
+} satisfies Prisma.AutomationSelect;
 
-interface AutomationAccountEncryptionMigrationRunRow {
-    id: string;
-    automationId: string;
-    triggerId: string | null;
-    causeKind: AutomationRunItem["causeKind"];
-    causeTriggerKind: AutomationRunItem["causeTriggerKind"];
-    causeTriggerRevision: number | null;
-    causeOccurredAt: Date | null;
-    causeEventPluginId: string | null;
-    causeEventLocalId: string | null;
-    causeScheduledFor: Date | null;
-    causeSessionLifecycleEvent: AutomationRunItem["causeSessionLifecycleEvent"];
-    causeSourceSessionId: string | null;
-    causeSourceTurnId: string | null;
-    causeSourceSelectorId: string | null;
-    createdAt: Date;
-    occurrenceKey: string | null;
-    occurrenceEvidenceEqualityTag: string | null;
-    triggerEvidenceEnvelope: string | null;
-    executionInputEnvelope: string | null;
-    resultEnvelope: string | null;
-    replyContextEnvelope: string | null;
-    replyHandoffReceiptEnvelope: string | null;
-    errorMessage: string | null;
-    summaryCiphertext: string | null;
-    revision: number;
-}
+type AutomationAccountEncryptionMigrationRow = Prisma.AutomationGetPayload<{
+    select: typeof automationMigrationDefinitionSelect;
+}>;
 
 /**
  * Internal projection of the guarded V5 Protocol participant shape. It stays
@@ -1281,11 +1293,18 @@ function transitionInventoryDefinition(
             templateCiphertext: row.templateCiphertext,
             triggerDefinitionEnvelopes: row.triggers
                 .filter((trigger) => trigger.kind === "pluginEvent")
-                .map((trigger) => ({
-                    triggerId: trigger.id,
-                    triggerRevision: trigger.revision,
-                    envelope: trigger.definitionEnvelope!,
-                })),
+                .map((trigger) => {
+                    if (trigger.definitionEnvelope === null) {
+                        throw new AutomationValidationError(
+                            "Automation Event trigger has no definition envelope",
+                        );
+                    }
+                    return {
+                        triggerId: trigger.id,
+                        triggerRevision: trigger.revision,
+                        envelope: trigger.definitionEnvelope,
+                    };
+                }),
         },
     };
 }
@@ -1303,6 +1322,73 @@ function currentAutomationRunFailureDetailEnvelope(
         ? row.errorMessage
         : null;
 }
+
+function automationRunHasMigrationPrivateContent(
+    row: AutomationAccountEncryptionMigrationRunRow,
+): boolean {
+    return row.triggerEvidenceEnvelope !== null
+        || row.occurrenceEvidenceEqualityTag !== null
+        || row.executionInputEnvelope !== null
+        || row.resultEnvelope !== null
+        || row.replyContextEnvelope !== null
+        || row.replyHandoffReceiptEnvelope !== null
+        || currentAutomationRunFailureDetailEnvelope(row) !== null
+        || row.summaryCiphertext !== null;
+}
+
+function automationRunMigrationCandidateWhere(
+    accountId: string,
+    afterId?: string,
+) {
+    return {
+        accountId,
+        ...(afterId ? { id: { gt: afterId } } : {}),
+        OR: [
+            { triggerEvidenceEnvelope: { not: null } },
+            { occurrenceEvidenceEqualityTag: { not: null } },
+            { executionInputEnvelope: { not: null } },
+            { resultEnvelope: { not: null } },
+            { replyContextEnvelope: { not: null } },
+            { replyHandoffReceiptEnvelope: { not: null } },
+            // Released V2 public error text shares this column. The strict
+            // parser above remains the final private-content discriminator.
+            { errorMessage: { not: null } },
+            { summaryCiphertext: { not: null } },
+        ],
+    };
+}
+
+const automationRunMigrationParticipantSelect = {
+    id: true,
+    automationId: true,
+    triggerId: true,
+    causeKind: true,
+    causeTriggerKind: true,
+    causeTriggerRevision: true,
+    causeOccurredAt: true,
+    causeEventPluginId: true,
+    causeEventLocalId: true,
+    causeScheduledFor: true,
+    causeSessionLifecycleEvent: true,
+    causeSourceSessionId: true,
+    causeSourceTurnId: true,
+    causeSourceSelectorId: true,
+    createdAt: true,
+    occurrenceKey: true,
+    occurrenceEvidenceEqualityTag: true,
+    triggerEvidenceEnvelope: true,
+    executionInputEnvelope: true,
+    resultEnvelope: true,
+    replyContextEnvelope: true,
+    replyHandoffReceiptEnvelope: true,
+    errorMessage: true,
+    summaryCiphertext: true,
+    revision: true,
+} satisfies Prisma.AutomationRunSelect;
+
+type AutomationAccountEncryptionMigrationRunRow = Prisma.AutomationRunGetPayload<{
+    select: typeof automationRunMigrationParticipantSelect;
+}>;
 
 function transitionInventoryRun(
     row: AutomationAccountEncryptionMigrationRunRow,
@@ -1423,36 +1509,7 @@ async function loadAutomationAccountEncryptionMigrationDefinitionPageInTx(
             accountId,
             ...(afterId ? { id: { gt: afterId } } : {}),
         },
-        select: {
-            id: true,
-            enabled: true,
-            deletedAt: true,
-            targetType: true,
-            templateCiphertext: true,
-            templateVersion: true,
-            triggers: {
-                where: { deletedAt: null },
-                select: {
-                    id: true,
-                    kind: true,
-                    enabled: true,
-                    revision: true,
-                    deletedAt: true,
-                    eventPluginId: true,
-                    eventLocalId: true,
-                    sourceSelectorId: true,
-                    definitionEnvelope: true,
-                },
-                orderBy: { id: "asc" },
-            },
-            assignments: {
-                select: {
-                    machineId: true,
-                    enabled: true,
-                    updatedAt: true,
-                },
-            },
-        },
+        select: automationMigrationDefinitionSelect,
         orderBy: { id: "asc" },
         take,
     });
@@ -1464,50 +1521,22 @@ async function loadAutomationAccountEncryptionMigrationRunPageInTx(
     afterId: string | undefined,
     take: number,
 ): Promise<AutomationAccountEncryptionMigrationRunRow[]> {
-    return await tx.automationRun.findMany({
-        where: {
-            accountId,
-            ...(afterId ? { id: { gt: afterId } } : {}),
-            OR: [
-                { triggerEvidenceEnvelope: { not: null } },
-                { occurrenceEvidenceEqualityTag: { not: null } },
-                { executionInputEnvelope: { not: null } },
-                { resultEnvelope: { not: null } },
-                { replyContextEnvelope: { not: null } },
-                { replyHandoffReceiptEnvelope: { not: null } },
-                { summaryCiphertext: { not: null } },
-            ],
-        },
-        select: {
-            id: true,
-            automationId: true,
-            triggerId: true,
-            causeKind: true,
-            causeTriggerKind: true,
-            causeTriggerRevision: true,
-            causeOccurredAt: true,
-            causeEventPluginId: true,
-            causeEventLocalId: true,
-            causeScheduledFor: true,
-            causeSessionLifecycleEvent: true,
-            causeSourceSessionId: true,
-            causeSourceTurnId: true,
-            causeSourceSelectorId: true,
-            createdAt: true,
-            occurrenceKey: true,
-            occurrenceEvidenceEqualityTag: true,
-            triggerEvidenceEnvelope: true,
-            executionInputEnvelope: true,
-            resultEnvelope: true,
-            replyContextEnvelope: true,
-            replyHandoffReceiptEnvelope: true,
-            errorMessage: true,
-            summaryCiphertext: true,
-            revision: true,
-        },
-        orderBy: { id: "asc" },
-        take,
-    }) as AutomationAccountEncryptionMigrationRunRow[];
+    const participants: AutomationAccountEncryptionMigrationRunRow[] = [];
+    let scanAfterId = afterId;
+    while (participants.length < take) {
+        const rows = await tx.automationRun.findMany({
+            where: automationRunMigrationCandidateWhere(accountId, scanAfterId),
+            select: automationRunMigrationParticipantSelect,
+            orderBy: { id: "asc" },
+            take,
+        });
+        const last = rows.at(-1);
+        if (!last) break;
+        scanAfterId = last.id;
+        participants.push(...rows.filter(automationRunHasMigrationPrivateContent));
+        if (rows.length < take) break;
+    }
+    return participants.slice(0, take);
 }
 
 /**
@@ -1763,37 +1792,8 @@ async function loadAutomationAccountEncryptionTransitionDefinitionsByIdsInTx(
     if (ids.length === 0) return [];
     return await tx.automation.findMany({
         where: { accountId, id: { in: [...ids] } },
-        select: {
-            id: true,
-            enabled: true,
-            deletedAt: true,
-            targetType: true,
-            templateCiphertext: true,
-            templateVersion: true,
-            triggers: {
-                where: { deletedAt: null },
-                select: {
-                    id: true,
-                    kind: true,
-                    enabled: true,
-                    revision: true,
-                    deletedAt: true,
-                    eventPluginId: true,
-                    eventLocalId: true,
-                    sourceSelectorId: true,
-                    definitionEnvelope: true,
-                },
-                orderBy: { id: "asc" },
-            },
-            assignments: {
-                select: {
-                    machineId: true,
-                    enabled: true,
-                    updatedAt: true,
-                },
-            },
-        },
-    }) as AutomationAccountEncryptionMigrationRow[];
+        select: automationMigrationDefinitionSelect,
+    });
 }
 
 async function loadAutomationAccountEncryptionTransitionRunsByIdsInTx(
@@ -1831,7 +1831,7 @@ async function loadAutomationAccountEncryptionTransitionRunsByIdsInTx(
             summaryCiphertext: true,
             revision: true,
         },
-    }) as AutomationAccountEncryptionMigrationRunRow[];
+    });
 }
 
 /**
@@ -2153,36 +2153,7 @@ async function loadAutomationAccountEncryptionMigrationRowsInTx(
 ): Promise<AutomationAccountEncryptionMigrationRow[]> {
     return await tx.automation.findMany({
         where: { accountId },
-        select: {
-            id: true,
-            enabled: true,
-            deletedAt: true,
-            targetType: true,
-            templateCiphertext: true,
-            templateVersion: true,
-            triggers: {
-                where: { deletedAt: null },
-                select: {
-                    id: true,
-                    kind: true,
-                    enabled: true,
-                    revision: true,
-                    deletedAt: true,
-                    eventPluginId: true,
-                    eventLocalId: true,
-                    sourceSelectorId: true,
-                    definitionEnvelope: true,
-                },
-                orderBy: { id: "asc" },
-            },
-            assignments: {
-                select: {
-                    machineId: true,
-                    enabled: true,
-                    updatedAt: true,
-                },
-            },
-        },
+        select: automationMigrationDefinitionSelect,
         orderBy: { id: "asc" },
     });
 }
@@ -2191,48 +2162,12 @@ async function loadAutomationAccountEncryptionMigrationRunsInTx(
     tx: Tx,
     accountId: string,
 ): Promise<AutomationAccountEncryptionMigrationRunRow[]> {
-    return await tx.automationRun.findMany({
-        where: {
-            accountId,
-            OR: [
-                { triggerEvidenceEnvelope: { not: null } },
-                { occurrenceEvidenceEqualityTag: { not: null } },
-                { executionInputEnvelope: { not: null } },
-                { resultEnvelope: { not: null } },
-                { replyContextEnvelope: { not: null } },
-                { replyHandoffReceiptEnvelope: { not: null } },
-                { summaryCiphertext: { not: null } },
-            ],
-        },
-        select: {
-            id: true,
-            automationId: true,
-            triggerId: true,
-            causeKind: true,
-            causeTriggerKind: true,
-            causeTriggerRevision: true,
-            causeOccurredAt: true,
-            causeEventPluginId: true,
-            causeEventLocalId: true,
-            causeScheduledFor: true,
-            causeSessionLifecycleEvent: true,
-            causeSourceSessionId: true,
-            causeSourceTurnId: true,
-            causeSourceSelectorId: true,
-            createdAt: true,
-            occurrenceKey: true,
-            occurrenceEvidenceEqualityTag: true,
-            triggerEvidenceEnvelope: true,
-            executionInputEnvelope: true,
-            resultEnvelope: true,
-            replyContextEnvelope: true,
-            replyHandoffReceiptEnvelope: true,
-            errorMessage: true,
-            summaryCiphertext: true,
-            revision: true,
-        },
+    const rows = await tx.automationRun.findMany({
+        where: automationRunMigrationCandidateWhere(accountId),
+        select: automationRunMigrationParticipantSelect,
         orderBy: { id: "asc" },
-    }) as AutomationAccountEncryptionMigrationRunRow[];
+    });
+    return rows.filter(automationRunHasMigrationPrivateContent);
 }
 
 type AutomationAccountEncryptionMigrationTemplateItem = Extract<
@@ -2722,7 +2657,7 @@ function readRetainedMigrationTemplateAdmission(params: Readonly<{
 type AutomationMigrationTemplateClassification =
     | Readonly<{
         kind: "strict";
-        recipe: AutomationRunExecutionRecipeV1;
+        recipe: AutomationStoredDefinitionExecutionRecipeV1;
         strictExistingSessionId?: string;
     }>
     | Readonly<{
@@ -2732,7 +2667,7 @@ type AutomationMigrationTemplateClassification =
 
 /** Definitions have no occurrence evidence; that immutable fact belongs only to Runs. */
 function assertStrictAutomationDefinitionMigrationRecipe(
-    recipe: AutomationRunExecutionRecipeV1,
+    recipe: AutomationStoredDefinitionExecutionRecipeV1,
 ): void {
     if (recipe.triggerEvidence !== null) {
         throw new AutomationValidationError(
@@ -2742,7 +2677,7 @@ function assertStrictAutomationDefinitionMigrationRecipe(
 }
 
 function assertStrictAutomationMigrationRecipeMode(params: Readonly<{
-    recipe: AutomationRunExecutionRecipeV1;
+    recipe: AutomationStoredDefinitionExecutionRecipeV1;
     mode: "plain" | "e2ee";
 }>): void {
     const expectedEnvelopeType = params.mode === "plain" ? "plain" : "encrypted";
@@ -3575,7 +3510,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     automation: Pick<AutomationListItem,
-        "id" | "targetType" | "templateCiphertext">;
+        "id" | "targetType" | "templateCiphertext" | "templateVersion">;
     triggerId: string;
     triggerRevision: number;
     input: AutomationTriggerDefinitionInput;
@@ -3780,7 +3715,9 @@ export async function listAutomations(params: {
             accountId: params.accountId,
             deletedAt: null,
         },
-        select: automationListItemSelect,
+        // The list read never loads private trigger definition envelopes; the
+        // canonical full definition read remains the detail/mutation owner.
+        select: automationDefinitionListItemSelect,
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     });
 
@@ -3809,7 +3746,7 @@ export async function createAutomation(params: {
         isAutomationCurrentUpsertInput(params.input)
             ? params.input.triggers
             : [{
-                triggerId: randomUUID(),
+                triggerId: AutomationTriggerIdSchema.parse(randomUUID()),
                 trigger: {
                     kind: "schedule",
                     enabled: true,
@@ -3887,6 +3824,12 @@ export async function createAutomation(params: {
         if (!definition) {
             throw new Error("Automation definition normalization failed");
         }
+        // Assignment-liveness: an enabled Automation must own at least one
+        // enabled execution assignment; a disabled draft may own none.
+        assertAutomationAssignmentLiveness({
+            enabled: params.input.enabled,
+            assignments: params.input.assignments ?? [],
+        });
 
         await validateExistingSessionAutomationTargetTx({
             tx,
@@ -3928,6 +3871,7 @@ export async function createAutomation(params: {
                     id: created.id,
                     targetType: definition.targetType,
                     templateCiphertext: definition.templateCiphertext,
+                    templateVersion: 1,
                 },
                 triggerId,
                 triggerRevision: 0,
@@ -4000,10 +3944,11 @@ export async function createAutomation(params: {
         if (!isAutomationCurrentUpsertInput(params.input) || !isPrismaErrorCode(error, "P2002")) {
             throw error;
         }
+        const currentInput = params.input;
         const rejoined = await inTx(async (tx) => await tryRejoinAutomationCreateTx({
             tx,
             accountId: params.accountId,
-            input: params.input,
+            input: currentInput,
         }));
         if (!rejoined) {
             const identityIsBound = await db.automation.findUnique({
@@ -4099,14 +4044,23 @@ export async function updateAutomation(params: {
             });
         }
 
+        // The retained strict recipe already carries the schema-owned target
+        // identity; a non-template patch (enable/disable/rename) must revalidate
+        // against that same target instead of reparsing the stored recipe as a
+        // legacy template envelope.
+        const effectiveExistingSessionId = currentDefinition?.strictExistingSessionId
+            ?? readAutomationExistingSessionTargetId({
+                targetType: effectiveTargetType,
+                templateCiphertext: effectiveTemplateCiphertext,
+            });
         await validateExistingSessionAutomationTargetTx({
             tx,
             accountId: params.accountId,
             targetType: effectiveTargetType,
             templateCiphertext: effectiveTemplateCiphertext,
             ...(accountMode ? { accountMode } : {}),
-            ...(currentDefinition?.strictExistingSessionId
-                ? { strictExistingSessionId: currentDefinition.strictExistingSessionId }
+            ...(effectiveExistingSessionId
+                ? { strictExistingSessionId: effectiveExistingSessionId }
                 : {}),
             ...(effectiveLegacyTemplateEnvelopeAdmission
                 ? {
@@ -4115,13 +4069,6 @@ export async function updateAutomation(params: {
                 }
                 : {}),
         });
-        const effectiveExistingSessionId = currentDefinition?.strictExistingSessionId
-            ?? (effectiveTargetType === "existing_session"
-                ? readAutomationExistingSessionTargetId({
-                    targetType: effectiveTargetType,
-                    templateCiphertext: effectiveTemplateCiphertext,
-                })
-                : null);
         for (const trigger of existing.triggers) {
             if (trigger.kind !== "sessionLifecycle" || trigger.sourceSessionId === null) continue;
             validateSessionLifecycleExecutionTargetInequality({
@@ -4133,6 +4080,15 @@ export async function updateAutomation(params: {
 
         const schedule = legacyInput?.schedule;
         const effectiveEnabled = params.input.enabled ?? existing.enabled;
+        // Assignment-liveness against the exact post-patch set: a replacement
+        // set when one is supplied, otherwise the loaded persisted set. Throws
+        // before any write so enabling without an assignment — or removing or
+        // disabling the last enabled assignment of an enabled Automation —
+        // rolls the whole patch back atomically.
+        assertAutomationAssignmentLiveness({
+            enabled: effectiveEnabled,
+            assignments: params.input.assignments ?? existing.assignments,
+        });
         const targetTypeChanged =
             inputSuppliesTarget
             && effectiveTargetType !== existing.targetType;
@@ -4373,11 +4329,19 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             throw new AutomationTriggerMutationConflictError();
         }
         for (const trigger of existing.triggers) {
-            const witness = retained.get(trigger.id) ?? removed.get(trigger.id);
+            const triggerId = AutomationTriggerIdSchema.parse(trigger.id);
+            const witness = retained.get(triggerId) ?? removed.get(triggerId);
             if (!witness || witness.expectedRevision !== trigger.revision) {
                 throw new AutomationTriggerMutationConflictError();
             }
         }
+        // Assignment-liveness before any write: a whole-editor Save of an
+        // enabled Automation must commit at least one enabled execution
+        // assignment or roll the entire reconciliation back atomically.
+        assertAutomationAssignmentLiveness({
+            enabled: params.input.enabled,
+            assignments: params.input.assignments,
+        });
 
         const currentDefinition = params.input.executionRecipe
             ? await normalizeCurrentAutomationDefinitionWriteTx({
@@ -4497,7 +4461,10 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             const unchangedScheduleDefinition = item.trigger?.kind === "schedule"
                 && trigger.kind === "schedule"
                 && nextEnabled === trigger.enabled
-                && hasSameAutomationScheduleFields(trigger, resolveScheduleDbFields(item.trigger.schedule));
+                && hasSameAutomationScheduleFields(
+                    trigger,
+                    resolveTriggerDefinitionScheduleDbFields(item.trigger.schedule),
+                );
             const nextRevision = unchangedScheduleDefinition ? trigger.revision : trigger.revision + 1;
             let nextKind = trigger.kind;
             let data: Prisma.AutomationTriggerUncheckedUpdateInput;
@@ -4579,7 +4546,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                                 binding: {
                                     v: 1,
                                     automationId: existing.id,
-                                    triggerId: trigger.id,
+                                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
                                     triggerRevision: nextRevision,
                                     triggerKind: "pluginEvent",
                                     eventRef: {
@@ -4823,7 +4790,9 @@ export async function updateAutomationTrigger(params: Readonly<{
             && existing.kind === "schedule"
             && nextEnabled === existing.enabled
             && (() => {
-                const fields = resolveScheduleDbFields(params.trigger.schedule);
+                const fields = resolveTriggerDefinitionScheduleDbFields(
+                    params.trigger.schedule,
+                );
                 return hasSameAutomationScheduleFields(existing, fields);
             })();
         const nextRevision = unchangedScheduleDefinition
@@ -4924,14 +4893,14 @@ export async function updateAutomationTrigger(params: Readonly<{
                             binding: {
                                 v: 1,
                                 automationId: automation.id,
-                                triggerId: existing.id,
+                                triggerId: AutomationTriggerIdSchema.parse(existing.id),
                                 triggerRevision: nextRevision,
                                 triggerKind: "pluginEvent",
                                 eventRef: {
                                     pluginId: existing.eventPluginId!,
                                     localId: existing.eventLocalId!,
                                 },
-                                sourceSelectorId: existing.sourceSelectorId!,
+                                sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(existing.sourceSelectorId),
                             },
                             definition,
                         }),
@@ -5265,14 +5234,31 @@ export async function runAutomationNow(params: {
     }));
 }
 
-export async function listAutomationRuns(params: {
+type AutomationRunListParams = Readonly<{
     accountId: string;
     automationId: string;
     limit: number;
     cursor?: string | null;
     requireV2DefinitionRepresentability?: boolean;
-    requireV2RunRepresentability?: boolean;
-}): Promise<{ runs: AutomationRunItem[]; nextCursor: string | null } | null> {
+    requireV2RunRepresentability?: false;
+}>;
+
+type AutomationRunV2ListParams = Omit<AutomationRunListParams, "requireV2RunRepresentability"> & Readonly<{
+    requireV2RunRepresentability: true;
+}>;
+
+export function listAutomationRuns(params: AutomationRunV2ListParams): Promise<{
+    runs: AutomationRunV2ListItem[];
+    nextCursor: string | null;
+} | null>;
+export function listAutomationRuns(params: AutomationRunListParams): Promise<{
+    runs: AutomationRunV3ListItem[];
+    nextCursor: string | null;
+} | null>;
+export async function listAutomationRuns(params: AutomationRunListParams | AutomationRunV2ListParams): Promise<{
+    runs: Array<AutomationRunV3ListItem | AutomationRunV2ListItem>;
+    nextCursor: string | null;
+} | null> {
     if (params.requireV2DefinitionRepresentability) {
         const automation = await getAutomation({
             accountId: params.accountId,
@@ -5298,7 +5284,7 @@ export async function listAutomationRuns(params: {
                 skip: 1,
             }
             : {}),
-        select: automationRunItemSelect,
+        select: automationRunV2ListItemSelect,
     });
     const rows = params.requireV2RunRepresentability
         ? await inTx(async (tx) => {
@@ -5319,7 +5305,7 @@ export async function listAutomationRuns(params: {
             while (representable.length <= normalizedLimit) {
                 const candidates = await readRows(tx, scanCursor, scanSize);
                 for (const run of candidates) {
-                    if (isAutomationRunV2Compatible(run as AutomationRunItem)) {
+                    if (isAutomationRunV2Compatible(run)) {
                         representable.push(run);
                         if (representable.length > normalizedLimit) break;
                     }
@@ -5343,7 +5329,7 @@ export async function listAutomationRuns(params: {
                     skip: 1,
                 }
                 : {}),
-            select: automationRunItemSelect,
+            select: automationRunV3ListItemSelect,
         });
 
     if (rows === null) return null;
@@ -5362,7 +5348,7 @@ export async function listAutomationRuns(params: {
         runs: resultRows.map((run) => ({
             ...run,
             triggerRetired: run.triggerId !== null && !currentTriggerIds.has(run.triggerId),
-        })) as AutomationRunItem[],
+        })),
         nextCursor,
     };
 }

@@ -58,6 +58,31 @@ function strictE2eeRecipeForAssignments(assignmentMachineIds: readonly string[])
     return serialized.serialized;
 }
 
+function strictPlainRecipeForAssignments(assignmentMachineIds: readonly string[]): string {
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        v: 1,
+        templateVersion: 1,
+        assignmentMachineIds: [...assignmentMachineIds],
+        template: { t: "plain", v: { v: 1, prompt: "Run the frozen task." } },
+        triggerEvidence: null,
+        target: {
+            kind: "newSession",
+            spawn: {
+                executionTarget: { serverId: "server", machineId: "machine" },
+                directory: "/tmp/automation-claim-test",
+                agentTarget: {
+                    kind: "agent",
+                    identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                },
+            },
+        },
+    });
+    if (serialized.kind !== "available") {
+        throw new Error("Failed to construct strict plain Automation Run test recipe");
+    }
+    return serialized.serialized;
+}
+
 function strictPlainExecutionRecipeForAssignments(assignmentMachineIds: readonly string[]): string {
     const serialized = serializeAutomationRunExecutionRecipeV1({
         v: 1,
@@ -85,11 +110,14 @@ function strictPlainExecutionRecipeForAssignments(assignmentMachineIds: readonly
 
 const TEST_STRICT_PLAIN_EXECUTION_RECIPE = strictPlainExecutionRecipeForAssignments([]);
 
-async function createAccountWithMachine(machineId: string): Promise<{ accountId: string }> {
+async function createAccountWithMachine(
+    machineId: string,
+    encryptionMode: "plain" | "e2ee" = "e2ee",
+): Promise<{ accountId: string }> {
     const account = await db.account.create({
         data: {
             ...createSignedAccountContentBinding(),
-            encryptionMode: "e2ee",
+            encryptionMode,
         },
         select: { id: true },
     });
@@ -531,13 +559,33 @@ describe("automationClaimService (integration)", () => {
             id: first.run!.id,
             attempt: claimedBeforeReplay!.attempt,
         });
+        await db.automationRun.update({
+            where: { id: first.run!.id },
+            data: {
+                state: "running",
+                startedAt: new Date(),
+                revision: { increment: 1 },
+            },
+        });
+        // The signed nonce identifies the already-committed claim response,
+        // not a later read of the mutable Run. Advancing the same attempt must
+        // therefore leave replay byte-for-byte equivalent to the first result.
+        await expect(claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            claimRequest,
+        })).resolves.toEqual(first);
         await expect(db.automationRun.findUnique({
             where: { id: first.run!.id },
             select: { attempt: true, revision: true, leaseExpiresAt: true },
-        })).resolves.toEqual(claimedBeforeReplay);
+        })).resolves.toEqual({
+            ...claimedBeforeReplay,
+            revision: claimedBeforeReplay!.revision + 1,
+        });
         expect([firstRun.id, secondRun.id]).toContain(first.run?.id);
         await expect(db.automationRun.count({
-            where: { id: { in: [firstRun.id, secondRun.id] }, state: "claimed" },
+            where: { id: { in: [firstRun.id, secondRun.id] }, state: { in: ["claimed", "running"] } },
         })).resolves.toBe(1);
         await expect(db.automationWorkerClaimReceipt.count({
             where: { accountId, machineId },
@@ -622,6 +670,120 @@ describe("automationClaimService (integration)", () => {
             leaseDurationMs: 30_000,
             claimRequest,
         })).resolves.toEqual({ run: null, accountCurrentness: null });
+    });
+
+    it.each(["plain", "e2ee"] as const)(
+        "replays a claimed V3 receipt with its committed post-claim %s witness exactly",
+        async (encryptionMode) => {
+        const machineId = `machine-witness-replay-${encryptionMode}`;
+        const machineInstallationId = `installation-witness-replay-${encryptionMode}`;
+        const { accountId } = await createAccountWithMachine(machineId, encryptionMode);
+        await db.machine.update({
+            where: { id: machineId },
+            data: { installationId: machineInstallationId },
+        });
+        const automation = await createAutomationWithAssignments({
+            accountId,
+            machineIds: [machineId],
+            name: "Committed claim witness replay",
+        });
+        await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                ...scheduleRunCause(automation.triggerId),
+                accountId,
+                state: "queued",
+                scheduledAt: new Date(Date.now() - 30_000),
+                dueAt: new Date(Date.now() - 20_000),
+                executionInputEnvelope: encryptionMode === "e2ee"
+                    ? strictE2eeRecipeForAssignments([machineId])
+                    : strictPlainRecipeForAssignments([machineId]),
+                assignments: frozenRunAssignments([machineId]),
+            },
+            select: { id: true },
+        });
+        const claimRequest = {
+            machineInstallationId,
+            nonce: "signed-witness-replay-nonce-1",
+            expiresAt: new Date(Date.now() + 300_000),
+        };
+        const first = await claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            claimRequest,
+        });
+        expect(first.run).toBeTruthy();
+        expect(first.accountCurrentness).toBeTruthy();
+
+        // An unrelated Account write advances the global change sequence after
+        // the claim committed. The retried request must still receive the exact
+        // committed post-claim witness, never a freshly minted one.
+        await db.account.update({ where: { id: accountId }, data: { seq: { increment: 1 } } });
+
+        await expect(claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            claimRequest,
+        })).resolves.toEqual(first);
+    });
+
+    it("claims a released-V2 run queued behind current strict-recipe runs", async () => {
+        const machineId = "machine-v2-discriminator";
+        const { accountId } = await createAccountWithMachine(machineId);
+        const automation = await createAutomationWithAssignments({
+            accountId,
+            machineIds: [machineId],
+            name: "V2 claim discriminator",
+        });
+        const createQueuedRun = async (params: Readonly<{
+            dueAt: Date;
+            executionInputEnvelope: string;
+        }>) => await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                ...scheduleRunCause(automation.triggerId),
+                accountId,
+                state: "queued",
+                scheduledAt: new Date(params.dueAt.getTime() - 10_000),
+                dueAt: params.dueAt,
+                executionInputEnvelope: params.executionInputEnvelope,
+                assignments: frozenRunAssignments([machineId]),
+            },
+            select: { id: true },
+        });
+        const dueBase = Date.now() - 120_000;
+        const strictRunIds: string[] = [];
+        for (let index = 0; index < 30; index += 1) {
+            const run = await createQueuedRun({
+                dueAt: new Date(dueBase + index * 1_000),
+                executionInputEnvelope: strictE2eeRecipeForAssignments([machineId]),
+            });
+            strictRunIds.push(run.id);
+        }
+        const retainedV2Run = await createQueuedRun({
+            dueAt: new Date(dueBase + 60_000),
+            executionInputEnvelope: JSON.stringify({
+                kind: "happier_automation_run_execution_input_v1",
+                targetType: "new_session",
+                templateVersion: 1,
+                templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+                origin: { kind: "scheduled", scheduledFor: dueBase + 60_000 },
+            }),
+        });
+
+        const claimed = await claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            requireV2RunRepresentability: true,
+        });
+        expect(claimed.run?.id).toBe(retainedV2Run.id);
+        await expect(db.automationRun.findMany({
+            where: { id: { in: strictRunIds }, state: "claimed" },
+            select: { id: true },
+        })).resolves.toEqual([]);
     });
 
     it("does not replay a newer lease attempt under an older signed V3 claim nonce", async () => {
@@ -796,7 +958,7 @@ describe("automationClaimService (integration)", () => {
         }
     });
 
-    it("requires the claim witness at start and the post-start witness at settlement", async () => {
+    it("requires the exact claim witness at start and Account content identity at settlement", async () => {
         const { accountId } = await createAccountWithMachine("machine-currentness");
         const automation = await createAutomationWithAssignments({
             accountId,
@@ -869,12 +1031,22 @@ describe("automationClaimService (integration)", () => {
         expect(started?.run.state).toBe("running");
         expect(started?.accountCurrentness).not.toEqual(claim.accountCurrentness);
 
+        // Post-effect settlement compares Account content identity (mode and
+        // content key) rather than the exact sequence: the start publication
+        // and the target effect it authorizes legitimately advance Account.seq
+        // past S, so the server can no longer distinguish a content-identical
+        // pre-start echo from the post-start echo. An encryption transition is
+        // still refused.
         await expect(failAutomationRun({
             accountId,
             runId: run.id,
             machineId: "machine-currentness",
             attempt: claim.run!.attempt,
-            accountCurrentness: claim.accountCurrentness!,
+            accountCurrentness: {
+                ...started!.accountCurrentness,
+                mode: "plain" as const,
+                contentKeyFingerprint: null,
+            },
             errorCode: "stale_currentness",
         })).resolves.toBeNull();
         await expect(db.automationRun.findUniqueOrThrow({
@@ -1336,19 +1508,99 @@ describe("automationClaimService (integration)", () => {
         expect(originMismatches).toHaveLength(requireV2RunRepresentability ? 1 : 26);
         expect(originMismatches[0]).toEqual({
             id: originMismatch.id,
-            state: "queued",
+            state: "failed",
             claimedByMachineId: null,
             leaseExpiresAt: null,
             attempt: 0,
-            revision: 0,
+            revision: 1,
         });
-        expect(originMismatches.every((run) => (
+        expect(originMismatches.slice(1).every((run) => (
             run.state === "queued"
             && run.claimedByMachineId === null
             && run.leaseExpiresAt === null
             && run.attempt === 0
             && run.revision === 0
         ))).toBe(true);
+    });
+
+    it.each([
+        ["released V2", true],
+        ["current", false],
+    ] as const)("terminalizes a saturated invalid retained-V2 page before a later %s claim", async (_claimant, requireV2RunRepresentability) => {
+        const machineId = `machine-${requireV2RunRepresentability ? "v2" : "current"}-saturated-invalid-v2`;
+        const { accountId } = await createAccountWithMachine(machineId);
+        const automation = await createAutomationWithAssignments({
+            accountId,
+            machineIds: [machineId],
+            name: "Saturated invalid retained V2 inputs",
+        });
+        const now = Date.now();
+        const frozenInput = (origin: Readonly<
+            { kind: "scheduled"; scheduledFor: number } | { kind: "manual"; invokedAt: number }
+        >) => JSON.stringify({
+            kind: "happier_automation_run_execution_input_v1",
+            targetType: "new_session",
+            templateVersion: 1,
+            templateCiphertext: TEST_TEMPLATE_ENVELOPE,
+            origin,
+        });
+        const invalidIds: string[] = [];
+        for (let index = 0; index < 25; index += 1) {
+            const run = await db.automationRun.create({
+                data: {
+                    automationId: automation.id,
+                    ...scheduleRunCause(automation.triggerId),
+                    accountId,
+                    state: "queued",
+                    scheduledAt: new Date(now - 120_000 + index),
+                    dueAt: new Date(now - 120_000 + index),
+                    executionInputEnvelope: frozenInput({
+                        kind: "manual",
+                        invokedAt: now - 120_000 + index,
+                    }),
+                    assignments: frozenRunAssignments([machineId]),
+                },
+                select: { id: true },
+            });
+            invalidIds.push(run.id);
+        }
+        const compatible = await db.automationRun.create({
+            data: {
+                automationId: automation.id,
+                ...scheduleRunCause(automation.triggerId),
+                accountId,
+                state: "queued",
+                scheduledAt: new Date(now - 60_000),
+                dueAt: new Date(now - 60_000),
+                executionInputEnvelope: frozenInput({
+                    kind: "scheduled",
+                    scheduledFor: now - 60_000,
+                }),
+                assignments: frozenRunAssignments([machineId]),
+            },
+            select: { id: true },
+        });
+
+        await expect(claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            expectedTriggerKind: "schedule",
+            ...(requireV2RunRepresentability ? { requireV2RunRepresentability: true } : {}),
+        })).resolves.toEqual({ run: null, accountCurrentness: null });
+        await expect(db.automationRun.count({
+            where: { id: { in: invalidIds }, state: "failed" },
+        })).resolves.toBe(25);
+
+        await expect(claimAutomationRun({
+            accountId,
+            machineId,
+            leaseDurationMs: 30_000,
+            expectedTriggerKind: "schedule",
+            ...(requireV2RunRepresentability ? { requireV2RunRepresentability: true } : {}),
+        })).resolves.toEqual(expect.objectContaining({
+            run: expect.objectContaining({ id: compatible.id }),
+        }));
     });
 
     it("does not reclaim an expired execution Run whose durable dispatch marker has no committed start result", async () => {
@@ -1671,11 +1923,19 @@ describe("automationClaimService (integration)", () => {
             state: "running",
             leaseExpiresAt: new Date(Date.now() - 1_000),
         });
+        // Assignment-liveness keeps an enabled definition runnable, so the
+        // reachable definition mutation is a replacement machine set rather
+        // than an empty one. The admitted Run must still claim from its frozen
+        // assignment, not the current definition assignments.
+        const reassignedMachineId = "machine-reassigned-active";
+        await db.machine.create({
+            data: { id: reassignedMachineId, accountId, metadata: "{}" },
+        });
 
         await expect(updateAutomation({
             accountId,
             automationId,
-            input: { assignments: [] },
+            input: { assignments: [{ machineId: reassignedMachineId }] },
         })).resolves.toEqual(expect.objectContaining({ id: automationId }));
         await expect(listDaemonAssignments({ accountId, machineId })).resolves.toEqual([
             expect.objectContaining({
@@ -1821,11 +2081,15 @@ describe("automationClaimService (integration)", () => {
             machineId: "machine-recovering-unassigned",
         });
 
-        await expect(updateAutomation({
+        // Assignment-liveness forbids emptying an enabled definition's
+        // assignments, so the reachable not-transferred state is the paused
+        // definition: its admitted Run keeps its frozen assignment while the
+        // unassigned replacement machine sees and claims nothing.
+        await expect(setAutomationEnabled({
             accountId,
             automationId,
-            input: { assignments: [] },
-        })).resolves.toEqual(expect.objectContaining({ id: automationId }));
+            enabled: false,
+        })).resolves.toEqual(expect.objectContaining({ id: automationId, enabled: false }));
 
         await expect(listDaemonAssignments({
             accountId,

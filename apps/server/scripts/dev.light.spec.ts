@@ -36,6 +36,7 @@ function runDevLightScript(params: Readonly<{
     tmpDir: string;
     lightDataDir: string;
     migrateMode?: 'always' | 'auto' | 'skip';
+    dbProvider?: 'postgres' | 'mysql' | 'pglite' | 'sqlite';
 }>) {
     return spawnSync('sh', ['-c', `
             set -eu
@@ -52,6 +53,7 @@ function runDevLightScript(params: Readonly<{
             HAPPIER_SERVER_LIGHT_DB_DIR="${join(params.lightDataDir, 'db')}" \
             HAPPY_SERVER_LIGHT_DB_DIR="${join(params.lightDataDir, 'db')}" \
             HAPPIER_STACK_MIGRATE_MODE="${params.migrateMode ?? ''}" \
+            HAPPIER_DB_PROVIDER="${params.dbProvider ?? ''}" \
             node --import tsx "${getScriptPath()}"
         `], {
         env: {
@@ -90,7 +92,7 @@ describe('dev.light.ts', () => {
         expect(result.stdout).toContain('{"happierStackTransition":"migration_started"}');
         expect(result.stdout).toContain('{"happierStackTransition":"migration_completed"}');
         const lines = await readLogLines(logPath);
-        expect(lines).toEqual(['YARN -s migrate:sqlite:deploy', 'YARN -s start:light']);
+        expect(lines).toEqual(['YARN -s migrate:deploy', 'YARN -s start:light']);
     }, 60_000);
 
     it('does not let a previous local run authorize skipping migrations', async () => {
@@ -104,7 +106,7 @@ describe('dev.light.ts', () => {
         expect(second.status).toBe(0);
 
         const lines = await readLogLines(logPath);
-        expect(lines).toEqual(['YARN -s migrate:sqlite:deploy', 'YARN -s start:light']);
+        expect(lines).toEqual(['YARN -s migrate:deploy', 'YARN -s start:light']);
     }, 60_000);
 
     it('skips light migrate only when the Stack planner explicitly admits skip', async () => {
@@ -114,5 +116,14 @@ describe('dev.light.ts', () => {
         expect(result.status).toBe(0);
         const lines = await readLogLines(logPath);
         expect(lines).toEqual(['YARN -s start:light']);
+    }, 60_000);
+
+    it('uses provider migrations independently of the light behavior preset', async () => {
+        const lightDataDir = join(tmpDir, 'server-light-postgres');
+        const result = runDevLightScript({ binDir, tmpDir, lightDataDir, dbProvider: 'postgres' });
+
+        expect(result.status).toBe(0);
+        const lines = await readLogLines(logPath);
+        expect(lines).toEqual(['YARN -s migrate:deploy', 'YARN -s start:light']);
     }, 60_000);
 });

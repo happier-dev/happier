@@ -6,6 +6,7 @@ import {
     AutomationTriggerIdSchema,
     normalizePluginReleaseFactsV1,
     openAutomationTriggerDefinitionStoredEnvelopeV1,
+    type PluginJsonSchemaV2,
 } from "@happier-dev/protocol";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -22,7 +23,7 @@ import {
     updateAutomationTrigger,
 } from "./automationCrudService";
 import { toAutomationDefinitionListItemApiDto } from "./automationApiProjection";
-import { AutomationStoredContentReadError } from "./automationStoredContentRead";
+import { AutomationValidationError } from "./automationValidation";
 
 const EVENT_PLUGIN_ID = "com.happier.event-crud-dbcontract";
 const EVENT_PLUGIN_VERSION = "1.0.0";
@@ -47,7 +48,7 @@ function eventWriterReleaseFacts() {
         additionalProperties: false,
         properties: { repositoryId: { type: "string" } },
         required: ["repositoryId"],
-    } as const;
+    } satisfies PluginJsonSchemaV2;
     return normalizePluginReleaseFactsV1({
         ref: { pluginId: EVENT_PLUGIN_ID, version: EVENT_PLUGIN_VERSION },
         archiveDigestSha256: `sha256:${"a".repeat(64)}`,
@@ -111,6 +112,7 @@ type EventWriterAccount = Readonly<{
     machineId: string;
     machineInstallationId: string;
     materializationId: string;
+    immutableGenerationId: string;
 }>;
 
 function eventExecutionRecipe(params: Readonly<{
@@ -168,6 +170,13 @@ function eventWriterTrigger(
         },
         filter: null,
         maximumObservationAgeMs: null,
+    };
+}
+
+function eventWriterTriggerInput(trigger: ReturnType<typeof eventWriterTrigger>) {
+    return {
+        triggerId: AutomationTriggerIdSchema.parse(randomUUID()),
+        trigger,
     };
 }
 
@@ -234,7 +243,13 @@ async function seedEventWriterAccount(mode: "plain" | "e2ee" = "plain"): Promise
             observedAt: new Date("2026-08-13T00:00:00.000Z"),
         },
     });
-    return { ...account, machineId, machineInstallationId, materializationId };
+    return {
+        ...account,
+        machineId,
+        machineInstallationId,
+        materializationId,
+        immutableGenerationId: `generation-${suffix}`,
+    };
 }
 
 async function readEventCatalogRevision(accountId: string): Promise<bigint | null> {
@@ -253,7 +268,7 @@ async function cleanupOwnedAccounts(): Promise<void> {
         if (automationIds.length > 0) {
             await db.automationRun.deleteMany({ where: { accountId } });
             await db.automationEventSourceStatus.deleteMany({
-                where: { automationId: { in: automationIds } },
+                where: { trigger: { automationId: { in: automationIds } } },
             });
             await db.automationAssignment.deleteMany({
                 where: { automationId: { in: automationIds } },
@@ -304,13 +319,19 @@ describe("Automation Event CRUD database contract", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Repository updates",
                 enabled: true,
-                triggers: [eventWriterTrigger(account, firstSource, privateDisplayLabel)],
+                triggers: [eventWriterTriggerInput(eventWriterTrigger(
+                    account,
+                    firstSource,
+                    privateDisplayLabel,
+                ))],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: account.machineId,
                 }),
+                assignments: [{ machineId: account.machineId }],
             },
         });
         const createdTrigger = created.triggers[0]!;
@@ -461,15 +482,19 @@ describe("Automation Event CRUD database contract", () => {
         await expect(createAutomation({
             accountId: e2ee.id,
             input: {
+                automationId: randomUUID(),
                 name: "E2EE Event writer is unavailable",
                 enabled: true,
-                triggers: [eventWriterTrigger(e2ee, `repository-e2ee-${randomUUID()}`)],
+                triggers: [eventWriterTriggerInput(eventWriterTrigger(
+                    e2ee,
+                    `repository-e2ee-${randomUUID()}`,
+                ))],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: e2ee.machineId,
                 }),
             },
-        })).rejects.toBeInstanceOf(AutomationStoredContentReadError);
+        })).rejects.toBeInstanceOf(AutomationValidationError);
         expect(await db.automation.count({ where: { accountId: e2ee.id } })).toBe(0);
         expect(await readEventCatalogRevision(e2ee.id)).toBeNull();
     });
@@ -481,16 +506,18 @@ describe("Automation Event CRUD database contract", () => {
         const created = await createAutomation({
             accountId: account.id,
             input: {
+                automationId: randomUUID(),
                 name: "Independent Event sources",
                 enabled: true,
                 triggers: [
-                    { ...eventWriterTrigger(account, leftSource), enabled: false },
-                    { ...eventWriterTrigger(account, rightSource), enabled: false },
+                    eventWriterTriggerInput({ ...eventWriterTrigger(account, leftSource), enabled: false }),
+                    eventWriterTriggerInput({ ...eventWriterTrigger(account, rightSource), enabled: false }),
                 ],
                 executionRecipe: eventExecutionRecipe({
                     templateVersion: 1,
                     machineId: account.machineId,
                 }),
+                assignments: [{ machineId: account.machineId }],
             },
         });
         expect(await readEventCatalogRevision(account.id)).toBe(0n);

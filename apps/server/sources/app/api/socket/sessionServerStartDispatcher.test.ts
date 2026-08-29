@@ -4,6 +4,7 @@ import {
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
     sealAccountScopedBlobCiphertext,
     serializeAutomationRunExecutionRecipeV1,
+    type AutomationRunCause,
     type SessionServerStartDispatchRequestV1,
 } from "@happier-dev/protocol";
 import {
@@ -26,15 +27,25 @@ const CURRENT = { target: true, runClaim: true } as const;
 const TARGET_LOST = { target: false, runClaim: true } as const;
 /** The Run was cancelled, reclaimed, retried, or lost its lease. */
 const RUN_CLAIM_LOST = { target: true, runClaim: false } as const;
-const RUN_CAUSE = AutomationRunCauseSchema.parse({
+const parsedRunCause = AutomationRunCauseSchema.parse({
     kind: "trigger",
     triggerId: "trigger-1",
     triggerRevision: 2,
     triggerKind: "pluginEvent",
     occurrenceKey: "A".repeat(43),
     occurredAt: 1_767_225_600_000,
-    evidence: { sourceSelectorId: "source-selector-1" },
+    evidence: {
+        eventRef: { pluginId: "com.acme.events", localId: "repository-event" },
+        sourceSelectorId: "bd37e041-8d5c-4f9b-985d-101f43d32a41",
+    },
 });
+if (parsedRunCause.kind !== "trigger" || parsedRunCause.triggerKind !== "pluginEvent") {
+    throw new Error("Session server-start fixture cause must be a pluginEvent trigger cause");
+}
+const RUN_CAUSE: Extract<
+    AutomationRunCause,
+    { kind: "trigger"; triggerKind: "pluginEvent" }
+> = parsedRunCause;
 
 const request: SessionServerStartDispatchRequestV1 = {
     v: 1,

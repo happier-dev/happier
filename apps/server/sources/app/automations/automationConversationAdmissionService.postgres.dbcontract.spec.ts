@@ -191,6 +191,11 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                     everyMs: 60_000,
                 },
             });
+            // Assignment-liveness: canonical admission refuses an enabled
+            // Automation whose execution-assignment set is empty.
+            await db.automationAssignment.create({
+                data: { automationId, machineId, enabled: true },
+            });
 
             const caller = {
                 pluginId: PLUGIN_ID,

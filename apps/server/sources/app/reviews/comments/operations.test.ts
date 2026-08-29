@@ -150,7 +150,7 @@ describe("review comment operations", () => {
                         body: "Preserve the explicit failure instead.",
                     },
                 ],
-                verdict: { kind: "requestChanges", body: "Please address both findings." },
+                verdict: { kind: "requestChanges" as const, body: "Please address both findings." },
             },
         };
 

@@ -109,6 +109,19 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             },
             select: { id: true },
         });
+        // Assignment-liveness: canonical admission refuses an enabled
+        // Automation whose execution-assignment set is empty.
+        const executionMachineId = `execution-${randomUUID()}`;
+        await db.machine.create({
+            data: { id: executionMachineId, accountId: params.accountId, metadata: "{}" },
+        });
+        await db.automationAssignment.create({
+            data: {
+                automationId: automation.id,
+                machineId: executionMachineId,
+                enabled: true,
+            },
+        });
         return await db.automationTrigger.create({
             data: {
                 automationId: automation.id,
@@ -149,6 +162,77 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             mutation: { v: 1, sessionId: current.sessionId, mutationId: `replay-${current.suffix}`, action: "complete", turnId: current.turnId, observedAt: completedAt + 1 },
         })).resolves.toMatchObject({ ok: true, didApply: false });
         await expect(db.automationRun.count({ where: { triggerId: { in: [first.id, second.id] } } })).resolves.toBe(2);
+    });
+
+    it("fans out more than the portable SQL bind ceiling of exact-turn matches in the settlement transaction", async () => {
+        const current = await source();
+        const matchCount = 520;
+        const recipe = serializeAutomationStoredDefinitionExecutionRecipeV1({
+            v: 1,
+            templateVersion: 1,
+            template: { t: "plain", v: { v: 1, prompt: "Exact turn fan-out" } },
+            triggerEvidence: null,
+            target: {
+                kind: "newSession",
+                spawn: {
+                    executionTarget: { serverId: `server-${current.suffix}`, machineId: `machine-${current.suffix}` },
+                    directory: "/tmp/exact-turn",
+                    agentTarget: { kind: "agent", identity: { pluginId: "happier.agent.codex", localId: "codex" } },
+                },
+            },
+        });
+        if (recipe.kind !== "available") throw new Error("Recipe unavailable");
+        const now = new Date();
+        const automationRows = Array.from({ length: matchCount }, (_, index) => ({
+            id: `fan-out-automation-${index}-${current.suffix}`,
+            accountId: current.accountId,
+            name: `Exact turn fan-out ${index}`,
+            enabled: true,
+            targetType: "new_session" as const,
+            templateCiphertext: recipe.serialized,
+            templateVersion: 1,
+            updatedAt: now,
+        }));
+        for (const chunk of automationPortableQueryChunks({ values: automationRows, bindingsPerValue: 9 })) {
+            await db.automation.createMany({ data: [...chunk] });
+        }
+        const triggerRows = automationRows.map((automation) => ({
+            id: `fan-out-trigger-${automation.id}`,
+            automationId: automation.id,
+            kind: "sessionLifecycle" as const,
+            enabled: true,
+            sessionLifecycleEvent: "parentTurnCompleted" as const,
+            sourceSessionId: current.sessionId,
+            sourceTurnId: current.turnId,
+            updatedAt: now,
+        }));
+        for (const chunk of automationPortableQueryChunks({ values: triggerRows, bindingsPerValue: 9 })) {
+            await db.automationTrigger.createMany({ data: [...chunk] });
+        }
+        const fanOutAssignmentRows = automationRows.map((automation) => ({
+            automationId: automation.id,
+            machineId: `fan-out-execution-${automation.id}`,
+            enabled: true,
+        }));
+        for (const chunk of automationPortableQueryChunks({ values: fanOutAssignmentRows, bindingsPerValue: 9 })) {
+            await db.automationAssignment.createMany({ data: [...chunk] });
+        }
+
+        await expect(applySessionTurnMutation({
+            actorUserId: current.accountId,
+            mutation: {
+                v: 1,
+                sessionId: current.sessionId,
+                mutationId: `complete-fan-out-${current.suffix}`,
+                action: "complete",
+                turnId: current.turnId,
+                observedAt: now.getTime(),
+            },
+        })).resolves.toMatchObject({ ok: true, didApply: true });
+
+        await expect(db.automationRun.count({
+            where: { triggerId: { in: triggerRows.map((trigger) => trigger.id) } },
+        })).resolves.toBe(matchCount);
     });
 
     it("admits every eligible exact-turn sibling outside Event and Conversation capacity", async () => {

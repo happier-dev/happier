@@ -3,9 +3,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
     AutomationRunExecutionRecipeV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     normalizePluginReleaseFactsV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     sealAccountScopedBlobCiphertext,
+    type AutomationTriggerId,
 } from "@happier-dev/protocol";
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 
@@ -37,8 +39,9 @@ const caller = {
     immutableGenerationId: "github-stored-definition-generation-a",
 } as const;
 
-function triggerId(index: number): string {
-    return `automation-trigger-${String(index).padStart(4, "0")}`;
+/** The one canonical trigger-identity fixture builder; branded at the boundary. */
+function triggerId(index: number): AutomationTriggerId {
+    return AutomationTriggerIdSchema.parse(`automation-trigger-${String(index).padStart(4, "0")}`);
 }
 
 function sourceSelector(index: number) {
@@ -131,6 +134,7 @@ function automationDefinition(index: number) {
         templateCiphertext: JSON.stringify(AutomationRunExecutionRecipeV1Schema.parse({
             v: 1,
             templateVersion: index,
+            assignmentMachineIds: [],
             template: { t: "plain", v: { v: 1, prompt: "observe" } },
             triggerEvidence: null,
             target: {
@@ -496,7 +500,7 @@ describe("Automation Event stored-definition projection", () => {
 
     it("lists every matching Event trigger without choosing one trigger from an Automation", async () => {
         await seed(1);
-        const secondTriggerId = "automation-trigger-0001-second";
+        const secondTriggerId = AutomationTriggerIdSchema.parse("automation-trigger-0001-second");
         const secondSelector = sourceSelector(92);
         await db.automationTrigger.create({
             data: {
@@ -619,6 +623,7 @@ describe("Automation Event stored-definition projection", () => {
                 id: "run-retains-soft-deleted-automation",
                 automationId: "automation-0005",
                 accountId: ACCOUNT_ID,
+                state: "failed",
                 triggerId: triggerId(5),
                 causeKind: "trigger",
                 causeTriggerKind: "pluginEvent",
@@ -631,6 +636,8 @@ describe("Automation Event stored-definition projection", () => {
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 scheduledAt: new Date("2026-08-18T00:00:00.000Z"),
                 dueAt: new Date("2026-08-18T00:00:00.000Z"),
+                finishedAt: new Date("2026-08-18T00:01:00.000Z"),
+                errorCode: "retained_test_run",
             },
         });
         await db.automationTrigger.delete({ where: { id: triggerId(5) } });

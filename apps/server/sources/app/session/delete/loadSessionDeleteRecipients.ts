@@ -1,39 +1,36 @@
-export type SessionDeleteTarget = Readonly<{
-    id: string;
-    accountId: string;
-    metadataLayoutVersion: number;
-    updatedAt: Date;
-    shares: ReadonlyArray<Readonly<{ sharedWithUserId: string }>>;
+import type { Tx } from '@/storage/inTx';
+import type { Prisma } from '@prisma/client';
+
+const sessionDeleteTargetSelect = {
+    id: true,
+    accountId: true,
+    metadataLayoutVersion: true,
+    updatedAt: true,
+    shares: {
+        select: {
+            sharedWithUserId: true,
+        },
+    },
+} satisfies Prisma.SessionSelect;
+
+export type SessionDeleteTarget = Prisma.SessionGetPayload<{
+    select: typeof sessionDeleteTargetSelect;
 }>;
 
 export async function loadSessionDeleteRecipients(
-    tx: {
-        session: {
-            findFirst: (args: unknown) => Promise<SessionDeleteTarget | null>;
-        };
-    },
+    tx: Tx,
     params: {
         sessionId: string;
         ownerAccountId?: string | null;
-        sessionWhereGuard?: Record<string, unknown>;
+        sessionWhereGuard?: Prisma.SessionWhereInput;
     },
 ): Promise<SessionDeleteTarget | null> {
     const where = params.ownerAccountId
-        ? { id: params.sessionId, accountId: params.ownerAccountId, ...(params.sessionWhereGuard ?? null) }
-        : { id: params.sessionId, ...(params.sessionWhereGuard ?? null) };
+        ? { ...(params.sessionWhereGuard ?? {}), id: params.sessionId, accountId: params.ownerAccountId }
+        : { ...(params.sessionWhereGuard ?? {}), id: params.sessionId };
 
     return await tx.session.findFirst({
         where,
-        select: {
-            id: true,
-            accountId: true,
-            metadataLayoutVersion: true,
-            updatedAt: true,
-            shares: {
-                select: {
-                    sharedWithUserId: true,
-                },
-            },
-        },
+        select: sessionDeleteTargetSelect,
     });
 }

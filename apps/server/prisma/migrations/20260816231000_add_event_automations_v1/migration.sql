@@ -264,7 +264,7 @@ ALTER TABLE "AutomationRun"
             AND "replyHandoffTargetMachineId" IS NOT NULL AND "replyHandoffTargetMachineInstallationId" IS NOT NULL
             AND "replyHandoffTargetMaterializationId" IS NOT NULL AND "replyHandoffId" IS NOT NULL
             AND "replyHandoffState" <> 'none')
-        OR ("causeKind" IN ('trigger', 'manual')
+        OR ("causeKind" IN ('trigger', 'manual', 'conversation')
             AND "replyContextEnvelope" IS NULL
             AND "replyHandoffActionPluginId" IS NULL AND "replyHandoffActionLocalId" IS NULL
             AND "replyHandoffTargetMachineId" IS NULL AND "replyHandoffTargetMachineInstallationId" IS NULL
@@ -342,14 +342,17 @@ CREATE TABLE "AutomationWorkerClaimReceipt" (
     "machineInstallationId" TEXT NOT NULL,
     "runId" TEXT,
     "claimedAttempt" INTEGER,
+    "accountCurrentnessWitnessJson" TEXT,
+    "claimResultJson" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "AutomationWorkerClaimReceipt_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "AutomationWorkerClaimReceipt_accountId_fkey"
         FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "AutomationWorkerClaimReceipt_outcome_check" CHECK (
-        ("runId" IS NULL AND "claimedAttempt" IS NULL)
-        OR ("runId" IS NOT NULL AND "claimedAttempt" IS NOT NULL AND "claimedAttempt" > 0)
+        ("runId" IS NULL AND "claimedAttempt" IS NULL AND "accountCurrentnessWitnessJson" IS NULL)
+        OR ("runId" IS NOT NULL AND "claimedAttempt" IS NOT NULL AND "claimedAttempt" > 0
+            AND "accountCurrentnessWitnessJson" IS NOT NULL)
     )
 );
 
@@ -379,6 +382,8 @@ CREATE INDEX "AutomationRun_accountId_causeKind_state_idx"
 ON "AutomationRun"("accountId", "causeKind", "state");
 CREATE INDEX "AutomationRun_triggerId_state_idx"
 ON "AutomationRun"("triggerId", "state");
+CREATE INDEX "AutomationRun_replyHandoffState_replyHandoffDueAt_idx"
+ON "AutomationRun"("replyHandoffState", "replyHandoffDueAt");
 CREATE INDEX "AutomationRunAssignment_machineId_priority_idx"
 ON "AutomationRunAssignment"("machineId", "priority");
 CREATE INDEX "AutomationWorkerClaimReceipt_accountId_machineId_idx"

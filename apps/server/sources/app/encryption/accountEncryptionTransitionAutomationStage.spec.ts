@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from "@happier-dev/protocol";
+import {
+    AutomationOccurrenceKeyV1Schema,
+    MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES,
+} from "@happier-dev/protocol";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -43,7 +46,7 @@ function runSourceItem(
         revision: 4,
         cause: {
             kind: "conversation",
-            occurrenceKey: "A".repeat(43),
+            occurrenceKey: AutomationOccurrenceKeyV1Schema.parse("A".repeat(43)),
             occurredAt: 1_723_247_200_000,
         },
         source: {
@@ -131,7 +134,7 @@ describe("accountEncryptionTransitionAutomationStage stored content bounds", () 
             expectedRevision: 4,
             cause: {
                 kind: "conversation",
-                occurrenceKey: "A".repeat(43),
+                occurrenceKey: AutomationOccurrenceKeyV1Schema.parse("A".repeat(43)),
                 occurredAt: 1_723_247_200_000,
             },
             source: source.kind === "run" ? source.source : (() => {

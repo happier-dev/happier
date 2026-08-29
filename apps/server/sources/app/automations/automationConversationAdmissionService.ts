@@ -127,6 +127,7 @@ function blocked(
         | "capacity"
         | "temporarilyUnavailable"
         | "occurrenceConflict"
+        | "noEnabledAssignment"
         | "resultDeliveryUnsupported",
 ):
     AutomationConversationAdmitResultV1 {
@@ -499,7 +500,9 @@ async function createConversationRunTx(params: Readonly<{
             : {}),
     });
     if (result.kind === "ineligible") {
-        return blocked(result.reason === "capacity" ? "capacity" : "temporarilyUnavailable");
+        if (result.reason === "capacity") return blocked("capacity");
+        if (result.reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
+        return blocked("temporarilyUnavailable");
     }
     if (result.kind === "rejoined") return rejoined(result.run.id);
     return admitted(result.run.id);

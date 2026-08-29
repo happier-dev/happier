@@ -229,6 +229,74 @@ model AutomationEventSourceStatus {
         expect(stageModel).not.toMatch(/^\s*(?:sourceContent|targetContent)\s+String\??\s*$/m);
     });
 
+    it("keeps the signed-claim receipt columns at the width its migration already created in MySQL", () => {
+        const master = `
+generator client { provider = "prisma-client-js" }
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Account {
+    id String @id
+}
+
+model AutomationWorkerClaimReceipt {
+    id String @id
+    accountId String
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    machineId String
+    machineInstallationId String
+    runId String?
+    claimedAttempt Int?
+    accountCurrentnessWitnessJson String?
+    claimResultJson String
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+
+    @@index([accountId, machineId])
+    @@index([expiresAt])
+}
+`;
+
+        // The receipt id and the committed post-claim witness JSON both leave
+        // MySQL's VARCHAR(191) String default. The generator must annotate
+        // them, or `yarn schema:sync` silently narrows the live LONGTEXT
+        // witness column in the model.
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toMatch(/^\s*id String @id @db\.VarChar\(64\)$/m);
+        expect(mysql).toMatch(/^\s*accountCurrentnessWitnessJson String\? @db\.LongText$/m);
+        expect(mysql).toMatch(/^\s*claimResultJson\s+String @db\.LongText$/m);
+        expect(mysql).not.toMatch(/^\s*accountCurrentnessWitnessJson String\?\s*$/m);
+        const regenerated = generateMySqlSchemaFromPostgres(mysql);
+        expect(
+            regenerated.match(/^\s*accountCurrentnessWitnessJson String\? @db\.LongText$/gm),
+        ).toHaveLength(1);
+
+        const migration = readFileSync(
+            join(
+                import.meta.dirname,
+                "../prisma/mysql/migrations/20260816231000_add_event_automations_v1/migration.sql",
+            ),
+            "utf8",
+        );
+        const generated = readFileSync(
+            join(import.meta.dirname, "../prisma/mysql/schema.prisma"),
+            "utf8",
+        );
+        expect(migration).toContain("`id` VARCHAR(64)");
+        expect(migration).toContain("`accountCurrentnessWitnessJson` LONGTEXT");
+        expect(migration).toContain("`claimResultJson` LONGTEXT");
+        const receiptModel = /^model\s+AutomationWorkerClaimReceipt\s+\{[\s\S]*?^\}\s*$/m
+            .exec(generated)?.[0];
+        expect(receiptModel).toBeDefined();
+        expect(receiptModel).toMatch(/^\s*id\s+String\s+@id\s+@db\.VarChar\(64\)\s*$/m);
+        expect(receiptModel).toMatch(/^\s*accountCurrentnessWitnessJson String\? @db\.LongText$/m);
+        expect(receiptModel).toMatch(/^\s*claimResultJson\s+String @db\.LongText$/m);
+        expect(receiptModel).not.toMatch(/^\s*accountCurrentnessWitnessJson\s+String\?\s*$/m);
+    });
+
     it("keeps Account API token label storage compatible with the public 256-character contract", () => {
         const atPublicLimit = "a".repeat(256);
         for (const length of [191, 192, atPublicLimit.length]) {

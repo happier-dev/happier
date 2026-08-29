@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
 
@@ -7,11 +6,13 @@ import { registerApiRoutes } from "@/app/api/api";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import {
-    createPluginInstallationManifestPublisherSigningInputV1,
+    createSignedPluginInstallationPublisherHeader,
+    createTrustedMachineInstallation,
+} from "@/testkit/pluginInstallationPublisherTestkit";
+import {
     GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-    stringifyPluginInstallationManifestCanonicalJsonV1,
     type PluginPermissionGrantAuditEventV1,
     type PluginPermissionGrantRequestV1,
     type PluginPermissionGrantV1,
@@ -30,72 +31,6 @@ const UNKNOWN_PLUGIN_ID = "acme.uninstalled.review";
 const EXTERNAL_PLUGIN_ID = "acme.reviewbot";
 let publisherMachineCounter = 0;
 
-function encodePublisherHeader(value: unknown): string {
-    return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
-}
-
-function createSignedPublisherHeader(params: Readonly<{
-    keyPair: tweetnacl.SignKeyPair;
-    machineId: string;
-    installationId: string;
-    path: string;
-    body?: unknown;
-    nonce?: string;
-}>): string {
-    const proof = {
-        v: 1 as const,
-        alg: "ed25519-machine-installation-v1" as const,
-        machineId: params.machineId,
-        installationId: params.installationId,
-        issuedAt: Date.now(),
-        nonce: params.nonce ?? "nonce-1",
-        method: "POST" as const,
-        path: params.path,
-        bodySha256Base64Url: createHash("sha256")
-            .update(stringifyPluginInstallationManifestCanonicalJsonV1(params.body ?? null))
-            .digest("base64url"),
-        signatureBase64Url: "",
-    };
-    const signingInput = createPluginInstallationManifestPublisherSigningInputV1({
-        proof: {
-            v: proof.v,
-            alg: proof.alg,
-            machineId: proof.machineId,
-            installationId: proof.installationId,
-            issuedAt: proof.issuedAt,
-            nonce: proof.nonce,
-            method: proof.method,
-            path: proof.path,
-            bodySha256Base64Url: proof.bodySha256Base64Url,
-        },
-    });
-    return encodePublisherHeader({
-        proof: {
-            ...proof,
-            signatureBase64Url: Buffer.from(tweetnacl.sign.detached(signingInput, params.keyPair.secretKey)).toString("base64url"),
-        },
-    });
-}
-
-async function createTrustedMachine(params: Readonly<{
-    accountId: string;
-    machineId: string;
-    installationId: string;
-    keyPair: tweetnacl.SignKeyPair;
-}>): Promise<void> {
-    const installationPublicKey = new Uint8Array(tweetnacl.sign.publicKeyLength);
-    installationPublicKey.set(params.keyPair.publicKey);
-    await db.machine.create({
-        data: {
-            id: params.machineId,
-            accountId: params.accountId,
-            metadata: "{}",
-            installationId: params.installationId,
-            installationPublicKey,
-        },
-    });
-}
-
 async function createPublisherRouteRequest(params: Readonly<{
     accountId: string;
     path: string;
@@ -105,7 +40,7 @@ async function createPublisherRouteRequest(params: Readonly<{
     publisherMachineCounter += 1;
     const machineId = `machine-plugin-projection-${publisherMachineCounter}`;
     const installationId = `installation-plugin-projection-${publisherMachineCounter}`;
-    await createTrustedMachine({
+    await createTrustedMachineInstallation({
         accountId: params.accountId,
         machineId,
         installationId,
@@ -117,7 +52,7 @@ async function createPublisherRouteRequest(params: Readonly<{
         method: "POST",
         url: params.path,
         headers: {
-            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+            [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                 keyPair,
                 machineId,
                 installationId,
@@ -293,7 +228,7 @@ describe("plugin permission grant durable storage", () => {
         const keyPair = tweetnacl.sign.keyPair();
         const machineId = "machine-plugin-permission-concurrent-request";
         const installationId = "installation-plugin-permission-concurrent-request";
-        await createTrustedMachine({
+        await createTrustedMachineInstallation({
             accountId: account.id,
             machineId,
             installationId,
@@ -320,7 +255,7 @@ describe("plugin permission grant durable storage", () => {
             method: "POST",
             url: path,
             headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
                     keyPair,
                     machineId,
                     installationId,

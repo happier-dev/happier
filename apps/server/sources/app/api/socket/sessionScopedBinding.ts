@@ -37,6 +37,39 @@ type MachineAccessKeyAvailability = Readonly<{
     }>;
 }> | null;
 
+/**
+ * Session-level form of the same machine access correspondence: proves that at
+ * least one available Account machine currently holds the session access
+ * relationship without a caller-nominated machine. Sessions may retain keys
+ * from several machines (including revoked/replaced ones), so the incumbent
+ * availability predicate (`revokedAt: null AND replacedByMachineId: null` —
+ * the exact predicate behind classifyMachineAvailabilityState) is expressed in
+ * the query itself: every candidate row is an available machine and whichever
+ * row the unordered read returns proves the correspondence. The classification
+ * below is the same-owner re-check, and the opaque payload is never read.
+ */
+export async function hasCurrentMachineAccessForSessionInTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    sessionId: string;
+}>): Promise<boolean> {
+    const accessKey = await params.tx.accessKey.findFirst({
+        where: {
+            accountId: params.accountId,
+            sessionId: params.sessionId,
+            machine: { revokedAt: null, replacedByMachineId: null },
+            session: { accountId: params.accountId },
+        },
+        select: {
+            machine: { select: { revokedAt: true, replacedByMachineId: true } },
+            session: { select: { accountId: true } },
+        },
+    });
+    return accessKey !== null
+        && accessKey.session.accountId === params.accountId
+        && classifyMachineAvailabilityState(accessKey.machine) === "available";
+}
+
 /** Revalidates the exact machine/session access relationship inside the caller's transaction. */
 export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<{
     tx: Tx;

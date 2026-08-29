@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
     ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
+    ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1,
     AccountApiTokenIntrospectionRequestV1Schema,
     AccountApiTokenIntrospectionSubjectFailureV1Schema,
     AccountApiTokenIntrospectionSuccessV1Schema,
@@ -23,6 +24,7 @@ export function registerApiTokenIntrospectionRoute(app: Fastify): void {
     app.post(
         ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
         {
+            bodyLimit: ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1,
             attachValidation: true,
             onRequest: app.authenticate,
             config: { connectionAuthFailureError: "authentication_failed" },

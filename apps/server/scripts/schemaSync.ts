@@ -377,14 +377,6 @@ function annotateMySqlPluginAvailabilityFields(schemaBody: string): string {
 function annotateMySqlEventAutomationFields(schemaBody: string): string {
     return schemaBody
         .replace(
-            /^model\s+Automation\s+\{[\s\S]*?^\}\s*$/gm,
-            (model) => model
-                .replace(
-                    /^(\s*triggerDefinitionEnvelope\s+String\?)(?![^\n]*@db\.)/m,
-                    "$1 @db.LongText",
-                ),
-        )
-        .replace(
             /^model\s+AutomationRun\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model
                 .replace(/^(\s*occurrenceKey\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.Char(43)")
@@ -395,10 +387,19 @@ function annotateMySqlEventAutomationFields(schemaBody: string): string {
         )
         .replace(
             /^model\s+AutomationWorkerClaimReceipt\s+\{[\s\S]*?^\}\s*$/gm,
-            (model) => model.replace(
-                /^(\s*id\s+String\s+@id)(?![^\n]*@db\.)/m,
-                "$1 @db.VarChar(64)",
-            ),
+            (model) => model
+                .replace(
+                    /^(\s*id\s+String\s+@id)(?![^\n]*@db\.)/m,
+                    "$1 @db.VarChar(64)",
+                )
+                .replace(
+                    /^(\s*accountCurrentnessWitnessJson\s+String\?)(?![^\n]*@db\.)/m,
+                    "$1 @db.LongText",
+                )
+                .replace(
+                    /^(\s*claimResultJson\s+String)(?![^\n]*@db\.)/m,
+                    "$1 @db.LongText",
+                ),
         )
         .replace(
             /^model\s+AutomationEventSourceCatalogStatus\s+\{[\s\S]*?^\}\s*$/gm,

@@ -39,6 +39,7 @@ const caller = {
     machineId: "machine-1",
     machineInstallationId: "installation-1",
     materializationId: "materialization-1",
+    immutableGenerationId: "generation-1",
 } as const;
 
 function listedRow(params: Readonly<{

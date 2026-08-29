@@ -1,12 +1,24 @@
 import {
+    AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     AutomationRunExecutionInputV1Schema,
+    buildAutomationConversationOccurrenceEvidenceV1,
+    buildAutomationPluginEventOccurrenceEvidenceV1,
+    deriveAutomationOccurrenceKeyV1,
+    parseAutomationStoredDefinitionExecutionRecipeV1,
+    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     serializeAutomationRunExecutionRecipeV1,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import tweetnacl from "tweetnacl";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import {
+    createSignedPluginInstallationPublisherHeader,
+    createTrustedMachineInstallation,
+} from "@/testkit/pluginInstallationPublisherTestkit";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { automationRoutes } from "./automationRoutes";
 
@@ -28,18 +40,15 @@ function buildPlainTemplateEnvelope(): string {
 function buildFrozenV2RunInput(params: Readonly<{
     templateCiphertext: string;
     origin: { kind: "scheduled"; scheduledFor: number } | { kind: "manual"; invokedAt: number };
-    targetType?: "new_session" | "existing_session" | "execution_run";
 }>): string {
     const input = {
         kind: "happier_automation_run_execution_input_v1",
-        targetType: params.targetType ?? "new_session",
+        targetType: "new_session",
         templateVersion: 1,
         templateCiphertext: params.templateCiphertext,
         origin: params.origin,
     };
-    return JSON.stringify(params.targetType === "execution_run"
-        ? input
-        : AutomationRunExecutionInputV1Schema.parse(input));
+    return JSON.stringify(AutomationRunExecutionInputV1Schema.parse(input));
 }
 
 function strictV3RecipeShape(templateVersion: number) {
@@ -83,7 +92,144 @@ function buildStrictV3RunRecipe(templateVersion: number, machineId: string): str
     return recipe.serialized;
 }
 
+function strictV3ExecutionRunRecipeShape(templateVersion: number) {
+    return {
+        v: 1,
+        templateVersion,
+        template: { t: "plain", v: { v: 1, prompt: "strict V3 detached execution" } },
+        triggerEvidence: null,
+        target: {
+            kind: "executionRun" as const,
+            request: {
+                intent: "task" as const,
+                backendTarget: { kind: "builtInAgent" as const, agentId: "codex" },
+                permissionMode: "read_only" as const,
+                retentionPolicy: "ephemeral" as const,
+                runClass: "bounded" as const,
+                ioMode: "request_response" as const,
+            },
+        },
+    };
+}
+
+function buildStrictV3ExecutionRunDefinition(templateVersion: number): string {
+    const recipe = serializeAutomationStoredDefinitionExecutionRecipeV1(
+        strictV3ExecutionRunRecipeShape(templateVersion),
+    );
+    if (recipe.kind !== "available") {
+        throw new Error("Expected strict V3 detached definition to serialize");
+    }
+    return recipe.serialized;
+}
+
+function buildStrictV3ExecutionRunRecipe(templateVersion: number, machineId: string): string {
+    const recipe = serializeAutomationRunExecutionRecipeV1({
+        ...strictV3ExecutionRunRecipeShape(templateVersion),
+        assignmentMachineIds: [machineId],
+    });
+    if (recipe.kind !== "available") {
+        throw new Error("Expected strict V3 detached Run recipe to serialize");
+    }
+    return recipe.serialized;
+}
+
 type UnsupportedV2RunCauseKind = "pluginEvent" | "conversation";
+
+const UNSUPPORTED_V2_SOURCE_SELECTOR_ID = AutomationSourceSelectorIdV1Schema.parse(
+    "8f2f9a52-6bd3-4d29-92bd-2b0b3f9a4a71",
+);
+
+/**
+ * Truthful frozen inputs for the unsupported-cause Run rows. V2 must refuse
+ * these Runs, but they remain real nonterminal current-model Runs, so each one
+ * carries the frozen strict recipe, immutable occurrence evidence envelope,
+ * and derived occurrence key the canonical admission owner would have
+ * written. Event/Conversation causes cannot exist under predecessor V2
+ * template bytes, so the fixture's Automation uses strict definition bytes.
+ */
+function unsupportedV2RunEvidenceInputs(params: Readonly<{
+    causeKind: UnsupportedV2RunCauseKind;
+    suffix: string;
+    occurredAt: number;
+    machineId: string;
+}>): Readonly<{
+    occurrenceKey: string;
+    triggerEvidenceEnvelope: string;
+    executionInputEnvelope: string;
+}> {
+    const definition = parseAutomationStoredDefinitionExecutionRecipeV1(buildStrictV3Recipe(1));
+    if (definition.kind !== "available") {
+        throw new Error("Expected the strict V3 fixture definition to parse");
+    }
+    const freeze = (triggerEvidence: { t: "plain"; v: unknown }, occurrenceKey: string,
+        triggerEvidenceEnvelope: string) => {
+        const frozen = serializeAutomationRunExecutionRecipeV1({
+            ...definition.recipe,
+            triggerEvidence,
+            assignmentMachineIds: [params.machineId],
+        });
+        if (frozen.kind !== "available") {
+            throw new Error("Expected the unsupported-cause fixture to freeze a strict Run recipe");
+        }
+        return {
+            occurrenceKey,
+            triggerEvidenceEnvelope,
+            executionInputEnvelope: frozen.serialized,
+        };
+    };
+    if (params.causeKind === "pluginEvent") {
+        const evidence = buildAutomationPluginEventOccurrenceEvidenceV1({
+            eventRef: { pluginId: "test.plugin", localId: "event-1" },
+            sourceSelectorId: UNSUPPORTED_V2_SOURCE_SELECTOR_ID,
+            occurrenceId: `unsupported-v2-${params.suffix}`,
+            occurredAt: params.occurredAt,
+            payload: {},
+        });
+        return freeze(
+            {
+                t: "plain",
+                v: {
+                    ...evidence,
+                    sourceInstanceId: "unsupported-v2-source",
+                    sourceContractVersion: 1,
+                    observationReceivedAt: params.occurredAt,
+                    filter: { version: null, result: "matched" as const },
+                },
+            },
+            deriveAutomationOccurrenceKeyV1({
+                triggerId: AutomationTriggerIdSchema.parse(`trigger-plugin-event-${params.causeKind}`),
+                evidence,
+            }),
+            JSON.stringify({ t: "plain", v: evidence }),
+        );
+    }
+    const evidence = buildAutomationConversationOccurrenceEvidenceV1({
+        accountMode: "plain",
+        bindingId: "binding-unsupported-v2",
+        occurrenceId: `unsupported-v2-${params.suffix}`,
+        occurredAt: params.occurredAt,
+        caller: {
+            pluginId: "happier.channels",
+            contributionLocalId: "provider/observation-ingest-v1",
+            machineId: params.machineId,
+        },
+        sender: { id: "sender-1" },
+        text: "V2 must not touch this Conversation Run.",
+        resultDelivery: {
+            kind: "finalResult",
+            actionRef: {
+                pluginId: "happier.channels",
+                localId: "automation/result-deliver-v1",
+            },
+            opaqueContext: { conversationId: `conversation-${params.suffix}` },
+        },
+    });
+    return freeze(
+        { t: "plain", v: { ...evidence, observationReceivedAt: params.occurredAt } },
+        deriveAutomationOccurrenceKeyV1(evidence),
+        JSON.stringify({ t: "plain", v: evidence }),
+    );
+}
 
 function scheduleTriggerCreate(id: string, everyMs = 60_000) {
     return {
@@ -99,16 +245,23 @@ function scheduleTriggerCreate(id: string, everyMs = 60_000) {
 function scheduleRunCause(params: Readonly<{
     triggerId: string;
     scheduledFor: Date;
-    occurrenceKey: string;
 }>) {
+    const triggerId = AutomationTriggerIdSchema.parse(params.triggerId);
     return {
-        triggerId: params.triggerId,
+        triggerId,
         causeKind: "trigger" as const,
         causeTriggerKind: "schedule" as const,
         causeTriggerRevision: 1,
         causeOccurredAt: params.scheduledFor,
         causeScheduledFor: params.scheduledFor,
-        occurrenceKey: params.occurrenceKey,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+            triggerId,
+            evidence: {
+                v: 1,
+                kind: "schedule",
+                scheduledFor: params.scheduledFor.getTime(),
+            },
+        }),
     };
 }
 
@@ -159,7 +312,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
             name: `pluginEvent V2 rejection fixture`,
             enabled: true,
             targetType: "new_session",
-            templateCiphertext: buildPlainTemplateEnvelope(),
+            templateCiphertext: buildStrictV3Recipe(1),
             templateVersion: 1,
             triggers: {
                 create: {
@@ -170,7 +323,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                     definitionEnvelope: JSON.stringify({ t: "plain", v: {} }),
                     eventPluginId: "test.plugin",
                     eventLocalId: "event-1",
-                    sourceSelectorId: "selector-1",
+                    sourceSelectorId: UNSUPPORTED_V2_SOURCE_SELECTOR_ID,
                     sourceContractVersion: 1,
                     observationTransport: "durablePush",
                     webhookEndpointId: "endpoint-1",
@@ -190,6 +343,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
     });
 
     const runInput = (suffix: string) => ({
+        id: `${params.causeKind}-${suffix}`,
         automationId: automation.id,
         accountId: params.accountId,
         triggerId: isConversationRun ? null : triggerId,
@@ -199,9 +353,13 @@ async function seedUnsupportedV2Automation(params: Readonly<{
         causeOccurredAt: new Date(now - 60_000),
         causeEventPluginId: isConversationRun ? null : "test.plugin",
         causeEventLocalId: isConversationRun ? null : "event-1",
-        occurrenceKey: `${params.causeKind}-${suffix}`,
-        causeSourceSelectorId: isConversationRun ? null : "selector-1",
-        triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
+        ...unsupportedV2RunEvidenceInputs({
+            causeKind: params.causeKind,
+            suffix,
+            occurredAt: now - 60_000,
+            machineId: params.machineId,
+        }),
+        causeSourceSelectorId: isConversationRun ? null : UNSUPPORTED_V2_SOURCE_SELECTOR_ID,
         ...(isConversationRun
             ? {
                 replyContextEnvelope: JSON.stringify({
@@ -243,6 +401,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                 ...runInput("queued"),
                 state: "queued",
                 attempt: 0,
+                assignments: { create: { machineId: params.machineId, priority: 0 } },
             },
             select: { id: true },
         }),
@@ -254,6 +413,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                 claimedByMachineId: params.machineId,
                 leaseExpiresAt: new Date(now + 60_000),
                 attempt: 1,
+                assignments: { create: { machineId: params.machineId, priority: 0 } },
             },
             select: { id: true },
         }),
@@ -266,6 +426,7 @@ async function seedUnsupportedV2Automation(params: Readonly<{
                 claimedByMachineId: params.machineId,
                 leaseExpiresAt: new Date(now + 60_000),
                 attempt: 1,
+                assignments: { create: { machineId: params.machineId, priority: 0 } },
             },
             select: { id: true },
         }),
@@ -344,7 +505,6 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId,
                     scheduledFor: scheduledAt,
-                    occurrenceKey: "nightly-run:scheduled",
                 }),
                 scheduledAt,
                 dueAt: new Date(Date.now() - 5_000),
@@ -352,6 +512,7 @@ describe("automation daemon routes (integration)", () => {
                     templateCiphertext,
                     origin: { kind: "scheduled", scheduledFor: scheduledAt.getTime() },
                 }),
+                assignments: { create: { machineId: "machine-1", priority: 0 } },
             },
         });
 
@@ -466,7 +627,7 @@ describe("automation daemon routes (integration)", () => {
                 name: "Execution Run target",
                 enabled: true,
                 targetType: "execution_run",
-                templateCiphertext: frozenTemplateCiphertext,
+                templateCiphertext: buildStrictV3ExecutionRunDefinition(1),
                 templateVersion: 1,
                 triggers: { create: scheduleTriggerCreate(executionRunTriggerId) },
                 assignments: {
@@ -503,6 +664,26 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
+        const mixedHistoryTriggerId = "trigger-v2-definition-v3-run";
+        const mixedHistoryAutomation = await db.automation.create({
+            data: {
+                accountId: account.id,
+                name: "V2 definition with strict V3 predecessor",
+                enabled: true,
+                targetType: "new_session",
+                templateCiphertext: frozenTemplateCiphertext,
+                templateVersion: 1,
+                triggers: { create: scheduleTriggerCreate(mixedHistoryTriggerId) },
+                assignments: {
+                    create: {
+                        machineId: "machine-v2-frozen-snapshot",
+                        enabled: true,
+                        priority: 0,
+                    },
+                },
+            },
+            select: { id: true },
+        });
         const now = Date.now();
         const strictScheduledFor = new Date(now - 120_000);
         const strictRun = await db.automationRun.create({
@@ -513,47 +694,56 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId: strictTriggerId,
                     scheduledFor: strictScheduledFor,
-                    occurrenceKey: "strict-v3:primary",
                 }),
                 scheduledAt: strictScheduledFor,
                 dueAt: strictScheduledFor,
-                executionInputEnvelope: strictTemplateCiphertext,
+                executionInputEnvelope: buildStrictV3RunRecipe(1, "machine-v2-frozen-snapshot"),
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
             },
             select: { id: true },
         });
-        await db.automationRun.createMany({
-            data: Array.from({ length: 30 }, (_, index) => {
-                const scheduledFor = new Date(now - 240_000 + index);
-                return {
-                    automationId: strictAutomation.id,
-                    accountId: account.id,
-                    state: "queued" as const,
-                    ...scheduleRunCause({
-                        triggerId: strictTriggerId,
-                        scheduledFor,
-                        occurrenceKey: `strict-v3:${index}`,
-                    }),
-                    scheduledAt: scheduledFor,
-                    dueAt: scheduledFor,
-                    executionInputEnvelope: strictTemplateCiphertext,
-                };
-            }),
-        });
-        const nullInputPredecessorRun = await db.automationRun.create({
+        await db.automationRun.create({
             data: {
-                automationId: predecessorAutomation.id,
+                automationId: mixedHistoryAutomation.id,
                 accountId: account.id,
                 state: "queued",
                 ...scheduleRunCause({
-                    triggerId: predecessorTriggerId,
-                    scheduledFor: new Date(now - 180_000),
-                    occurrenceKey: "predecessor:null-input",
+                    triggerId: mixedHistoryTriggerId,
+                    scheduledFor: strictScheduledFor,
                 }),
-                scheduledAt: new Date(now - 180_000),
-                dueAt: new Date(now - 180_000),
-                executionInputEnvelope: null,
+                scheduledAt: strictScheduledFor,
+                dueAt: strictScheduledFor,
+                executionInputEnvelope: buildStrictV3RunRecipe(1, "machine-v2-frozen-snapshot"),
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
             },
-            select: { id: true },
+        });
+        const strictPaginationRuns = Array.from({ length: 30 }, (_, index) => {
+            const scheduledFor = new Date(now - 240_000 + index);
+            return {
+                id: `strict-v3-pagination-${index}`,
+                automationId: strictAutomation.id,
+                accountId: account.id,
+                state: "queued" as const,
+                ...scheduleRunCause({
+                    triggerId: strictTriggerId,
+                    scheduledFor,
+                }),
+                scheduledAt: scheduledFor,
+                dueAt: scheduledFor,
+                executionInputEnvelope: buildStrictV3RunRecipe(1, "machine-v2-frozen-snapshot"),
+            };
+        });
+        await db.automationRun.createMany({ data: strictPaginationRuns });
+        await db.automationRunAssignment.createMany({
+            data: strictPaginationRuns.map((run) => ({
+                runId: run.id,
+                machineId: "machine-v2-frozen-snapshot",
+                priority: 0,
+            })),
         });
         const executionRunTargetRun = await db.automationRun.create({
             data: {
@@ -563,15 +753,16 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId: executionRunTriggerId,
                     scheduledFor: new Date(now - 90_000),
-                    occurrenceKey: "execution-run:scheduled",
                 }),
                 scheduledAt: new Date(now - 90_000),
                 dueAt: new Date(now - 90_000),
-                executionInputEnvelope: buildFrozenV2RunInput({
-                    templateCiphertext: frozenTemplateCiphertext,
-                    targetType: "execution_run",
-                    origin: { kind: "scheduled", scheduledFor: now - 90_000 },
-                }),
+                executionInputEnvelope: buildStrictV3ExecutionRunRecipe(
+                    1,
+                    "machine-v2-frozen-snapshot",
+                ),
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
             },
             select: { id: true },
         });
@@ -579,7 +770,7 @@ describe("automation daemon routes (integration)", () => {
             templateCiphertext: frozenTemplateCiphertext,
             origin: { kind: "scheduled", scheduledFor: now - 60_000 },
         });
-        const multiTriggerScheduledFor = new Date(now - 70_000);
+        const multiTriggerScheduledFor = new Date(now + 70_000);
         const multiTriggerRun = await db.automationRun.create({
             data: {
                 automationId: multiTriggerAutomation.id,
@@ -588,7 +779,6 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId: "trigger-multi-a",
                     scheduledFor: multiTriggerScheduledFor,
-                    occurrenceKey: "multi-trigger:scheduled",
                 }),
                 scheduledAt: multiTriggerScheduledFor,
                 dueAt: multiTriggerScheduledFor,
@@ -599,6 +789,9 @@ describe("automation daemon routes (integration)", () => {
                         scheduledFor: multiTriggerScheduledFor.getTime(),
                     },
                 }),
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
             },
             select: { id: true },
         });
@@ -610,11 +803,13 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId: predecessorTriggerId,
                     scheduledFor: new Date(now - 60_000),
-                    occurrenceKey: "predecessor:frozen-input",
                 }),
                 scheduledAt: new Date(now - 60_000),
                 dueAt: new Date(now - 60_000),
                 executionInputEnvelope: frozenInput,
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
             },
             select: { id: true },
         });
@@ -640,7 +835,21 @@ describe("automation daemon routes (integration)", () => {
                     headers: { "x-test-user-id": account.id },
                 });
                 expect(assignments.statusCode).toBe(200);
-                expect(assignments.json()).toEqual({ assignments: [] });
+                const assignmentBody = assignments.json();
+                expect(assignmentBody.assignments).toHaveLength(3);
+                expect(assignmentBody.assignments).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ automation: expect.objectContaining({ id: predecessorAutomation.id }) }),
+                    expect.objectContaining({ automation: expect.objectContaining({ id: multiTriggerAutomation.id }) }),
+                    expect.objectContaining({
+                        automation: expect.objectContaining({
+                            id: mixedHistoryAutomation.id,
+                            nextRunAt: null,
+                        }),
+                    }),
+                ]));
+                expect(assignmentBody.assignments).toEqual(expect.not.arrayContaining([
+                    expect.objectContaining({ automation: expect.objectContaining({ id: strictAutomation.id }) }),
+                ]));
 
                 const definitions = await app.inject({
                     method: "GET",
@@ -716,20 +925,6 @@ describe("automation daemon routes (integration)", () => {
             attempt: 0,
         });
         await expect(db.automationRun.findUniqueOrThrow({
-            where: { id: nullInputPredecessorRun.id },
-            select: {
-                state: true,
-                claimedByMachineId: true,
-                leaseExpiresAt: true,
-                attempt: true,
-            },
-        })).resolves.toEqual({
-            state: "queued",
-            claimedByMachineId: null,
-            leaseExpiresAt: null,
-            attempt: 0,
-        });
-        await expect(db.automationRun.findUniqueOrThrow({
             where: { id: executionRunTargetRun.id },
             select: {
                 state: true,
@@ -776,35 +971,37 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const now = Date.now();
-        const scheduledFor = new Date(now - 60_000);
-        const runInput = {
-            automationId: automation.id,
-            accountId: account.id,
-            ...scheduleRunCause({ triggerId, scheduledFor, occurrenceKey: "placeholder" }),
-            scheduledAt: scheduledFor,
-            dueAt: new Date(now - 30_000),
-            claimedAt: new Date(now - 20_000),
-            claimedByMachineId: machineId,
-            leaseExpiresAt: new Date(now + 60_000),
-            attempt: 1,
-            executionInputEnvelope: buildStrictV3RunRecipe(1, machineId),
+        const runInput = (offsetMs: number) => {
+            const scheduledFor = new Date(now - 60_000 - offsetMs);
+            return {
+                automationId: automation.id,
+                accountId: account.id,
+                ...scheduleRunCause({ triggerId, scheduledFor }),
+                scheduledAt: scheduledFor,
+                dueAt: new Date(now - 30_000 - offsetMs),
+                claimedAt: new Date(now - 20_000),
+                claimedByMachineId: machineId,
+                leaseExpiresAt: new Date(now + 60_000),
+                attempt: 1,
+                executionInputEnvelope: buildStrictV3RunRecipe(1, machineId),
+                assignments: { create: { machineId, priority: 0 } },
+            };
         };
         const [claimedForHeartbeat, claimedForStart, runningForSucceed, runningForFail, queuedForCancel] =
             await Promise.all([
-                db.automationRun.create({ data: { ...runInput, occurrenceKey: "strict:heartbeat", state: "claimed" }, select: { id: true } }),
-                db.automationRun.create({ data: { ...runInput, occurrenceKey: "strict:start", state: "claimed" }, select: { id: true } }),
+                db.automationRun.create({ data: { ...runInput(0), state: "claimed" }, select: { id: true } }),
+                db.automationRun.create({ data: { ...runInput(1), state: "claimed" }, select: { id: true } }),
                 db.automationRun.create({
-                    data: { ...runInput, occurrenceKey: "strict:succeed", state: "running", startedAt: new Date(now - 10_000) },
+                    data: { ...runInput(2), state: "running", startedAt: new Date(now - 10_000) },
                     select: { id: true },
                 }),
                 db.automationRun.create({
-                    data: { ...runInput, occurrenceKey: "strict:fail", state: "running", startedAt: new Date(now - 10_000) },
+                    data: { ...runInput(3), state: "running", startedAt: new Date(now - 10_000) },
                     select: { id: true },
                 }),
                 db.automationRun.create({
                     data: {
-                        ...runInput,
-                        occurrenceKey: "strict:cancel",
+                        ...runInput(4),
                         state: "queued",
                         claimedAt: null,
                         claimedByMachineId: null,
@@ -888,32 +1085,32 @@ describe("automation daemon routes (integration)", () => {
             select: { id: true },
         });
         const now = Date.now();
-        const executionInputEnvelope = buildFrozenV2RunInput({
-            templateCiphertext,
-            origin: { kind: "scheduled", scheduledFor: now - 60_000 },
-        });
-        const createRunningRun = async (id: string) => await db.automationRun.create({
-            data: {
-                id,
-                automationId: automation.id,
-                accountId: account.id,
-                state: "running",
-                ...scheduleRunCause({
-                    triggerId,
-                    scheduledFor: new Date(now - 60_000),
-                    occurrenceKey: `session-retention:${id}`,
-                }),
-                scheduledAt: new Date(now - 60_000),
-                dueAt: new Date(now - 30_000),
-                claimedAt: new Date(now - 20_000),
-                startedAt: new Date(now - 10_000),
-                claimedByMachineId: machineId,
-                leaseExpiresAt: new Date(now + 60_000),
-                attempt: 1,
-                executionInputEnvelope,
-            },
-            select: { id: true },
-        });
+        let runSequence = 0;
+        const createRunningRun = async (id: string) => {
+            const scheduledFor = new Date(now - 60_000 - runSequence++);
+            return await db.automationRun.create({
+                data: {
+                    id,
+                    automationId: automation.id,
+                    accountId: account.id,
+                    state: "running",
+                    ...scheduleRunCause({ triggerId, scheduledFor }),
+                    scheduledAt: scheduledFor,
+                    dueAt: new Date(now - 30_000),
+                    claimedAt: new Date(now - 20_000),
+                    startedAt: new Date(now - 10_000),
+                    claimedByMachineId: machineId,
+                    leaseExpiresAt: new Date(now + 60_000),
+                    attempt: 1,
+                    executionInputEnvelope: buildFrozenV2RunInput({
+                        templateCiphertext,
+                        origin: { kind: "scheduled", scheduledFor: scheduledFor.getTime() },
+                    }),
+                    assignments: { create: { machineId, priority: 0 } },
+                },
+                select: { id: true },
+            });
+        };
         const failureCases = [
             { suffix: "rejected", errorCode: "prompt_delivery_failed", errorMessage: "admission rejected" },
             { suffix: "unknown", errorCode: "prompt_delivery_outcome_unknown", errorMessage: "admission outcome unknown" },
@@ -1053,13 +1250,19 @@ describe("automation daemon routes (integration)", () => {
             data: { encryptionMode: "plain" },
             select: { id: true },
         });
-        await db.machine.create({
-            data: {
-                id: "machine-1",
-                accountId: account.id,
-                metadata: "{}",
-            },
-            select: { id: true },
+        const machine1KeyPair = tweetnacl.sign.keyPair();
+        const machine2KeyPair = tweetnacl.sign.keyPair();
+        await createTrustedMachineInstallation({
+            accountId: account.id,
+            machineId: "machine-1",
+            installationId: "installation-1",
+            keyPair: machine1KeyPair,
+        });
+        await createTrustedMachineInstallation({
+            accountId: account.id,
+            machineId: "machine-2",
+            installationId: "installation-2",
+            keyPair: machine2KeyPair,
         });
         const templateCiphertext = buildPlainTemplateEnvelope();
         const triggerId = "trigger-heartbeat";
@@ -1084,7 +1287,6 @@ describe("automation daemon routes (integration)", () => {
                 ...scheduleRunCause({
                     triggerId,
                     scheduledFor: scheduledAt,
-                    occurrenceKey: "heartbeat:scheduled",
                 }),
                 scheduledAt,
                 dueAt: new Date(Date.now() - 20_000),
@@ -1096,6 +1298,7 @@ describe("automation daemon routes (integration)", () => {
                     templateCiphertext,
                     origin: { kind: "scheduled", scheduledFor: scheduledAt.getTime() },
                 }),
+                assignments: { create: { machineId: "machine-1", priority: 0 } },
             },
             select: { id: true },
         });
@@ -1103,34 +1306,59 @@ describe("automation daemon routes (integration)", () => {
         await withAuthenticatedTestApp(
             (app) => automationRoutes(app as any),
             async (app) => {
+                const heartbeatHeaders = (params: Readonly<{
+                    machineId: "machine-1" | "machine-2";
+                    body: Readonly<Record<string, unknown>>;
+                    nonce: string;
+                }>) => ({
+                    "content-type": "application/json",
+                    "x-test-user-id": account.id,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({
+                            keyPair: params.machineId === "machine-1"
+                                ? machine1KeyPair
+                                : machine2KeyPair,
+                            machineId: params.machineId,
+                            installationId: params.machineId === "machine-1"
+                                ? "installation-1"
+                                : "installation-2",
+                            path: `/v2/automations/runs/${run.id}/heartbeat`,
+                            body: params.body,
+                            nonce: params.nonce,
+                        }),
+                });
+                const okRequestBody = {
+                    machineId: "machine-1",
+                    leaseDurationMs: 45_000,
+                };
                 const okResponse = await app.inject({
                     method: "POST",
                     url: `/v2/automations/runs/${run.id}/heartbeat`,
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
+                    headers: heartbeatHeaders({
                         machineId: "machine-1",
-                        leaseDurationMs: 45_000,
-                    },
+                        body: okRequestBody,
+                        nonce: "heartbeat-machine-1-ok",
+                    }),
+                    payload: okRequestBody,
                 });
                 expect(okResponse.statusCode).toBe(200);
                 const okBody = okResponse.json() as any;
                 expect(okBody.ok).toBe(true);
                 expect(typeof okBody.leaseExpiresAt).toBe("number");
 
+                const deniedBody = {
+                    machineId: "machine-2",
+                    leaseDurationMs: 45_000,
+                };
                 const deniedResponse = await app.inject({
                     method: "POST",
                     url: `/v2/automations/runs/${run.id}/heartbeat`,
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
+                    headers: heartbeatHeaders({
                         machineId: "machine-2",
-                        leaseDurationMs: 45_000,
-                    },
+                        body: deniedBody,
+                        nonce: "heartbeat-machine-2-denied",
+                    }),
+                    payload: deniedBody,
                 });
                 expect(deniedResponse.statusCode).toBe(404);
                 expect(deniedResponse.json()).toEqual({ error: "automation_run_not_found_or_not_claimed" });
@@ -1140,32 +1368,57 @@ describe("automation daemon routes (integration)", () => {
                     data: { attempt: 2 },
                 });
 
-                const staleLegacyAttemptResponse = await app.inject({
+                const staleBody = {
+                    machineId: "machine-1",
+                    leaseDurationMs: 45_000,
+                };
+                // Released V2 workers do not send an attempt token. The V2
+                // adapter deliberately resolves the exact current same-machine
+                // lease attempt, while an explicit stale V3/current attempt is
+                // still rejected by the canonical service.
+                const legacyMissingAttemptResponse = await app.inject({
                     method: "POST",
                     url: `/v2/automations/runs/${run.id}/heartbeat`,
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
+                    headers: heartbeatHeaders({
                         machineId: "machine-1",
-                        leaseDurationMs: 45_000,
-                    },
+                        body: staleBody,
+                        nonce: "heartbeat-machine-1-stale",
+                    }),
+                    payload: staleBody,
                 });
-                expect(staleLegacyAttemptResponse.statusCode).toBe(404);
+                expect(legacyMissingAttemptResponse.statusCode).toBe(200);
 
+                const explicitStaleBody = {
+                    machineId: "machine-1",
+                    attempt: 1,
+                    leaseDurationMs: 45_000,
+                };
+                const explicitStaleAttemptResponse = await app.inject({
+                    method: "POST",
+                    url: `/v2/automations/runs/${run.id}/heartbeat`,
+                    headers: heartbeatHeaders({
+                        machineId: "machine-1",
+                        body: explicitStaleBody,
+                        nonce: "heartbeat-machine-1-explicit-stale",
+                    }),
+                    payload: explicitStaleBody,
+                });
+                expect(explicitStaleAttemptResponse.statusCode).toBe(404);
+
+                const currentBody = {
+                    machineId: "machine-1",
+                    attempt: 2,
+                    leaseDurationMs: 45_000,
+                };
                 const currentAttemptResponse = await app.inject({
                     method: "POST",
                     url: `/v2/automations/runs/${run.id}/heartbeat`,
-                    headers: {
-                        "content-type": "application/json",
-                        "x-test-user-id": account.id,
-                    },
-                    payload: {
+                    headers: heartbeatHeaders({
                         machineId: "machine-1",
-                        attempt: 2,
-                        leaseDurationMs: 45_000,
-                    },
+                        body: currentBody,
+                        nonce: "heartbeat-machine-1-current",
+                    }),
+                    payload: currentBody,
                 });
                 expect(currentAttemptResponse.statusCode).toBe(200);
             },

@@ -1,4 +1,5 @@
 import {
+    AutomationTriggerIdSchema,
     deriveAutomationOccurrenceKeyV1,
 } from "@happier-dev/protocol";
 
@@ -49,7 +50,16 @@ export async function ensureAutomationScheduleCursorsTx(params: Readonly<{
     let changed = false;
     for (const trigger of automation.triggers) {
         if (trigger.scheduleKind === null || trigger.nextRunAt !== null) continue;
-        const dueAt = resolveScheduledRunDueAt({ now: params.now, ...trigger });
+        // Property narrowing does not survive an object spread, so the live
+        // schedule kind is passed explicitly instead of `...trigger`.
+        const dueAt = resolveScheduledRunDueAt({
+            now: params.now,
+            scheduleKind: trigger.scheduleKind,
+            everyMs: trigger.everyMs,
+            scheduleExpr: trigger.scheduleExpr,
+            timezone: trigger.timezone,
+            nextRunAt: trigger.nextRunAt,
+        });
         if (!dueAt) continue;
         const updated = await params.tx.automationTrigger.updateMany({
             where: {
@@ -95,9 +105,11 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         },
     });
     if (!trigger || trigger.scheduleKind === null || trigger.nextRunAt === null) return null;
+    // The one physical-row to branded trigger-identity boundary for this owner.
+    const triggerId = AutomationTriggerIdSchema.parse(trigger.id);
     const scheduledFor = trigger.nextRunAt.getTime();
     const occurrenceKey = deriveAutomationOccurrenceKeyV1({
-        triggerId: trigger.id,
+        triggerId,
         evidence: { v: 1, kind: "schedule", scheduledFor },
     });
     const open = await params.tx.automationRun.findFirst({
@@ -115,7 +127,7 @@ export async function admitDueAutomationScheduleTriggerTx(params: Readonly<{
         automationId: trigger.automationId,
         now: params.now,
         cause: {
-            kind: "trigger", triggerId: trigger.id, triggerRevision: trigger.revision,
+            kind: "trigger", triggerId, triggerRevision: trigger.revision,
             triggerKind: "schedule", occurrenceKey, occurredAt: scheduledFor,
             evidence: { scheduledFor },
         },
@@ -160,8 +172,18 @@ export async function advanceAutomationScheduleCursorAfterTerminalRunTx(params: 
         },
     });
     if (!trigger || trigger.scheduleKind === null || trigger.nextRunAt === null) return;
+    // Property narrowing does not survive an object spread, so the live
+    // schedule kind is passed explicitly instead of `...trigger`. A disabled
+    // or deleted trigger still tombstones its cursor to null below.
     const nextRunAt = trigger.enabled && trigger.deletedAt === null
-        ? resolveScheduledRunDueAt({ now: params.now, ...trigger })
+        ? resolveScheduledRunDueAt({
+            now: params.now,
+            scheduleKind: trigger.scheduleKind,
+            everyMs: trigger.everyMs,
+            scheduleExpr: trigger.scheduleExpr,
+            timezone: trigger.timezone,
+            nextRunAt: trigger.nextRunAt,
+        })
         : null;
     await params.tx.automationTrigger.updateMany({
         where: {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
     AutomationRunExecutionInputV1Schema,
     AutomationStoredDefinitionExecutionRecipeV1Schema,
+    AutomationTriggerIdSchema,
 } from "@happier-dev/protocol";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -18,13 +19,14 @@ import {
     createAutomationTrigger,
     deleteAutomation,
     deleteAutomationTrigger,
+    getAutomation,
     listAutomations,
+    reconcileAutomationDefinition,
     runAutomationNow,
     setAutomationEnabled,
     updateAutomation,
     updateAutomationTrigger,
 } from "./automationCrudService";
-import { AutomationStoredContentReadError } from "./automationStoredContentRead";
 import { AutomationValidationError } from "./automationValidation";
 import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 import { cancelAutomationRun } from "./automationRunService";
@@ -63,7 +65,7 @@ function intervalTrigger(everyMs: number, enabled = true) {
 }
 
 function triggerInput(trigger: ReturnType<typeof intervalTrigger>) {
-    return { triggerId: randomUUID(), trigger };
+    return { triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger };
 }
 
 function legacyTemplateEnvelope(payloadCiphertext = "ciphertext-base64"): string {
@@ -71,6 +73,15 @@ function legacyTemplateEnvelope(payloadCiphertext = "ciphertext-base64"): string
         kind: "happier_automation_template_encrypted_v1",
         payloadCiphertext,
     });
+}
+
+/** Creates one revocable account machine for enabled-Automation assignment fixtures. */
+async function seedExecutionMachine(accountId: string): Promise<string> {
+    const machineId = `execution-machine-${randomUUID()}`;
+    await db.machine.create({
+        data: { id: machineId, accountId, metadata: "{}" },
+    });
+    return machineId;
 }
 
 describe("automationCrudService (integration)", () => {
@@ -97,6 +108,8 @@ describe("automationCrudService (integration)", () => {
             () => db.automationAssignment.deleteMany(),
             () => db.automation.deleteMany(),
             () => db.accountChange.deleteMany(),
+            () => db.accessKey.deleteMany(),
+            () => db.session.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
@@ -107,6 +120,7 @@ describe("automationCrudService (integration)", () => {
             data: { encryptionMode: "plain" },
             select: { id: true },
         });
+        const executionMachineId = await seedExecutionMachine(account.id);
         const directOnly = await createAutomation({
             accountId: account.id,
             input: {
@@ -114,6 +128,7 @@ describe("automationCrudService (integration)", () => {
                 name: "Direct only",
                 enabled: true,
                 executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: executionMachineId }],
                 triggers: [],
             },
         });
@@ -133,13 +148,68 @@ describe("automationCrudService (integration)", () => {
             },
         });
         expect(scheduled.triggers).toHaveLength(2);
-        expect(scheduled.triggers[0]).toMatchObject({
+        expect(scheduled.triggers.find((trigger) => trigger.everyMs === 60_000)).toMatchObject({
             kind: "schedule", enabled: true, revision: 0, everyMs: 60_000,
         });
-        expect(scheduled.triggers[1]).toMatchObject({
+        expect(scheduled.triggers.find((trigger) => trigger.everyMs === 120_000)).toMatchObject({
             kind: "schedule", enabled: false, revision: 0, everyMs: 120_000,
         });
         expect(scheduled.triggers[0]!.id).not.toBe(scheduled.triggers[1]!.id);
+    });
+
+    it("keeps private trigger definition envelopes and unused status relations out of the list read", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const automation = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "List read narrowing",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
+                triggers: [triggerInput(intervalTrigger(60_000))],
+            },
+        });
+        const privateEnvelope = JSON.stringify({
+            v: 1,
+            sourceInstanceId: "repository-private",
+            displayLabel: "Private repository label",
+            sourceConfig: { repositoryId: "repository-private" },
+        });
+        await db.automationTrigger.create({
+            data: {
+                automationId: automation.id,
+                kind: "pluginEvent",
+                eventPluginId: "happier.github",
+                eventLocalId: "repository-pushed",
+                sourceSelectorId: `selector-${randomUUID()}`,
+                sourceContractVersion: 1,
+                observationTransport: "checkpointedPull",
+                watcherMachineId: "watcher-machine",
+                watcherMachineInstallationId: "watcher-installation",
+                watcherPluginId: "happier.github",
+                watcherMaterializationId: "watcher-materialization",
+                definitionEnvelope: privateEnvelope,
+            },
+            select: { id: true },
+        });
+
+        const listed = await listAutomations({ accountId: account.id });
+        const listedAutomation = listed.find((row) => row.id === automation.id);
+        expect(listedAutomation).toBeDefined();
+        const listedEventTrigger = listedAutomation!.triggers.find((trigger) => trigger.kind === "pluginEvent");
+        expect(listedEventTrigger).toBeDefined();
+        expect(listedEventTrigger!).not.toHaveProperty("definitionEnvelope");
+        expect(JSON.stringify(listedEventTrigger!)).not.toContain("Private repository label");
+        expect(listedEventTrigger!).not.toHaveProperty("eventSourceStatus");
+
+        const detail = await getAutomation({ accountId: account.id, automationId: automation.id });
+        const detailEventTrigger = detail?.triggers.find((trigger) => trigger.kind === "pluginEvent");
+        expect(detailEventTrigger).toBeDefined();
+        expect(detailEventTrigger!).toHaveProperty("definitionEnvelope", privateEnvelope);
     });
 
     it("rejoins an identical client-identified Automation create after response loss", async () => {
@@ -148,7 +218,7 @@ describe("automationCrudService (integration)", () => {
             select: { id: true },
         });
         const automationId = randomUUID();
-        const triggerId = randomUUID();
+        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
         const input = {
             automationId,
             name: "Response-loss Automation",
@@ -377,6 +447,7 @@ describe("automationCrudService (integration)", () => {
                 name: "On demand",
                 enabled: true,
                 executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
                 triggers: [],
             },
         });
@@ -435,6 +506,7 @@ describe("automationCrudService (integration)", () => {
                 name: "Retained history",
                 enabled: true,
                 executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
                 triggers: [triggerInput(intervalTrigger(60_000))],
             },
         });
@@ -481,6 +553,7 @@ describe("automationCrudService (integration)", () => {
                 schedule: { kind: "cron", scheduleExpr: "*/5 * * * *", timezone: "UTC" },
                 targetType: "new_session",
                 templateCiphertext: originalTemplateCiphertext,
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
             },
         });
         expect(created.triggers).toEqual([expect.objectContaining({
@@ -572,12 +645,13 @@ describe("automationCrudService (integration)", () => {
         await expect(createAutomation({
             accountId: e2ee.id,
             input: {
+                automationId: randomUUID(),
                 name: "Unavailable current E2EE writer",
                 enabled: true,
                 executionRecipe: currentRecipe(1),
                 triggers: [],
             },
-        })).rejects.toBeInstanceOf(AutomationStoredContentReadError);
+        })).rejects.toBeInstanceOf(AutomationValidationError);
         await expect(db.automation.count({ where: { accountId: e2ee.id } })).resolves.toBe(0);
 
         const legacy = await createAutomation({
@@ -589,6 +663,7 @@ describe("automationCrudService (integration)", () => {
                 schedule: { kind: "interval", everyMs: 300_000, timezone: null },
                 targetType: "new_session",
                 templateCiphertext: legacyTemplateEnvelope(),
+                assignments: [{ machineId: await seedExecutionMachine(e2ee.id) }],
             },
         });
         await db.account.update({
@@ -611,5 +686,295 @@ describe("automationCrudService (integration)", () => {
             automationId: legacy.id,
             requireV2DefinitionRepresentability: true,
         })).resolves.toBe(false);
+    });
+
+    it("rejects an enabled create with zero enabled assignments and admits a disabled draft with none", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        await expect(createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Enabled without assignment",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [],
+                triggers: [],
+            },
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        // An all-disabled replacement set is still zero enabled assignments.
+        const disabledOnlyMachineId = await seedExecutionMachine(account.id);
+        await expect(createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Enabled with only disabled assignments",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: disabledOnlyMachineId, enabled: false }],
+                triggers: [],
+            },
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(db.automation.count({ where: { accountId: account.id } })).resolves.toBe(0);
+
+        // A disabled draft may own zero enabled assignments.
+        await expect(createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Disabled draft",
+                enabled: false,
+                executionRecipe: currentRecipe(1),
+                assignments: [],
+                triggers: [],
+            },
+        })).resolves.toMatchObject({ id: expect.any(String), enabled: false });
+    });
+
+    it("rejects enabling without an enabled assignment and accepts enabling with one", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const draft = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Enable gate",
+                enabled: false,
+                executionRecipe: currentRecipe(1),
+                assignments: [],
+                triggers: [],
+            },
+        });
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: draft.id,
+            enabled: true,
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: draft.id },
+            select: { enabled: true },
+        })).resolves.toMatchObject({ enabled: false });
+
+        const executionMachineId = await seedExecutionMachine(account.id);
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: draft.id,
+            input: {
+                enabled: true,
+                assignments: [{ machineId: executionMachineId }],
+            },
+        })).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("rejects removing or disabling the last enabled assignment while enabled, atomically", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const executionMachineId = await seedExecutionMachine(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Last assignment gate",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: executionMachineId }],
+                triggers: [],
+            },
+        });
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: created.id,
+            input: { assignments: [] },
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                assignments: [{ machineId: executionMachineId, enabled: false }],
+            },
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        // The whole patch rolled back: the enabled assignment survived.
+        await expect(getAutomation({ accountId: account.id, automationId: created.id }))
+            .resolves.toMatchObject({
+                enabled: true,
+                assignments: [{ machineId: executionMachineId, enabled: true }],
+            });
+
+        // Pausing first makes the same removal a legal disabled draft edit.
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: created.id,
+            enabled: false,
+        })).resolves.toMatchObject({ enabled: false });
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: created.id,
+            input: { assignments: [] },
+        })).resolves.toMatchObject({ enabled: false, assignments: [] });
+    });
+
+    it("rejects a whole-editor Save leaving an enabled Automation with zero enabled assignments, atomically", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const executionMachineId = await seedExecutionMachine(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Save atomicity",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: executionMachineId }],
+                triggers: [triggerInput(intervalTrigger(60_000))],
+            },
+        });
+        await expect(reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Save without assignment",
+                description: null,
+                enabled: true,
+                assignments: [],
+                triggers: created.triggers.map((trigger) => ({
+                    kind: "existing" as const,
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: trigger.revision,
+                })),
+                removedTriggers: [],
+            },
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        // Nothing committed: name, template revision, and assignments intact.
+        await expect(getAutomation({ accountId: account.id, automationId: created.id }))
+            .resolves.toMatchObject({
+                name: "Save atomicity",
+                templateVersion: 1,
+                enabled: true,
+                assignments: [{ machineId: executionMachineId, enabled: true }],
+            });
+
+        // Pausing in the same Save accepts the empty assignment set.
+        await expect(reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Save without assignment",
+                description: null,
+                enabled: false,
+                assignments: [],
+                triggers: created.triggers.map((trigger) => ({
+                    kind: "existing" as const,
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: trigger.revision,
+                })),
+                removedTriggers: [],
+            },
+        })).resolves.toMatchObject({ enabled: false, assignments: [] });
+    });
+
+    it("authors, pauses, and resumes an existingSession definition against a layout-one Session", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const executionMachineId = await seedExecutionMachine(account.id);
+        const sessionId = `session-layout-one-${randomUUID()}`;
+        await db.session.create({
+            data: {
+                id: sessionId,
+                accountId: account.id,
+                tag: "automation-existing-session-layout-one",
+                metadata: JSON.stringify({
+                    v: 1,
+                    summary: { text: "Spawned layout-one Session", updatedAt: 1 },
+                }),
+                metadataLayoutVersion: 1,
+                ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        await db.accessKey.create({
+            data: {
+                accountId: account.id,
+                machineId: executionMachineId,
+                sessionId,
+                data: "opaque-machine-correspondence",
+            },
+        });
+
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Layout-one existing session",
+                enabled: true,
+                executionRecipe: AutomationStoredDefinitionExecutionRecipeV1Schema.parse({
+                    v: 1,
+                    templateVersion: 1,
+                    template: { t: "plain", v: { v: 1, prompt: "Continue the target Session" } },
+                    triggerEvidence: null,
+                    target: { kind: "existingSession", sessionId },
+                }),
+                assignments: [{ machineId: executionMachineId }],
+                triggers: [triggerInput(intervalTrigger(60_000))],
+            },
+        });
+        expect(created.targetType).toBe("existing_session");
+
+        // A non-template definition mutation (pause/resume) revalidates the
+        // retained strict target instead of reparsing it as a legacy envelope.
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: created.id,
+            enabled: false,
+        })).resolves.toMatchObject({ enabled: false });
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: created.id,
+            enabled: true,
+        })).resolves.toMatchObject({ enabled: true });
+
+        // Revoked-first + available-sibling correspondence: a Session may retain
+        // a revoked machine's key beside an available machine's key, and the
+        // available sibling must satisfy the target proof.
+        const siblingMachineId = await seedExecutionMachine(account.id);
+        await db.accessKey.create({
+            data: {
+                accountId: account.id,
+                machineId: siblingMachineId,
+                sessionId,
+                data: "opaque-sibling-correspondence",
+            },
+        });
+        await db.machine.update({
+            where: { id: executionMachineId },
+            data: { revokedAt: new Date() },
+        });
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: created.id,
+            enabled: false,
+        })).resolves.toMatchObject({ enabled: false });
+
+        // With only the revoked machine's correspondence left, the same target
+        // fails typed and the mutation rolls back atomically.
+        await db.accessKey.deleteMany({
+            where: { accountId: account.id, machineId: siblingMachineId },
+        });
+        await expect(setAutomationEnabled({
+            accountId: account.id,
+            automationId: created.id,
+            enabled: true,
+        })).rejects.toBeInstanceOf(AutomationValidationError);
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: created.id },
+            select: { enabled: true },
+        })).resolves.toMatchObject({ enabled: false });
     });
 });

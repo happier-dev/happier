@@ -9,9 +9,12 @@ import {
     type AutomationRunState,
     type AutomationTriggerKind,
 } from "./automationTypes";
-import { AutomationValidationError } from "./automationValidation";
+import {
+    AutomationValidationError,
+    normalizeAutomationAssignments,
+} from "./automationValidation";
 import { isAutomationDefinitionRepresentableInV2 } from "./automationApiProjection";
-import { automationListItemSelect } from "./automationPersistenceSelect";
+import { RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX } from "./automationStoredContentRead";
 
 type AutomationAssignmentWakeRun = Readonly<{
     triggerId: string | null;
@@ -35,11 +38,35 @@ const automationAssignmentWakeRunSelect = {
     executionDispatchState: true,
 } satisfies Prisma.AutomationRunSelect;
 
-function automationDaemonWakeAutomationSelect(machineId: string) {
+/**
+ * The worker wake projection: exactly the scalar facts that decide a wake —
+ * schedule cursors, open-Run state, and the released-V2 representability
+ * boundary — with no private definition envelopes, assignments, or trigger
+ * status state.
+ */
+const automationAssignmentWakeTriggerSelect = {
+    id: true, kind: true, enabled: true, scheduleKind: true, scheduleExpr: true,
+    everyMs: true, timezone: true, nextRunAt: true,
+} satisfies Prisma.AutomationTriggerSelect;
+
+function automationDaemonWakeAutomationSelect(
+    machineId: string,
+    requireV2RunRepresentability: boolean,
+) {
     return {
-        ...automationListItemSelect,
+        id: true, name: true, enabled: true,
+        targetType: true, templateCiphertext: true, templateVersion: true,
+        lastRunAt: true, updatedAt: true,
+        triggers: {
+            where: { deletedAt: null },
+            select: automationAssignmentWakeTriggerSelect,
+            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        },
         runs: {
             where: {
+                ...(requireV2RunRepresentability
+                    ? { executionInputEnvelope: { startsWith: RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX } }
+                    : {}),
                 OR: [
                     { state: "queued" },
                     { state: "claimed", leaseExpiresAt: { not: null } },
@@ -135,18 +162,38 @@ async function assertMachinesBelongToAccount(params: {
     }
 }
 
+/**
+ * Assignment-liveness invariant, shared by every definition writer. An enabled
+ * Automation must own at least one enabled execution assignment: admission
+ * freezes the current enabled-assignment set into the Run, so a Run admitted
+ * with zero enabled assignments could never be claimed by any machine. A
+ * disabled draft may own zero enabled assignments.
+ *
+ * Callers pass the exact assignment set their transaction is about to persist
+ * (or the loaded persisted set). Canonical normalization prevents a repeated
+ * machineId from fabricating a second assignment.
+ */
+export function assertAutomationAssignmentLiveness(params: Readonly<{
+    enabled: boolean;
+    assignments: ReadonlyArray<Readonly<{ machineId: string; enabled?: boolean }>>;
+}>): void {
+    if (!params.enabled) return;
+    const normalized = normalizeAutomationAssignments(params.assignments) ?? [];
+    const hasEnabledAssignment = normalized.some((assignment) => assignment.enabled ?? true);
+    if (!hasEnabledAssignment) {
+        throw new AutomationValidationError(
+            "An enabled Automation requires at least one enabled execution assignment",
+        );
+    }
+}
+
 export async function replaceAutomationAssignmentsTx(params: {
     tx: Tx;
     accountId: string;
     automationId: string;
     assignments: ReadonlyArray<AutomationAssignmentInput>;
 }): Promise<Array<{ machineId: string; enabled: boolean; priority: number; updatedAt: Date }>> {
-    const deduped = new Map<string, AutomationAssignmentInput>();
-    for (const assignment of params.assignments) {
-        deduped.set(assignment.machineId, assignment);
-    }
-
-    const normalizedAssignments = Array.from(deduped.values());
+    const normalizedAssignments = normalizeAutomationAssignments(params.assignments) ?? [];
     await assertMachinesBelongToAccount({
         tx: params.tx,
         accountId: params.accountId,
@@ -205,7 +252,12 @@ export async function listDaemonAssignments(params: {
                 enabled: true,
                 priority: true,
                 updatedAt: true,
-                automation: { select: automationDaemonWakeAutomationSelect(params.machineId) },
+                automation: {
+                    select: automationDaemonWakeAutomationSelect(
+                        params.machineId,
+                        params.requireV2DefinitionRepresentability === true,
+                    ),
+                },
             },
             orderBy: [{ priority: "desc" }, { updatedAt: "desc" }],
         }),
@@ -214,6 +266,9 @@ export async function listDaemonAssignments(params: {
                 machineId: params.machineId,
                 run: {
                     accountId: params.accountId,
+                    ...(params.requireV2DefinitionRepresentability
+                        ? { executionInputEnvelope: { startsWith: RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX } }
+                        : {}),
                     OR: [
                         { state: "queued" },
                         { state: "claimed", leaseExpiresAt: { not: null } },
@@ -268,8 +323,9 @@ export async function listDaemonAssignments(params: {
     }
 
     // Frozen Run assignments survive definition disable/delete/reassignment.
-    // Fetch each remaining Automation projection exactly once; nesting that
-    // Automation's complete open-Run set under every assigned Run is O(N²).
+    // Fetch each remaining Automation wake projection exactly once; nesting
+    // that Automation's complete open-Run set under every assigned Run is
+    // O(N²).
     const frozenAutomations = frozenByAutomationId.size === 0
         ? []
         : await db.automation.findMany({
@@ -277,7 +333,16 @@ export async function listDaemonAssignments(params: {
                 id: { in: [...frozenByAutomationId.keys()] },
                 accountId: params.accountId,
             },
-            select: automationListItemSelect,
+            select: {
+                id: true, name: true, enabled: true,
+                targetType: true, templateCiphertext: true, templateVersion: true,
+                lastRunAt: true, updatedAt: true,
+                triggers: {
+                    where: { deletedAt: null },
+                    select: automationAssignmentWakeTriggerSelect,
+                    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                },
+            },
         });
     const admittedRunWakes: Array<(typeof activeAssignments)[number]> = [];
     for (const automation of frozenAutomations) {

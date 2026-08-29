@@ -1,7 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+    AutomationTriggerIdSchema,
     deriveSessionCreationTagV1,
+    deriveAutomationOccurrenceKeyV1,
     serializeAutomationRunExecutionRecipeV1,
     type SessionServerStartDispatchResultV1,
 } from "@happier-dev/protocol";
@@ -36,6 +38,11 @@ import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 const TEST_TEMPLATE_ENVELOPE = JSON.stringify({
     kind: "happier_automation_template_encrypted_v1",
     payloadCiphertext: "ciphertext-base64",
+});
+
+const TEST_PLAIN_TEMPLATE_ENVELOPE = JSON.stringify({
+    kind: "happier_automation_template_plain_v1",
+    payload: { prompt: "Run the scheduled automation." },
 });
 
 const TEST_STRICT_PLAIN_RECIPE = (() => {
@@ -94,6 +101,21 @@ const TEST_STRICT_PLAIN_EXECUTION_RECIPE = (() => {
     return serialized.serialized;
 })();
 
+function strictPlainExistingSessionRecipe(sessionId: string): string {
+    const serialized = serializeAutomationRunExecutionRecipeV1({
+        v: 1,
+        templateVersion: 1,
+        assignmentMachineIds: [],
+        template: { t: "plain", v: { v: 1, prompt: "Continue the existing session." } },
+        triggerEvidence: null,
+        target: { kind: "existingSession", sessionId },
+    });
+    if (serialized.kind !== "available") {
+        throw new Error("Failed to construct strict existing-Session Automation Run test recipe");
+    }
+    return serialized.serialized;
+}
+
 const INCONSISTENT_E2EE_CURRENTNESS = {
     mode: "e2ee" as const,
     version: 0,
@@ -150,6 +172,7 @@ async function createAccountMachineAutomation(params: {
     publicKey: string;
     machineId: string;
     automationName: string;
+    targetType?: "new_session" | "execution_run";
 }) {
     const account = await db.account.create({
         data: { publicKey: params.publicKey, encryptionMode: "plain" },
@@ -167,8 +190,10 @@ async function createAccountMachineAutomation(params: {
             accountId: account.id,
             name: params.automationName,
             enabled: true,
-            targetType: "new_session",
-            templateCiphertext: TEST_STRICT_PLAIN_RECIPE,
+            targetType: params.targetType ?? "new_session",
+            templateCiphertext: params.targetType === "execution_run"
+                ? TEST_STRICT_PLAIN_EXECUTION_RECIPE
+                : TEST_PLAIN_TEMPLATE_ENVELOPE,
             templateVersion: 1,
             triggers: {
                 create: {
@@ -195,20 +220,34 @@ async function createAccountMachineAutomation(params: {
     };
 }
 
+let scheduleCauseSequence = 0;
+
 function scheduleRunCause(triggerId: string) {
-    const occurredAt = new Date();
+    const occurredAt = new Date(Date.now() + scheduleCauseSequence++);
+    const parsedTriggerId = AutomationTriggerIdSchema.parse(triggerId);
     return {
-        triggerId,
+        triggerId: parsedTriggerId,
         causeKind: "trigger" as const,
         causeTriggerKind: "schedule" as const,
         causeTriggerRevision: 0,
         causeOccurredAt: occurredAt,
         causeScheduledFor: occurredAt,
-        occurrenceKey: `test-schedule:${randomUUID()}`,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({
+            triggerId: parsedTriggerId,
+            evidence: {
+                v: 1,
+                kind: "schedule",
+                scheduledFor: occurredAt.getTime(),
+            },
+        }),
     };
 }
 
-function conversationRunCause(occurrenceKey: string) {
+function conversationOccurrenceKey(seed: string): string {
+    return createHash("sha256").update(seed, "utf8").digest("base64url");
+}
+
+function conversationRunCause(occurrenceSeed: string) {
     return {
         triggerId: null,
         causeKind: "conversation" as const,
@@ -216,7 +255,7 @@ function conversationRunCause(occurrenceKey: string) {
         causeTriggerRevision: null,
         causeOccurredAt: new Date(Date.now() - 60_000),
         causeScheduledFor: null,
-        occurrenceKey,
+        occurrenceKey: conversationOccurrenceKey(occurrenceSeed),
         legacyManualIdempotencyKey: null,
     };
 }
@@ -527,6 +566,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: machine.id,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
             },
             select: { id: true },
         });
@@ -542,6 +582,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: machine.id,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
             },
             select: { id: true },
         });
@@ -554,6 +595,7 @@ describe("automationRunService (integration)", () => {
                 scheduledAt: new Date(Date.now() - 60_000),
                 dueAt: new Date(Date.now() - 30_000),
                 attempt: 0,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
             },
             select: { id: true },
         });
@@ -602,25 +644,37 @@ describe("automationRunService (integration)", () => {
     });
 
     async function seedConversationRunForResultValidation() {
+        const suffix = randomUUID();
+        const occurrenceSeed = `conversation-occurrence-result-validation-${suffix}`;
+        const handoffId = `handoff-conversation-result-validation-${suffix}`;
         const account = await db.account.create({
-            data: { id: "account-conversation-result-validation", publicKey: null, encryptionMode: "plain" },
+            data: { id: `account-conversation-result-validation-${suffix}`, publicKey: null, encryptionMode: "plain" },
             select: { id: true },
         });
         const machine = await db.machine.create({
             data: {
-                id: "machine-conversation-result-validation",
+                id: `machine-conversation-result-validation-${suffix}`,
                 accountId: account.id,
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                id: `session-conversation-result-validation-${suffix}`,
+                accountId: account.id,
+                tag: "conversation-result-validation",
                 metadata: "{}",
             },
             select: { id: true },
         });
         const automation = await db.automation.create({
             data: {
-                id: "automation-conversation-result-validation",
+                id: `automation-conversation-result-validation-${suffix}`,
                 accountId: account.id,
                 name: "Conversation result validation",
                 enabled: true,
-                targetType: "new_session",
+                targetType: "existing_session",
                 templateCiphertext: JSON.stringify({
                     kind: "happier_automation_template_plain_v1",
                     payload: { prompt: "reply" },
@@ -631,11 +685,12 @@ describe("automationRunService (integration)", () => {
         });
         const run = await db.automationRun.create({
             data: {
-                id: "run-conversation-result-validation",
+                id: `run-conversation-result-validation-${suffix}`,
                 automationId: automation.id,
                 accountId: account.id,
                 state: "running",
-                ...conversationRunCause("conversation-occurrence-result-validation"),
+                ...conversationRunCause(occurrenceSeed),
+                executionInputEnvelope: strictPlainExistingSessionRecipe(session.id),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: JSON.stringify({
                     t: "plain",
@@ -643,7 +698,7 @@ describe("automationRunService (integration)", () => {
                         v: 1,
                         correspondence: {
                             automationId: automation.id,
-                            occurrenceKey: "conversation-occurrence-result-validation",
+                            occurrenceKey: conversationOccurrenceKey(occurrenceSeed),
                         },
                         templateVersion: 1,
                         opaqueContext: { conversationId: "conversation-1" },
@@ -654,7 +709,7 @@ describe("automationRunService (integration)", () => {
                 replyHandoffTargetMachineId: machine.id,
                 replyHandoffTargetMachineInstallationId: "installation-1",
                 replyHandoffTargetMaterializationId: "materialization-1",
-                replyHandoffId: "handoff-conversation-result-validation",
+                replyHandoffId: handoffId,
                 replyHandoffState: "awaitingResult",
                 scheduledAt: new Date(Date.now() - 60_000),
                 dueAt: new Date(Date.now() - 30_000),
@@ -665,19 +720,24 @@ describe("automationRunService (integration)", () => {
             },
             select: { id: true },
         });
-        return { account, machine, automation, run };
+        return { account, machine, session, automation, run, handoffId };
     }
 
-    it("transitions claimed -> running -> succeeded and enqueues the next run", async () => {
+    it("transitions claimed -> running -> succeeded and advances the schedule cursor", async () => {
         const seeded = await createAccountMachineAutomation({
             publicKey: "pk-automation-run-succeed",
             machineId: "machine-1",
             automationName: "Succeed automation",
         });
+        const cause = scheduleRunCause(seeded.triggerId);
+        await db.automationTrigger.update({
+            where: { id: seeded.triggerId },
+            data: { nextRunAt: cause.causeScheduledFor },
+        });
         const run = await db.automationRun.create({
             data: {
                 automationId: seeded.automationId,
-                ...scheduleRunCause(seeded.triggerId),
+                ...cause,
                 accountId: seeded.accountId,
                 state: "claimed",
                 scheduledAt: new Date(Date.now() - 60_000),
@@ -686,6 +746,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: seeded.machineId,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
             },
             select: { id: true },
         });
@@ -702,6 +763,17 @@ describe("automationRunService (integration)", () => {
         if (!started) {
             throw new Error("Expected the claimed Automation Run to start");
         }
+        const producedSession = await db.session.create({
+            data: {
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
 
         const resultEnvelope = JSON.stringify({
             t: "plain",
@@ -722,6 +794,7 @@ describe("automationRunService (integration)", () => {
             machineId: seeded.machineId,
             attempt: 1,
             accountCurrentness: started.accountCurrentness,
+            producedSessionId: producedSession.id,
             resultEnvelope,
         });
         expect(succeeded).toEqual(
@@ -744,8 +817,7 @@ describe("automationRunService (integration)", () => {
                 dueAt: true,
             },
         });
-        expect(runs.map((entry) => entry.state)).toEqual(["succeeded", "queued"]);
-        expect(runs[1]?.dueAt.getTime()).toBeGreaterThan(Date.now());
+        expect(runs.map((entry) => entry.state)).toEqual(["succeeded"]);
         const events = await db.automationRunEvent.findMany({
             where: { runId: run.id },
             orderBy: [{ ts: "asc" }],
@@ -820,15 +892,6 @@ describe("automationRunService (integration)", () => {
                         claimedByMachineId: null,
                     }),
                 }),
-                expect.objectContaining({
-                    body: expect.objectContaining({
-                        t: "automation-run-state-changed",
-                        automationId: exhausted.automation.id,
-                        previousState: null,
-                        currentState: "queued",
-                        claimedByMachineId: null,
-                    }),
-                }),
             ]);
         } finally {
             eventRouter.removeConnection(exhausted.account.id, observer);
@@ -877,7 +940,6 @@ describe("automationRunService (integration)", () => {
             select: { state: true, dueAt: true },
         })).resolves.toEqual([
             expect.objectContaining({ state: "failed" }),
-            expect.objectContaining({ state: "queued", dueAt: expect.any(Date) }),
         ]);
         await expect(db.automation.findUniqueOrThrow({
             where: { id: exhausted.automation.id },
@@ -887,7 +949,7 @@ describe("automationRunService (integration)", () => {
             },
         })).resolves.toEqual({
             lastRunAt: null,
-            triggers: [{ nextRunAt: expect.any(Date) }],
+            triggers: [{ nextRunAt: null }],
         });
     });
 
@@ -1468,6 +1530,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: seeded.machineId,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
             },
             select: { id: true },
         });
@@ -1539,7 +1602,7 @@ describe("automationRunService (integration)", () => {
                     t: "automation-run-state-changed",
                     runId: seeded.run.id,
                     currentState: "outcome_uncertain",
-                    cause: "cancelledAfterDispatchPermitted",
+                    transitionCause: "cancelledAfterDispatchPermitted",
                 }),
             );
         } finally {
@@ -1589,12 +1652,21 @@ describe("automationRunService (integration)", () => {
             data: { id: "machine-conversation-reply", accountId: account.id, metadata: "{}" },
             select: { id: true },
         });
+        const session = await db.session.create({
+            data: {
+                id: "session-conversation-reply-ready",
+                accountId: account.id,
+                tag: "conversation-reply-ready",
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Conversation reply",
                 enabled: true,
-                targetType: "new_session",
+                targetType: "existing_session",
                 templateCiphertext: JSON.stringify({
                     kind: "happier_automation_template_plain_v1",
                     payload: { prompt: "reply" },
@@ -1610,6 +1682,7 @@ describe("automationRunService (integration)", () => {
                 accountId: account.id,
                 state: "running",
                 ...conversationRunCause("conversation-occurrence-ready"),
+                executionInputEnvelope: strictPlainExistingSessionRecipe(session.id),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: JSON.stringify({
                     t: "plain",
@@ -1617,7 +1690,7 @@ describe("automationRunService (integration)", () => {
                         v: 1,
                         correspondence: {
                             automationId: automation.id,
-                            occurrenceKey: "conversation-occurrence-ready",
+                            occurrenceKey: conversationOccurrenceKey("conversation-occurrence-ready"),
                         },
                         templateVersion: 1,
                         opaqueContext: { conversationId: "conversation-1" },
@@ -1659,6 +1732,7 @@ describe("automationRunService (integration)", () => {
             machineId: machine.id,
             attempt: 1,
             accountCurrentness: await readAutomationAccountCurrentness(account.id),
+            producedSessionId: session.id,
             resultEnvelope,
         });
 
@@ -1690,13 +1764,22 @@ describe("automationRunService (integration)", () => {
             },
             select: { id: true },
         });
+        const session = await db.session.create({
+            data: {
+                id: "session-conversation-no-result-delivery",
+                accountId: account.id,
+                tag: "conversation-no-result-delivery",
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
         const automation = await db.automation.create({
             data: {
                 id: "automation-conversation-no-result-delivery",
                 accountId: account.id,
                 name: "Conversation without result delivery",
                 enabled: true,
-                targetType: "new_session",
+                targetType: "existing_session",
                 templateCiphertext: JSON.stringify({
                     kind: "happier_automation_template_plain_v1",
                     payload: { prompt: "reply without delivery" },
@@ -1712,6 +1795,7 @@ describe("automationRunService (integration)", () => {
                 accountId: account.id,
                 state: "running",
                 ...conversationRunCause(occurrenceKey),
+                executionInputEnvelope: strictPlainExistingSessionRecipe(session.id),
                 triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: {} }),
                 replyContextEnvelope: null,
                 replyHandoffActionPluginId: null,
@@ -1754,6 +1838,7 @@ describe("automationRunService (integration)", () => {
                 machineId: machine.id,
                 attempt: 1,
                 accountCurrentness: currentness,
+                producedSessionId: session.id,
                 resultEnvelope: JSON.stringify({
                     t: "plain",
                     v: {
@@ -1784,6 +1869,7 @@ describe("automationRunService (integration)", () => {
             machineId: machine.id,
             attempt: 1,
             accountCurrentness: currentness,
+            producedSessionId: session.id,
             resultEnvelope: null,
         });
 
@@ -1856,7 +1942,7 @@ describe("automationRunService (integration)", () => {
                                 accountId: seeded.account.id,
                                 automationId: seeded.automation.id,
                                 runId: "other-run",
-                                handoffId: "handoff-conversation-result-validation",
+                                handoffId: seeded.handoffId,
                             },
                             result: { v: 1, kind: "text", text: "Wrong correspondence" },
                         },
@@ -1868,6 +1954,7 @@ describe("automationRunService (integration)", () => {
                 machineId: seeded.machine.id,
                 attempt: 1,
                 accountCurrentness: await readAutomationAccountCurrentness(seeded.account.id),
+                producedSessionId: seeded.session.id,
                 ...(resultEnvelope === undefined ? {} : { resultEnvelope }),
             })).resolves.toBeNull();
             await expect(db.automationRun.findUniqueOrThrow({
@@ -1948,6 +2035,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: seeded.machineId,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
             },
             select: { id: true },
         });
@@ -2017,6 +2105,7 @@ describe("automationRunService (integration)", () => {
             publicKey: "pk-automation-run-unknown-produced-session",
             machineId: "machine-3",
             automationName: "Unknown produced session",
+            targetType: "execution_run",
         });
         const run = await db.automationRun.create({
             data: {
@@ -2030,6 +2119,7 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: seeded.machineId,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_EXECUTION_RECIPE,
             },
             select: { id: true },
         });
@@ -2123,6 +2213,478 @@ describe("automationRunService (integration)", () => {
             state: "succeeded",
             producedSessionId: canonicalSession.id,
         });
+    });
+
+    it("settles a strict new-Session success after the canonical Session creation itself advanced the Account sequence", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-succeed-post-effect-seq",
+            machineId: "machine-succeed-post-effect-seq",
+            automationName: "Post-effect sequence success",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-succeed-post-effect-seq",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "running",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                startedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        // S: the exact witness the worker holds from its start response.
+        const startWitness = await readAutomationAccountCurrentness(seeded.accountId);
+
+        // The canonical Session creation this success reports is itself an
+        // Account-scoped write: it advances Account.seq after S without
+        // changing the encryption identity the effect was authorized under.
+        const canonicalSession = await db.session.create({
+            data: {
+                id: "session-succeed-post-effect-seq",
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "session",
+                entityId: canonicalSession.id,
+            });
+        });
+        const movedWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        expect(movedWitness.version).toBeGreaterThan(startWitness.version);
+        expect(movedWitness.mode).toBe(startWitness.mode);
+        expect(movedWitness.contentKeyFingerprint).toBe(startWitness.contentKeyFingerprint);
+
+        const succeeded = await succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            producedSessionId: canonicalSession.id,
+        });
+        expect(succeeded).toEqual(expect.objectContaining({
+            id: run.id,
+            state: "succeeded",
+            producedSessionId: canonicalSession.id,
+        }));
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, producedSessionId: true, finishedAt: true },
+        })).resolves.toEqual({
+            state: "succeeded",
+            producedSessionId: canonicalSession.id,
+            finishedAt: expect.any(Date),
+        });
+    });
+
+    it("retains the produced Session through a failed settlement whose echo of S is stale only by sequence movement", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-fail-post-effect-seq",
+            machineId: "machine-fail-post-effect-seq",
+            automationName: "Post-effect sequence failure",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-fail-post-effect-seq",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "running",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                startedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        const canonicalSession = await db.session.create({
+            data: {
+                id: "session-fail-post-effect-seq",
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "session",
+                entityId: canonicalSession.id,
+            });
+        });
+
+        const failed = await failAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            producedSessionId: canonicalSession.id,
+            errorCode: "prompt_delivery_failed",
+        });
+        expect(failed).toEqual(expect.objectContaining({
+            state: "failed",
+            producedSessionId: canonicalSession.id,
+            errorCode: "prompt_delivery_failed",
+        }));
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, producedSessionId: true },
+        })).resolves.toEqual({
+            state: "failed",
+            producedSessionId: canonicalSession.id,
+        });
+    });
+
+    it("still refuses a terminal settlement whose witness names a different Account encryption identity", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-terminal-mode-transition",
+            machineId: "machine-terminal-mode-transition",
+            automationName: "Terminal mode transition",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-terminal-mode-transition",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "running",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                startedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        const canonicalSession = await db.session.create({
+            data: {
+                id: "session-terminal-mode-transition",
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "session",
+                entityId: canonicalSession.id,
+            });
+        });
+
+        // Relaxing the post-effect settlement to content identity is not the
+        // same as dropping it. A witness naming a different encryption mode
+        // and content key may not terminalize the Run or persist its produced
+        // Session, so the transition still fences the settlement write.
+        const transitionedWitness = {
+            ...startWitness,
+            mode: "e2ee" as const,
+            contentKeyFingerprint: "different-current-key",
+        };
+        await expect(succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: transitionedWitness,
+            producedSessionId: canonicalSession.id,
+        })).resolves.toBeNull();
+        await expect(failAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: transitionedWitness,
+            producedSessionId: canonicalSession.id,
+            errorCode: "prompt_delivery_failed",
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, producedSessionId: true },
+        })).resolves.toEqual({ state: "running", producedSessionId: null });
+    });
+
+    it("keeps the exact claim witness for a pre-start claimed-Run failure after an unrelated Account write", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-claimed-fail-exact",
+            machineId: "machine-claimed-fail-exact",
+            automationName: "Claimed failure exact witness",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-claimed-fail-exact",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "claimed",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                claimedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        const claimWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "kv",
+                entityId: "unrelated-key",
+            });
+        });
+
+        // A claimed Run has had no target effect. Its pre-start failure is a
+        // pre-effect decision and keeps the exact claim witness; the untouched
+        // Run stays under current lease-recovery authority.
+        await expect(failAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: claimWitness,
+            errorCode: "invalid_template",
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true },
+        })).resolves.toEqual({ state: "claimed" });
+    });
+
+    it("keeps the exact claim witness for a pre-start claimed-Run success after an unrelated Account write", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-claimed-succeed-exact",
+            machineId: "machine-claimed-succeed-exact",
+            automationName: "Claimed success exact witness",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-claimed-succeed-exact",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "claimed",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                claimedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        // A canonical Session and its id are supplied so the strict new-Session
+        // correspondence guard cannot mask the currentness decision under
+        // test: this case isolates the witness rule alone.
+        const canonicalSession = await db.session.create({
+            data: {
+                id: "session-claimed-succeed-exact",
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const claimWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "kv",
+                entityId: "unrelated-key",
+            });
+        });
+
+        // A success claim over a claimed Run is a pre-start assertion with no
+        // authorized effect: it keeps the exact claim witness, so an unrelated
+        // Account write that moved only the sequence still refuses it and the
+        // untouched Run stays claimed under current authority.
+        await expect(succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: claimWitness,
+            producedSessionId: canonicalSession.id,
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, producedSessionId: true },
+        })).resolves.toEqual({ state: "claimed", producedSessionId: null });
+    });
+
+    it("still refuses terminal settlement from stale claim authority after the Account sequence moved", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-terminal-stale-authority",
+            machineId: "machine-terminal-stale-authority",
+            automationName: "Terminal stale authority",
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-terminal-stale-authority",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "running",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                startedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: TEST_STRICT_PLAIN_RECIPE,
+            },
+            select: { id: true },
+        });
+        const canonicalSession = await db.session.create({
+            data: {
+                id: "session-terminal-stale-authority",
+                accountId: seeded.accountId,
+                tag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: `automation:${seeded.automationId}`,
+                    creationKey: `automation-run:${run.id}`,
+                }),
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "session",
+                entityId: canonicalSession.id,
+            });
+        });
+
+        // Content-identity tolerance never restores expired claim authority:
+        // the exact machine/attempt/revision/lease Run CAS still owns whose
+        // settlement report is accepted.
+        await expect(succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 2,
+            accountCurrentness: startWitness,
+            producedSessionId: canonicalSession.id,
+        })).resolves.toBeNull();
+        await expect(failAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: "machine-other-terminal-stale-authority",
+            attempt: 1,
+            accountCurrentness: startWitness,
+            producedSessionId: canonicalSession.id,
+            errorCode: "prompt_delivery_failed",
+        })).resolves.toBeNull();
+        await db.automationRun.update({
+            where: { id: run.id },
+            data: { leaseExpiresAt: new Date(Date.now() - 1_000) },
+        });
+        await expect(succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            producedSessionId: canonicalSession.id,
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: run.id },
+            select: { state: true, producedSessionId: true, claimedByMachineId: true },
+        })).resolves.toEqual({
+            state: "running",
+            producedSessionId: null,
+            claimedByMachineId: seeded.machineId,
+        });
+    });
+
+    it("settles an existing-Session success after an unrelated Account write advanced the sequence", async () => {
+        const seeded = await createAccountMachineAutomation({
+            publicKey: "pk-automation-run-existing-post-effect-seq",
+            machineId: "machine-existing-post-effect-seq",
+            automationName: "Existing post-effect sequence",
+        });
+        const session = await db.session.create({
+            data: {
+                id: "session-existing-post-effect-seq",
+                accountId: seeded.accountId,
+                tag: "existing-post-effect-seq",
+                metadata: "{}",
+            },
+            select: { id: true },
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: "run-existing-post-effect-seq",
+                automationId: seeded.automationId,
+                ...scheduleRunCause(seeded.triggerId),
+                accountId: seeded.accountId,
+                state: "running",
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                startedAt: new Date(Date.now() - 20_000),
+                claimedByMachineId: seeded.machineId,
+                leaseExpiresAt: new Date(Date.now() + 30_000),
+                attempt: 1,
+                executionInputEnvelope: strictPlainExistingSessionRecipe(session.id),
+            },
+            select: { id: true },
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.accountId);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.accountId,
+                kind: "kv",
+                entityId: "unrelated-key",
+            });
+        });
+
+        const succeeded = await succeedAutomationRun({
+            accountId: seeded.accountId,
+            runId: run.id,
+            machineId: seeded.machineId,
+            attempt: 1,
+            accountCurrentness: startWitness,
+        });
+        expect(succeeded).toEqual(expect.objectContaining({
+            state: "succeeded",
+        }));
     });
 
     it("retains only the canonical strict new-Session identity through failed input and cancellation settlement without a duplicate lifecycle transition", async () => {

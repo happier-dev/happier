@@ -32,6 +32,11 @@ export async function admitCompletedParentTurnAutomationRunsTx(params: Readonly<
             sessionLifecycleEvent: "parentTurnCompleted",
             sourceSessionId: params.sourceSessionId,
             sourceTurnId: params.sourceTurnId,
+            // Matching membership is the enabled, non-deleted Automation and
+            // trigger set visible at this transaction's serialization point.
+            enabled: true,
+            deletedAt: null,
+            automation: { enabled: true, deletedAt: null },
         },
         orderBy: { id: "asc" },
         select: { id: true, automationId: true, revision: true },

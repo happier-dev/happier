@@ -91,6 +91,7 @@ const automationAccountSettingsMigrationId = "20260825130000_add_automation_acco
 const supersededAutomationMigrationIds = [
     "20260816233000_backfill_automation_execution_dispatch_state",
     "20260825130000_add_automation_account_settings_and_run_compaction",
+    "20260829000000_add_automation_claim_currentness_witness",
 ] as const;
 
 async function exists(path: string): Promise<boolean> {

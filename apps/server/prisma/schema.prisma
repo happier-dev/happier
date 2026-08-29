@@ -1381,6 +1381,8 @@ model AutomationWorkerClaimReceipt {
     machineInstallationId String
     runId                 String?
     claimedAttempt        Int?
+    accountCurrentnessWitnessJson String?
+    claimResultJson       String
     expiresAt             DateTime
     createdAt             DateTime @default(now())
 

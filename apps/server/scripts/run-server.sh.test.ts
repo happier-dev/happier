@@ -15,7 +15,7 @@ async function writeFakeYarn(params: Readonly<{ dir: string; logPath: string }>)
 set -e
 echo "YARN $@" >> "${params.logPath}"
 echo "ENV DATABASE_URL=$DATABASE_URL" >> "${params.logPath}"
-if echo "$*" | grep -Eq "migrate:full:deploy|migrate:sqlite:deploy|migrate:mysql:deploy"; then
+if echo "$*" | grep -Eq "migrate:deploy"; then
   state_path="${statePath}"
   count=0
   if [ -f "$state_path" ]; then
@@ -124,7 +124,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:full:deploy');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 
@@ -146,7 +146,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines.filter((l) => l.includes('migrate:full:deploy'))).toHaveLength(2);
+    expect(yarnLines.filter((l) => l.includes('migrate:deploy'))).toHaveLength(2);
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start');
   });
 
@@ -166,7 +166,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:mysql:deploy');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
   });
 
   it('runs the canonical sqlite deploy owner and derives DATABASE_URL from HAPPIER_SERVER_LIGHT_DATA_DIR when missing', async () => {
@@ -189,7 +189,7 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:sqlite:deploy');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:deploy');
     expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=4');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start:light');
   });

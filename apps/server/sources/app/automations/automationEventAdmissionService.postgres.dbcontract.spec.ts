@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import {
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
     buildAutomationPluginEventOccurrenceEvidenceV1,
     deriveAutomationOccurrenceKeyV1,
     normalizePluginReleaseFactsV1,
@@ -128,7 +129,7 @@ function triggerDefinitionEnvelope(params: Readonly<{
         binding: {
             v: 1,
             automationId: params.automationId,
-            triggerId: params.triggerId,
+            triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
             triggerRevision: params.triggerRevision,
             triggerKind: "pluginEvent",
             eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
@@ -325,6 +326,7 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")(
                 machineId,
                 machineInstallationId,
                 materializationId,
+                immutableGenerationId: `generation-${suffix}`,
             };
             const admit = async (params: Readonly<{
                 input: ReturnType<typeof eventInput>;

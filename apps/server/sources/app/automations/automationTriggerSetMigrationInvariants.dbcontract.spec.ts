@@ -482,6 +482,21 @@ describe(
                     },
                     select: { id: true },
                 });
+                await db.automationRun.create({
+                    data: {
+                        id: `trigger-invariants-conversation-no-handoff-${fixture.suffix}`,
+                        automationId: fixture.automationId,
+                        accountId: fixture.accountId,
+                        causeKind: "conversation",
+                        causeOccurredAt: now,
+                        occurrenceKey: "N".repeat(43),
+                        triggerEvidenceEnvelope: '{"t":"plain","v":{}}',
+                        executionInputEnvelope: '{"t":"plain","v":{}}',
+                        scheduledAt: now,
+                        dueAt: now,
+                    },
+                    select: { id: true },
+                });
                 await expect(db.automationRun.create({
                     data: {
                         id: `trigger-invariants-conversation-manual-key-${fixture.suffix}`,
@@ -545,11 +560,15 @@ describe(
                     triggerId: otherAutomationTriggerId,
                     evidence: occurrenceEvidence,
                 });
-                expect(new Set([
+                // Fan-out proof: three distinct triggers derive three distinct
+                // occurrence keys. Set cardinality is asserted directly; the
+                // Vitest matcher set has no `toHaveSize`.
+                const distinctOccurrenceKeys = new Set([
                     firstOccurrenceKey,
                     secondOccurrenceKey,
                     otherAutomationOccurrenceKey,
-                ])).toHaveSize(3);
+                ]);
+                expect(distinctOccurrenceKeys.size).toBe(3);
                 await db.automationRun.create({
                     data: scheduleTriggerRunInput({
                         id: `trigger-invariants-occ-first-${fixture.suffix}`,

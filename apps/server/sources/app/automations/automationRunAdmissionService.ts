@@ -16,9 +16,11 @@ import { afterTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 import { automationRunItemSelect } from "./automationPersistenceSelect";
+import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
 import {
     decodeAutomationRunCause,
     encodeAutomationRunCause,
+    retainedV2OriginKindForRun,
 } from "./automationRunCauseCodec";
 import {
     AUTOMATION_RUN_TERMINAL_STATES,
@@ -33,6 +35,7 @@ import {
 export type AutomationRunAdmissionIneligibleReason =
     | "automationNotFound"
     | "automationDisabled"
+    | "noEnabledAssignment"
     | "triggerNotFound"
     | "triggerDisabled"
     | "triggerRevisionMismatch"
@@ -212,6 +215,17 @@ function prepareAutomationRunAdmission(params: Readonly<{
     const automation = params.automationsById.get(params.request.automationId);
     if (!automation) return { kind: "ineligible", reason: "automationNotFound" };
     if (!automation.enabled) return { kind: "ineligible", reason: "automationDisabled" };
+    // Defense in depth for the assignment-liveness invariant: the select only
+    // loads enabled assignments, so an empty list means every execution
+    // assignment is disabled or absent. The cause is irrelevant — an empty
+    // frozen assignment snapshot is permanently unclaimable for schedule,
+    // pluginEvent, exact-turn, manual, and Conversation alike. Rejoin above
+    // keeps already-admitted Runs on their immutable snapshots. Definition
+    // writers enforce the same invariant transactionally; this only catches
+    // corrupted or raced legacy state without creating an unclaimable Run.
+    if (automation.assignments.length === 0) {
+        return { kind: "ineligible", reason: "noEnabledAssignment" };
+    }
     if (cause.kind === "trigger") {
         const trigger = params.triggersById.get(cause.triggerId);
         if (!trigger || trigger.automationId !== params.request.automationId) {
@@ -292,13 +306,13 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         ? new Date(cause.evidence.scheduledFor)
         : request.now;
     const causeFields = encodeAutomationRunCause(cause);
-    const runId = request.replyHandoff ? randomUUID() : undefined;
+    const runId = request.replyHandoff ? randomUUID() : null;
     const initialExecutionDispatchState = initialAutomationExecutionDispatchStateForRun(
         executionInputEnvelope,
     );
     const run = await params.tx.automationRun.create({
         data: {
-            ...(runId ? { id: runId } : {}),
+            ...(runId !== null ? { id: runId } : {}),
             automationId: request.automationId,
             accountId: params.accountId,
             state: "queued",
@@ -321,7 +335,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
             },
             scheduledAt: request.now,
             dueAt,
-            ...(request.replyHandoff
+            ...(request.replyHandoff && runId !== null
                 ? {
                     replyContextEnvelope: request.replyHandoff.contextEnvelope,
                     replyHandoffActionPluginId: request.replyHandoff.actionPluginId,
@@ -329,7 +343,7 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
                     replyHandoffTargetMachineId: request.replyHandoff.targetMachineId,
                     replyHandoffTargetMachineInstallationId: request.replyHandoff.targetMachineInstallationId,
                     replyHandoffTargetMaterializationId: request.replyHandoff.targetMaterializationId,
-                    replyHandoffId: replyHandoffIdForRun(runId!),
+                    replyHandoffId: replyHandoffIdForRun(runId),
                     replyHandoffState: "awaitingResult" as const,
                 }
                 : {}),
@@ -380,38 +394,56 @@ export async function admitAutomationRunsTx(params: Readonly<{
         request,
         cause: AutomationRunCauseSchema.parse(request.cause),
     }));
-    const occurrenceDiscriminators = parsedAdmissions.flatMap(({ request, cause }) => {
+    const occurrenceDiscriminators = [...new Map(parsedAdmissions.flatMap(({ request, cause }) => {
         const discriminator = occurrenceDiscriminator({
             automationId: request.automationId,
             cause,
             manualIdempotencyKey: request.manualIdempotencyKey,
         });
-        return discriminator === null ? [] : [discriminator];
-    });
+        return discriminator === null ? [] : [[JSON.stringify(discriminator), discriminator] as const];
+    })).values()];
+    // Membership probes fan out with the triggering batch; SQLite's portable
+    // bind ceiling is a provider transport fact, never a cap on admitted work.
     const existingRuns = occurrenceDiscriminators.length === 0
         ? []
-        : await params.tx.automationRun.findMany({
-            where: { accountId: params.accountId, OR: occurrenceDiscriminators },
+        : (await Promise.all(automationPortableQueryChunks({
+            values: occurrenceDiscriminators,
+            // Trigger occurrences bind two columns, while Conversation and
+            // released manual idempotency bind three. Account ownership adds
+            // one fixed predicate. Use the worst canonical arm so a mixed
+            // batch cannot cross SQLite's provider bind boundary.
+            bindingsPerValue: 3,
+            fixedBindings: 1,
+        }).map((chunk) => params.tx.automationRun.findMany({
+            where: { accountId: params.accountId, OR: [...chunk] },
             select: automationRunItemSelect,
-        });
+        })))).flat();
     const automationIds = [...new Set(parsedAdmissions.map(({ request }) => request.automationId))];
     const triggerIds = [...new Set(parsedAdmissions.flatMap(({ cause }) => (
         cause.kind === "trigger" ? [cause.triggerId] : []
     )))];
-    const automations = await params.tx.automation.findMany({
+    const automations = (await Promise.all(automationPortableQueryChunks({
+        values: automationIds,
+        bindingsPerValue: 1,
+        fixedBindings: 1,
+    }).map((chunk) => params.tx.automation.findMany({
         where: {
-            id: { in: automationIds },
+            id: { in: [...chunk] },
             accountId: params.accountId,
             deletedAt: null,
         },
         select: automationAdmissionDefinitionSelect,
-    });
+    })))).flat();
     const triggers = triggerIds.length === 0
         ? []
-        : await params.tx.automationTrigger.findMany({
-            where: { id: { in: triggerIds }, deletedAt: null },
+        : (await Promise.all(automationPortableQueryChunks({
+            values: triggerIds,
+            bindingsPerValue: 1,
+            fixedBindings: 1,
+        }).map((chunk) => params.tx.automationTrigger.findMany({
+            where: { id: { in: [...chunk] }, deletedAt: null },
             select: automationAdmissionTriggerSelect,
-        });
+        })))).flat();
     const automationsById = new Map(automations.map((automation) => [automation.id, automation]));
     const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));
     const prepared = parsedAdmissions.map(({ request, cause }) => prepareAutomationRunAdmission({

@@ -58,7 +58,13 @@ export function createAutomationReplyHandoffDaemonDispatcher(params: Readonly<{
     const forwardRpc = params.forwardRpc ?? forwardRpcCall;
     return async (raw: unknown): Promise<AutomationReplyHandoffDispatchResultV1> => {
         const request = AutomationReplyHandoffDispatchRequestV1Schema.safeParse(raw);
-        if (!request.success) return unavailable("contractInvalid");
+        // The frozen claim bytes failing their transport schema is a stable
+        // pre-effect contract invalidity: dispatch never started, so retrying
+        // identical bytes can never succeed. `invalidRequest` reaches the
+        // durable `blocked` custody with its present-user remediation. Only a
+        // malformed response after dispatch is `contractInvalid` — the daemon
+        // may have committed custody before returning it.
+        if (!request.success) return unavailable("invalidRequest");
 
         let forwarded: RpcForwardResult;
         try {

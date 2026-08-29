@@ -358,6 +358,132 @@ describe("public plugin webhook ingress route", () => {
         expect(distributedAcquire.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ key: expect.stringMatching(/^route:/u) })]);
     });
 
+    it("applies route pressure per route so one exhausted route never consumes an unrelated route's budget", async () => {
+        // A stateful stand-in for the Redis admission owner: each scope key has
+        // its own rate window of one request. A process-wide route budget — a
+        // plausible wrong implementation — would refuse the second, unrelated
+        // route exactly like the exhausted one.
+        const acquisitionsByKey = new Map<string, number>();
+        const distributedAdmission = {
+            acquire: async (scopes: readonly PluginWebhookDistributedScopeV1[]) => {
+                for (const scope of scopes) {
+                    if ((acquisitionsByKey.get(scope.key) ?? 0) >= 1) {
+                        return { ok: false as const, code: "rate" as const, retryAfterMs: 60_000 };
+                    }
+                }
+                for (const scope of scopes) acquisitionsByKey.set(scope.key, (acquisitionsByKey.get(scope.key) ?? 0) + 1);
+                return { ok: true as const, release: vi.fn(async () => {}) };
+            },
+        };
+        const app = await createApp({
+            env: {
+                ...ENABLED_ENV,
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_RATE_PER_MINUTE: "1",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ROUTE_CONCURRENCY: "1",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_RATE_PER_MINUTE: "100",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENDPOINT_CONCURRENCY: "10",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_RATE_PER_MINUTE: "100",
+                HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_CONCURRENCY: "10",
+            },
+            ingest: vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-route-pressure", duplicate: false })),
+            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 4, maxWorkingBytes: chargePluginWebhookWorkingBytesV1(4_096) }),
+            prepareRoute: vi.fn(async (opaqueRouteId: string) => ({
+                route: {
+                    routeId: `route-${opaqueRouteId}`,
+                    verifierKind: "github_hmac_sha256_v1" as const,
+                    routingKind: "providerInstallation" as const,
+                    policyVersion: 1 as const,
+                },
+            })),
+            distributedAdmission,
+        });
+        const post = (opaqueRouteId: string) => app.inject({
+            method: "POST" as const,
+            url: `/v1/plugins/webhooks/${opaqueRouteId}`,
+            headers: { "content-type": "application/octet-stream" },
+            payload: Buffer.from("{}"),
+        });
+
+        await expect(post("opaque-route-pressure-one")).resolves.toMatchObject({ statusCode: 202 });
+        await expect(post("opaque-route-pressure-one")).resolves.toMatchObject({ statusCode: 429 });
+        await expect(post("opaque-route-pressure-two")).resolves.toMatchObject({ statusCode: 202 });
+    });
+
+    it("maps authenticated tenant-admission refusal to its typed public response and releases the route reservation", async () => {
+        // The route pre-authorizes only the shared route scope; the tenant
+        // scopes are acquired at the verified routing point. When that
+        // acquisition refuses, the public answer must keep the rate/concurrency
+        // distinction and its Retry-After — a bare 503 would collapse the two
+        // failure modes the policy owner distinguishes.
+        const build = async (code: "rate" | "concurrency", retryAfterMs: number) => {
+            const endpoint = {
+                endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                revision: 1,
+                accountId: "account-tenant-refusal",
+                pluginId: "acme.github",
+                webhookContributionId: "github-events",
+                handlerActionId: "handle-webhook",
+                sourceInstanceId: "source-tenant-refusal",
+                routingKind: "accountEndpoint" as const,
+                providerInstallationId: null,
+                targetMaterialization: { machineId: "machine-1", materializationId: "materialization-1", pluginId: "acme.github" },
+                targetMachineInstallationId: "installation-1",
+                targetPluginVersion: "1.0.0",
+            };
+            const localRelease = vi.fn();
+            const distributedRelease = vi.fn(async () => {});
+            const app = await createApp({
+                env: ENABLED_ENV,
+                // Stands in for the verified ingest owner: on reservation refusal
+                // it reports the same typed unavailable rejection the real owner
+                // returns, and the route owns the public refusal mapping.
+                ingest: vi.fn(async (params: { reserveResolvedEndpoint?: (value: typeof endpoint) => Promise<unknown> }) => {
+                    const lease = await params.reserveResolvedEndpoint?.(endpoint);
+                    return lease
+                        ? { kind: "accepted" as const, deliveryId: "delivery-tenant-refusal", duplicate: false }
+                        : { kind: "rejected" as const, statusCode: 503 as const, code: "unavailable" as const };
+                }),
+                processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
+                prepareRoute: vi.fn(async () => ({
+                    route: {
+                        routeId: `route-tenant-refusal-${code}`,
+                        verifierKind: "github_hmac_sha256_v1" as const,
+                        routingKind: "accountEndpoint" as const,
+                        policyVersion: 1 as const,
+                    },
+                })),
+                distributedAdmission: {
+                    acquire: vi.fn(async (scopes: readonly PluginWebhookDistributedScopeV1[]) => (
+                        scopes.length === 2
+                            ? { ok: false as const, code, retryAfterMs }
+                            : { ok: true as const, release: distributedRelease }
+                    )),
+                },
+            });
+            return { app, localRelease, distributedRelease };
+        };
+
+        const rate = await build("rate", 2_500);
+        await expect(rate.app.inject({
+            method: "POST",
+            url: "/v1/plugins/webhooks/opaque-tenant-refusal-rate",
+            headers: { "content-type": "application/octet-stream" },
+            payload: Buffer.from("{}"),
+        })).resolves.toMatchObject({ statusCode: 429, headers: { "retry-after": "3" } });
+        expect(rate.distributedRelease).toHaveBeenCalledTimes(1);
+        expect(rate.localRelease).toHaveBeenCalledTimes(1);
+
+        const concurrency = await build("concurrency", 8_000);
+        await expect(concurrency.app.inject({
+            method: "POST",
+            url: "/v1/plugins/webhooks/opaque-tenant-refusal-concurrency",
+            headers: { "content-type": "application/octet-stream" },
+            payload: Buffer.from("{}"),
+        })).resolves.toMatchObject({ statusCode: 503, headers: { "retry-after": "8" } });
+        expect(concurrency.distributedRelease).toHaveBeenCalledTimes(1);
+        expect(concurrency.localRelease).toHaveBeenCalledTimes(1);
+    });
+
     it("applies aggregate process pressure across routes and keeps admission until abandoned ingestion settles", async () => {
         vi.useFakeTimers();
         const localRelease = vi.fn();

@@ -262,7 +262,7 @@ ALTER TABLE `AutomationRun`
             AND `replyHandoffTargetMachineId` IS NOT NULL AND `replyHandoffTargetMachineInstallationId` IS NOT NULL
             AND `replyHandoffTargetMaterializationId` IS NOT NULL AND `replyHandoffId` IS NOT NULL
             AND `replyHandoffState` <> 'none')
-        OR (`causeKind` IN ('trigger', 'manual')
+        OR (`causeKind` IN ('trigger', 'manual', 'conversation')
             AND `replyContextEnvelope` IS NULL
             AND `replyHandoffActionPluginId` IS NULL AND `replyHandoffActionLocalId` IS NULL
             AND `replyHandoffTargetMachineId` IS NULL AND `replyHandoffTargetMachineInstallationId` IS NULL
@@ -344,6 +344,8 @@ CREATE TABLE `AutomationWorkerClaimReceipt` (
     `machineInstallationId` VARCHAR(191) NOT NULL,
     `runId` VARCHAR(191) NULL,
     `claimedAttempt` INTEGER NULL,
+    `accountCurrentnessWitnessJson` LONGTEXT NULL,
+    `claimResultJson` LONGTEXT NOT NULL,
     `expiresAt` DATETIME(3) NOT NULL,
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
@@ -352,8 +354,9 @@ CREATE TABLE `AutomationWorkerClaimReceipt` (
     CONSTRAINT `AutomationWorkerClaimReceipt_accountId_fkey`
         FOREIGN KEY (`accountId`) REFERENCES `Account`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT `AutomationWorkerClaimReceipt_outcome_check` CHECK (
-        (`runId` IS NULL AND `claimedAttempt` IS NULL)
-        OR (`runId` IS NOT NULL AND `claimedAttempt` IS NOT NULL AND `claimedAttempt` > 0)
+        (`runId` IS NULL AND `claimedAttempt` IS NULL AND `accountCurrentnessWitnessJson` IS NULL)
+        OR (`runId` IS NOT NULL AND `claimedAttempt` IS NOT NULL AND `claimedAttempt` > 0
+            AND `accountCurrentnessWitnessJson` IS NOT NULL)
     )
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

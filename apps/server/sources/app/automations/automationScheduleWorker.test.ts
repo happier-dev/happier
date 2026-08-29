@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     findMany: vi.fn(),
+    findOpenRuns: vi.fn(),
     findFirst: vi.fn(),
     inTx: vi.fn(),
     fence: vi.fn(),
@@ -13,7 +14,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/storage/db", () => ({
-    db: { automationTrigger: { findMany: mocks.findMany, findFirst: mocks.findFirst } },
+    db: {
+        automationTrigger: { findMany: mocks.findMany, findFirst: mocks.findFirst },
+        automationRun: { findMany: mocks.findOpenRuns },
+    },
 }));
 vi.mock("@/storage/inTx", () => ({ inTx: mocks.inTx }));
 vi.mock("@/app/encryption/accountEncryptionTransition", () => ({
@@ -53,6 +57,7 @@ describe("Automation schedule worker", () => {
         vi.clearAllMocks();
         mocks.wakeListener = null;
         mocks.findMany.mockResolvedValue([]);
+        mocks.findOpenRuns.mockResolvedValue([]);
         mocks.findFirst.mockResolvedValue(null);
         mocks.inTx.mockImplementation(async (operation: (tx: object) => Promise<unknown>) => await operation({}));
         mocks.fence.mockResolvedValue({ status: "ready" });
@@ -121,30 +126,96 @@ describe("Automation schedule worker", () => {
         expect(mocks.admit).toHaveBeenCalledWith(expect.objectContaining({ triggerId: "eligible" }));
     });
 
-    it("keyset-pages a saturated due scan", async () => {
+    it("admits one saturated page per pass and yields the rest to the next pass", async () => {
         const firstPage = Array.from({ length: 128 }, (_, index) => ({
             ...dueCandidate(`schedule-${String(index).padStart(3, "0")}`, "account"),
             nextRunAt: new Date(`2026-08-27T12:00:${String(Math.floor(index / 100)).padStart(2, "0")}.${String(index % 100).padStart(3, "0")}Z`),
         }));
+        const secondPage = [dueCandidate("schedule-next", "account")];
         mocks.findMany
             .mockResolvedValueOnce(firstPage)
-            .mockResolvedValueOnce([dueCandidate("schedule-next", "account")]);
+            .mockResolvedValueOnce(secondPage);
+
+        const firstPass = await runAutomationScheduleWorkerPass({
+            now: new Date("2026-08-27T12:01:00.000Z"),
+        });
+        expect(firstPass).toMatchObject({ progressed: true });
+        expect(mocks.findMany).toHaveBeenCalledTimes(1);
+        expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            take: 128,
+        }));
+        expect(mocks.admit).toHaveBeenCalledTimes(128);
+
+        const secondPass = await runAutomationScheduleWorkerPass({
+            now: new Date("2026-08-27T12:01:00.000Z"),
+        });
+        expect(secondPass).toMatchObject({ progressed: true });
+        expect(mocks.admit).toHaveBeenCalledTimes(129);
+        expect(mocks.admit).toHaveBeenLastCalledWith(expect.objectContaining({ triggerId: "schedule-next" }));
+    });
+
+    it("excludes triggers with open schedule work through the incumbent Run index", async () => {
+        mocks.findMany.mockResolvedValue([
+            dueCandidate("blocked", "account"),
+            dueCandidate("eligible", "account"),
+        ]);
+        mocks.findOpenRuns.mockResolvedValue([{ triggerId: "blocked" }]);
 
         await runAutomationScheduleWorkerPass({
             now: new Date("2026-08-27T12:01:00.000Z"),
         });
 
-        expect(mocks.findMany).toHaveBeenCalledTimes(2);
-        expect(mocks.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            where: expect.objectContaining({
-                OR: [
-                    { nextRunAt: { gt: firstPage[127]!.nextRunAt } },
-                    { nextRunAt: firstPage[127]!.nextRunAt, id: { gt: firstPage[127]!.id } },
-                ],
-            }),
-            take: 128,
+        expect(mocks.findOpenRuns).toHaveBeenCalledWith({
+            where: {
+                triggerId: { in: ["blocked", "eligible"] },
+                causeKind: "trigger",
+                causeTriggerKind: "schedule",
+                state: {
+                    notIn: [
+                        "succeeded", "failed", "cancelled", "expired",
+                        "dispatch_failed", "skipped", "missed", "outcome_uncertain",
+                    ],
+                },
+            },
+            select: { triggerId: true },
+            distinct: ["triggerId"],
+        });
+        expect(mocks.admit).toHaveBeenCalledTimes(1);
+        expect(mocks.admit).toHaveBeenCalledWith(expect.objectContaining({ triggerId: "eligible" }));
+    });
+
+    it("yields after one parked query page and resumes from its process-local continuation", async () => {
+        const parked = Array.from({ length: 128 }, (_, index) => ({
+            ...dueCandidate(`parked-${index}`, "account"),
+            nextRunAt: new Date(`2026-08-27T12:00:00.${String(index).padStart(3, "0")}Z`),
         }));
-        expect(mocks.admit).toHaveBeenCalledTimes(129);
+        const eligible = [dueCandidate("eligible-after-parked", "account")];
+        mocks.findMany.mockResolvedValueOnce(parked).mockResolvedValueOnce(eligible);
+        mocks.findOpenRuns
+            .mockResolvedValueOnce(parked.map((candidate) => ({ triggerId: candidate.id })))
+            .mockResolvedValueOnce([]);
+
+        const firstPass = await runAutomationScheduleWorkerPass({
+            now: new Date("2026-08-27T12:01:00.000Z"),
+        });
+
+        expect(mocks.findMany).toHaveBeenCalledTimes(1);
+        expect(mocks.admit).not.toHaveBeenCalled();
+        expect(firstPass.continuationCursor).toEqual({
+            nextRunAt: parked[127]!.nextRunAt,
+            id: parked[127]!.id,
+        });
+
+        await runAutomationScheduleWorkerPass({
+            now: new Date("2026-08-27T12:01:00.000Z"),
+            scanCursor: firstPass.continuationCursor,
+        });
+
+        expect(mocks.findMany).toHaveBeenCalledTimes(2);
+        expect(mocks.admit).toHaveBeenCalledTimes(1);
+        expect(mocks.admit).toHaveBeenCalledWith(expect.objectContaining({
+            triggerId: "eligible-after-parked",
+        }));
     });
 
     it("stops between candidates without scanning another page", async () => {
@@ -160,6 +231,57 @@ describe("Automation schedule worker", () => {
 
         expect(mocks.admit).toHaveBeenCalledTimes(1);
         expect(mocks.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops between parked scan pages before issuing another query", async () => {
+        const parked = Array.from(
+            { length: 128 },
+            (_, index) => dueCandidate(`parked-${index}`, "account"),
+        );
+        mocks.findMany.mockResolvedValue(parked);
+        mocks.findOpenRuns.mockResolvedValue(parked.map((candidate) => ({
+            triggerId: candidate.id,
+        })));
+
+        await runAutomationScheduleWorkerPass({
+            now: new Date("2026-08-27T12:01:00.000Z"),
+            shouldStop: () => mocks.findOpenRuns.mock.calls.length >= 1,
+        });
+
+        expect(mocks.findMany).toHaveBeenCalledTimes(1);
+        expect(mocks.findOpenRuns).toHaveBeenCalledTimes(1);
+        expect(mocks.admit).not.toHaveBeenCalled();
+    });
+
+    it("cooperatively continues a full parked page from process-local worker state", async () => {
+        const parked = Array.from(
+            { length: 128 },
+            (_, index) => dueCandidate(`parked-${index}`, "account"),
+        );
+        mocks.findMany
+            .mockResolvedValueOnce(parked)
+            .mockResolvedValueOnce([dueCandidate("eligible-next-page", "account")])
+            .mockResolvedValue([]);
+        mocks.findOpenRuns
+            .mockResolvedValueOnce(parked.map((candidate) => ({ triggerId: candidate.id })))
+            .mockResolvedValueOnce([]);
+
+        const worker = startAutomationScheduleWorker({ idlePollMs: 60_000 });
+        await vi.waitFor(() => {
+            expect(mocks.admit).toHaveBeenCalledWith(expect.objectContaining({
+                triggerId: "eligible-next-page",
+            }));
+        });
+
+        expect(mocks.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            where: expect.objectContaining({
+                OR: [
+                    { nextRunAt: { gt: parked[127]!.nextRunAt } },
+                    { nextRunAt: parked[127]!.nextRunAt, id: { gt: parked[127]!.id } },
+                ],
+            }),
+        }));
+        await worker.stop();
     });
 
     it("uses a process-local wake to rescan an earlier cursor immediately", async () => {

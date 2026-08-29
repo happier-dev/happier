@@ -1,5 +1,7 @@
 import {
     AccountEncryptionMigrateAutomationsDirectiveSchema,
+    AutomationRunCauseSchema,
+    AutomationTriggerIdSchema,
     deriveAutomationOccurrenceKeyV1,
     AutomationSourceSelectorIdV1Schema,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
@@ -47,7 +49,7 @@ function eventTriggerDefinitionEnvelope(params: Readonly<{
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        triggerId: params.triggerId,
+        triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
         triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
@@ -348,7 +350,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "failed",
-            ...encodeAutomationRunCause({
+            ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
                 kind: "trigger",
                 triggerId: eventTrigger.id,
                 triggerRevision: eventTrigger.revision,
@@ -356,7 +358,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
                 occurrenceKey: eventOccurrenceKey,
                 occurredAt: event.occurredAt,
                 evidence: { eventRef: event.eventRef, sourceSelectorId },
-            }),
+            })),
             occurrenceEvidenceEqualityTag: null,
             triggerEvidenceEnvelope: JSON.stringify({ t: "plain", v: event }),
             executionInputEnvelope: strictExecutionInput({
@@ -450,7 +452,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
             automationId: eventAutomation.id,
             accountId: account.id,
             state: "queued",
-            ...encodeAutomationRunCause({
+            ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
                 kind: "trigger",
                 triggerId: scheduleTrigger.id,
                 triggerRevision: scheduleTrigger.revision,
@@ -458,7 +460,7 @@ async function seedAllCauseRuns(onAccountCreated?: (accountId: string) => void) 
                 occurrenceKey: scheduleOccurrenceKey,
                 occurredAt: scheduledFor.getTime(),
                 evidence: { scheduledFor: scheduledFor.getTime() },
-            }),
+            })),
             executionInputEnvelope: executionInput({
                 templateCiphertext: eventAutomation.templateCiphertext,
                 retainedV2Origin: {
@@ -598,7 +600,7 @@ function buildDirective(seeded: Awaited<ReturnType<typeof seedAllCauseRuns>>) {
                         binding: {
                             v: 1,
                             automationId: seeded.eventAutomation.id,
-                            triggerId: seeded.eventTrigger.id,
+                            triggerId: AutomationTriggerIdSchema.parse(seeded.eventTrigger.id),
                             triggerRevision: seeded.eventTrigger.revision,
                             triggerKind: "pluginEvent",
                             eventRef: {
@@ -724,7 +726,7 @@ export async function assertAllCauseAutomationRunMigrationToE2ee(params?: Readon
     );
     const eventTemplate = templatesByAutomationId.get(seeded.eventAutomation.id)!;
     const conversationTemplate = templatesByAutomationId.get(seeded.conversationAutomation.id)!;
-    const eventTriggerTarget = eventTemplate.triggerDefinitionEnvelopes.find(
+    const eventTriggerTarget = (eventTemplate.triggerDefinitionEnvelopes ?? []).find(
         (target) => target.triggerId === seeded.eventTrigger.id,
     )!;
 

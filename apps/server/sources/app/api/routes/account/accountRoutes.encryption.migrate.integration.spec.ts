@@ -38,7 +38,7 @@ import {
 import {
     createLegacyCredentialFixtureIdentity,
 } from "../connect/testkit/qualifiedConnectedAccountFixtureIdentity";
-import { registerAutomationCrudRoutes } from "../automations/registerAutomationCrudRoutes";
+import { registerAutomationV3Routes } from "../automations/registerAutomationV3Routes";
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import {
@@ -56,7 +56,10 @@ import {
     sealReviewCommentEventSensitiveEnvelopeV1,
     sealReviewCommentSensitiveEnvelopeV1,
     sealAccountScopedBlobCiphertext,
+    AutomationRunExecutionInputV1Schema,
     AutomationSourceSelectorIdV1Schema,
+    AutomationTriggerIdSchema,
+    serializeAutomationStoredDefinitionExecutionRecipeV1,
     sealAutomationTriggerDefinitionStoredEnvelopeV1,
     splitReviewCommentV1,
     type AccountEncryptionMigrateRequest,
@@ -122,7 +125,7 @@ function encodePluginEventTriggerDefinitionEnvelope(params: Readonly<{
     const binding = {
         v: 1 as const,
         automationId: params.automationId,
-        triggerId: params.triggerId,
+        triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
         triggerRevision: params.triggerRevision,
         triggerKind: "pluginEvent" as const,
         eventRef: {
@@ -645,10 +648,6 @@ async function createAccountMigrationSessionGuardFixture(params: Readonly<{
         data: {
             accountId: account.id,
             name: "migration-owned automation",
-            scheduleKind: "interval",
-            everyMs: 60_000,
-            timezone: null,
-            scheduleExpr: null,
             targetType: "new_session",
             templateCiphertext: "automation-before-migration",
         },
@@ -731,6 +730,11 @@ function createTestApp(options: Readonly<{
             return reply.code(401).send({ error: "Unauthorized" });
         }
         request.userId = userId;
+        // These route fixtures model the interactive Account owner. Sensitive
+        // Account mutations deliberately reject PAT/terminal automation
+        // authority; that negative boundary is covered by the dedicated
+        // accountRoutes.authAuthority integration suite.
+        request.authAuthority = "present_user";
         if (options.accountStoredContentCaller !== "legacy") {
             Object.assign(
                 request.headers,
@@ -1558,8 +1562,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             data: {
                 accountId: account.id,
                 name: "Current automation",
-                scheduleKind: "interval",
-                everyMs: 60_000,
                 targetType: "new_session",
                 templateCiphertext: currentTemplate,
                 templateVersion: 8,
@@ -2839,10 +2841,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             data: {
                 accountId: account.id,
                 name: "blocks key replacement",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                timezone: null,
-                scheduleExpr: null,
                 targetType: "new_session",
                 templateCiphertext: JSON.stringify({
                     kind: "happier_automation_template_encrypted_v1",
@@ -3304,10 +3302,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             data: {
                 accountId: account.id,
                 name: "owned automation migration",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                timezone: null,
-                scheduleExpr: null,
                 targetType: "new_session",
                 templateCiphertext: ownedTemplateCiphertext,
             },
@@ -3317,10 +3311,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             data: {
                 accountId: otherAccount.id,
                 name: "foreign automation migration",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                timezone: null,
-                scheduleExpr: null,
                 targetType: "new_session",
                 templateCiphertext: foreignTemplateCiphertext,
             },
@@ -3432,8 +3422,23 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
                 causeTriggerRevision: automation.triggers[0]!.revision,
                 causeOccurredAt: new Date(index),
                 causeScheduledFor: new Date(index),
-                occurrenceKey: `route-account-encryption-too-large-${index}`,
-                executionInputEnvelope: JSON.stringify({ index }),
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: AutomationTriggerIdSchema.parse(automation.triggers[0]!.id),
+                    evidence: { v: 1, kind: "schedule", scheduledFor: index },
+                }),
+                // Truthful retained predecessor frozen input: the exact
+                // released-V2 arm the admission owner writes for queued
+                // schedule inventory under this Automation's own template
+                // bytes and template version.
+                executionInputEnvelope: JSON.stringify(
+                    AutomationRunExecutionInputV1Schema.parse({
+                        kind: "happier_automation_run_execution_input_v1",
+                        targetType: "new_session",
+                        templateVersion: automation.templateVersion,
+                        templateCiphertext: originalTemplateCiphertext,
+                        origin: { kind: "scheduled", scheduledFor: index },
+                    }),
+                ),
                 scheduledAt: new Date(index),
                 dueAt: new Date(index),
             })),
@@ -3521,10 +3526,6 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             data: {
                 accountId: account.id,
                 name: "duplicate automation migration",
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                timezone: null,
-                scheduleExpr: null,
                 targetType: "new_session",
                 templateCiphertext: originalTemplateCiphertext,
             },
@@ -3608,28 +3609,65 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             },
             select: { id: true },
         });
-        const initialPlainTemplate = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { prompt: "initial" },
+        const recipe = (params: Readonly<{
+            templateVersion: number;
+            template: Readonly<
+                | { t: "plain"; v: { v: 1; prompt: string } }
+                | { t: "encrypted"; c: string }
+            >;
+        }>) => ({
+            v: 1 as const,
+            templateVersion: params.templateVersion,
+            template: params.template,
+            triggerEvidence: null,
+            target: {
+                kind: "executionRun" as const,
+                request: {
+                    intent: "task" as const,
+                    backendTarget: {
+                        kind: "builtInAgent" as const,
+                        agentId: "codex",
+                    },
+                    permissionMode: "read_only" as const,
+                    retentionPolicy: "ephemeral" as const,
+                    runClass: "bounded" as const,
+                    ioMode: "request_response" as const,
+                },
+            },
         });
-        const stalePlainTemplate = JSON.stringify({
-            kind: "happier_automation_template_plain_v1",
-            payload: { prompt: "stale update" },
+        const initialRecipe = recipe({
+            templateVersion: 0,
+            template: { t: "plain", v: { v: 1, prompt: "initial" } },
         });
-        const migratedEncryptedTemplate = JSON.stringify({
-            kind: "happier_automation_template_encrypted_v1",
-            payloadCiphertext: "migrated-ciphertext",
+        const staleRecipe = recipe({
+            templateVersion: 1,
+            template: {
+                t: "plain",
+                v: { v: 1, prompt: "stale update" },
+            },
         });
+        const migratedEncryptedRecipe = recipe({
+            templateVersion: 0,
+            template: { t: "encrypted", c: "migrated-ciphertext" },
+        });
+        const serializeRecipe = (value: unknown): string => {
+            const serialized =
+                serializeAutomationStoredDefinitionExecutionRecipeV1(value);
+            if (serialized.kind !== "available") {
+                throw new Error("current Automation recipe fixture is invalid");
+            }
+            return serialized.serialized;
+        };
+        const initialPlainTemplate = serializeRecipe(initialRecipe);
+        const stalePlainTemplate = serializeRecipe(staleRecipe);
+        const migratedEncryptedTemplate =
+            serializeRecipe(migratedEncryptedRecipe);
         const automation = await db.automation.create({
             data: {
                 accountId: account.id,
                 name: "Migration race",
                 enabled: false,
-                scheduleKind: "interval",
-                everyMs: 60_000,
-                timezone: null,
-                scheduleExpr: null,
-                targetType: "new_session",
+                targetType: "execution_run",
                 templateCiphertext: initialPlainTemplate,
             },
             select: { id: true, templateVersion: true },
@@ -3637,15 +3675,18 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
 
         const app = createTestApp();
         registerAccountEncryptionMigrateRoutes(app as any);
-        registerAutomationCrudRoutes(app as any);
+        registerAutomationV3Routes(app as any);
         await app.ready();
         const barrier = installAccountModeReadBarrier(account.id);
         try {
             const automationPatch = app.inject({
                 method: "PATCH",
-                url: `/v2/automations/${automation.id}`,
+                url: `/v3/automations/${automation.id}`,
                 headers: { "content-type": "application/json", "x-test-user-id": account.id },
-                payload: { templateCiphertext: stalePlainTemplate },
+                payload: {
+                    expectedTemplateVersion: automation.templateVersion,
+                    executionRecipe: staleRecipe,
+                },
             });
             await barrier.modeObserved;
 

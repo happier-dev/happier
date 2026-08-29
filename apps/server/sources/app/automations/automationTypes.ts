@@ -62,6 +62,13 @@ export function initialAutomationExecutionDispatchStateForRun(
 }
 export type AutomationRunReplyHandoffState = AutomationReplyHandoffStateV1;
 
+/**
+ * The execution-dispatch retry ceiling. One decision: a detached dispatch that
+ * repeatedly returns strict pre-creation rejection gets this many attempts
+ * before start/settlement terminalizes the Run as retry-exhausted.
+ */
+export const AUTOMATION_EXECUTION_DISPATCH_MAX_ATTEMPTS = 3;
+
 /** States that no longer retain durable Conversation reply custody. */
 export const AUTOMATION_RUN_REPLY_HANDOFF_TERMINAL_STATES = [
     'none',
@@ -233,13 +240,22 @@ export type AutomationTriggerItem = Readonly<{
     watcherMachineInstallationId: string | null;
     watcherPluginId: string | null;
     watcherMaterializationId: string | null;
-    definitionEnvelope: string | null;
+    /**
+     * The trigger's private definition envelope. Present on full definition
+     * reads; the list-specific read intentionally never loads it.
+     */
+    definitionEnvelope?: string | null;
     sessionLifecycleEvent: 'parentTurnCompleted' | null;
     sourceSessionId: string | null;
     sourceTurnId: string | null;
     createdAt: Date;
     updatedAt: Date;
-    eventSourceStatus: unknown | null;
+    /**
+     * Retained trigger-side status relation. No current reader projects it —
+     * batched status summaries come from the status projection owner — so no
+     * select loads it.
+     */
+    eventSourceStatus?: unknown | null;
 }>;
 
 export type AutomationRunItem = Readonly<{
@@ -301,6 +317,49 @@ export type AutomationRunItem = Readonly<{
     createdAt: Date;
     updatedAt: Date;
 }>;
+
+/** The authenticated current-version Run-list row. */
+export type AutomationRunV3ListItem =
+    Pick<
+        AutomationRunItem,
+        | 'id'
+        | 'automationId'
+        | 'state'
+        | 'triggerId'
+        | 'causeKind'
+        | 'causeTriggerKind'
+        | 'causeTriggerRevision'
+        | 'causeOccurredAt'
+        | 'causeEventPluginId'
+        | 'causeEventLocalId'
+        | 'causeScheduledFor'
+        | 'causeSessionLifecycleEvent'
+        | 'causeSourceSessionId'
+        | 'causeSourceTurnId'
+        | 'occurrenceKey'
+        | 'causeSourceSelectorId'
+        | 'executionDispatchState'
+        | 'executionAttempt'
+        | 'errorCode'
+        | 'replyHandoffState'
+        | 'replyHandoffAttempt'
+        | 'replyHandoffDueAt'
+        | 'dueAt'
+        | 'claimedAt'
+        | 'startedAt'
+        | 'finishedAt'
+        | 'claimedByMachineId'
+        | 'leaseExpiresAt'
+        | 'attempt'
+        | 'revision'
+        | 'producedSessionId'
+        | 'createdAt'
+        | 'updatedAt'
+    > & Readonly<{ triggerRetired?: boolean }>;
+
+/** The released-V2 adapter's retained Run-list row. */
+export type AutomationRunV2ListItem = AutomationRunV3ListItem &
+    Pick<AutomationRunItem, 'executionInputEnvelope' | 'resultEnvelope' | 'errorMessage' | 'scheduledAt'>;
 
 /** One committed Run transition as persisted by the lifecycle owners. */
 export type AutomationRunEventRow = Readonly<{

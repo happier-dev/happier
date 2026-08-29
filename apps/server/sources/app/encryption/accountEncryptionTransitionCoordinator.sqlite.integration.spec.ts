@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
     ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
+    AutomationRunExecutionInputV1Schema,
+    AutomationTriggerIdSchema,
+    deriveAutomationOccurrenceKeyV1,
     sealPluginCollectionPrivatePayloadV1,
 } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
@@ -78,6 +81,28 @@ function encryptedAutomationTemplate(ciphertext: string): string {
         kind: "happier_automation_template_encrypted_v1",
         payloadCiphertext: ciphertext,
     });
+}
+
+/**
+ * Truthful retained predecessor execution input for one queued schedule-cause
+ * Run: the exact frozen released-V2 arm the admission owner writes for
+ * predecessor inventory, so a nonterminal retained Run never satisfies the
+ * open-frozen-input CHECK with missing or placeholder bytes.
+ */
+function retainedScheduleRunExecutionInput(params: Readonly<{
+    templateCiphertext: string;
+    scheduledFor: Date;
+}>): string {
+    return JSON.stringify(AutomationRunExecutionInputV1Schema.parse({
+        kind: "happier_automation_run_execution_input_v1",
+        targetType: "new_session",
+        templateVersion: 1,
+        templateCiphertext: params.templateCiphertext,
+        origin: {
+            kind: "scheduled",
+            scheduledFor: params.scheduledFor.getTime(),
+        },
+    }));
 }
 
 function plainAutomationTemplate(payload: unknown): string {
@@ -587,7 +612,16 @@ describe("Account encryption transition coordinator Collection participant", () 
                 causeTriggerRevision: scheduleTrigger.revision,
                 causeOccurredAt: new Date(1_700_000_000_000 + index),
                 causeScheduledFor: new Date(1_700_000_000_000 + index),
-                occurrenceKey: `schedule-occurrence-${index}`,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: AutomationTriggerIdSchema.parse(scheduleTrigger.id),
+                    evidence: { v: 1, kind: "schedule", scheduledFor: 1_700_000_000_000 + index },
+                }),
+                executionInputEnvelope: retainedScheduleRunExecutionInput({
+                    templateCiphertext: encryptedAutomationTemplate(
+                        "run-limit-source-template",
+                    ),
+                    scheduledFor: new Date(1_700_000_000_000 + index),
+                }),
                 resultEnvelope: JSON.stringify({
                     t: "legacySummaryCiphertext",
                     c: legacySummary,
@@ -694,7 +728,16 @@ describe("Account encryption transition coordinator Collection participant", () 
                 causeTriggerRevision: scheduleTrigger.revision,
                 causeOccurredAt: new Date(1_700_000_000_000 + index),
                 causeScheduledFor: new Date(1_700_000_000_000 + index),
-                occurrenceKey: `schedule-occurrence-${index}`,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({
+                    triggerId: AutomationTriggerIdSchema.parse(scheduleTrigger.id),
+                    evidence: { v: 1, kind: "schedule", scheduledFor: 1_700_000_000_000 + index },
+                }),
+                executionInputEnvelope: retainedScheduleRunExecutionInput({
+                    templateCiphertext: encryptedAutomationTemplate(
+                        "measured-ceiling-source-template",
+                    ),
+                    scheduledFor: new Date(1_700_000_000_000 + index),
+                }),
                 resultEnvelope: JSON.stringify({
                     t: "legacySummaryCiphertext",
                     c: legacySummary,

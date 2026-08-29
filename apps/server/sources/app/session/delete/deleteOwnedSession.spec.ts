@@ -152,6 +152,31 @@ describe('deleteOwnedSession', () => {
         }));
     });
 
+    it('does not let an additional guard replace the exact session or Account owner', async () => {
+        findFirst.mockResolvedValueOnce(null);
+
+        const { deleteOwnedSession } = await import('./deleteOwnedSession');
+        const result = await deleteOwnedSession({
+            sessionId: 's1',
+            ownerAccountId: 'owner',
+            reason: 'user_request',
+            sessionWhereGuard: {
+                id: 'different-session',
+                accountId: 'different-owner',
+                updatedAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
+            },
+        });
+
+        expect(result).toEqual({ ok: false, error: 'not-found' });
+        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: {
+                id: 's1',
+                accountId: 'owner',
+                updatedAt: { lt: new Date('2025-01-01T00:00:00.000Z') },
+            },
+        }));
+    });
+
     it('reports a lost delete condition as a conflict, not as an absent session, and emits nothing', async () => {
         const { log } = await import('@/utils/logging/log');
         findFirst.mockResolvedValueOnce({

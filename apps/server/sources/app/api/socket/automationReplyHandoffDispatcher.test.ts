@@ -155,7 +155,7 @@ describe("createAutomationReplyHandoffDaemonDispatcher", () => {
         });
     });
 
-    it("fails closed for malformed input, a lost target response, and a malformed daemon result", async () => {
+    it("classifies a schema-invalid dispatch request as stable pre-effect invalidRequest before any daemon effect", async () => {
         const targetUnavailable = vi.fn(async () => ({ ok: false as const, error: "RPC method not available" })) as AutomationReplyHandoffForwardRpcCall;
         const dispatchUnavailable = createAutomationReplyHandoffDaemonDispatcher({
             io: {} as Server,
@@ -163,7 +163,16 @@ describe("createAutomationReplyHandoffDaemonDispatcher", () => {
         });
         await expect(dispatchUnavailable({ ...request, target: { ...request.target, unexpected: true } })).resolves.toEqual({
             kind: "unavailable",
-            code: "contractInvalid",
+            code: "invalidRequest",
+        });
+        expect(targetUnavailable).not.toHaveBeenCalled();
+    });
+
+    it("classifies a malformed daemon response as post-effect contractInvalid so the same handoff rejoins", async () => {
+        const targetUnavailable = vi.fn(async () => ({ ok: false as const, error: "RPC method not available" })) as AutomationReplyHandoffForwardRpcCall;
+        const dispatchUnavailable = createAutomationReplyHandoffDaemonDispatcher({
+            io: {} as Server,
+            forwardRpc: targetUnavailable,
         });
         await expect(dispatchUnavailable(request)).resolves.toEqual({
             kind: "unavailable",

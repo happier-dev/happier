@@ -231,7 +231,7 @@ CREATE TABLE "new_AutomationRun" (
     ),
     CONSTRAINT "AutomationRun_reply_handoff_arm_check" CHECK (
         ("causeKind" = 'conversation' AND "replyContextEnvelope" IS NOT NULL AND "replyHandoffActionPluginId" IS NOT NULL AND "replyHandoffActionLocalId" IS NOT NULL AND "replyHandoffTargetMachineId" IS NOT NULL AND "replyHandoffTargetMachineInstallationId" IS NOT NULL AND "replyHandoffTargetMaterializationId" IS NOT NULL AND "replyHandoffId" IS NOT NULL AND "replyHandoffState" <> 'none')
-        OR ("causeKind" IN ('trigger', 'manual') AND "replyContextEnvelope" IS NULL AND "replyHandoffActionPluginId" IS NULL AND "replyHandoffActionLocalId" IS NULL AND "replyHandoffTargetMachineId" IS NULL AND "replyHandoffTargetMachineInstallationId" IS NULL AND "replyHandoffTargetMaterializationId" IS NULL AND "replyHandoffId" IS NULL AND "replyHandoffState" = 'none' AND "replyHandoffAttempt" = 0 AND "replyHandoffDueAt" IS NULL AND "replyHandoffReceiptEnvelope" IS NULL)
+        OR ("causeKind" IN ('trigger', 'manual', 'conversation') AND "replyContextEnvelope" IS NULL AND "replyHandoffActionPluginId" IS NULL AND "replyHandoffActionLocalId" IS NULL AND "replyHandoffTargetMachineId" IS NULL AND "replyHandoffTargetMachineInstallationId" IS NULL AND "replyHandoffTargetMaterializationId" IS NULL AND "replyHandoffId" IS NULL AND "replyHandoffState" = 'none' AND "replyHandoffAttempt" = 0 AND "replyHandoffDueAt" IS NULL AND "replyHandoffReceiptEnvelope" IS NULL)
     )
 );
 
@@ -314,13 +314,15 @@ CREATE TABLE "AutomationWorkerClaimReceipt" (
     "machineInstallationId" TEXT NOT NULL,
     "runId" TEXT,
     "claimedAttempt" INTEGER,
+    "accountCurrentnessWitnessJson" TEXT,
+    "claimResultJson" TEXT NOT NULL,
     "expiresAt" DATETIME NOT NULL,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "AutomationWorkerClaimReceipt_accountId_fkey"
         FOREIGN KEY ("accountId") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "AutomationWorkerClaimReceipt_outcome_check" CHECK (
-        ("runId" IS NULL AND "claimedAttempt" IS NULL)
-        OR ("runId" IS NOT NULL AND "claimedAttempt" IS NOT NULL AND "claimedAttempt" > 0)
+        ("runId" IS NULL AND "claimedAttempt" IS NULL AND "accountCurrentnessWitnessJson" IS NULL)
+        OR ("runId" IS NOT NULL AND "claimedAttempt" IS NOT NULL AND "claimedAttempt" > 0 AND "accountCurrentnessWitnessJson" IS NOT NULL)
     )
 );
 INSERT INTO "AutomationRunAssignment" ("runId", "machineId", "priority")

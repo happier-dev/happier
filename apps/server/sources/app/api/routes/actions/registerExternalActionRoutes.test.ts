@@ -396,7 +396,11 @@ describe("registerExternalActionRoutes", () => {
                 instance.addContentTypeParser(
                     "application/json",
                     { parseAs: "string" },
-                    (_request, _body, done) => done(null, { v: 1, input: Number.NaN }),
+                    (
+                        _request: unknown,
+                        _body: string,
+                        done: (error: Error | null, value?: unknown) => void,
+                    ) => done(null, { v: 1, input: Number.NaN }),
                 );
             },
         });

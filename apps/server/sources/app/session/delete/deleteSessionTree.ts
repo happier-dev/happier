@@ -1,3 +1,6 @@
+import type { Tx } from '@/storage/inTx';
+import type { Prisma } from '@prisma/client';
+
 export class SessionDeleteConditionLostError extends Error {
     constructor() {
         super('Session no longer matches delete conditions');
@@ -6,21 +9,13 @@ export class SessionDeleteConditionLostError extends Error {
 }
 
 export async function deleteSessionTree(
-    tx: {
-        sessionMessage: { deleteMany: (args: unknown) => Promise<{ count: number }> };
-        usageReport: { deleteMany: (args: unknown) => Promise<{ count: number }> };
-        accessKey: { deleteMany: (args: unknown) => Promise<{ count: number }> };
-        session: {
-            updateMany: (args: unknown) => Promise<{ count: number }>;
-            deleteMany: (args: unknown) => Promise<{ count: number }>;
-        };
-    },
+    tx: Tx,
     params: {
         sessionId: string;
         sessionUpdatedAt: Date;
         actorAccountId: string;
         reason: 'user_request' | 'retention_policy';
-        sessionDeleteWhere?: Record<string, unknown>;
+        sessionDeleteWhere?: Prisma.SessionWhereInput;
         afterSessionWriteBoundary?: () => Promise<void>;
     },
 ): Promise<{
