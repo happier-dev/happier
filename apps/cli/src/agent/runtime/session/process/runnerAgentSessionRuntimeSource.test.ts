@@ -522,13 +522,15 @@ describe('runner Agent session runtime source', () => {
         const entries = [
             {
                 pluginId: 'acme.alpha',
-                agentId: 'acme.alpha/agents/assistant',
+                routingId: 'acme.alpha/assistant',
+                qualifiedAgentId: 'acme.alpha/agents/assistant',
                 generation: 'immutable-alpha',
                 path: '/tmp/happier-runner-source/alpha.json',
             },
             {
                 pluginId: 'acme.beta',
-                agentId: 'acme.beta/agents/assistant',
+                routingId: 'acme.beta/assistant',
+                qualifiedAgentId: 'acme.beta/agents/assistant',
                 generation: 'immutable-beta',
                 path: '/tmp/happier-runner-source/beta.json',
             },
@@ -542,7 +544,7 @@ describe('runner Agent session runtime source', () => {
                     retainedAgent: {
                         ...base.retainedAgent,
                         pluginId: entry.pluginId,
-                        agentId: entry.agentId,
+                        agentId: entry.routingId,
                         localAgentId,
                         immutableGenerationId: entry.generation,
                     },
@@ -559,8 +561,8 @@ describe('runner Agent session runtime source', () => {
                 sessions: Object.freeze({ open: vi.fn() }),
             });
             const factory = vi.fn(async () => runtime);
-            runtimes.set(entry.agentId, runtime);
-            factories.set(entry.agentId, factory);
+            runtimes.set(entry.routingId, runtime);
+            factories.set(entry.routingId, factory);
         }
         mocks.loadFactory.mockImplementation(async (input) => {
             const binding = (input as Readonly<{
@@ -580,8 +582,8 @@ describe('runner Agent session runtime source', () => {
         ));
         expect(sources.every((source) => source !== null)).toBe(true);
         expect(sources.map((source) => source?.identity.agentId)).toEqual([
-            entries[0].agentId,
-            entries[1].agentId,
+            entries[0].qualifiedAgentId,
+            entries[1].qualifiedAgentId,
         ]);
         expect(new Set(sources.map((source) => source?.identity.agentId)).size)
             .toBe(2);
@@ -591,11 +593,11 @@ describe('runner Agent session runtime source', () => {
             const entry = entries[index];
             if (!source) throw new Error('Missing runner source');
             await expect(source.createRuntime({ signal }))
-                .resolves.toBe(runtimes.get(entry.agentId));
+                .resolves.toBe(runtimes.get(entry.routingId));
             await source.createInvocationServices({
                 pluginId: entry.pluginId,
                 pluginVersion: '1.0.0',
-                agentId: entry.agentId,
+                agentId: entry.qualifiedAgentId,
                 generation: entry.generation,
                 correlationId: `${entry.pluginId}-session`,
                 cwd: '/repo',
@@ -611,7 +613,7 @@ describe('runner Agent session runtime source', () => {
         }
 
         for (const entry of entries) {
-            expect(factories.get(entry.agentId)).toHaveBeenCalledWith({
+            expect(factories.get(entry.routingId)).toHaveBeenCalledWith({
                 plugin: {
                     id: entry.pluginId,
                     version: '1.0.0',
@@ -629,7 +631,7 @@ describe('runner Agent session runtime source', () => {
                     },
                     contribution: {
                         id: localAgentId,
-                        qualifiedId: entry.agentId,
+                        qualifiedId: entry.qualifiedAgentId,
                     },
                 }),
             )));

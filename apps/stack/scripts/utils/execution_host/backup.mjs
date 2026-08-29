@@ -43,7 +43,12 @@ function requireSafeStackName(value, label = 'backup Stack name') {
 
 function redactBackupSource(source) {
   return source.placement === 'target'
-    ? { authority: source.authority, placement: 'target', target: source.target }
+    ? {
+      authority: source.authority,
+      placement: 'target',
+      target: source.target,
+      stackName: source.stackName,
+    }
     : { authority: source.authority, placement: 'guest' };
 }
 
@@ -55,8 +60,13 @@ function readStoredBackupSource(raw) {
   if (!authority) return null;
   if (raw.placement === 'guest') return { authority, placement: 'guest' };
   const target = String(raw.target ?? '').trim();
-  if (raw.placement === 'target' && STACK_NAME_RE.test(target)) {
-    return { authority, placement: 'target', target };
+  const stackName = String(raw.stackName ?? '').trim();
+  if (
+    raw.placement === 'target'
+    && STACK_NAME_RE.test(target)
+    && STACK_NAME_RE.test(stackName)
+  ) {
+    return { authority, placement: 'target', target, stackName };
   }
   return null;
 }
@@ -64,7 +74,10 @@ function readStoredBackupSource(raw) {
 function sameBackupSource(left, right) {
   return left.authority === right.authority
     && left.placement === right.placement
-    && (left.placement !== 'target' || left.target === right.target);
+    && (
+      left.placement !== 'target'
+      || (left.target === right.target && left.stackName === right.stackName)
+    );
 }
 
 export async function resolveExecutionHostBackupSource({
@@ -96,7 +109,11 @@ export async function resolveExecutionHostBackupSource({
   if (!target) {
     throw new Error('[dev-vm] persisted target server placement has no configured target');
   }
-  const { stackStorageDir, stackBaseDir } = resolveRemoteStackStatePaths(target, {
+  const {
+    stackName: targetStackName,
+    stackStorageDir,
+    stackBaseDir,
+  } = resolveRemoteStackStatePaths(target, {
     stackName: normalizedStackName,
   });
   if (target.platform !== 'posix' || !isAbsolute(stackStorageDir) || !isAbsolute(stackBaseDir)) {
@@ -106,6 +123,10 @@ export async function resolveExecutionHostBackupSource({
     authority,
     placement: 'target',
     target: target.name,
+    // Target-placed servers persist under the resolved execution child Stack.
+    // The backup tool must address this Stack, never the controller-named one,
+    // or it would snapshot a stale controller-named directory on the target.
+    stackName: targetStackName,
     stackStorageDir,
     stackStateDir: stackBaseDir,
   };
@@ -578,6 +599,10 @@ export async function createExecutionHostBackup({
   await mkdir(paths.destination, { recursive: true, mode: 0o700 });
   await chmod(paths.destination, 0o700);
   const sourceLabel = backupSourceLabel(source);
+  // The backup tool resolves storage as <stack storage dir>/<Stack name>.
+  // Target placement addresses the resolved execution child Stack; guest
+  // placement addresses the controller Stack inside the VM.
+  const backupStackName = source.placement === 'target' ? source.stackName : paths.stackName;
   const archiveName = backupArchiveName();
   const archivePath = join(paths.destination, archiveName);
   const temporaryPath = join(paths.destination, `.${archiveName}.partial`);
@@ -590,9 +615,9 @@ export async function createExecutionHostBackup({
       boundary: processBoundary,
       env,
       action: 'preflight',
-      stackName: paths.stackName,
+      stackName: backupStackName,
     }), sourceLabel);
-    if (plan.stackName !== paths.stackName) {
+    if (plan.stackName !== backupStackName) {
       throw new Error(`[dev-vm] ${sourceLabel} backup preflight returned the wrong Stack name`);
     }
     await requireAvailableBytes({
@@ -608,9 +633,9 @@ export async function createExecutionHostBackup({
       boundary: processBoundary,
       env,
       action: 'backup',
-      stackName: paths.stackName,
+      stackName: backupStackName,
     }), sourceLabel);
-    if (backupResult.stackName !== paths.stackName) {
+    if (backupResult.stackName !== backupStackName) {
       throw new Error(`[dev-vm] ${sourceLabel} backup returned the wrong Stack name`);
     }
     await requireAvailableBytes({
@@ -637,7 +662,7 @@ export async function createExecutionHostBackup({
         boundary: processBoundary,
         env,
       });
-      if (inspected.stackName !== paths.stackName) {
+      if (inspected.stackName !== backupStackName) {
         throw new Error('[dev-vm] transferred backup archive returned the wrong Stack name');
       }
       await rename(temporaryPath, archivePath);

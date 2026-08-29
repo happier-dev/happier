@@ -34,15 +34,23 @@ describe('terminal cleanup source-tree fence', () => {
     const ledgerLines = readFileSync(resolve(repoRoot, '.project/plans/runtime-unification-v2/execution/packet-ledger.tsv'), 'utf8').trim().split('\n');
     const ledger = new Map(ledgerLines.slice(1).map((line) => {
       const columns = line.split('\t');
-      return [columns[0], columns[5]] as const;
+      return [columns[0], { status: columns[5]!, lineCount: Number(columns[2]) }] as const;
     }));
     for (const packetId of ['TERM-1', 'TERM-2', 'TERM-3', 'TERM-4', 'TERM-5', 'TERM-6', 'TERM-7a', 'TERM-7b']) {
       const packet = manifest.packets[packetId]!;
       const bodyPath = packet.packet_body.replace('[TARGET]', '');
       const body = readFileSync(resolve(repoRoot, bodyPath), 'utf8');
+      const ledgerRow = ledger.get(packetId)!;
       const bodyStatus = /^> Status: `([^`]+)`/m.exec(body)?.[1];
-      expect(bodyStatus, packetId).toBe(ledger.get(packetId));
-      expect(packet.status, packetId).toBe(ledger.get(packetId));
+      expect(bodyStatus, packetId).toBe(ledgerRow.status);
+      expect(packet.status, packetId).toBe(ledgerRow.status);
+      expect(countPacketBodyLines(body), `${packetId} ledger line_count`).toBe(ledgerRow.lineCount);
     }
   });
 });
+
+function countPacketBodyLines(body: string): number {
+  const lines = body.split('\n');
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+  return lines.length;
+}

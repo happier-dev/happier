@@ -121,9 +121,12 @@ async function resolveRunnerAgentSessionDescriptorForLease(
     v: 1,
     pluginId: registration.pluginId,
     pluginVersion: registration.pluginVersion,
-    agentId: agent.provenance === 'first_party'
-      ? registration.agentId
-      : `${registration.pluginId}/agents/${registration.localAgentId}`,
+    // The descriptor's `agentId` is the host routing id — the same id the
+    // runtime registry (`agentRuntimesByAgentId`) keys this Agent by — as its
+    // schema documents. Spelling installed Agents as the contribution-qualified
+    // `pluginId/agents/<localId>` reference here broke foreground admission and
+    // runner-authority reattachment, whose registry lookups key on routing ids.
+    agentId: registration.agentId,
     backendId: backend.id,
     generation: registration.generation,
     ...(registration.immutableGenerationId

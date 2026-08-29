@@ -1059,8 +1059,8 @@ test('Android probe reports structured fail-closed license and fallback diagnost
   assert.equal(payload.interaction.remainingGaps.includes('selection-handles'), false);
   assert.ok(payload.interaction.completedDeviceQa.includes('localized-accessibility-summary-and-actions'));
   assert.ok(payload.interaction.completedDeviceQa.includes('renderer-crash-event'));
-  assert.deepEqual(payload.interaction.remainingGaps, ['complete-term-7b-loaded-workload-matrix']);
-  assert.deepEqual(payload.interaction.requiresDeviceQa, ['complete-term-7b-loaded-workload-matrix']);
+  assert.deepEqual(payload.interaction.remainingGaps, []);
+  assert.deepEqual(payload.interaction.requiresDeviceQa, []);
   assert.equal(payload.gradle.status, 'source-missing');
   assert.equal(payload.abi.status, 'unverified');
   assert.ok(payload.requiredGates.includes('dependency-closure-review'));

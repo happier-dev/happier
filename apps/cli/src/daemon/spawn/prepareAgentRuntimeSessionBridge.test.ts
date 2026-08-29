@@ -300,6 +300,9 @@ describe('prepareRunnerAgentSessionBootstrapForLease', () => {
             } as never),
         ));
 
+        // The daemon descriptor carries the exact contribution identity. The
+        // registry keeps the shorter host routing id only for lookup, while the
+        // contributor factory continues to receive the manifest-local id.
         expect(prepared.map((entry) => entry?.authorization.descriptor.agentId)).toEqual([
             'acme.alpha/agents/assistant',
             'acme.beta/agents/assistant',

@@ -425,6 +425,80 @@ describe('foreground Agent runtime admission', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
+  it('admits an installed Agent whose descriptor carries its contribution identity while retained custody keeps its routing id', async () => {
+    const cleanup = vi.fn(async () => undefined);
+    const retirement = new AbortController();
+    const retained = createAgentSessionRunnerFactoryBinding({
+      ...retainedAgent(),
+      pluginId: 'acme.alpha',
+      agentId: 'acme.alpha/assistant',
+      localAgentId: 'assistant',
+    });
+    const prepared = createPrepared(
+      cleanup,
+      retirement,
+      vi.fn(async () => ({
+        ok: true as const,
+        environment: {},
+        unsetEnvironmentVariableNames: [],
+        sensitiveEnvironmentVariableNames: [],
+        invocationContext: invocationContext({}),
+        authority: {
+          ...claimAuthority(),
+          retainedAgent: retained,
+        },
+      })),
+    );
+    const owner = createForegroundAgentRuntimeAdmissionOwner({
+      prepare: async () => ({
+        ok: true,
+        prepared: {
+          ...prepared,
+          authorization: {
+            ...prepared.authorization,
+            descriptor: {
+              ...prepared.authorization.descriptor,
+              pluginId: 'acme.alpha',
+              agentId: 'acme.alpha/agents/assistant',
+              agentDeclaration: {
+                provenance: 'external',
+                source: { kind: 'path' },
+                definition: {
+                  kindVersion: 1,
+                  id: 'assistant',
+                  title: 'Assistant',
+                  runtime: { kind: 'custom' },
+                  primary: 'sessions',
+                  capabilities: {
+                    sessions: {
+                      open: ['create'],
+                      delivery: ['newTurn'],
+                      cancel: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+    });
+    const admitted = await owner.admit({
+      ...admissionRequest,
+      agentId: 'acme.alpha/assistant',
+      backendTarget: {
+        ...admissionRequest.backendTarget,
+        backendId: 'acme.alpha/assistant',
+      },
+    });
+    expect(admitted).toMatchObject({ ok: true });
+    await expect(owner.claimEnvironment({
+      ...claimRequest(),
+      pluginId: 'acme.alpha',
+      agentId: 'acme.alpha/agents/assistant',
+    })).resolves.toMatchObject({ ok: true });
+  });
+
   it('allows only one concurrent claimant before late preparation settles', async () => {
     const cleanup = vi.fn(async () => undefined);
     const retirement = new AbortController();

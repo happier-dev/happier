@@ -108,6 +108,41 @@ describe('runtimeDescriptorReaderRegistry', () => {
     });
   });
 
+  it('reads the retired persisted descriptor envelope at the same compatibility owner', () => {
+    expect(readSessionMetadataConnectedServiceBindings({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        provider: {
+          backendMode: 'appServer',
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceGroupId: 'team',
+          connectedServiceProfileId: 'work',
+        },
+      },
+    }, 'codex')).toEqual({
+      'openai-codex': {
+        source: 'connected',
+        selection: 'group',
+        groupId: 'team',
+        profileId: 'work',
+      },
+    });
+
+    expect(readSessionMetadataConnectedServiceBindings({
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        provider: {
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'work',
+        },
+      },
+    }, 'opencode')).toEqual({});
+  });
+
   it('keeps current Agent descriptors opaque while reading released flat compatibility', () => {
     const reader = getRuntimeDescriptorReader('codex');
     const expected = {
@@ -165,6 +200,26 @@ describe('runtimeDescriptorReaderRegistry', () => {
         profileId: 'legacy-profile',
       },
     });
+    expect(readSessionMetadataConnectedServiceBindings({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'current-profile',
+        },
+      },
+      agentRuntimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        provider: {
+          home: 'connectedService',
+          connectedServiceId: 'openai-codex',
+          connectedServiceProfileId: 'retired-profile',
+        },
+      },
+    }, 'codex')).toEqual({});
   });
 
   it('preserves OpenCode legacy URL validation in the generated reader', () => {

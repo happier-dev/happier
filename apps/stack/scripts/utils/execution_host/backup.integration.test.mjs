@@ -132,6 +132,7 @@ test('active execution-host backups resolve server placement from the mounted gu
     authority: 'guest-config',
     placement: 'target',
     target: 'mac-host',
+    stackName: remoteState.stackName,
     stackStorageDir: remoteState.stackStorageDir,
     stackStateDir: remoteState.stackBaseDir,
   });
@@ -210,11 +211,12 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
       const archiveContents = `target-backup:${version}`;
       await mkdir(join(limaHome, 'happier-agent-primary'), { recursive: true });
       await writeFile(join(limaHome, 'happier-agent-primary', 'ssh.config'), 'Host lima-happier-agent-primary\n', 'utf8');
-      await writeTargetServerPlacement({
+      const configuredTarget = await writeTargetServerPlacement({
         storageRoot: join(guestHome, '.happier', 'stacks'),
         version,
         target: { cliHomeDir: targetCliHome },
       });
+      const remoteState = resolveRemoteStackStatePaths(configuredTarget, { stackName: 'main' });
       await mkdir(join(storageRoot, 'main'), { recursive: true });
       await writeFile(join(storageRoot, 'main', 'dev-targets.json'), `${JSON.stringify({
         version: 1,
@@ -237,10 +239,11 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
           targetActions.push({ action, storageDir: options.env?.HAPPIER_STACK_STORAGE_DIR });
           if (action === 'preflight') {
             assert.equal(options.env?.HAPPIER_STACK_STORAGE_DIR, targetStorageDir);
+            assert.equal(args[2], remoteState.stackName);
             return {
               exitCode: 0,
               out: JSON.stringify({
-                stackName: 'main',
+                stackName: remoteState.stackName,
                 database: { provider: 'sqlite', integrity: 'pending' },
                 databaseBytes: 4096,
                 treeBytes: 4096,
@@ -252,6 +255,7 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
           }
           if (action === 'backup') {
             assert.equal(options.env?.HAPPIER_STACK_STORAGE_DIR, targetStorageDir);
+            assert.equal(args[2], remoteState.stackName);
             await writeFile(sourceArchive, archiveContents, 'utf8');
             return {
               exitCode: 0,
@@ -259,7 +263,7 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
                 archivePath: sourceArchive,
                 archiveBytes: Buffer.byteLength(archiveContents),
                 archiveSha256: createHash('sha256').update(archiveContents).digest('hex'),
-                stackName: 'main',
+                stackName: remoteState.stackName,
                 database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
                 included: [],
               }),
@@ -271,7 +275,7 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
             exitCode: 0,
             out: JSON.stringify({
               format: 2,
-              stackName: 'main',
+              stackName: remoteState.stackName,
               archiveBytes: Buffer.byteLength(archiveContents),
               archiveSha256: createHash('sha256').update(archiveContents).digest('hex'),
               database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
@@ -304,7 +308,12 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
       });
 
       assert.equal(guestCalls, 0);
-      assert.deepEqual(backup.source, { authority: 'guest-config', placement: 'target', target: 'mac-host' });
+      assert.deepEqual(backup.source, {
+        authority: 'guest-config',
+        placement: 'target',
+        target: 'mac-host',
+        stackName: remoteState.stackName,
+      });
       assert.deepEqual(targetActions.map(({ action }) => action), ['preflight', 'backup', 'inspect']);
       const status = await inspectExecutionHostBackup({
         profile: { ...guestProfile(limaHome), activation: 'active', hostMountDir: guestHome },
@@ -312,11 +321,125 @@ test('target-placed v2 and v3 backups snapshot the configured target without inv
         destination,
         boundary,
       });
-      assert.deepEqual(status.source, { authority: 'guest-config', placement: 'target', target: 'mac-host' });
-      assert.deepEqual(status.latest.source, { authority: 'guest-config', placement: 'target', target: 'mac-host' });
+      assert.deepEqual(status.source, backup.source);
+      assert.deepEqual(status.latest.source, backup.source);
       assert.deepEqual(status.health, { ok: true, code: 'ready' });
     });
   }
+});
+
+test('target-placed backups address the resolved child Stack storage through argv and env even with spaced target paths', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-target-backup-spaced-paths-' });
+  const limaHome = fixture.path('lima');
+  const destination = fixture.path('backups');
+  const storageRoot = fixture.path('stack-storage');
+  const guestHome = fixture.path('vm-home');
+  const targetCliHome = fixture.path('target cli home');
+  const sourceArchive = `/tmp/happier-dev-vm-backup-target-spaced-${process.pid}.tar.gz`;
+  const archiveContents = 'target-backup:spaced-paths';
+  await mkdir(join(limaHome, 'happier-agent-primary'), { recursive: true });
+  await writeFile(join(limaHome, 'happier-agent-primary', 'ssh.config'), 'Host lima-happier-agent-primary\n', 'utf8');
+  const configuredTarget = await writeTargetServerPlacement({
+    storageRoot: join(guestHome, '.happier', 'stacks'),
+    target: { cliHomeDir: targetCliHome },
+  });
+  await mkdir(join(storageRoot, 'main'), { recursive: true });
+  await writeFile(join(storageRoot, 'main', 'dev-targets.json'), `${JSON.stringify({
+    version: 1,
+    targets: [],
+  }, null, 2)}\n`, 'utf8');
+  t.after(async () => {
+    await rm(sourceArchive, { force: true });
+  });
+  const remoteState = resolveRemoteStackStatePaths(configuredTarget, { stackName: 'main' });
+  assert.match(remoteState.stackStorageDir, / /, 'fixture must exercise a spaced target storage path');
+
+  let guestCalls = 0;
+  const toolActions = [];
+  const boundary = {
+    availableBytes: async () => Number.MAX_SAFE_INTEGER,
+    capture: mountedGuestBoundary(guestHome, async (command, args, options = {}) => {
+      assert.equal(command, 'python3');
+      const action = args[1];
+      if (action === 'preflight' || action === 'backup') {
+        assert.equal(options.env?.TMPDIR, '/tmp');
+        assert.equal(options.env?.HAPPIER_STACK_STORAGE_DIR, remoteState.stackStorageDir);
+        assert.equal(args[2], remoteState.stackName);
+        toolActions.push({ action, storageDir: options.env?.HAPPIER_STACK_STORAGE_DIR, stackName: args[2] });
+      }
+      if (action === 'preflight') {
+        return {
+          exitCode: 0,
+          out: JSON.stringify({
+            stackName: remoteState.stackName,
+            database: { provider: 'sqlite', integrity: 'pending' },
+            databaseBytes: 4096,
+            treeBytes: 4096,
+            archiveMaxBytes: 8192,
+            requiredFreeBytes: 12288,
+          }),
+          err: '',
+        };
+      }
+      if (action === 'backup') {
+        await writeFile(sourceArchive, archiveContents, 'utf8');
+        return {
+          exitCode: 0,
+          out: JSON.stringify({
+            archivePath: sourceArchive,
+            archiveBytes: Buffer.byteLength(archiveContents),
+            archiveSha256: createHash('sha256').update(archiveContents).digest('hex'),
+            stackName: remoteState.stackName,
+            database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
+            included: [],
+          }),
+          err: '',
+        };
+      }
+      assert.equal(action, 'inspect');
+      return {
+        exitCode: 0,
+        out: JSON.stringify({
+          format: 2,
+          stackName: remoteState.stackName,
+          archiveBytes: Buffer.byteLength(archiveContents),
+          archiveSha256: createHash('sha256').update(archiveContents).digest('hex'),
+          database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
+          secret: {
+            path: 'stack/server-light/handy-master-secret.txt',
+            mode: 0o600,
+            sha256: createHash('sha256').update('target-secret').digest('hex'),
+          },
+          entryCount: 2,
+        }),
+        err: '',
+      };
+    }).capture,
+  };
+  const backup = await createExecutionHostBackup({
+    profile: { ...guestProfile(limaHome), activation: 'active', hostMountDir: guestHome },
+    executor: {
+      capture: async () => {
+        guestCalls += 1;
+        throw new Error('guest backup must not run for a target-placed server');
+      },
+    },
+    boundary,
+    env: {
+      HAPPIER_STACK_HOME_DIR: fixture.path('mac-home'),
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+    },
+    destination,
+  });
+
+  assert.equal(guestCalls, 0);
+  assert.deepEqual(toolActions.map(({ action }) => action), ['preflight', 'backup']);
+  assert.deepEqual(backup.source, {
+    authority: 'guest-config',
+    placement: 'target',
+    target: 'mac-host',
+    stackName: remoteState.stackName,
+  });
 });
 
 test('target-placed backups fail closed when target snapshotting is unavailable or unsupported', async (t) => {
@@ -430,16 +553,103 @@ test('backup inspection treats placement-only legacy metadata as unverified', as
   assert.deepEqual(status.health, { ok: false, code: 'source_unverified' });
 });
 
+test('backup inspection treats pre-fix target metadata without the resolved child Stack as unverified', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-backup-target-source-without-child-' });
+  const destination = fixture.path('backups');
+  const storageRoot = fixture.path('stack-storage');
+  const archiveName = 'dev-vm-backup-1-00000000-0000-0000-0000-000000000000.tar.gz';
+  const archivePath = join(destination, archiveName);
+  await writeTargetServerPlacement({ storageRoot });
+  await mkdir(destination, { recursive: true });
+  await Promise.all([
+    writeFile(archivePath, 'pre-fix target archive\n', 'utf8'),
+    writeFile(join(destination, 'latest.json'), `${JSON.stringify({
+      archivePath,
+      archiveName,
+      createdAt: '2026-08-27T00:00:00.000Z',
+      stackName: 'main',
+      database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
+      archiveSha256: 'a'.repeat(64),
+      included: [],
+      source: { authority: 'host-config', placement: 'target', target: 'mac-host' },
+    })}\n`, 'utf8'),
+  ]);
+
+  const status = await inspectExecutionHostBackup({
+    profile: guestProfile(fixture.path('lima')),
+    env: {
+      HAPPIER_STACK_HOME_DIR: fixture.path('mac-home'),
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+    },
+    destination,
+  });
+
+  assert.equal(status.source.placement, 'target');
+  assert.equal(status.source.target, 'mac-host');
+  assert.match(status.source.stackName, /^dev-target-mac-host-[a-f0-9]{16}$/);
+  assert.deepEqual(status.health, { ok: false, code: 'source_unverified' });
+});
+
+test('backup inspection marks the same target stale when its resolved child Stack identity changes', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'execution-host-backup-target-child-stale-' });
+  const destination = fixture.path('backups');
+  const storageRoot = fixture.path('stack-storage');
+  const archiveName = 'dev-vm-backup-1-00000000-0000-0000-0000-000000000000.tar.gz';
+  const archivePath = join(destination, archiveName);
+  const formerTarget = await writeTargetServerPlacement({
+    storageRoot,
+    target: { cliHomeDir: fixture.path('former-target-cli') },
+  });
+  const formerStackName = resolveRemoteStackStatePaths(formerTarget, { stackName: 'main' }).stackName;
+  await writeTargetServerPlacement({
+    storageRoot,
+    target: { cliHomeDir: fixture.path('current-target-cli') },
+  });
+  await mkdir(destination, { recursive: true });
+  await Promise.all([
+    writeFile(archivePath, 'former target archive\n', 'utf8'),
+    writeFile(join(destination, 'latest.json'), `${JSON.stringify({
+      archivePath,
+      archiveName,
+      createdAt: '2026-08-27T00:00:00.000Z',
+      stackName: 'main',
+      database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
+      archiveSha256: 'a'.repeat(64),
+      included: [],
+      source: {
+        authority: 'host-config',
+        placement: 'target',
+        target: 'mac-host',
+        stackName: formerStackName,
+      },
+    })}\n`, 'utf8'),
+  ]);
+
+  const status = await inspectExecutionHostBackup({
+    profile: guestProfile(fixture.path('lima')),
+    env: {
+      HAPPIER_STACK_HOME_DIR: fixture.path('mac-home'),
+      HAPPIER_STACK_STORAGE_DIR: storageRoot,
+    },
+    destination,
+  });
+
+  assert.equal(status.source.placement, 'target');
+  assert.notEqual(status.source.stackName, formerStackName);
+  assert.deepEqual(status.health, { ok: false, code: 'source_stale' });
+});
+
 test('backup inspection marks a prior host-config target archive stale after guest authority takes over', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-backup-authority-stale-' });
   const destination = fixture.path('backups');
   const guestHome = fixture.path('vm-home');
   const archiveName = 'dev-vm-backup-1-00000000-0000-0000-0000-000000000000.tar.gz';
   const archivePath = join(destination, archiveName);
-  await writeTargetServerPlacement({
+  const configuredTarget = await writeTargetServerPlacement({
     storageRoot: join(guestHome, '.happier', 'stacks'),
     target: { cliHomeDir: fixture.path('target-cli') },
   });
+  const remoteState = resolveRemoteStackStatePaths(configuredTarget, { stackName: 'main' });
   await mkdir(destination, { recursive: true });
   await Promise.all([
     writeFile(archivePath, 'prior target archive\n', 'utf8'),
@@ -451,7 +661,12 @@ test('backup inspection marks a prior host-config target archive stale after gue
       database: { provider: 'sqlite', integrity: 'ok', foreignKeys: 'ok' },
       archiveSha256: 'a'.repeat(64),
       included: [],
-      source: { authority: 'host-config', placement: 'target', target: 'mac-host' },
+      source: {
+        authority: 'host-config',
+        placement: 'target',
+        target: 'mac-host',
+        stackName: remoteState.stackName,
+      },
     })}\n`, 'utf8'),
   ]);
 
@@ -466,8 +681,18 @@ test('backup inspection marks a prior host-config target archive stale after gue
     boundary: mountedGuestBoundary(guestHome),
   });
 
-  assert.deepEqual(status.source, { authority: 'guest-config', placement: 'target', target: 'mac-host' });
-  assert.deepEqual(status.latest.source, { authority: 'host-config', placement: 'target', target: 'mac-host' });
+  assert.deepEqual(status.source, {
+    authority: 'guest-config',
+    placement: 'target',
+    target: 'mac-host',
+    stackName: remoteState.stackName,
+  });
+  assert.deepEqual(status.latest.source, {
+    authority: 'host-config',
+    placement: 'target',
+    target: 'mac-host',
+    stackName: remoteState.stackName,
+  });
   assert.deepEqual(status.health, { ok: false, code: 'source_stale' });
 });
 

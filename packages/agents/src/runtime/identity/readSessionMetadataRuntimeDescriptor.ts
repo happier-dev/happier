@@ -1,8 +1,7 @@
+import { readLegacyAgentRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+
 import { getRuntimeDescriptorReader } from './runtimeDescriptorReaderRegistry.js';
-import type {
-  KnownProviderRuntimeDescriptor,
-  SharedRuntimeDescriptorRuntimeHandle,
-} from './runtimeDescriptorTypes.js';
+import type { SharedRuntimeDescriptorRuntimeHandle } from './runtimeDescriptorTypes.js';
 import { asRecord } from './runtimeDescriptorShared.js';
 
 export type SessionMetadataRuntimeDescriptor = Readonly<{
@@ -47,7 +46,7 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 function readConnectedServiceBindingFromDescriptor(
-  descriptor: KnownProviderRuntimeDescriptor | null,
+  descriptor: unknown,
 ): Readonly<Record<string, SessionMetadataConnectedServiceBinding>> {
   const descriptorRecord = asRecord(descriptor);
   if (descriptorRecord?.home !== 'connectedService') return {};
@@ -87,7 +86,16 @@ export function readSessionMetadataConnectedServiceBindings(
   // Current Sessions persist the host-owned connected-services projection.
   // Never reconstruct host state from an Agent-owned current descriptor.
   if (Object.hasOwn(metadataRecord, 'runtimeDescriptorV1')) return {};
-  return readConnectedServiceBindingFromDescriptor(
+  const releasedFlatBindings = readConnectedServiceBindingFromDescriptor(
     getRuntimeDescriptorReader(providerId)?.(metadataRecord) ?? null,
   );
+  if (Object.keys(releasedFlatBindings).length > 0) return releasedFlatBindings;
+
+  // Older persisted Session rows can carry the same released provider facts
+  // inside the retired `agentRuntimeDescriptorV1` envelope. Keep that parsing
+  // at this existing compatibility owner so UI/host consumers never interpret
+  // Agent-owned descriptor fields themselves.
+  const retiredDescriptor = readLegacyAgentRuntimeDescriptorV1FromMetadata(metadataRecord);
+  if (!retiredDescriptor || retiredDescriptor.agentId !== providerId) return {};
+  return readConnectedServiceBindingFromDescriptor(retiredDescriptor.agent);
 }

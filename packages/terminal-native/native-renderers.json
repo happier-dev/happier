@@ -166,14 +166,11 @@
         "ime-input-echo",
         "layout-resize-and-rotation",
         "localized-accessibility-summary-and-actions",
-        "renderer-crash-event"
-      ],
-      "remainingGaps": [
+        "renderer-crash-event",
         "complete-term-7b-loaded-workload-matrix"
       ],
-      "requiresDeviceQa": [
-        "complete-term-7b-loaded-workload-matrix"
-      ]
+      "remainingGaps": [],
+      "requiresDeviceQa": []
     },
     "sourceStrategy": {
       "kind": "ignored-source-extract",

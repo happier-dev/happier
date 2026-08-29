@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { resolveRemoteStackStatePaths } from '../dev_targets/remote_commands.mjs';
 import {
   installExecutionHostBackupSchedule,
   inspectExecutionHostBackupSchedule,
@@ -27,20 +28,22 @@ function profile(instance = 'happier-dev') {
 }
 
 async function writeTargetServerPlacement({ storageRoot, stackName, targetCliHome, version = 3 }) {
+  const target = {
+    name: 'mac-host',
+    platform: 'posix',
+    ssh: 'mac-host',
+    repoDir: '/Users/target/happier-dev',
+    cliHomeDir: targetCliHome,
+  };
   await mkdir(join(storageRoot, stackName), { recursive: true });
   await writeFile(join(storageRoot, stackName, 'dev-targets.json'), `${JSON.stringify({
     version,
-    targets: [{
-      name: 'mac-host',
-      platform: 'posix',
-      ssh: 'mac-host',
-      repoDir: '/Users/target/happier-dev',
-      cliHomeDir: targetCliHome,
-    }],
+    targets: [target],
     runtimePlacement: {
-      server: { mode: 'prefer-target', target: 'mac-host' },
+      server: { mode: 'prefer-target', target: target.name },
     },
   }, null, 2)}\n`, 'utf8');
+  return target;
 }
 
 async function writeGuestLocalServerPlacement({ guestHome, stackName }) {
@@ -297,11 +300,12 @@ test('backup schedule serializes guest and target-placed stacks through the one 
     guestHome: backupProfile.hostMountDir,
     stackName: stackNames[0],
   });
-  await writeTargetServerPlacement({
+  const configuredTarget = await writeTargetServerPlacement({
     storageRoot: join(backupProfile.hostMountDir, '.happier', 'stacks'),
     stackName: stackNames[1],
     targetCliHome: fixture.path('target-cli'),
   });
+  const targetChildStackName = resolveRemoteStackStatePaths(configuredTarget, { stackName: stackNames[1] }).stackName;
   await mkdir(join(stackStorageRoot, stackNames[1]), { recursive: true });
   await writeFile(join(stackStorageRoot, stackNames[1], 'dev-targets.json'), `${JSON.stringify({
     version: 1,
@@ -443,14 +447,19 @@ test('backup schedule serializes guest and target-placed stacks through the one 
   assert.deepEqual(result.health, { ok: true, code: 'ready' });
   assert.deepEqual(result.stacks.map((stack) => stack.backup.source), [
     { authority: 'guest-config', placement: 'guest' },
-    { authority: 'guest-config', placement: 'target', target: 'mac-host' },
+    {
+      authority: 'guest-config',
+      placement: 'target',
+      target: 'mac-host',
+      stackName: targetChildStackName,
+    },
   ]);
   assert.deepEqual(actions, [
     `guest:preflight:${stackNames[0]}`,
     `guest:backup:${stackNames[0]}`,
     `guest:cleanup:${stackNames[0]}`,
-    `target:preflight:${stackNames[1]}`,
-    `target:backup:${stackNames[1]}`,
+    `target:preflight:${targetChildStackName}`,
+    `target:backup:${targetChildStackName}`,
   ]);
 });
 
@@ -489,11 +498,12 @@ test('a scheduled target failure leaves a prior guest archive stale instead of r
     })}\n`, 'utf8'),
   ]);
   await chmod(hstack, 0o755);
-  await writeTargetServerPlacement({
+  const configuredTarget = await writeTargetServerPlacement({
     storageRoot: join(backupProfile.hostMountDir, '.happier', 'stacks'),
     stackName,
     targetCliHome: fixture.path('target-cli'),
   });
+  const targetChildStackName = resolveRemoteStackStatePaths(configuredTarget, { stackName }).stackName;
   await mkdir(join(stackStorageRoot, stackName), { recursive: true });
   await writeFile(join(stackStorageRoot, stackName, 'dev-targets.json'), `${JSON.stringify({
     version: 1,
@@ -547,7 +557,12 @@ test('a scheduled target failure leaves a prior guest archive stale instead of r
       capture: mountedGuestCapture(backupProfile.hostMountDir, async () => ({ exitCode: 0, out: '', err: '' })),
     },
   });
-  assert.deepEqual(status.stacks[0].source, { authority: 'guest-config', placement: 'target', target: 'mac-host' });
+  assert.deepEqual(status.stacks[0].source, {
+    authority: 'guest-config',
+    placement: 'target',
+    target: 'mac-host',
+    stackName: targetChildStackName,
+  });
   assert.deepEqual(status.stacks[0].latest.source, { authority: 'guest-config', placement: 'guest' });
   assert.deepEqual(status.health, { ok: false, code: 'stack_source_stale' });
 });

@@ -5,6 +5,8 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { expandHome } from './utils/paths/canonical_home.mjs';
+import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
+import { resolveRepoStackIdentity, resolveStacksStorageRoot } from './utils/stack/repo_stack_identity.mjs';
 import { deleteKeychainBundle } from '../../../scripts/pipeline/secrets/delete-keychain-bundle.mjs';
 import { readKeychainBundle } from '../../../scripts/pipeline/secrets/read-keychain-bundle.mjs';
 import { writeKeychainBundle } from '../../../scripts/pipeline/secrets/write-keychain-bundle.mjs';
@@ -33,7 +35,7 @@ Optional:
   HAPPIER_GHOPS_CONFIG_DIR   Override GH_CONFIG_DIR (default: <repo>/.happier/local/ghops/gh)
 
 Behavior:
-  - Prefers HAPPIER_GITHUB_BOT_TOKEN, then macOS Keychain service '${KEYCHAIN_SERVICE}'
+  - Prefers HAPPIER_GITHUB_BOT_TOKEN, then macOS Keychain service '${KEYCHAIN_SERVICE}' locally or through the active mac-host target
   - Forces GH_TOKEN from the resolved bot token (no fallback to stored gh auth)
   - Disables interactive prompts (GH_PROMPT_DISABLED=1)
   - Uses an isolated GH_CONFIG_DIR by default
@@ -88,11 +90,62 @@ function readStoredBotToken() {
   }
 }
 
-function resolveBotToken() {
+async function readMacHostBotToken(repoRoot) {
+  if (process.platform !== 'linux') return null;
+  const configuredStackName = String(process.env.HAPPIER_STACK_STACK ?? '').trim();
+  const stackName = configuredStackName || resolveRepoStackIdentity({
+    repoRoot,
+    stacksStorageRoot: resolveStacksStorageRoot(process.env),
+    createIfMissing: false,
+  }).stackName;
+  const { config } = await loadDevTargetsConfig({
+    stackName,
+    env: process.env,
+    allowMissing: true,
+  });
+  const target = config.targets.find((candidate) => (
+    candidate.name === 'mac-host' && candidate.platform === 'posix'
+  ));
+  if (!target) return null;
+
+  const result = spawnSync('ssh', [
+    '-T',
+    ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
+    '-o', 'ControlMaster=no',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    target.ssh,
+    `security find-generic-password -s ${KEYCHAIN_SERVICE} -w -a ${KEYCHAIN_ACCOUNT}`,
+  ], {
+    encoding: 'utf8',
+    env: process.env,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`mac-host Keychain credential retrieval failed for stack '${stackName}'.`);
+  }
+
+  let bundle;
+  try {
+    bundle = JSON.parse(String(result.stdout ?? '').trim());
+  } catch {
+    throw new Error('mac-host Keychain credential bundle is invalid.');
+  }
+  const token = String(bundle?.[BOT_TOKEN_ENV_KEY] ?? '').trim();
+  if (!token) {
+    throw new Error('mac-host Keychain credential is missing the happier-bot token.');
+  }
+  return { token, source: 'mac-host keychain' };
+}
+
+async function resolveBotToken(repoRoot) {
   const environmentToken = String(process.env[BOT_TOKEN_ENV_KEY] ?? '').trim();
   if (environmentToken) return { token: environmentToken, source: 'environment' };
   const keychainToken = readStoredBotToken();
   if (keychainToken) return { token: keychainToken, source: 'keychain' };
+  const macHostToken = await readMacHostBotToken(repoRoot);
+  if (macHostToken) return macHostToken;
   return { token: '', source: 'missing' };
 }
 
@@ -321,7 +374,7 @@ async function main() {
     return 0;
   }
 
-  const resolved = resolveBotToken();
+  const resolved = await resolveBotToken(repoRoot);
   if (!resolved.token) {
     const keychainHint = process.platform === 'darwin' ? ' or run `yarn ghops auth store`' : '';
     process.stderr.write(`[ghops] missing ${BOT_TOKEN_ENV_KEY}; set it${keychainHint}.\n`);
