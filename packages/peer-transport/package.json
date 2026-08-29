@@ -1,0 +1,34 @@
+{
+  "name": "@happier-dev/peer-transport",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./duplexFrames": {
+      "types": "./dist/duplexFrames/index.d.ts",
+      "default": "./dist/duplexFrames/index.js"
+    }
+  },
+  "files": ["dist", "package.json"],
+  "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
+    "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "yarn -s build && vitest run --config ../../vitest.config.ts src",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

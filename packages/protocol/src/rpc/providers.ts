@@ -622,13 +622,40 @@ export const DaemonProviderModelProjectionGroupV1Schema = z.object({
   manualModelPolicy: z.enum(['allowed', 'catalog-only']),
   supportsFreeformModelIds: z.boolean(),
   suppressedConnectedServiceIds: z.array(ConnectedServiceIdSchema).max(32),
-  rows: z.array(DaemonProviderModelProjectionRowV1Schema).max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection),
+  rows: z.array(DaemonProviderModelProjectionRowV1Schema)
+    .max(PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection + 1),
 }).strict().superRefine((value, ctx) => {
   if (new Set(value.suppressedConnectedServiceIds).size !== value.suppressedConnectedServiceIds.length) {
     ctx.addIssue({
       code: 'custom',
       path: ['suppressedConnectedServiceIds'],
       message: 'Suppressed connected-service ids must be unique',
+    });
+  }
+  // The picker projection appends at most one stale-current row. Unlike
+  // stale observations from a retained snapshot, that recovery row has no
+  // observation timestamps; keep this boundary explicit so a second stale
+  // row cannot hide behind the one-row allowance.
+  const staleCurrentRows = value.rows.filter((row) => (
+    row.catalog.stale
+    && row.catalog.observedAt === undefined
+    && row.catalog.staleAt === undefined
+  ));
+  if (staleCurrentRows.length > 1) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rows'],
+      message: 'A Provider model projection may contain at most one stale-current recovery row',
+    });
+  }
+  if (
+    value.rows.length > PROVIDER_CATALOG_LIMITS_V1.maxModelsPerConnection
+    && staleCurrentRows.length !== 1
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['rows'],
+      message: 'A Provider model projection may exceed the active model limit only for one stale-current recovery row',
     });
   }
 });

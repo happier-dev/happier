@@ -1,0 +1,17 @@
+{
+  "name": "@happier-dev/iroh-native",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": ["src", "ios/HappierIrohNativeModule.swift", "ios/HappierIrohNative.podspec", "android/build.gradle", "android/src", "rust", "expo-module.config.json", "package.json", "README.md"],
+  "scripts": {
+    "test": "../../apps/stack/bin/hstack-exec --script=test:local",
+    "test:local": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
+    "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
+    "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
+  },
+  "devDependencies": { "typescript": "^5.9.2", "vitest": "^3.2.4", "expo-modules-core": "55.0.20" },
+  "peerDependencies": { "expo": "*" },
+  "peerDependenciesMeta": { "expo": { "optional": true } }
+}

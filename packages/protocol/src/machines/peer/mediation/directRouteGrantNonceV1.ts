@@ -1,14 +1,14 @@
 import { z } from 'zod';
 
 import { PeerFlowKindV1Schema } from './flowKind.js';
-import { DirectPeerRouteKindV1Schema } from './routeKind.js';
+import { AuthorizedPeerEndpointRouteKindV1Schema } from './routeKind.js';
 
 const Base64UrlSchema = z.string().regex(/^[A-Za-z0-9_-]+$/);
 
 export const PeerRouteNonceProofV1Schema = z.object({
   v: z.literal(1),
   grantId: z.string().min(1),
-  routeKind: DirectPeerRouteKindV1Schema,
+  routeKind: AuthorizedPeerEndpointRouteKindV1Schema,
   flowKind: PeerFlowKindV1Schema,
   endpointFingerprint: z.string().min(1).optional(),
   nonceBase64Url: Base64UrlSchema,

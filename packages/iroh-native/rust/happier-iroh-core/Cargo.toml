@@ -1,0 +1,13 @@
+[package]
+name = "happier-iroh-core"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib"]
+
+[dependencies]
+# Keep the native transport and relay protocol on one audited release line.
+iroh = "=1.1.0"
+getrandom = "=0.3.3"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }

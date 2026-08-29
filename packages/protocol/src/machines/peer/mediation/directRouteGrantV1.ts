@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
 import { PeerFlowKindV1Schema } from './flowKind.js';
-import { DirectPeerRouteKindV1Schema } from './routeKind.js';
+import { AuthorizedPeerEndpointRouteKindV1Schema } from './routeKind.js';
 import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 
 export { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
@@ -19,7 +19,7 @@ export const DirectRouteGrantPayloadV1Schema = z
     accountId: z.string().min(1),
     machineId: z.string().min(1),
     flowKind: PeerFlowKindV1Schema,
-    routeKind: DirectPeerRouteKindV1Schema,
+    routeKind: AuthorizedPeerEndpointRouteKindV1Schema,
     scope: DirectRouteGrantScopeV1Schema,
     iat: z.number().int().nonnegative(),
     exp: z.number().int().positive(),

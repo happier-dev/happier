@@ -805,6 +805,50 @@ describe('provider machine RPC contracts', () => {
     }).success).toBe(false);
   });
 
+  it('allows one stale-current recovery row beyond the active model limit and rejects a second', () => {
+    const baseRow = {
+      ref: { agentTargetKey: 'backend:codex', providerConnectionId: 'pc_1', modelId: 'model-0' },
+      descriptor: { id: 'model-0', name: 'Model 0' },
+      sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
+      compatibility: {
+        result: { status: 'experimental', selectedProtocol: 'openai-responses', reasons: ['compatibility_evidence_missing'], confirmationScope: { kind: 'model', modelId: 'model-0' } },
+        compatibilityFingerprint: 'compatibility:v1:abc', confirmed: false,
+      },
+      endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
+    } as const;
+    const activeRows = Array.from({ length: 5_000 }, (_, index) => ({
+      ...baseRow,
+      ref: { ...baseRow.ref, modelId: `model-${index}` },
+      descriptor: { ...baseRow.descriptor, id: `model-${index}`, name: `Model ${index}` },
+    }));
+    const staleCurrent = {
+      ...baseRow,
+      ref: { ...baseRow.ref, modelId: 'stale-current' },
+      descriptor: { ...baseRow.descriptor, id: 'stale-current', name: 'Stale current' },
+      catalog: { stale: true },
+      visibility: 'visible' as const,
+    };
+    const group = {
+      connectionId: 'pc_1', providerName: 'Gateway', connectionName: 'Work',
+      connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const,
+      connectionRevision: 1, modelLoadAction: 'descriptor_absent' as const,
+      modelLoadPreflightPolicy: null, authorization: { authorized: true as const },
+      manualModelPolicy: 'allowed' as const, supportsFreeformModelIds: true,
+      suppressedConnectedServiceIds: [], rows: [...activeRows, staleCurrent],
+    };
+    const response = { status: 'success' as const, agentTargetKey: 'backend:codex', groups: [group] };
+    expect(DaemonProviderModelProjectionResponseV1Schema.safeParse(response).success).toBe(true);
+    const secondStale = {
+      ...staleCurrent,
+      ref: { ...staleCurrent.ref, modelId: 'stale-second' },
+      descriptor: { ...staleCurrent.descriptor, id: 'stale-second' },
+    };
+    expect(DaemonProviderModelProjectionResponseV1Schema.safeParse({
+      ...response,
+      groups: [{ ...group, rows: [...activeRows.slice(0, 4_999), staleCurrent, secondStale] }],
+    }).success).toBe(false);
+  });
+
   it('closes current Provider selection recovery over typed missing-source, deleted-connection, and missing-model states', () => {
     const ref = {
       agentTargetKey: 'backend:codex', providerConnectionId: 'pc_1', modelId: 'same-id',

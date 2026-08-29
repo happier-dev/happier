@@ -219,6 +219,8 @@
       "packages/desktop-native",
       "packages/sherpa-native",
       "packages/ssh-native",
+      "packages/iroh-native",
+      "packages/peer-transport",
       "packages/terminal-native",
       "packages/relay-server",
       "packages/support",

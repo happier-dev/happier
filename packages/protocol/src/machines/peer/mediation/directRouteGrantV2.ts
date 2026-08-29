@@ -4,7 +4,7 @@ import { DirectRouteGrantScopeV1Schema } from './directRouteGrantScopesV1.js';
 import { createCanonicalJsonSigningInput } from '../../../crypto/canonicalJson.js';
 import { DIRECT_ROUTE_GRANT_AUDIENCE_V1 } from './directRouteGrantV1.js';
 import { PeerFlowKindV1Schema } from './flowKind.js';
-import { DirectPeerRouteKindV1Schema } from './routeKind.js';
+import { AuthorizedPeerEndpointRouteKindV1Schema } from './routeKind.js';
 import { decodeCanonicalBase64UrlFixedLength } from './strictBase64Url.js';
 
 export const PEER_ROUTE_EPHEMERAL_ED25519_KIND_V2 = 'ephemeral_ed25519' as const;
@@ -24,7 +24,7 @@ export const DirectRouteGrantPayloadV2Schema = z
     accountId: z.string().min(1),
     machineId: z.string().min(1),
     flowKind: PeerFlowKindV1Schema,
-    routeKind: DirectPeerRouteKindV1Schema,
+    routeKind: AuthorizedPeerEndpointRouteKindV1Schema,
     scope: DirectRouteGrantScopeV1Schema,
     iat: z.number().int().nonnegative(),
     exp: z.number().int().positive(),
@@ -73,7 +73,7 @@ export const DirectRouteGrantRequestV2Schema = z
     ephemeralPublicKeyBase64Url: fixedBase64UrlSchema(32),
     machineId: z.string().min(1),
     flowKind: PeerFlowKindV1Schema,
-    routeKind: DirectPeerRouteKindV1Schema,
+    routeKind: AuthorizedPeerEndpointRouteKindV1Schema,
     endpointFingerprint: z.string().min(1),
     ttlMs: z.number().int().positive(),
     scope: DirectRouteGrantScopeV1Schema,

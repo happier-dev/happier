@@ -1,0 +1,10 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+group = 'dev.happier.iroh'
+version = '0.0.0'
+android {
+  namespace "dev.happier.iroh"
+  defaultConfig { versionCode 1; versionName version }
+}

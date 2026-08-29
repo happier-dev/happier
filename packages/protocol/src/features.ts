@@ -41,6 +41,10 @@ export {
   type AuthCapabilities,
 } from './features/payload/capabilities/authCapabilities.js';
 export {
+  AccountDirectoryCapabilitiesSchema,
+  type AccountDirectoryCapabilities,
+} from './features/payload/capabilities/accountDirectoryCapabilities.js';
+export {
   DEFAULT_MACHINE_TRANSFER_CAPABILITIES,
   DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_CAPABILITIES,
   DEFAULT_MACHINE_TRANSFER_SERVER_ROUTED_MAX_BYTES,

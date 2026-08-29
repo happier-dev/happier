@@ -1,0 +1,13 @@
+# Pinned Iroh relay configuration: holepunch-only default.
+enable_relay = false
+enable_quic_addr_discovery = true
+http_bind_addr = "[::]:8080"
+enable_metrics = false
+
+[tls]
+https_bind_addr = "[::]:443"
+quic_bind_addr = "[::]:7842"
+cert_mode = "Manual"
+cert_dir = "/etc/iroh/certs"
+
+# forwarding mode is an explicit operational rollout: enable_relay = true

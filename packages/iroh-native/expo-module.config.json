@@ -1,0 +1,6 @@
+{
+  "name": "HappierIrohNative",
+  "platforms": ["ios", "android"],
+  "ios": { "modules": ["HappierIrohNativeModule"] },
+  "android": { "modules": ["dev.happier.iroh.HappierIrohNativeModule"] }
+}

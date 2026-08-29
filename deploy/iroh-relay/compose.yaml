@@ -1,0 +1,19 @@
+services:
+  iroh-relay:
+    image: happier/iroh-relay:holepunch-only
+    build: .
+    read_only: true
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "7842:7842/udp"
+    volumes:
+      - ./relay.toml:/etc/iroh/relay.toml:ro
+      - ./certs:/etc/iroh/certs:ro
+    # The relay profile is intentionally stateless: no database, key, or
+    # application-server volume is mounted. Runtime scratch is memory-only.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
