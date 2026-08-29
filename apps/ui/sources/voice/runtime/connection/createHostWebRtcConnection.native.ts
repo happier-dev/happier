@@ -1,23 +1,39 @@
 import {
   createWebRtcConnection,
   type VoiceWebRtcRemoteOutputAttachment,
+  type VoiceWebRtcRemoteStreamOwnership,
 } from './VoiceRealtimeConnection';
 import type { VoiceOutputFocusState } from '@happier-dev/plugin-sdk/voice/client';
 import { getVoiceNativeWebRtcRuntime } from '@/voice/runtime/nativeWebRtcRuntime';
 
 type NativeVolumeTrack = Readonly<{
   _setVolume?: (volume: number) => void;
+  stop?: () => void;
+}> & {
+  enabled?: boolean;
+};
+
+type NativeRemoteMediaStream = MediaStream & Readonly<{
+  release?: () => void;
+}>;
+
+type NativeControllableVolumeTrack = NativeVolumeTrack & Readonly<{
+  _setVolume(volume: number): void;
 }>;
 
 export function attachNativeRemoteStream(
   stream: MediaStream | null,
   duckGain: number,
+  ownership: VoiceWebRtcRemoteStreamOwnership,
 ): VoiceWebRtcRemoteOutputAttachment {
   const streamAudioTracks = (stream?.getAudioTracks() ?? []) as unknown as NativeVolumeTrack[];
   const audioTracks = streamAudioTracks
-    .filter((track): track is Required<NativeVolumeTrack> => typeof track._setVolume === 'function');
+    .filter((track): track is NativeControllableVolumeTrack => (
+      typeof track._setVolume === 'function'
+    ));
   let candidateActive = false;
   let focusState: VoiceOutputFocusState = 'active';
+  let disposed = false;
 
   const setVolume = (volume: number): void => {
     for (const track of audioTracks) track._setVolume(volume);
@@ -34,9 +50,21 @@ export function attachNativeRemoteStream(
 
   return Object.freeze({
     dispose() {
-      if (!candidateActive) return;
+      if (disposed) return;
+      disposed = true;
       candidateActive = false;
-      applyVolume();
+      setVolume(0);
+      for (const track of streamAudioTracks) {
+        try {
+          track.enabled = false;
+        } catch {
+          // A retired native receiver that cannot be disabled is still muted
+          // through its native volume hook when that hook is available.
+        }
+      }
+      if (ownership === 'host_fallback') {
+        (stream as NativeRemoteMediaStream | null)?.release?.();
+      }
     },
     beginOutputInterruptionCandidate() {
       if (audioTracks.length === 0) return 'unsupported' as const;
@@ -74,6 +102,8 @@ export const createHostWebRtcConnection: typeof createWebRtcConnection = (input)
       const { MediaStream } = getVoiceNativeWebRtcRuntime();
       return new MediaStream(tracks as unknown[]) as MediaStream;
     },
-    attachRemoteStream: (stream) => attachNativeRemoteStream(stream, input.duckGain),
+    attachRemoteStream: (stream, ownership) => (
+      attachNativeRemoteStream(stream, input.duckGain, ownership)
+    ),
   })
 );

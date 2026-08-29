@@ -598,7 +598,20 @@ describe('VoiceRealtimeConnection implementations', () => {
 
       expect(createPeerConnection).toHaveBeenCalledTimes(1);
       expect(createMediaStream).toHaveBeenCalledWith([remoteTrack]);
-      expect(attachRemoteStream).toHaveBeenCalledWith(fallbackStream);
+      expect(attachRemoteStream).toHaveBeenCalledWith(
+        fallbackStream,
+        'host_fallback',
+      );
+      const peerOwnedStream = { getAudioTracks: () => [] } as unknown as MediaStream;
+      peer.remoteTrack(
+        { id: 'remote-peer-owned' } as MediaStreamTrack,
+        [peerOwnedStream],
+      );
+      expect(attachRemoteStream).toHaveBeenLastCalledWith(
+        peerOwnedStream,
+        'peer',
+      );
+      expect(createMediaStream).toHaveBeenCalledTimes(1);
       expect(peer.addTrack).toHaveBeenCalledWith(localTrack, localStream);
 
       await connection.close({ code: 'user_stop' });

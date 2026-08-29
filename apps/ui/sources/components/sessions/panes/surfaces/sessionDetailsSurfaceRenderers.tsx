@@ -342,6 +342,7 @@ export function createSessionDetailsSurfaceRenderers(
             render: (input) => renderProviderSessionDetailsTab({
                 sessionId: options.sessionId,
                 scopeId: options.scopeId,
+                serverId: options.serverId,
                 tab: input.tab,
             }),
         },

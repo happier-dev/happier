@@ -116,4 +116,30 @@ describe('readSessionConnectedServiceBindings', () => {
             },
         });
     });
+
+    it('never reconstructs host bindings from a current Agent-owned descriptor', () => {
+        expect(readSessionConnectedServiceBindings({
+            metadata: {
+                runtimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    agent: {
+                        home: 'connectedService',
+                        connectedServiceId: 'openai-codex',
+                        connectedServiceProfileId: 'current',
+                    },
+                },
+                agentRuntimeDescriptorV1: {
+                    v: 1,
+                    agentId: 'codex',
+                    provider: {
+                        home: 'connectedService',
+                        connectedServiceId: 'openai-codex',
+                        connectedServiceProfileId: 'retired',
+                    },
+                },
+            },
+            agentId: 'codex',
+        })).toBeNull();
+    });
 });

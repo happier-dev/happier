@@ -432,9 +432,8 @@ impl HostedArtifactDesktopTransport {
 /// would make this transport depend on a different surface's QA schedule
 /// instead of on its own implementation fact.
 ///
-/// Saying the code path exists is not saying the hosted-Artifact platform row
-/// has been proved on it; `hosted_artifact_desktop_transport_for` composes this
-/// with `hosted_artifact_child_embedding_proved_for` for that.
+/// Runtime admission uses this executable primitive fact. Loaded QA remains a
+/// separate publication/support evidence gate.
 fn hosted_artifact_desktop_transport_implementation_for(
     platform: DesktopBrowserPlatform,
 ) -> Option<HostedArtifactDesktopTransport> {
@@ -453,55 +452,15 @@ fn hosted_artifact_desktop_transport_implementation_for(
     }
 }
 
-/// Per-platform hosted-Artifact frame proof: whether THIS surface has a
-/// recorded loaded run on that platform.
-///
-/// `UI-RT-INV-13` restricts Preview to advertising only platform cells with
-/// approved loaded proof. Flipping a platform to `true` is the one auditable
-/// edit that turns its `available` bit on, and it must be backed by a
-/// hosted-Artifact loaded run on that platform — multi-file custom-protocol
-/// load, strict IPC, mount/bridge retirement, late-request denial.
-/// Desktop-browser QA is a different surface and cannot stand in for it, and
-/// neither can a compiling implementation or a CI build matrix.
-///
-/// `UI-RT-REQ-27` names macOS as the intended first factual packaged-desktop
-/// row. That is the plan's requirement, not evidence: a requirement sentence is
-/// not a loaded run, so it cannot seed this bit. No hosted-Artifact loaded run
-/// is recorded for any desktop platform yet, so every cell fails closed and the
-/// capability reports the missing proof instead of advertising it.
-///
-/// This is deliberately a separate fact from
-/// `hosted_artifact_desktop_transport_implementation_for`: the macOS, Windows
-/// and X11 direct-Wry paths stay implemented, selectable and unit-tested in
-/// source, and only their product advertisement waits on their own loaded
-/// proof.
-fn hosted_artifact_child_embedding_proved_for(platform: DesktopBrowserPlatform) -> bool {
-    match platform {
-        // Implemented and unit-tested, but with no recorded hosted-Artifact
-        // loaded run on any of these platforms yet.
-        DesktopBrowserPlatform::MacOs
-        | DesktopBrowserPlatform::Windows
-        | DesktopBrowserPlatform::LinuxX11 => false,
-        // No implemented child-embedding primitive at all; the structural owner
-        // already refuses these, and they carry their own typed reasons.
-        DesktopBrowserPlatform::LinuxWayland
-        | DesktopBrowserPlatform::LinuxUnknown
-        | DesktopBrowserPlatform::Unsupported => false,
-    }
-}
-
+/// Loaded QA remains evidence for publication/support claims, but it is not a
+/// runtime capability bit. The executable adapter/primitive below is the sole
+/// runtime admission fact for this platform.
 /// The one direct-Wry transport this shell may actually use for a platform:
-/// an implemented child-embedding path that also carries this surface's own
-/// recorded loaded proof. Everything downstream — the advertised frame
-/// capability, registration, and view lifecycle — reads this, so an unproved
-/// platform can never be advertised as available while still being able to
-/// open a view.
+/// an implemented child-embedding path. Loaded QA remains evidence for
+/// publication/support claims, not a hand-maintained runtime capability bit.
 fn hosted_artifact_desktop_transport_for(
     platform: DesktopBrowserPlatform,
 ) -> Option<HostedArtifactDesktopTransport> {
-    if !hosted_artifact_child_embedding_proved_for(platform) {
-        return None;
-    }
     hosted_artifact_desktop_transport_implementation_for(platform)
 }
 
@@ -521,13 +480,11 @@ fn hosted_artifact_platform_unavailable_code(platform: DesktopBrowserPlatform) -
         }
         DesktopBrowserPlatform::LinuxUnknown => "desktop_hosted_artifact_linux_display_unavailable",
         DesktopBrowserPlatform::Unsupported => "desktop_hosted_artifact_platform_unsupported",
-        // The direct-Wry child is implemented here, but this surface has no
-        // recorded loaded run on the platform yet, so it is not advertised.
-        // The reason names the missing proof rather than claiming the adapter
-        // does not exist.
+        // Implemented desktop primitives do not reach this branch. Keep a
+        // typed fallback for exhaustive handling if the primitive is removed.
         DesktopBrowserPlatform::MacOs
         | DesktopBrowserPlatform::Windows
-        | DesktopBrowserPlatform::LinuxX11 => "desktop_hosted_artifact_platform_frame_unproved",
+        | DesktopBrowserPlatform::LinuxX11 => "desktop_hosted_artifact_platform_frame_unavailable",
     }
 }
 
@@ -1791,6 +1748,10 @@ impl WryHostedArtifactView {
             .with_visible(false)
             .with_incognito(true)
             .with_devtools(false)
+            // Hosted plugin content is trusted application code, but it does
+            // not own direct camera or process-microphone capture. Capture
+            // remains mediated by the app shell's canonical owners.
+            .with_media_capture_enabled(false)
             .with_navigation_handler(move |url| {
                 // Token is captured only to make this closure's binding
                 // explicit; permitted navigation remains only the registered
@@ -2284,6 +2245,101 @@ mod tests {
         format!("allow-{}", command.replace('_', "-"))
     }
 
+    fn rust_sources_below(directory: &std::path::Path, sources: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(directory).expect("Rust source directory should be readable") {
+            let path = entry.expect("Rust source entry should be readable").path();
+            if path.is_dir() {
+                rust_sources_below(&path, sources);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+                sources.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn every_direct_production_wry_builder_explicitly_denies_media_capture() {
+        let mut sources = Vec::new();
+        rust_sources_below(&manifest_dir().join("src"), &mut sources);
+
+        // Build the search terms at runtime so this inventory test does not
+        // count its own string literals as production builder configuration.
+        let constructor = ["WebViewBuilder", "::new"].concat();
+        let denied_capture = [".with_media_capture_enabled", "(false)"].concat();
+        let mut builder_count = 0;
+
+        for path in sources {
+            let source = fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!("failed to read Rust source {}: {error}", path.display())
+            });
+            let constructors = source.matches(&constructor).count();
+            if constructors == 0 {
+                continue;
+            }
+
+            builder_count += constructors;
+            assert_eq!(
+                source.matches(&denied_capture).count(),
+                constructors,
+                "every direct Wry builder in {} must explicitly deny media capture; app-shell capture is owned outside these child-view builders",
+                path.display(),
+            );
+        }
+
+        assert!(
+            builder_count > 0,
+            "the production Wry builder inventory should not be empty",
+        );
+    }
+
+    #[test]
+    fn vendored_wry_enforces_media_capture_policy_on_every_desktop_backend() {
+        let wry_source = manifest_dir().join("vendor").join("wry").join("src");
+        let backend_contracts = [
+            (
+                "wkwebview/mod.rs",
+                [
+                    "attributes.media_capture_enabled",
+                    "WryWebViewUIDelegate::new",
+                ]
+                .as_slice(),
+            ),
+            (
+                "webview2/mod.rs",
+                [
+                    "attributes.media_capture_enabled",
+                    "COREWEBVIEW2_PERMISSION_KIND_MICROPHONE",
+                    "COREWEBVIEW2_PERMISSION_KIND_CAMERA",
+                    "COREWEBVIEW2_PERMISSION_STATE_DENY",
+                ]
+                .as_slice(),
+            ),
+            (
+                "webkitgtk/mod.rs",
+                [
+                    "attributes.media_capture_enabled",
+                    "connect_permission_request",
+                    "UserMediaPermissionRequest",
+                    "request.deny()",
+                ]
+                .as_slice(),
+            ),
+        ];
+
+        for (relative_path, required_fragments) in backend_contracts {
+            let path = wry_source.join(relative_path);
+            let source = fs::read_to_string(&path).unwrap_or_else(|error| {
+                panic!("failed to read vendored Wry backend {}: {error}", path.display())
+            });
+            for fragment in required_fragments {
+                assert!(
+                    source.contains(fragment),
+                    "{} must consume the media-capture policy through `{fragment}`",
+                    path.display(),
+                );
+            }
+        }
+    }
+
     #[test]
     fn hosted_artifact_commands_are_registered_for_generated_acl_and_main_capability() {
         let manifest_dir = manifest_dir();
@@ -2466,12 +2522,10 @@ mod tests {
     }
 
     #[test]
-    fn hosted_artifact_transport_is_admitted_only_where_this_surface_recorded_loaded_proof() {
-        // `UI-RT-INV-13`: a desktop cell stays typed-unavailable until its own
-        // hosted-Artifact loaded run is recorded. An implemented, compiling,
-        // CI-built adapter is not that proof, and neither is the plan sentence
-        // that names macOS as the intended first row. No such loaded run is
-        // recorded for ANY desktop platform today, so none may be advertised.
+    fn hosted_artifact_transport_is_admitted_by_the_executable_primitive() {
+        // Runtime capability is a factual adapter/primitive query. Loaded QA
+        // remains evidence for publication/support claims, but must not be
+        // copied into a hand-maintained runtime proof bit.
         for platform in [
             DesktopBrowserPlatform::MacOs,
             DesktopBrowserPlatform::Windows,
@@ -2480,25 +2534,11 @@ mod tests {
             DesktopBrowserPlatform::LinuxUnknown,
             DesktopBrowserPlatform::Unsupported,
         ] {
-            assert!(
-                !hosted_artifact_child_embedding_proved_for(platform),
-                "{platform:?} claims a recorded hosted-Artifact loaded run that does not exist",
-            );
             assert_eq!(
                 hosted_artifact_desktop_transport_for(platform).is_some(),
-                hosted_artifact_child_embedding_proved_for(platform),
-                "{platform:?} admitted a hosted-Artifact transport without its own proof",
+                child_embedding_supported_for(platform),
+                "{platform:?} runtime admission disagreed with its executable primitive",
             );
-        }
-        for platform in [
-            DesktopBrowserPlatform::MacOs,
-            DesktopBrowserPlatform::Windows,
-            DesktopBrowserPlatform::LinuxX11,
-        ] {
-            assert_eq!(hosted_artifact_desktop_transport_for(platform), None);
-            // The implementation is still linked and selectable; only the product
-            // row is withheld.
-            assert!(hosted_artifact_desktop_transport_implementation_for(platform).is_some());
         }
     }
 
@@ -2528,23 +2568,9 @@ mod tests {
     #[test]
     fn hosted_artifact_frame_capability_reports_one_derived_status_per_platform() {
         // An unavailable platform states why, so no consumer has to restate a generic
-        // "desktop is unsupported" claim — and an implemented-but-unproved cell says
-        // so instead of claiming no adapter exists. macOS is implemented but has no
-        // recorded loaded run, so it reports the same unproved fact as Windows/X11
-        // rather than advertising a capability whose proof does not exist.
+        // "desktop is unsupported" claim. Implemented desktop primitives report
+        // their executable adapter; loaded QA remains a separate publication gate.
         for (platform, code) in [
-            (
-                DesktopBrowserPlatform::MacOs,
-                "desktop_hosted_artifact_platform_frame_unproved",
-            ),
-            (
-                DesktopBrowserPlatform::Windows,
-                "desktop_hosted_artifact_platform_frame_unproved",
-            ),
-            (
-                DesktopBrowserPlatform::LinuxX11,
-                "desktop_hosted_artifact_platform_frame_unproved",
-            ),
             (
                 DesktopBrowserPlatform::LinuxWayland,
                 "desktop_hosted_artifact_wayland_gtk_container_unimplemented",
@@ -2562,6 +2588,20 @@ mod tests {
                 serde_json::to_value(hosted_artifact_frame_capability_for(platform))
                     .expect("unavailable hosted Artifact capability should serialize"),
                 json!({ "kind": "unavailable", "code": code }),
+            );
+        }
+        for platform in [
+            DesktopBrowserPlatform::MacOs,
+            DesktopBrowserPlatform::Windows,
+            DesktopBrowserPlatform::LinuxX11,
+        ] {
+            assert_eq!(
+                serde_json::to_value(hosted_artifact_frame_capability_for(platform))
+                    .expect("implemented hosted Artifact capability should serialize"),
+                json!({
+                    "kind": "available",
+                    "capability": { "platform": "desktop", "adapter": "wry" },
+                }),
             );
         }
     }

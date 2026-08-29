@@ -50,6 +50,7 @@ import {
     getComposerMediaContentAvailability,
     inspectComposerContent,
     releaseComposerContent,
+    claimComposerContent,
 } from '@/sync/domains/transfers/runtime/transferRuntime';
 import {
     areServerAccountScopesEqual,
@@ -113,6 +114,21 @@ export type ComposerPresentationTransactionApplier = Readonly<{
          */
         executionTarget?: SessionExecutionTargetV1;
     }>) => ComposerTransactionResultV1;
+    /**
+     * The Host API application path: after validation and before the owner's
+     * final revision recheck/commit, claims transfer-store custody for every
+     * staged-media handle the transaction would publish. A handle already
+     * claimed by another document/attachment refuses typed; the transaction
+     * never commits with partial custody.
+     */
+    applyWithAttachmentCustody: (request: Readonly<{
+        ref: ComposerRefV1;
+        admittedContributor: ComposerPresentationAdmittedContributor;
+        transaction: unknown;
+        executionTarget?: SessionExecutionTargetV1;
+        signal?: AbortSignal;
+        isCurrent?: () => boolean;
+    }>) => Promise<ComposerTransactionResultV1>;
     /**
      * Resolves only a declaration admitted to this exact contribution and
      * generation. Media staging uses the resulting attachment identity as
@@ -736,19 +752,39 @@ function validateAttachmentOperationValues(input: Readonly<{
 
 function resolveAttachments(input: Readonly<{
     target: ComposerPresentationTarget;
+    composer: ComposerRefV1;
     snapshot: ComposerSnapshotV1;
     operations: readonly ReturnType<typeof ComposerOperationV1Schema.parse>[];
     attachmentAuthorityResolver: ComposerPresentationAttachmentAuthorityResolver | null;
     admittedContributor: ComposerPresentationAdmittedContributor | null;
     executionTarget: SessionExecutionTargetV1 | null;
 }>):
-    | Readonly<{ ok: true; attachments: readonly ComposerAttachmentViewV1[]; attachmentInstanceIds: readonly string[] }>
+    | Readonly<{
+        ok: true;
+        attachments: readonly ComposerAttachmentViewV1[];
+        attachmentInstanceIds: readonly string[];
+        /**
+         * Publication claims the transaction must admit before it may commit:
+         * every `attachment.add` that supplies NEW staged-media content, keyed
+         * by the exact instance id the draft will record.
+         */
+        stagedMediaClaims: readonly Readonly<{
+            operationIndex: number;
+            handle: ComposerContentHandleV1;
+            claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+        }>[];
+    }>
     | Readonly<{ ok: false; result: ComposerTransactionResultV1 }> {
     const attachmentOperations = input.operations.flatMap((operation, operationIndex) => (
         operation.kind.startsWith('attachment.') ? [{ operation, operationIndex }] : []
     ));
     if (attachmentOperations.length === 0) {
-        return { ok: true, attachments: input.snapshot.attachments, attachmentInstanceIds: [] };
+        return {
+            ok: true,
+            attachments: input.snapshot.attachments,
+            attachmentInstanceIds: [],
+            stagedMediaClaims: [],
+        };
     }
     if (!input.snapshot.capabilities.attachments) {
         return { ok: false, result: invalidOperation(attachmentOperations[0]!.operationIndex, 'attachments_unsupported') };
@@ -759,6 +795,11 @@ function resolveAttachments(input: Readonly<{
 
     const attachments = input.snapshot.attachments.map((attachment) => ({ ...attachment }));
     const attachmentInstanceIds: string[] = [];
+    const stagedMediaClaims: Array<Readonly<{
+        operationIndex: number;
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>> = [];
     for (const { operation, operationIndex } of attachmentOperations) {
         if (operation.kind === 'attachment.add') {
             const authority = validatedValues.authoritiesByOperationIndex.get(operationIndex)!;
@@ -807,6 +848,17 @@ function resolveAttachments(input: Readonly<{
             // A contentless upsert changes the attachment value only. Stage
             // custody is removed only by an explicit replacement or removal.
             const content = operation.content ?? sameIdentity?.content;
+            // New staged-media content publishes only under a transfer-store
+            // claim created for the exact instance id above. The sync owner
+            // cannot admit claims; the attachment-capable applier claims these
+            // after validation and before the owner's final revision recheck.
+            if (operation.content?.kind === 'stagedMedia') {
+                stagedMediaClaims.push(Object.freeze({
+                    operationIndex,
+                    handle: operation.content.handle,
+                    claimant: { composer: input.composer, attachmentInstanceId: generatedId },
+                }));
+            }
             const next: ComposerAttachmentViewV1 = {
                 v: 1,
                 instanceId: generatedId,
@@ -856,7 +908,7 @@ function resolveAttachments(input: Readonly<{
                 : existing.presentation,
         };
     }
-    return { ok: true, attachments, attachmentInstanceIds };
+    return { ok: true, attachments, attachmentInstanceIds, stagedMediaClaims };
 }
 
 /**
@@ -914,13 +966,33 @@ function releaseComposerStagedMedia(
     void releaseComposerContent(handle, claimant ? { claimant } : undefined).catch(() => undefined);
 }
 
+/** One validated, not-yet-committed transaction application. */
+type PreparedComposerPresentationTransactionApply = Readonly<{
+    target: ComposerPresentationTarget;
+    requiresRegisteredTargetCurrent: boolean;
+    snapshot: ComposerSnapshotV1;
+    expectedRevision: number;
+    text: string;
+    references: readonly ComposerMentionRef[];
+    attachments: readonly ComposerAttachmentViewV1[];
+    attachmentInstanceIds: readonly string[];
+    /** Publication claims the caller must admit before this plan may commit. */
+    stagedMediaClaims: readonly Readonly<{
+        operationIndex: number;
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>[];
+    selection: ComposerSnapshotV1['selection'];
+}>;
+
 /**
- * The canonical UI-realm transaction executor. All target adapters provide is
- * a snapshot/commit bridge to their incumbent owner; validation, conflict,
- * and reference reconciliation live here. Attachment authority enters only
- * through the controller-created resolver below, never through a transaction.
+ * Validates one transaction against its target without committing. All target
+ * adapters provide is a snapshot/commit bridge to their incumbent owner;
+ * validation, conflict, and reference reconciliation live here. Attachment
+ * authority enters only through the controller-created resolver below, never
+ * through a transaction.
  */
-function applyComposerPresentationTransactionAtOwner(input: Readonly<{
+function prepareComposerPresentationTransactionApply(input: Readonly<{
     request: ComposerPresentationTransactionRequest;
     attachmentAuthorityResolver: ComposerPresentationAttachmentAuthorityResolver | null;
     admittedContributor: ComposerPresentationAdmittedContributor | null;
@@ -932,67 +1004,247 @@ function applyComposerPresentationTransactionAtOwner(input: Readonly<{
      * registered-only refusal.
      */
     target?: ComposerPresentationTarget | null;
-}>): ComposerTransactionResultV1 {
+}>):
+    | Readonly<{ ok: true; prepared: PreparedComposerPresentationTransactionApply }>
+    | Readonly<{ ok: false; result: ComposerTransactionResultV1 }> {
     const { request } = input;
+    const targetKey = composerRefV1Key(request.ref);
+    const registeredTarget = targets.get(targetKey) ?? null;
     const target = input.target === undefined ? readTarget(request.ref) : input.target;
     if (!target?.readSnapshot || !target.commitDocument) {
-        return { status: 'composerUnavailable' };
+        return { ok: false, result: { status: 'composerUnavailable' } };
     }
     const transaction = ComposerTransactionV1Schema.safeParse(request.transaction);
     if (!transaction.success) {
-        return invalidOperation(0, 'invalid_transaction');
+        return { ok: false, result: invalidOperation(0, 'invalid_transaction') };
     }
     const snapshot = target.readSnapshot();
     if (snapshot.revision !== transaction.data.expectedRevision) {
-        return { status: 'conflict', currentRevision: snapshot.revision };
+        return { ok: false, result: { status: 'conflict', currentRevision: snapshot.revision } };
     }
-    if (!snapshot.state.editable) return { status: 'notEditable' };
+    if (!snapshot.state.editable) return { ok: false, result: { status: 'notEditable' } };
 
     const text = resolveTextMutation({ snapshot, operations: transaction.data.operations });
-    if (!text.ok) return text.result;
+    if (!text.ok) return { ok: false, result: text.result };
     const references = resolveReferences({
         snapshot,
         operations: transaction.data.operations,
         nextText: text.text,
         edits: text.edits,
     });
-    if (!references.ok) return references.result;
+    if (!references.ok) return { ok: false, result: references.result };
     const attachments = resolveAttachments({
         target,
+        composer: request.ref,
         snapshot,
         operations: transaction.data.operations,
         attachmentAuthorityResolver: input.attachmentAuthorityResolver,
         admittedContributor: input.admittedContributor,
         executionTarget: readComposerMediaExecutionTarget(input.executionTarget),
     });
-    if (!attachments.ok) return attachments.result;
-    const selection = clampSelection(snapshot.selection, text.text.length);
-
-    const committed = target.commitDocument({
-        expectedRevision: transaction.data.expectedRevision,
-        mutation: {
+    if (!attachments.ok) return { ok: false, result: attachments.result };
+    return {
+        ok: true,
+        prepared: Object.freeze({
+            target,
+            requiresRegisteredTargetCurrent: registeredTarget === target,
+            snapshot,
+            expectedRevision: transaction.data.expectedRevision,
             text: text.text,
-            ...(selection ? { selection } : {}),
             references: references.references,
             attachments: attachments.attachments,
+            attachmentInstanceIds: attachments.attachmentInstanceIds,
+            stagedMediaClaims: attachments.stagedMediaClaims,
+            selection: clampSelection(snapshot.selection, text.text.length),
+        }),
+    };
+}
+
+function commitComposerPresentationTransactionApply(
+    prepared: PreparedComposerPresentationTransactionApply,
+    ref: ComposerRefV1,
+    admittedClaims: readonly Readonly<{
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>[] = [],
+): ComposerTransactionResultV1 {
+    const committed = prepared.target.commitDocument({
+        expectedRevision: prepared.expectedRevision,
+        mutation: {
+            text: prepared.text,
+            ...(prepared.selection ? { selection: prepared.selection } : {}),
+            references: prepared.references,
+            attachments: prepared.attachments,
         },
     });
     if (committed.status !== 'applied') return committed;
     for (const released of readReleasedComposerStagedMediaHandles({
-        composer: request.ref,
-        previous: snapshot.attachments,
-        next: attachments.attachments,
+        composer: ref,
+        previous: prepared.snapshot.attachments,
+        next: prepared.attachments,
     })) {
         releaseComposerStagedMedia(released.handle, released.claimant);
     }
-    if (target.commitDocumentEmitsChange !== true) emit(request.ref);
+    // A transaction may introduce a staged handle and remove it again before
+    // publication (for example, an add followed by a remove of the generated
+    // instance). The ordinary previous->next diff cannot see that handle, so
+    // release only the claims this attempt newly acquired when no final
+    // attachment retains the exact stage.
+    const retainedHandles = new Set(prepared.attachments.flatMap((attachment) => (
+        attachment.content?.kind === 'stagedMedia'
+            ? [composerStagedMediaHandleKey(attachment.content.handle)]
+            : []
+    )));
+    for (const admitted of admittedClaims) {
+        if (!retainedHandles.has(composerStagedMediaHandleKey(admitted.handle))) {
+            releaseComposerStagedMedia(admitted.handle, admitted.claimant);
+        }
+    }
+    if (prepared.target.commitDocumentEmitsChange !== true) emit(ref);
     return {
         status: 'applied',
         revision: committed.revision,
-        ...(attachments.attachmentInstanceIds.length > 0
-            ? { attachmentInstanceIds: [...attachments.attachmentInstanceIds] }
+        ...(prepared.attachmentInstanceIds.length > 0
+            ? { attachmentInstanceIds: [...prepared.attachmentInstanceIds] }
             : {}),
     };
+}
+
+/**
+ * The synchronous transaction executor. It cannot admit staged-media custody,
+ * so a transaction that would publish new staged content refuses typed rather
+ * than publishing unclaimed. Generic host text/reference transactions — and
+ * every attachment value/removal flow — stay fully synchronous.
+ */
+function applyComposerPresentationTransactionAtOwner(input: Readonly<{
+    request: ComposerPresentationTransactionRequest;
+    attachmentAuthorityResolver: ComposerPresentationAttachmentAuthorityResolver | null;
+    admittedContributor: ComposerPresentationAdmittedContributor | null;
+    executionTarget?: SessionExecutionTargetV1;
+    target?: ComposerPresentationTarget | null;
+}>): ComposerTransactionResultV1 {
+    const prepared = prepareComposerPresentationTransactionApply(input);
+    if (!prepared.ok) return prepared.result;
+    if (prepared.prepared.stagedMediaClaims.length > 0) {
+        return invalidOperation(prepared.prepared.stagedMediaClaims[0]!.operationIndex, 'staged_media_custody_required');
+    }
+    return commitComposerPresentationTransactionApply(prepared.prepared, input.request.ref);
+}
+
+/**
+ * Releases publication claims this applier admitted for a transaction that
+ * never committed. A claim is kept only when the exact attachment (same
+ * instance id and handle) is already present in the current document — the
+ * losing side of a concurrent double-apply must not strip the winner's
+ * custody.
+ */
+async function releaseUnpublishedStagedMediaClaims(
+    prepared: PreparedComposerPresentationTransactionApply,
+    admittedClaims: readonly Readonly<{
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>[],
+): Promise<void> {
+    if (admittedClaims.length === 0) return;
+    let currentAttachments: readonly ComposerAttachmentViewV1[];
+    try {
+        const snapshot = prepared.target.readSnapshot?.();
+        if (!snapshot) return;
+        currentAttachments = snapshot.attachments;
+    } catch {
+        return;
+    }
+    await Promise.all(admittedClaims.map(async (claim) => {
+        const published = currentAttachments?.some((attachment) => (
+            attachment.instanceId === claim.claimant.attachmentInstanceId
+            && attachment.content?.kind === 'stagedMedia'
+            && attachment.content.handle.id === claim.handle.id
+        ));
+        if (!published) {
+            await releaseComposerContent(claim.handle, { claimant: claim.claimant }).catch(() => undefined);
+        }
+    }));
+}
+
+/**
+ * The attachment-capable application used by the mounted Host API. After all
+ * validation passes and before the owner's final revision recheck/commit, it
+ * claims every staged-media handle this transaction would publish at the
+ * existing transfer-store claimant owner. Custody conflicts and unavailable
+ * transfer paths refuse typed; nothing publishes unclaimed.
+ */
+function isCustodyAttemptCurrent(input: Readonly<{
+    plan: PreparedComposerPresentationTransactionApply;
+    ref: ComposerRefV1;
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+}>): boolean {
+    if (input.signal?.aborted) return false;
+    if (input.isCurrent?.() === false) return false;
+    if (!isComposerPresentationTargetCurrent(input.plan.target)) return false;
+    return !input.plan.requiresRegisteredTargetCurrent
+        || targets.get(composerRefV1Key(input.ref)) === input.plan.target;
+}
+
+async function applyComposerPresentationTransactionWithAttachmentCustody(input: Readonly<{
+    request: ComposerPresentationTransactionRequest;
+    attachmentAuthorityResolver: ComposerPresentationAttachmentAuthorityResolver | null;
+    admittedContributor: ComposerPresentationAdmittedContributor | null;
+    executionTarget?: SessionExecutionTargetV1;
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+}>): Promise<ComposerTransactionResultV1> {
+    const prepared = prepareComposerPresentationTransactionApply(input);
+    if (!prepared.ok) return prepared.result;
+    const plan = prepared.prepared;
+    if (plan.stagedMediaClaims.length === 0) {
+        if (!isCustodyAttemptCurrent({ plan, ref: input.request.ref, signal: input.signal, isCurrent: input.isCurrent })) {
+            return { status: 'composerUnavailable' };
+        }
+        return commitComposerPresentationTransactionApply(plan, input.request.ref);
+    }
+    if (!isCustodyAttemptCurrent({ plan, ref: input.request.ref, signal: input.signal, isCurrent: input.isCurrent })) {
+        return { status: 'composerUnavailable' };
+    }
+    const admittedClaims: Array<Readonly<{
+        handle: ComposerContentHandleV1;
+        claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+    }>> = [];
+    for (const claim of plan.stagedMediaClaims) {
+        const outcome = input.signal
+            ? await claimComposerContent(claim.handle, claim.claimant, { signal: input.signal })
+            : await claimComposerContent(claim.handle, claim.claimant);
+        if (!isCustodyAttemptCurrent({ plan, ref: input.request.ref, signal: input.signal, isCurrent: input.isCurrent })) {
+            if (outcome.status === 'claimed' && outcome.newlyAcquired) {
+                admittedClaims.push(claim);
+            }
+            await releaseUnpublishedStagedMediaClaims(plan, admittedClaims);
+            return { status: 'composerUnavailable' };
+        }
+        if (outcome.status === 'claimed') {
+            // A restart/retry rejoin does not belong to this attempt, so a
+            // later revision conflict must not release it. Only the atomic
+            // first claimant is eligible for rollback cleanup.
+            if (outcome.newlyAcquired) admittedClaims.push(claim);
+            continue;
+        }
+        // The transaction must not commit with partial custody. Only the
+        // claims this attempt admitted are released, and even those only when
+        // the exact attachment did not already win a concurrent publication.
+        await releaseUnpublishedStagedMediaClaims(plan, admittedClaims);
+        return outcome.status === 'claimedElsewhere'
+            ? invalidOperation(claim.operationIndex, 'staged_media_custody_conflict')
+            : { status: 'composerUnavailable' };
+    }
+    if (!isCustodyAttemptCurrent({ plan, ref: input.request.ref, signal: input.signal, isCurrent: input.isCurrent })) {
+        await releaseUnpublishedStagedMediaClaims(plan, admittedClaims);
+        return { status: 'composerUnavailable' };
+    }
+    const committed = commitComposerPresentationTransactionApply(plan, input.request.ref, admittedClaims);
+    if (committed.status !== 'applied') {
+        await releaseUnpublishedStagedMediaClaims(plan, admittedClaims);
+    }
+    return committed;
 }
 
 /**
@@ -1017,6 +1269,14 @@ export function createComposerPresentationTransactionApplier(input: Readonly<{
             attachmentAuthorityResolver,
             admittedContributor: request.admittedContributor,
             ...(request.executionTarget ? { executionTarget: request.executionTarget } : {}),
+        }),
+        applyWithAttachmentCustody: (request) => applyComposerPresentationTransactionWithAttachmentCustody({
+            request,
+            attachmentAuthorityResolver,
+            admittedContributor: request.admittedContributor,
+            ...(request.executionTarget ? { executionTarget: request.executionTarget } : {}),
+            ...(request.signal ? { signal: request.signal } : {}),
+            ...(request.isCurrent ? { isCurrent: request.isCurrent } : {}),
         }),
         resolveAttachmentIdentity: (request) => (
             attachmentAuthorityResolver(request)?.identity ?? null
@@ -1562,21 +1822,30 @@ export function createComposerPresentationHostHandlers(
         applyComposer: (
             request: PluginUiHostApiRequestEnvelopeV1,
             options?: PluginSurfaceHostApiRequestOptions,
-        ): PluginUiJsonValueV1 => {
+        ): Promise<PluginUiJsonValueV1> => {
             const refusal = requestRefusal(options, 'composer_apply_cancelled');
-            if (refusal) return refusal;
+            if (refusal) return Promise.resolve(refusal);
             const parsed = PluginUiApplyComposerRequestV1Schema.safeParse(request.payload);
-            if (!parsed.success) return composerHostInvalidPayload('composer_apply_payload_invalid');
-            return PluginUiJsonValueV1Schema.parse(input.transactionApplier
-                ? input.transactionApplier.apply({
-                    ref: parsed.data.ref,
-                    admittedContributor,
-                    transaction: parsed.data.transaction,
-                    ...(composerMediaExecutionTarget
-                        ? { executionTarget: composerMediaExecutionTarget }
-                        : {}),
-                })
-                : applyComposerPresentationTransaction(parsed.data));
+            if (!parsed.success) return Promise.resolve(composerHostInvalidPayload('composer_apply_payload_invalid'));
+            const apply = async (): Promise<PluginUiJsonValueV1> => {
+                const result = input.transactionApplier
+                    ? await input.transactionApplier.applyWithAttachmentCustody({
+                        ref: parsed.data.ref,
+                        admittedContributor,
+                        transaction: parsed.data.transaction,
+                        ...(composerMediaExecutionTarget
+                            ? { executionTarget: composerMediaExecutionTarget }
+                            : {}),
+                        ...(options?.signal ? { signal: options.signal } : {}),
+                        isCurrent: () => requestRefusal(options, 'composer_apply_cancelled') === null,
+                    })
+                    : applyComposerPresentationTransaction(parsed.data);
+                const lateRefusal = requestRefusal(options, 'composer_apply_cancelled');
+                return result.status === 'composerUnavailable' && lateRefusal
+                    ? lateRefusal
+                    : PluginUiJsonValueV1Schema.parse(result);
+            };
+            return apply();
         },
         ...(composerMediaExecutionTarget && composerMediaTransactionApplier
             ? {

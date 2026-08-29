@@ -28,8 +28,10 @@ import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voicePro
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
+import { resolveDaemonTtsVoiceSelection } from './resolveDaemonTtsVoiceSelection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 
 const ACCESSORY_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const ACCESSORY_BUTTON_STYLE = {
@@ -52,7 +54,6 @@ export function LocalNeuralTtsSettings(props: {
     requestedExecution: props.cfgKokoro.execution,
   }), [props.cfgKokoro.execution]);
 
-  const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
   const effectiveAssetSetId = resolveKokoroDaemonTtsPackId(props.cfgKokoro.assetId ?? KOKORO_DEFAULT_TTS_PACK_ID);
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
@@ -76,7 +77,17 @@ export function LocalNeuralTtsSettings(props: {
       networkTimeoutMs: props.networkTimeoutMs,
     });
 
-  const voices = useLocalNeuralKokoroVoiceCatalog({ installSummary });
+  const deviceVoices = useLocalNeuralKokoroVoiceCatalog({ installSummary });
+  const daemonCatalog = useDaemonVoiceModelCatalogController();
+  const daemonVoiceSelection = React.useMemo(() => resolveDaemonTtsVoiceSelection({
+    packId: effectiveAssetSetId,
+    configuredVoiceId: props.cfgKokoro.voiceId,
+    statuses: daemonCatalog?.state.statuses ?? [],
+  }), [daemonCatalog?.state.statuses, effectiveAssetSetId, props.cfgKokoro.voiceId]);
+  const voices = usesDaemonExecution ? daemonVoiceSelection.voices : deviceVoices;
+  const effectiveVoiceId = usesDaemonExecution
+    ? daemonVoiceSelection.selectedVoiceId
+    : props.cfgKokoro.voiceId ?? 'af_heart';
 
   const previewController = React.useMemo(() => createVoicePlaybackController(), []);
   const [previewingVoiceId, setPreviewingVoiceId] = React.useState<string | null>(null);
@@ -277,7 +288,7 @@ export function LocalNeuralTtsSettings(props: {
         onOpenChange={(next) => setOpenMenu(next ? 'voiceId' : null)}
         variant="selectable"
         search={true}
-        selectedId={effectiveVoiceId}
+        selectedId={effectiveVoiceId ?? ''}
         showCategoryTitles={false}
         matchTriggerWidth={true}
         connectToTrigger={true}
@@ -288,13 +299,13 @@ export function LocalNeuralTtsSettings(props: {
           title: t('settingsVoice.local.kokoro.voice.title'),
           subtitle: t('settingsVoice.local.kokoro.voice.subtitleNative'),
           showSelectedSubtitle: false,
-          detailFormatter: () => effectiveVoiceId,
+          detailFormatter: () => effectiveVoiceId ?? t('common.unavailable'),
         }}
         items={voices.map((v) => ({
           id: v.id,
           title: v.title,
           subtitle: v.subtitle,
-          rightElement: (
+          rightElement: usesDaemonExecution ? undefined : (
             <View style={{ paddingRight: 4 }}>
               <Pressable
                 accessibilityRole="button"
@@ -315,7 +326,7 @@ export function LocalNeuralTtsSettings(props: {
           ),
         }))}
         onSelect={(id) => {
-          props.setKokoro({ ...props.cfgKokoro, voiceId: id });
+          props.setKokoro({ ...props.cfgKokoro, voiceId: id || null });
           setOpenMenu(null);
         }}
       />

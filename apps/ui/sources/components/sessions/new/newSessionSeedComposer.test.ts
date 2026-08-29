@@ -1,12 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const storeTempDataSpy = vi.hoisted(() => vi.fn(() => 'seed-handoff'));
-const getTempDataSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('@/utils/sessions/tempDataStore', () => ({
-    storeTempData: storeTempDataSpy,
-    getTempData: getTempDataSpy,
-}));
+const seedDraftSpy = vi.hoisted(() => vi.fn(() => '00000000-0000-4000-8000-000000000042'));
 
 import { readPluginNewSessionSeedV1, seedAndOpenNewSession } from './newSessionSeedComposer';
 
@@ -16,7 +10,7 @@ describe('readPluginNewSessionSeedV1', () => {
     it('admits the dedicated one-shot shape and rejects the retired append/replace prompt shape', () => {
         expect(readPluginNewSessionSeedV1({
             prompt: 'Repair the failing check',
-            placement: { directory: '/workspace' },
+            placement: { kind: 'currentTarget', directory: '/workspace' },
         })).toMatchObject({ prompt: 'Repair the failing check' });
         expect(readPluginNewSessionSeedV1({
             prompt: { text: 'Repair the failing check', mode: 'append' },
@@ -30,84 +24,98 @@ describe('readPluginNewSessionSeedV1', () => {
 describe('seedAndOpenNewSession', () => {
     function harness(overrides: Partial<Parameters<typeof seedAndOpenNewSession>[0]> = {}) {
         const navigate = vi.fn();
-        const writeAttachmentSeeds = vi.fn();
         const outcome = seedAndOpenNewSession({
-            seed: { prompt: 'Repair the failing check', placement: { directory: '/work' } },
+            seed: {
+                prompt: 'Repair the failing check',
+                placement: { kind: 'currentTarget', directory: '/work' },
+            },
             pluginId: 'happier.triage',
             scope,
             isCurrent: () => true,
             navigateToNewSession: navigate,
             createDraftId: () => '00000000-0000-4000-8000-000000000042',
-            writeAttachmentSeeds,
+            seedDraft: seedDraftSpy,
             ...overrides,
         });
-        return { outcome, navigate, writeAttachmentSeeds };
+        return { outcome, navigate };
     }
 
-    it('hands the complete fresh seed to the mounted screen without pre-writing a draft', () => {
-        storeTempDataSpy.mockClear();
-        const { outcome, navigate, writeAttachmentSeeds } = harness({
+    it('persists the complete fresh seed before navigating by draft identity', () => {
+        seedDraftSpy.mockClear();
+        const { outcome, navigate } = harness({
             seed: {
                 prompt: 'Repair the failing check',
                 profileId: 'profile-review',
-                placement: { serverId: 'server-a', machineId: 'machine-a', directory: '/work' },
+                placement: {
+                    kind: 'exactTarget',
+                    serverId: 'server-a',
+                    machineId: 'machine-a',
+                    directory: '/work',
+                },
             },
         });
 
-        expect(outcome).toEqual({ kind: 'opened', dataId: 'seed-handoff' });
-        expect(storeTempDataSpy).toHaveBeenCalledWith({
-            prompt: 'Repair the failing check',
-            selectedProfileId: 'profile-review',
-            machineId: 'machine-a',
-            directory: '/work',
-        });
-        expect(writeAttachmentSeeds).not.toHaveBeenCalled();
+        expect(outcome).toEqual({ kind: 'opened', dataId: null });
+        expect(seedDraftSpy).toHaveBeenCalledWith(expect.objectContaining({
+            scope,
+            seed: expect.objectContaining({
+                prompt: { text: 'Repair the failing check', mode: 'replace' },
+                profileId: 'profile-review',
+                placement: {
+                    kind: 'exactTarget',
+                    serverId: 'server-a',
+                    machineId: 'machine-a',
+                    directory: '/work',
+                },
+            }),
+            createDraftId: expect.any(Function),
+        }));
         expect(navigate).toHaveBeenCalledWith({
-            dataId: 'seed-handoff',
+            dataId: null,
             draftId: '00000000-0000-4000-8000-000000000042',
-            spawnServerId: 'server-a',
-            machineId: 'machine-a',
-            directory: '/work',
         });
     });
 
     it('routes incumbent checkout questions and rejects a prepared intent that bypassed mounted materialization', () => {
         for (const checkoutIntent of ['createWorktree', 'ask'] as const) {
             expect(harness({ seed: { checkoutIntent } }).navigate).toHaveBeenCalledWith({
-                dataId: 'seed-handoff',
+                dataId: null,
                 draftId: '00000000-0000-4000-8000-000000000042',
                 worktree: 'new',
             });
         }
-        storeTempDataSpy.mockClear();
+        seedDraftSpy.mockClear();
         const refused = harness({ seed: { checkoutIntent: 'preparedReviewWorkspace' } });
         expect(refused.outcome).toEqual({
             kind: 'unavailable',
             reason: 'prepared_review_workspace_unavailable',
         });
-        expect(storeTempDataSpy).not.toHaveBeenCalled();
+        expect(seedDraftSpy).not.toHaveBeenCalled();
         expect(refused.navigate).not.toHaveBeenCalled();
-        expect(refused.writeAttachmentSeeds).not.toHaveBeenCalled();
     });
 
-    it('stores attachment requests only in the Account+draft handoff owner', () => {
-        storeTempDataSpy.mockClear();
+    it('stores attachment requests in the draft-local handoff owner', () => {
+        seedDraftSpy.mockClear();
         const attachment = {
             attachmentLocalId: 'entry',
             value: { key: 'entry:42', value: { v: 1 }, presentation: { label: 'PR #42' } },
         } as const;
-        const { writeAttachmentSeeds } = harness({ seed: { attachments: [attachment] } });
+        const { outcome } = harness({ seed: { attachments: [attachment] } });
 
-        expect(writeAttachmentSeeds).toHaveBeenCalledWith({
-            scope,
-            draftId: '00000000-0000-4000-8000-000000000042',
-        }, [{ pluginId: 'happier.triage', ...attachment }]);
-        expect(storeTempDataSpy).toHaveBeenCalledWith({});
+        expect(outcome).toEqual({ kind: 'opened', dataId: null });
+        expect(seedDraftSpy).toHaveBeenCalled();
+        expect(seedDraftSpy.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            attachmentSeeds: [expect.objectContaining({
+                instanceId: expect.any(String),
+                pluginId: 'happier.triage',
+                attachmentLocalId: attachment.attachmentLocalId,
+                value: attachment.value,
+            })],
+        }));
     });
 
-    it('retire-on-refusal leaves no durable draft or pending attachment and a retry opens once', () => {
-        getTempDataSpy.mockClear();
-        const writeAttachmentSeeds = vi.fn();
+    it('keeps the durable draft on navigation refusal while clearing pending attachment custody', () => {
+        seedDraftSpy.mockClear();
         const seed = {
             attachments: [{
                 attachmentLocalId: 'entry',
@@ -116,18 +124,12 @@ describe('seedAndOpenNewSession', () => {
         } as const;
         const refused = harness({
             seed,
-            writeAttachmentSeeds,
             navigateToNewSession: () => { throw new Error('router unavailable'); },
         });
         expect(refused.outcome).toEqual({ kind: 'unavailable', reason: 'navigation_unavailable' });
-        expect(getTempDataSpy).toHaveBeenCalledWith('seed-handoff');
-        expect(writeAttachmentSeeds).toHaveBeenLastCalledWith({
-            scope,
-            draftId: '00000000-0000-4000-8000-000000000042',
-        }, []);
-
+        expect(seedDraftSpy).toHaveBeenCalledTimes(1);
         const retry = harness({ seed });
-        expect(retry.outcome).toEqual({ kind: 'opened', dataId: 'seed-handoff' });
+        expect(retry.outcome).toEqual({ kind: 'opened', dataId: null });
         expect(retry.navigate).toHaveBeenCalledOnce();
     });
 
@@ -148,7 +150,6 @@ describe('seedAndOpenNewSession', () => {
             const result = harness(overrides);
             expect(result.outcome).toEqual(expected);
             expect(result.navigate).not.toHaveBeenCalled();
-            expect(result.writeAttachmentSeeds).not.toHaveBeenCalled();
         }
     });
 });

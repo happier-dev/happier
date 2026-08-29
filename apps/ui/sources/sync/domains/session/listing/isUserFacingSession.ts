@@ -1,5 +1,6 @@
 import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 type UserFacingSessionCandidate = Readonly<{
     metadata?: unknown;
@@ -28,6 +29,8 @@ export function isUserFacingSession(session: UserFacingSessionCandidate): boolea
     if (session.metadataUnavailable === true) {
         return false;
     }
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
+    if (metadataLayoutVersion < 0) return false;
     const metadata = readSessionOwnerMetadataView({
         metadataLayoutVersion: session.metadataLayoutVersion,
         metadata: session.metadata ?? null,
@@ -41,7 +44,7 @@ export function isUserFacingSession(session: UserFacingSessionCandidate): boolea
         && session.accessLevel == null
         && session.metadataUnavailable === false;
     if (
-        (session.metadataLayoutVersion ?? 0) === 1
+        metadataLayoutVersion === 1
         && metadata == null
         && !isSharedParticipant
         && !hasProjectedOwnerMetadata

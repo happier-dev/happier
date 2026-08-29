@@ -308,6 +308,22 @@ describe('sessionExecutionRuns', () => {
         expect(Array.isArray((response as any).runs)).toBe(true);
     });
 
+    it('fails closed when execution.run.list returns a sparse non-contract run', async () => {
+        sessionRpcMock.mockResolvedValue({
+            runs: [{
+                runId: 'run_legacy_sparse',
+                intent: 'voice_agent',
+                status: 'running',
+                backendId: 'claude',
+            }],
+        });
+
+        await expect(sessionExecutionRuns.sessionExecutionRunList('session-1', {})).resolves.toEqual({
+            ok: false,
+            error: 'Unsupported response from session RPC',
+        });
+    });
+
     it('calls execution.run.get through session RPC', async () => {
         sessionRpcMock.mockResolvedValue({
             run: {
@@ -315,7 +331,11 @@ describe('sessionExecutionRuns', () => {
                 callId: 'call_1',
                 sidechainId: 'call_1',
                 intent: 'review',
-                backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                permissionMode: 'read_only',
+                retentionPolicy: 'ephemeral',
+                runClass: 'bounded',
+                ioMode: 'request_response',
                 status: 'succeeded',
                 startedAtMs: 1,
                 finishedAtMs: 2,
@@ -331,6 +351,28 @@ describe('sessionExecutionRuns', () => {
             expectRpcTimeout,
         );
         expect((response as any).run?.runId).toBe('run_1');
+    });
+
+    it('fails closed when execution.run.get returns backend identity only through sparse predecessor fields', async () => {
+        sessionRpcMock.mockResolvedValue({
+            run: {
+                runId: 'run_sparse',
+                backendId: 'claude',
+                resumeHandle: {
+                    kind: 'provider_session.v1',
+                    backendId: 'claude',
+                    providerSessionId: 'provider_sparse',
+                },
+            },
+        });
+
+        await expect(sessionExecutionRuns.sessionExecutionRunGet('session-1', {
+            runId: 'run_sparse',
+            includeStructured: false,
+        })).resolves.toEqual({
+            ok: false,
+            error: 'Unsupported response from session RPC',
+        });
     });
 
     it('returns ok:false error shapes from execution.run.get without treating them as unsupported', async () => {

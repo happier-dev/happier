@@ -3,15 +3,21 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { installDropdownCommonModuleMocks } from '@/components/ui/forms/dropdown/dropdownTestHelpers';
-import type { PopoverRenderProps } from '@/components/ui/popover/_types';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routeState = vi.hoisted(() => ({ pathname: '/settings/providers/cpx-moving' }));
 const featureRuntimeState = vi.hoisted(() => ({
   status: 'ready' as 'loading' | 'ready',
+  qualifiedAccounts: true,
 }));
+const connectedAccountState = vi.hoisted(() => ({
+  additionalAccounts: [] as Array<Record<string, unknown>>,
+}));
+const modalSpies = vi.hoisted(() => ({ show: vi.fn((_config: unknown) => 'purpose-target-modal'), hide: vi.fn() }));
+const localizationSpies = vi.hoisted(() => ({ resolve: vi.fn((_pluginId: string, value: string | { key: string; fallback: string }) => (
+  typeof value === 'string' ? value : `localized:${value.key}`
+)) }));
 const connectedServiceRegistryState = vi.hoisted(() => ({
   entries: [{
     serviceId: 'acme-gateway-account',
@@ -22,75 +28,22 @@ const connectedServiceRegistryState = vi.hoisted(() => ({
   }] as Array<Record<string, unknown>>,
 }));
 
-type PopoverMockProps = Readonly<Record<string, unknown> & {
-  children?: React.ReactNode | ((bounds: PopoverRenderProps) => React.ReactNode);
-}>;
-
-installDropdownCommonModuleMocks();
-
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
   return createExpoRouterMock({ pathname: () => routeState.pathname }).module;
 });
 
+vi.mock('@/modal', () => ({
+  Modal: {
+    show: modalSpies.show,
+    hide: modalSpies.hide,
+  },
+}));
+
 vi.mock('@expo/vector-icons', () => ({
   Ionicons: (props: Record<string, unknown>) => React.createElement('Ionicons', props),
 }));
 
-vi.mock('@/components/ui/popover', () => ({
-  Popover: (props: PopoverMockProps) => {
-    const children = props.children;
-    return React.createElement(
-      'Popover',
-      props,
-      typeof children === 'function'
-        ? children({
-          maxHeight: 200,
-          maxWidth: 400,
-          placement: 'bottom',
-          requestClose: () => {},
-        })
-        : children ?? null,
-    );
-  },
-  PopoverScope: (props: React.PropsWithChildren) => React.createElement(React.Fragment, null, props.children),
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-  FloatingOverlay: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement(
-    'FloatingOverlay',
-    props,
-    props.children,
-  ),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/useSelectableMenu', () => ({
-  useSelectableMenu: () => ({
-    searchQuery: '',
-    selectedIndex: 0,
-    filteredCategories: [],
-    inputRef: { current: null },
-    setSelectedIndex: () => {},
-    handleSearchChange: () => {},
-    handleKeyPress: () => {},
-  }),
-  CREATE_ITEM_ID: '__create__',
-}));
-
-vi.mock('@/components/ui/forms/dropdown/SelectableMenuResults', () => ({
-  SelectableMenuResults: (props: Record<string, unknown>) => React.createElement('SelectableMenuResults', props),
-}));
-
-vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({ useReducedMotionPreference: () => false }));
-vi.mock('@/components/ui/scroll/useScrollRectIntoView', () => ({
-  useScrollRectIntoViewRegistry: () => ({
-    scrollRef: { current: null },
-    registerItemLayout: () => () => {},
-    onViewportLayout: () => {},
-    onContentSizeChange: () => {},
-    onScroll: () => {},
-  }),
-}));
 vi.mock('@/components/ui/lists/Item', () => ({
   Item: (props: React.PropsWithChildren<Record<string, unknown>>) => React.createElement('Item', props, props.children),
 }));
@@ -115,7 +68,7 @@ vi.mock('@/sync/store/hooks', () => ({
       configurationRevision: null,
       displayName: undefined,
       scopes: [],
-    }],
+    }, ...connectedAccountState.additionalAccounts],
     connectedAccountGroupsV4: [],
   }),
   useSettings: () => ({
@@ -128,11 +81,14 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
   useProjectedConnectedServicesRegistry: () => ({
     scopeKey: 'server-a', status: 'ready', errorReason: null, entries: connectedServiceRegistryState.entries,
   }),
+  useProjectedPluginLocalizedTextResolver: () => localizationSpies.resolve,
 }));
 vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
   useServerFeaturesRuntimeSnapshot: () => ({
     status: featureRuntimeState.status,
-    features: { capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } },
+    features: { capabilities: { connectedServices: {
+      qualifiedAccounts: featureRuntimeState.qualifiedAccounts ? { protocolVersion: 4 } : undefined,
+    } } },
   }),
 }));
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
@@ -155,19 +111,51 @@ vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
 
 afterEach(() => {
   featureRuntimeState.status = 'ready';
+  featureRuntimeState.qualifiedAccounts = true;
   routeState.pathname = '/settings/providers/cpx-moving';
+  connectedAccountState.additionalAccounts = [];
+  modalSpies.show.mockClear();
+  modalSpies.hide.mockClear();
+  localizationSpies.resolve.mockClear();
 });
+
+type CapturedPurposeTargetModalConfig = Readonly<{
+  props: Readonly<{
+    rootStep: Readonly<{
+      sections: readonly [Readonly<{
+        virtualization?: string;
+        options: ReadonlyArray<Readonly<{
+          id: string;
+          label: string;
+          subtitle?: string;
+          accessibilityLabel?: string;
+          disabled?: boolean;
+        }>>;
+      }>];
+    }>;
+  }>;
+}>;
+
+function latestPurposeTargetModalConfig(): CapturedPurposeTargetModalConfig {
+  const config = modalSpies.show.mock.calls.at(-1)?.[0];
+  if (!config) throw new Error('Expected the purpose-target modal to be shown');
+  return config as CapturedPurposeTargetModalConfig;
+}
+
+function findItemByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+  return screen.findAllByType('Item').find((node) => node.props?.testID === testID);
+}
 
 describe('ConnectedAccountPurposeTargetChooser', () => {
   it('closes its portal-backed menu when a retained settings screen changes route', async () => {
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const props = {
       testID: 'provider-connection-managed-purpose-chooser:openai-upstream',
+      localizedTextPluginId: 'acme.provider.author',
       declaration: {
         purpose: 'openai-upstream',
         service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
-        title: 'Use OpenAI upstream account',
+        title: { key: 'managed.openaiPurpose', fallback: 'Use OpenAI upstream account' },
         required: true,
       },
       value: null,
@@ -176,20 +164,24 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       reloadSubtitle: 'settingsProviders.status.disabled',
     };
     const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser {...props} />);
-    const dropdown = screen.tree.findByType(DropdownMenu);
+    const trigger = findItemByTestId(screen, props.testID);
 
-    expect(dropdown.props.itemTrigger).toEqual(expect.objectContaining({
-      title: 'Use OpenAI upstream account',
-      itemProps: expect.objectContaining({
-        accessibilityLabel: 'Use OpenAI upstream account · common.unavailable',
-      }),
+    expect(trigger?.props).toEqual(expect.objectContaining({
+      title: 'localized:managed.openaiPurpose',
+      accessibilityLabel: 'localized:managed.openaiPurpose · Choose an account or group',
     }));
-    expect(dropdown.props.itemTrigger.title).not.toContain('openai-upstream');
-    expect(dropdown.props.itemTrigger.title).not.toContain('acme.managed.provider');
-    expect(dropdown.props.itemTrigger.title).not.toContain('gateway');
-    expect(dropdown.props.items).toEqual(expect.arrayContaining([
+    expect(localizationSpies.resolve).toHaveBeenCalledWith('acme.provider.author', props.declaration.title);
+    expect(trigger?.props.title).not.toContain('openai-upstream');
+    expect(trigger?.props.title).not.toBe('Use OpenAI upstream account');
+    expect(trigger?.props.title).not.toContain('acme.managed.provider');
+    expect(trigger?.props.title).not.toContain('gateway');
+    await act(async () => {
+      trigger?.props.onPress();
+    });
+    const options = latestPurposeTargetModalConfig().props.rootStep.sections[0].options;
+    expect(options).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        title: 'Personal OpenAI',
+        label: 'Personal OpenAI',
         subtitle: 'Acme Gateway account',
         accessibilityLabel: 'Acme Gateway account · Personal OpenAI',
         disabled: false,
@@ -197,8 +189,8 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     ]));
     // The canonical accountId is routing identity, not copy: it may key the row
     // and its testID, but no field a user reads or a screen reader speaks.
-    for (const item of dropdown.props.items) {
-      expect(item.title).not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
+    for (const item of options) {
+      expect(item.label).not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
       expect(item.subtitle ?? '').not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
       expect(item.accessibilityLabel ?? '').not.toContain('35f1d8ec-633c-4bda-9e0d-7055ac95b8af');
     }
@@ -206,24 +198,21 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       node.props?.testID === `${props.testID}:reload`
     ))[0]?.props.subtitle).toBe('settingsProviders.status.disabled');
 
-    await act(async () => {
-      dropdown.props.onOpenChange(true);
-    });
-    expect(screen.root.findAllByType('Popover' as never)).toHaveLength(1);
+    expect(modalSpies.show).toHaveBeenCalledTimes(1);
 
     routeState.pathname = '/settings/connected-services';
     await act(async () => {
       screen.tree.update(<ConnectedAccountPurposeTargetChooser {...props} />);
     });
 
-    expect(screen.root.findAllByType('Popover' as never)).toHaveLength(0);
+    expect(modalSpies.hide).toHaveBeenCalledWith('purpose-target-modal');
   });
 
   it('labels a selected target and an indeterminate transport without raw purpose identifiers', async () => {
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const props = {
       testID: 'provider-connection-managed-purpose-chooser:openai-upstream',
+      localizedTextPluginId: 'acme.provider.author',
       declaration: {
         purpose: 'openai-upstream',
         service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
@@ -240,9 +229,9 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       onChange: vi.fn(),
     };
     const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser {...props} />);
-    const dropdown = screen.tree.findByType(DropdownMenu);
+    const trigger = findItemByTestId(screen, props.testID);
 
-    expect(dropdown.props.itemTrigger.itemProps.accessibilityLabel).toBe(
+    expect(trigger?.props.accessibilityLabel).toBe(
       'Use OpenAI upstream account · Acme Gateway account · Personal OpenAI',
     );
 
@@ -251,16 +240,63 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       screen.tree.update(<ConnectedAccountPurposeTargetChooser {...props} />);
     });
 
-    expect(screen.tree.findByType(DropdownMenu).props.itemTrigger.itemProps.accessibilityLabel).toBe(
-      'Use OpenAI upstream account · common.loading',
+    expect(findItemByTestId(screen, props.testID)?.props.accessibilityLabel).toBe(
+      'Use OpenAI upstream account · Loading...',
     );
+  });
+
+  it('distinguishes legacy transport from a deleted target and required-unset prompt', async () => {
+    featureRuntimeState.qualifiedAccounts = false;
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    const selected = {
+      kind: 'account' as const,
+      account: {
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+      },
+    };
+    const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser
+      testID="provider-connection-managed-purpose-chooser:legacy"
+      localizedTextPluginId="acme.provider.author"
+      declaration={{
+        purpose: 'openai-upstream',
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        required: true,
+      }}
+      value={selected}
+      onChange={vi.fn()}
+    />);
+
+    expect(findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:legacy')?.props).toEqual(
+      expect.objectContaining({
+        subtitle: 'This server cannot show connected-account targets yet',
+        detail: 'This server cannot show connected-account targets yet',
+      }),
+    );
+
+    featureRuntimeState.qualifiedAccounts = true;
+    connectedAccountState.additionalAccounts = [];
+    await act(async () => {
+      screen.tree.update(<ConnectedAccountPurposeTargetChooser
+        testID="provider-connection-managed-purpose-chooser:legacy"
+        localizedTextPluginId="acme.provider.author"
+        declaration={{
+          purpose: 'openai-upstream',
+          service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+          required: true,
+        }}
+        value={{ ...selected, account: { ...selected.account, accountId: 'deleted' } }}
+        onChange={vi.fn()}
+      />);
+    });
+    expect(findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:legacy')?.props.detail).toBe('Unavailable');
   });
 
   it('falls back to the canonical service display name for a legacy titleless purpose', async () => {
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
-    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser
       testID="provider-connection-managed-purpose-chooser:openai-upstream"
+      localizedTextPluginId="acme.provider.author"
       declaration={{
         purpose: 'openai-upstream',
         service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
@@ -269,13 +305,52 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
       value={null}
       onChange={vi.fn()}
     />);
-    const trigger = screen.tree.findByType(DropdownMenu).props.itemTrigger;
+    const trigger = findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:openai-upstream');
 
-    expect(trigger).toEqual(expect.objectContaining({
+    expect(trigger?.props).toEqual(expect.objectContaining({
       title: 'Acme Gateway account',
-      itemProps: expect.objectContaining({
-        accessibilityLabel: 'Acme Gateway account · common.unavailable',
-      }),
+      accessibilityLabel: 'Acme Gateway account · Choose an account or group',
     }));
+  });
+
+  it('hands 601 account rows to the shared automatic virtualization owner without a local limit', async () => {
+    connectedAccountState.additionalAccounts = Array.from({ length: 600 }, (_, index) => ({
+      ref: {
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        accountId: `scale-account-${String(index).padStart(4, '0')}`,
+      },
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      revisionSemantics: 'revisioned',
+      credentialRevision: `cred-${index}`,
+      configurationReady: true,
+      configurationRevision: null,
+      displayName: `Scale account ${index}`,
+      scopes: [],
+    }));
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    const testID = 'provider-connection-managed-purpose-chooser:scale';
+    const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser
+      testID={testID}
+      localizedTextPluginId="acme.provider.author"
+      declaration={{
+        purpose: 'openai-upstream',
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        title: 'Use OpenAI upstream account',
+        required: true,
+      }}
+      value={null}
+      onChange={vi.fn()}
+    />);
+
+    await act(async () => {
+      findItemByTestId(screen, testID)?.props.onPress();
+    });
+
+    const section = latestPurposeTargetModalConfig().props.rootStep.sections[0];
+    expect(section.options).toHaveLength(601);
+    expect(section.virtualization).toBeUndefined();
+    expect(section.options[0]?.label).toBe('Personal OpenAI');
+    expect(section.options.map((option) => option.label)).toContain('Scale account 599');
   });
 });

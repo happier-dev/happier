@@ -4,6 +4,7 @@ const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const resolvePreferredServerIdForSessionIdMock = vi.hoisted(() => vi.fn());
 const resumeSessionMock = vi.hoisted(() => vi.fn());
+const readAgentScopedPluginSettingsSnapshotMock = vi.hoisted(() => vi.fn(async () => null));
 const storageStateMock = vi.hoisted(() => ({
     sessions: {} as Record<string, any>,
     sessionMessages: {} as Record<string, any>,
@@ -34,6 +35,10 @@ vi.mock('./sessions', () => ({
     resumeSession: (options: unknown) => resumeSessionMock(options),
 }));
 
+vi.mock('@/agents/registry/agentScopedPluginSettings', () => ({
+    readAgentScopedPluginSettingsSnapshot: readAgentScopedPluginSettingsSnapshotMock,
+}));
+
 vi.mock('@/text', () => ({
     t: (key: string) => `t:${key}`,
 }));
@@ -45,6 +50,8 @@ describe('session goal operations', () => {
         machineRpcWithServerScopeMock.mockReset();
         resolvePreferredServerIdForSessionIdMock.mockReset();
         resumeSessionMock.mockReset();
+        readAgentScopedPluginSettingsSnapshotMock.mockReset();
+        readAgentScopedPluginSettingsSnapshotMock.mockResolvedValue(null);
         storageStateMock.sessions = {
             'session-1': {
                 active: true,
@@ -188,6 +195,11 @@ describe('session goal operations', () => {
             initialGoal: {
                 objective: 'line one\nline two',
             },
+        }));
+        expect(readAgentScopedPluginSettingsSnapshotMock).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: expect.any(String),
+            machineId: 'machine-1',
+            serverId: 'server-explicit',
         }));
     });
 

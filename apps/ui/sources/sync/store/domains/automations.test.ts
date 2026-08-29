@@ -70,7 +70,6 @@ const eventDefinitionSummary = AutomationDefinitionListItemSchema.parse({
     createdAt: 1,
     updatedAt: 2,
     assignments: [],
-    retiredTriggers: [],
 });
 
 const eventDefinitionDetail = AutomationDefinitionDetailSchema.parse({
@@ -184,6 +183,7 @@ describe('createAutomationsDomain', () => {
     it('initializes with empty automation state', () => {
         const harness = createHarness();
         expect(harness.get().automations).toEqual({});
+        expect(harness.get().automationDefinitionNextCursor).toBeNull();
         expect(harness.get().automationRunsByAutomationId).toEqual({});
     });
 
@@ -194,6 +194,40 @@ describe('createAutomationsDomain', () => {
 
         harness.get().applyAutomations([automation({ id: 'a3' })]);
         expect(Object.keys(harness.get().automations).sort()).toEqual(['a3']);
+    });
+
+    it('preserves an extended Automation window while restarting its fresh continuation on refresh', () => {
+        const harness = createHarness();
+        harness.get().applyAutomations([automation({ id: 'a2', updatedAt: 2 })], 'cursor-1');
+
+        harness.get().appendAutomations('stale-cursor', [automation({ id: 'a1' })], null);
+        expect(Object.keys(harness.get().automations)).toEqual(['a2']);
+        expect(harness.get().automationDefinitionNextCursor).toBe('cursor-1');
+
+        harness.get().appendAutomations('cursor-1', [automation({ id: 'a1' })], null);
+        expect(Object.keys(harness.get().automations).sort()).toEqual(['a1', 'a2']);
+        expect(harness.get().automationDefinitionNextCursor).toBeNull();
+
+        harness.get().applyAutomations([automation({ id: 'a2', name: 'refreshed', updatedAt: 3 })], 'cursor-new');
+        expect(Object.keys(harness.get().automations).sort()).toEqual(['a1', 'a2']);
+        expect(harness.get().automations.a2?.name).toBe('refreshed');
+        expect(harness.get().automationDefinitionNextCursor).toBe('cursor-new');
+
+        // The fresh cursor may replay an already-retained row before it
+        // reaches definitions inserted while this client was offline. The
+        // identity-keyed merge keeps the old tail without duplicating it.
+        harness.get().appendAutomations('cursor-new', [
+            automation({ id: 'a1', updatedAt: 2 }),
+            automation({ id: 'a-new', updatedAt: 2.5 }),
+        ], null);
+        expect(Object.keys(harness.get().automations).sort()).toEqual(['a-new', 'a1', 'a2']);
+        expect(harness.get().automationDefinitionNextCursor).toBeNull();
+
+        // A complete refreshed first page is the whole current catalog and
+        // may therefore retire predecessor tail rows authoritatively.
+        harness.get().applyAutomations([automation({ id: 'a2', updatedAt: 4 })], null);
+        expect(Object.keys(harness.get().automations)).toEqual(['a2']);
+        expect(harness.get().automationDefinitionWindowExtended).toBe(false);
     });
 
     it('retains current private definition content across a same-version summary refresh and drops it on a revision change', () => {

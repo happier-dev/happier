@@ -13,13 +13,13 @@ describe('sendTranscriptSelectionToSession', () => {
     it('formats messages, applies the template, writes sessionInitialPromptV1, and navigates to the destination session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'existingSession', sessionId: 'dest', serverId: 'server-b' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn(() => 'draft-a');
+        const openNewSession = vi.fn(async () => true);
         const navigateToSession = vi.fn();
-        const navigateToNewSession = vi.fn();
 
         const result = await sendTranscriptSelectionToSession({
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
+            sourceMachineId: 'machine-a',
             sourceSessionName: 'Source session',
             selectedMessages,
             bulkCopyFormat: 'markdown_labeled',
@@ -28,9 +28,8 @@ describe('sendTranscriptSelectionToSession', () => {
             nowMs: () => 123,
             chooseDestinationSessionId,
             writeInitialPrompt,
-            appendNewSessionDraft,
+            openNewSession,
             navigateToSession,
-            navigateToNewSession,
         });
 
         expect(result).toBe(true);
@@ -52,9 +51,8 @@ describe('sendTranscriptSelectionToSession', () => {
                 sourceSessionId: 'source',
             },
         });
-        expect(appendNewSessionDraft).not.toHaveBeenCalled();
+        expect(openNewSession).not.toHaveBeenCalled();
         expect(navigateToSession).toHaveBeenCalledWith({ sessionId: 'dest', serverId: 'server-b' });
-        expect(navigateToNewSession).not.toHaveBeenCalled();
     });
 
     it('does nothing when the picker is cancelled', async () => {
@@ -64,6 +62,7 @@ describe('sendTranscriptSelectionToSession', () => {
         const result = await sendTranscriptSelectionToSession({
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
+            sourceMachineId: 'machine-a',
             sourceSessionName: null,
             selectedMessages,
             bulkCopyFormat: 'plain',
@@ -72,9 +71,8 @@ describe('sendTranscriptSelectionToSession', () => {
             nowMs: () => 123,
             chooseDestinationSessionId: vi.fn(async () => null),
             writeInitialPrompt,
-            appendNewSessionDraft: vi.fn(),
+            openNewSession: vi.fn(async () => true),
             navigateToSession,
-            navigateToNewSession: vi.fn(),
         });
 
         expect(result).toBe(false);
@@ -82,16 +80,16 @@ describe('sendTranscriptSelectionToSession', () => {
         expect(navigateToSession).not.toHaveBeenCalled();
     });
 
-    it('appends to the new-session draft and opens /new when the picker chooses a new session', async () => {
+    it('opens New Session through the canonical seed owner when the picker chooses a new session', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'newSession' }));
         const writeInitialPrompt = vi.fn(async () => undefined);
-        const appendNewSessionDraft = vi.fn(() => 'draft-a');
+        const openNewSession = vi.fn(async () => true);
         const navigateToSession = vi.fn();
-        const navigateToNewSession = vi.fn();
 
         const result = await sendTranscriptSelectionToSession({
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
+            sourceMachineId: 'machine-a',
             sourceSessionName: null,
             selectedMessages,
             bulkCopyFormat: 'plain',
@@ -100,21 +98,46 @@ describe('sendTranscriptSelectionToSession', () => {
             nowMs: () => 789,
             chooseDestinationSessionId,
             writeInitialPrompt,
-            appendNewSessionDraft,
+            openNewSession,
             navigateToSession,
-            navigateToNewSession,
         });
 
         expect(result).toBe(true);
-        expect(appendNewSessionDraft).toHaveBeenCalledWith({
+        expect(openNewSession).toHaveBeenCalledWith({
             promptText: 'Question\n\nAnswer',
-            createdAtMs: 789,
-            sourceMessageIds: ['m1', 'm2'],
-            sourceSessionId: 'source',
             sourceServerId: 'server-a',
+            placement: {
+                kind: 'exactTarget',
+                serverId: 'server-a',
+                machineId: 'machine-a',
+            },
         });
-        expect(navigateToNewSession).toHaveBeenCalledWith('draft-a');
         expect(writeInitialPrompt).not.toHaveBeenCalled();
         expect(navigateToSession).not.toHaveBeenCalled();
+    });
+
+    it('does not fabricate a partial placement when the source machine is unavailable', async () => {
+        const openNewSession = vi.fn(async () => true);
+
+        await sendTranscriptSelectionToSession({
+            sourceSessionId: 'source',
+            sourceServerId: 'server-b',
+            sourceMachineId: null,
+            sourceSessionName: null,
+            selectedMessages,
+            bulkCopyFormat: 'plain',
+            template: '{{MESSAGES}}',
+            roleLabels: { user: 'You', assistant: 'Assistant' },
+            nowMs: () => 789,
+            chooseDestinationSessionId: vi.fn(async () => ({ kind: 'newSession' as const })),
+            writeInitialPrompt: vi.fn(async () => undefined),
+            openNewSession,
+            navigateToSession: vi.fn(),
+        });
+
+        expect(openNewSession).toHaveBeenCalledWith({
+            promptText: 'Question\n\nAnswer',
+            sourceServerId: 'server-b',
+        });
     });
 });

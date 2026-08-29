@@ -10,7 +10,11 @@ const resolveVoiceAgentInitialContexts = vi.fn((_sessionId: string, _options?: R
     deferredTargetSessionContext: '',
 }));
 const sessionExecutionRunList = vi.fn(async (_sessionId: string, _params?: any) => ({ runs: [] }));
-const sessionExecutionRunGet = vi.fn(async (_sessionId: string, _params?: any) => null);
+const sessionExecutionRunGet = vi.fn(async (_sessionId: string, _params?: any) => ({
+    ok: false as const,
+    error: 'Execution run not found',
+    errorCode: 'execution_run_not_found',
+}));
 const sessionExecutionRunStop = vi.fn(async (_sessionId: string, _params?: any) => ({ ok: true }));
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, updater: (metadata: any) => any) => {
     const session = state.sessions[_sessionId];
@@ -156,13 +160,23 @@ describe('initializeVoiceAgentHandle', () => {
         patchSessionMetadataWithRetry.mockClear();
         ensureSessionVisibleForMessageRoute.mockClear();
         refreshSessionMessages.mockClear();
+        state.sessions.s1.metadataLayoutVersion = 0;
+        delete state.sessions.s1.ownerMetadataView;
         state.sessions.s1.metadata = {
             flavor: 'claude',
             profileId: 'raw-profile',
+            agentRuntimeCapabilitiesV1: {
+                localControl: { supported: true },
+            },
         };
+        state.sessionListRenderables.s1.metadataLayoutVersion = 0;
+        delete state.sessionListRenderables.s1.ownerMetadataView;
         state.sessionListRenderables.s1.metadata = {
             flavor: 'codex',
             profileId: 'cached-profile',
+            agentRuntimeCapabilitiesV1: {
+                localControl: { supported: true },
+            },
         };
     });
 
@@ -198,6 +212,46 @@ describe('initializeVoiceAgentHandle', () => {
         );
     });
 
+    it.each<[string, () => void]>([
+        ['visible session metadata', () => {
+            state.sessions.s1.metadataLayoutVersion = 1;
+            state.sessions.s1.ownerMetadataView = null;
+            state.sessionListRenderables.s1.metadataLayoutVersion = 1;
+            state.sessionListRenderables.s1.ownerMetadataView = null;
+        }],
+        ['cached session metadata', () => {
+            state.sessions.s1.metadata = null;
+            state.sessionListRenderables.s1.metadataLayoutVersion = 1;
+            state.sessionListRenderables.s1.ownerMetadataView = null;
+        }],
+    ])('fails closed without RPC when the %s Agent is unreadable', async (_case, arrange) => {
+        arrange();
+        const getDaemonVoiceAgentClient = vi.fn(() => ({
+            start,
+            sendTurn: vi.fn(),
+            welcome: vi.fn(),
+            startTurnStream: vi.fn(),
+            readTurnStream: vi.fn(),
+            cancelTurnStream: vi.fn(),
+            commit: vi.fn(),
+            stop: vi.fn(),
+        }));
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+
+        await expect(initializeVoiceAgentHandle({
+            sessionId: 's1',
+            getDaemonVoiceAgentClient,
+            setDeferredTargetSessionContext: vi.fn(),
+        })).rejects.toMatchObject({
+            message: 'voice_agent_selection_unavailable',
+            code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
+        });
+
+        expect(ensureVoiceAgentInstallablesBackground).not.toHaveBeenCalled();
+        expect(getDaemonVoiceAgentClient).not.toHaveBeenCalled();
+        expect(start).not.toHaveBeenCalled();
+    });
+
     it('routes migrated OpenAI-compatible Chat through the daemon with exact Provider selections', async () => {
         const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
         const originalAgent = state.settings.voice.providers.local_conversation.config.agent;
@@ -208,12 +262,12 @@ describe('initializeVoiceAgentHandle', () => {
             providerChat: {
                 status: 'configured',
                 chat: {
-                    agentTargetKey: 'backend:opencode',
+                    agentTargetKey: 'agent:happier.agent.opencode/opencode',
                     providerConnectionId: 'voice-openai-compatible-chat',
                     modelId: 'chat-model',
                 },
                 commit: {
-                    agentTargetKey: 'backend:opencode',
+                    agentTargetKey: 'agent:happier.agent.opencode/opencode',
                     providerConnectionId: 'voice-openai-compatible-chat',
                     modelId: 'commit-model',
                 },
@@ -251,6 +305,123 @@ describe('initializeVoiceAgentHandle', () => {
                     overrides: { temperature: { updatedAt: 0, value: 0.73 } },
                 },
             }));
+        } finally {
+            state.settings.voice.providers.local_conversation.config.agent = originalAgent;
+        }
+    });
+
+    it('routes the released OpenAI-compatible settings through migration and daemon startup', async () => {
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const originalSettings = state.settings;
+        const legacySecret = {
+            id: 'voice:openai_compat:chat_api_key',
+            name: 'Voice: openai_compat',
+            kind: 'apiKey' as const,
+            encryptedValue: { _isSecretValue: true as const, value: 'sk-existing' },
+            createdAt: 0,
+            updatedAt: 0,
+        };
+        state.settings = settingsParse({
+            secrets: [legacySecret],
+            voice: {
+                providerId: 'local_conversation',
+                adapters: {
+                    local_conversation: {
+                        conversationMode: 'agent',
+                        agent: {
+                            backend: 'openai_compat',
+                            agentSource: 'agent',
+                            agentId: 'opencode',
+                            permissionPolicy: 'read_only',
+                            openaiCompat: {
+                                chatBaseUrl: 'http://127.0.0.1:11434/v1',
+                                chatApiKey: legacySecret.encryptedValue,
+                                chatModel: 'qwen-chat',
+                                commitModel: 'qwen-commit',
+                                temperature: 0.25,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        try {
+            await initializeVoiceAgentHandle({
+                sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({
+                    start,
+                    sendTurn: vi.fn(),
+                    welcome: vi.fn(),
+                    startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(),
+                    cancelTurnStream: vi.fn(),
+                    commit: vi.fn(),
+                    stop: vi.fn(),
+                }),
+                setDeferredTargetSessionContext: vi.fn(),
+            });
+
+            expect(start).toHaveBeenCalledWith(expect.objectContaining({
+                agentSource: 'agent',
+                agentId: 'opencode',
+                chatModelId: 'qwen-chat',
+                commitModelId: 'qwen-commit',
+                chatModelSelection: expect.objectContaining({
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                }),
+                commitModelSelection: expect.objectContaining({
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                }),
+            }));
+        } finally {
+            state.settings = originalSettings;
+        }
+    });
+
+    it.each([
+        ['different', 'backend:codex'],
+        ['malformed', 'not-a-target-key'],
+    ])('fails closed when the configured commit target is %s', async (_case, commitTargetKey) => {
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const originalAgent = state.settings.voice.providers.local_conversation.config.agent;
+        state.settings.voice.providers.local_conversation.config.agent = {
+            ...originalAgent,
+            agentSource: 'agent',
+            agentId: 'opencode',
+            providerChat: {
+                status: 'configured',
+                chat: {
+                    agentTargetKey: 'agent:happier.agent.opencode/opencode',
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                    modelId: 'chat-model',
+                },
+                commit: {
+                    agentTargetKey: commitTargetKey,
+                    providerConnectionId: 'voice-openai-compatible-chat',
+                    modelId: 'commit-model',
+                },
+                configuration: {},
+            },
+        };
+
+        try {
+            await expect(initializeVoiceAgentHandle({
+                sessionId: 's1',
+                getDaemonVoiceAgentClient: () => ({
+                    start,
+                    sendTurn: vi.fn(),
+                    welcome: vi.fn(),
+                    startTurnStream: vi.fn(),
+                    readTurnStream: vi.fn(),
+                    cancelTurnStream: vi.fn(),
+                    commit: vi.fn(),
+                    stop: vi.fn(),
+                }),
+                setDeferredTargetSessionContext: vi.fn(),
+            })).rejects.toMatchObject({ code: 'VOICE_AGENT_PROVIDER_SELECTION_MISMATCH' });
+            expect(start).not.toHaveBeenCalled();
         } finally {
             state.settings.voice.providers.local_conversation.config.agent = originalAgent;
         }

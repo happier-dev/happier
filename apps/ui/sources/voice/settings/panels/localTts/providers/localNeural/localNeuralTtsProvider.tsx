@@ -50,7 +50,7 @@ export const localNeuralTtsProviderSpec: LocalTtsProviderSpec = {
       await new DaemonTtsController().speak({
         text: sample,
         packId: resolveKokoroDaemonTtsPackId(cfgTts.localNeural.assetId),
-        voiceId: cfgTts.localNeural.voiceId ?? 'af_heart',
+        voiceId: cfgTts.localNeural.voiceId,
         speed: cfgTts.localNeural.speed ?? 1,
         registerPlaybackStopper: (_stopper) => () => {},
         onSpeaking: () => {},

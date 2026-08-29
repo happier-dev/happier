@@ -1,8 +1,10 @@
 import {
     SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+    SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema,
     SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
     SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
     type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+    type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
     type SessionPendingMessageComposerAdmissionPrepareRequestV1,
     type SessionPendingMessageComposerAdmissionPrepareResponseV1,
 } from '@happier-dev/protocol';
@@ -41,5 +43,23 @@ export async function acceptPendingMessageComposerAdmission(
     });
     if (!response || typeof response !== 'object' || (response as { ok?: unknown }).ok !== true) {
         throw new Error('composer_attachment_acceptance_settlement_failed');
+    }
+}
+
+export async function abandonPendingMessageComposerAdmission(
+    sessionId: string,
+    request: SessionPendingMessageComposerAdmissionAbandonedRequestV1,
+    options?: Readonly<{ serverId?: string | null; signal?: AbortSignal }>,
+): Promise<void> {
+    const payload = SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema.parse(request);
+    const response = await sessionRpcWithServerScope<unknown, typeof payload>({
+        sessionId,
+        serverId: options?.serverId,
+        method: SESSION_RPC_METHODS.SESSION_PENDING_MESSAGE_COMPOSER_ADMISSION_ABANDONED_V1,
+        payload,
+        signal: options?.signal,
+    });
+    if (!response || typeof response !== 'object' || (response as { ok?: unknown }).ok !== true) {
+        throw new Error('composer_media_abandonment_settlement_failed');
     }
 }

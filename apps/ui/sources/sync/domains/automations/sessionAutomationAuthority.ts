@@ -1,4 +1,13 @@
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import {
+    isAutomationSessionCandidate,
+    type AutomationSessionCandidate,
+} from './isAutomationSessionCandidate';
+
+type AutomationAuthoritySession = AutomationSessionCandidate & Readonly<{
+    id: string;
+    serverId?: string | null;
+}>;
 
 export type SessionAutomationAuthority = Readonly<{
     sessionId: string;
@@ -13,18 +22,20 @@ export type SessionAutomationAuthority = Readonly<{
  * promoted above the hydrated Session owner.
  */
 export function captureSessionAutomationAuthority(params: Readonly<{
-    session: Readonly<{ id: string; serverId?: string | null }> | null | undefined;
+    session: AutomationAuthoritySession | null | undefined;
     routeSessionId: string | null | undefined;
     routeServerId?: string | null;
     activeServerId: string | null | undefined;
     automationsEnabled: boolean;
+    accountSettings?: Record<string, unknown> | null;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     readCurrent: () => Readonly<{
-        session: Readonly<{ id: string; serverId?: string | null }> | null | undefined;
+        session: AutomationAuthoritySession | null | undefined;
         routeSessionId: string | null | undefined;
         routeServerId?: string | null;
         activeServerId: string | null | undefined;
         automationsEnabled: boolean;
+        accountSettings?: Record<string, unknown> | null;
     }>;
 }>): SessionAutomationAuthority | null {
     const sessionId = String(params.session?.id ?? '').trim();
@@ -36,6 +47,7 @@ export function captureSessionAutomationAuthority(params: Readonly<{
         || (params.routeServerId != null && params.routeServerId !== serverId)
         || params.activeServerId !== serverId
         || params.automationsEnabled !== true
+        || !isAutomationSessionCandidate(params.session, params.accountSettings)
         || !params.accountLifetime?.isCurrent()
     ) return null;
 
@@ -48,6 +60,8 @@ export function captureSessionAutomationAuthority(params: Readonly<{
             if (!accountLifetime.isCurrent()) return false;
             const current = params.readCurrent();
             return current.automationsEnabled === true
+                && current.session != null
+                && isAutomationSessionCandidate(current.session, current.accountSettings)
                 && current.routeSessionId === sessionId
                 && (current.routeServerId == null || current.routeServerId === serverId)
                 && current.activeServerId === serverId

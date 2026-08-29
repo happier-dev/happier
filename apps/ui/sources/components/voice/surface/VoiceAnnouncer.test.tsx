@@ -385,6 +385,70 @@ describe('VoiceAnnouncer lifecycle announcements', () => {
         expect(readAnnouncement(screen)).toBe('Listening. Both at once');
         await screen.unmount();
     });
+
+    it('announces truthful microphone, mute, and recovery transitions through the same region', async () => {
+        const stateAnnouncements = [
+            { id: 'microphone', transitionKey: 'voice-mic:inactive', text: 'Microphone inactive' },
+            { id: 'recovery', transitionKey: 'voice-recovery:none', text: null },
+        ] as const;
+        const screen = await renderScreen(
+            <VoiceAnnouncerSurface
+                {...IDLE}
+                stateAnnouncements={stateAnnouncements}
+                transcriptEntries={[]}
+            />,
+        );
+        expect(readAnnouncement(screen)).toBe('');
+
+        await screen.update(
+            <VoiceAnnouncerSurface
+                {...LISTENING}
+                stateAnnouncements={[
+                    { id: 'microphone', transitionKey: 'voice-mic:active', text: 'Microphone active' },
+                    { id: 'recovery', transitionKey: 'voice-recovery:none', text: null },
+                ]}
+                transcriptEntries={[]}
+            />,
+        );
+        expect(readAnnouncement(screen)).toBe('Listening. Microphone active');
+
+        await screen.update(
+            <VoiceAnnouncerSurface
+                {...LISTENING}
+                stateAnnouncements={[
+                    { id: 'microphone', transitionKey: 'voice-mic:muted', text: 'Microphone muted' },
+                    { id: 'recovery', transitionKey: 'voice-recovery:retry', text: 'Retry connection' },
+                ]}
+                transcriptEntries={[]}
+            />,
+        );
+        expect(readAnnouncement(screen)).toBe('Microphone muted. Retry connection');
+
+        // Retirement is tracked silently, so the same recovery becoming available later is new.
+        await screen.update(
+            <VoiceAnnouncerSurface
+                {...LISTENING}
+                stateAnnouncements={[
+                    { id: 'microphone', transitionKey: 'voice-mic:muted', text: 'Microphone muted' },
+                    { id: 'recovery', transitionKey: 'voice-recovery:none', text: null },
+                ]}
+                transcriptEntries={[]}
+            />,
+        );
+        await screen.update(
+            <VoiceAnnouncerSurface
+                {...LISTENING}
+                stateAnnouncements={[
+                    { id: 'microphone', transitionKey: 'voice-mic:muted', text: 'Microphone muted' },
+                    { id: 'recovery', transitionKey: 'voice-recovery:retry', text: 'Retry connection' },
+                ]}
+                transcriptEntries={[]}
+            />,
+        );
+        expect(readAnnouncement(screen)).toBe('Retry connection');
+        expect(screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'polite' })).toHaveLength(1);
+        await screen.unmount();
+    });
 });
 
 describe('VoiceAnnouncer platform shape', () => {

@@ -9,8 +9,13 @@ import type {
     RecordedAudioTranscriptionRequest,
 } from '@/voice/runtime/input/recordedAudioTranscriptionController';
 import {
+    MissingBundledSpeechCredentialError,
+    resolveRecordedAudioTranscriptionFailureReason,
+} from '@/voice/runtime/input/recordedAudioTranscriptionController';
+import {
     createRecordedAudioArtifactCleanup,
     type RecordedAudioArtifactCleanup,
+    type RecordedAudioArtifactCleanupResult,
 } from '@/voice/runtime/input/recordedAudioArtifactCleanup';
 import type {
     VoiceMachineErrorKind,
@@ -29,11 +34,10 @@ export const VOICE_DICTATION_LIMITS = Object.freeze({
     // owner-level deadline bounds complete finalization, beginning when the
     // recorder is asked to stop so it cannot wait forever for a final artifact.
     transcriptionDeadlineMs: 30_000,
-    // A one-minute utterance is comfortably below these composer bounds. The
-    // independent UTF-8 ceiling prevents multi-byte output from bypassing the
-    // character ceiling.
+    // A one-minute utterance is comfortably below this composer bound. Count
+    // Unicode code points so every accepted scalar has the same advertised
+    // 8,000-character capacity regardless of its UTF-8 representation.
     transcriptCharacters: 8_000,
-    transcriptUtf8Bytes: 16_000,
     // This is the smallest current recorded-audio carrier ceiling: both bundled
     // speech and OpenAI-compatible daemon uploads reject payloads above 8 MiB.
     recordedAudioBytes: 8 * 1024 * 1024,
@@ -48,7 +52,10 @@ export type VoiceDictationFailureReason =
     | 'capture_duration_exceeded'
     | 'transcription_deadline_exceeded'
     | 'transcript_character_limit_exceeded'
-    | 'transcript_utf8_limit_exceeded'
+    | 'transcription_credentials_required'
+    | 'transcription_machine_unavailable'
+    | 'transcription_transfer_failed'
+    | 'transcription_failed'
     | 'recorded_audio_size_unavailable'
     | 'recorded_audio_limit_exceeded';
 
@@ -71,6 +78,27 @@ export type VoiceDictationSnapshot = Readonly<{
     failure?: VoiceDictationFailure;
 }>;
 
+function resolveDictationTranscriptionFailureReason(
+    error: unknown,
+): VoiceDictationFailureReason {
+    const reason = error instanceof MissingBundledSpeechCredentialError
+        ? 'stt_credential_unavailable'
+        : resolveRecordedAudioTranscriptionFailureReason(error);
+    switch (reason) {
+        case 'stt_credential_unavailable':
+            return 'transcription_credentials_required';
+        case 'stt_machine_unavailable':
+        case 'stt_machine_unreachable':
+        case 'stt_runtime_unavailable':
+        case 'stt_model_not_installed':
+            return 'transcription_machine_unavailable';
+        case 'stt_transfer_failed':
+            return 'transcription_transfer_failed';
+        default:
+            return 'transcription_failed';
+    }
+}
+
 export type VoiceDictationToggleResult =
     | Readonly<{ kind: 'started' }>
     | Readonly<{ kind: 'completed'; text: string | null }>
@@ -82,6 +110,7 @@ type DictationCaptureOwner = Pick<
 >;
 
 type ActiveDictation = {
+    generation: number;
     sessionId: string;
     provider: LocalVoiceCaptureProvider;
     executionMachineId: string | null;
@@ -96,6 +125,7 @@ type ActiveDictation = {
     stopCaptureSettled: boolean;
     stopSessionPromise: Promise<void> | null;
     recordedAudioCleanup: RecordedAudioArtifactCleanup;
+    artifactCleanupPromise: Promise<RecordedAudioArtifactCleanupResult> | null;
     cleanupPromise: Promise<void> | null;
 };
 
@@ -124,12 +154,12 @@ export function createVoiceDictationController(deps: Readonly<{
     const listeners = new Set<() => void>();
     const setTimer = deps.setTimer ?? ((task, waitMs) => setTimeout(task, waitMs));
     const clearTimer = deps.clearTimer ?? ((timer) => clearTimeout(timer));
-    const textEncoder = new TextEncoder();
     let snapshot: VoiceDictationSnapshot = {
         sessionId: null,
         status: 'idle',
     };
     let active: ActiveDictation | null = null;
+    let latestAttemptGeneration = 0;
     let nextFailureId = 1;
     let nativeLifecycleWork = Promise.resolve();
 
@@ -182,14 +212,24 @@ export function createVoiceDictationController(deps: Readonly<{
     const stopSessionAfterCapture = (attempt: ActiveDictation): Promise<void> => {
         attempt.stopSessionPromise ??= Promise.resolve()
             .then(async () => {
-                // A recorded URI is produced by stopCapture. Do not tear down
-                // the recorder/session until that result has had a chance to
-                // admit its one attempt-owned cleanup artifact.
-                await attempt.stopCapturePromise?.catch(() => {});
+                // Terminal capture ownership is independent from artifact
+                // finalization. The recorder may yield its URI later; its
+                // attempt-local cleanup remains fenced below while session and
+                // product admission are released immediately.
                 await deps.captureOwner.stopSession(attempt.sessionId);
             })
             .catch(() => {});
         return attempt.stopSessionPromise;
+    };
+
+    const cleanupArtifact = (
+        attempt: ActiveDictation,
+    ): Promise<RecordedAudioArtifactCleanupResult> => {
+        attempt.artifactCleanupPromise ??= (async () => {
+            await attempt.stopCapturePromise?.catch(() => {});
+            return await attempt.recordedAudioCleanup.cleanup();
+        })();
+        return attempt.artifactCleanupPromise;
     };
 
     const cleanup = (attempt: ActiveDictation): Promise<void> => {
@@ -200,28 +240,35 @@ export function createVoiceDictationController(deps: Readonly<{
             void stopCapture(attempt).catch(() => {});
         }
         attempt.cleanupPromise ??= (async () => {
-            await attempt.stopCapturePromise?.catch(() => {});
-            // stopCapture is the capture-owner boundary that yields the final
-            // recording URI. Once it settles, delete or revoke that temporary
-            // artifact before a later session teardown can stall.
-            const cleanupResult = await attempt.recordedAudioCleanup.cleanup();
+            const artifactCleanup = cleanupArtifact(attempt);
             await stopSessionAfterCapture(attempt);
             if (active !== attempt) return;
+            // Release controller ownership before file deletion settles so a
+            // slow cleanup never pins a same-session retry. The attempt-local
+            // artifact promise still owns exact-once cleanup and may report its
+            // bounded failure only while no replacement has become current.
             active = null;
-            if (cleanupResult.kind === 'failed' && !snapshot.failure) {
-                // Dictation deliberately uses its existing bounded terminal
-                // failure boundary: the transcript remains usable and the UI
-                // does not silently imply that temporary cleanup succeeded.
-                publish({
-                    sessionId: null,
-                    status: 'idle',
-                    failure: {
-                        id: nextFailureId++,
-                        sessionId: attempt.sessionId,
-                        kind: 'provider_error',
-                        reason: 'capture_failed',
-                    },
-                });
+            if (attempt.stopCaptureSettled) {
+                const cleanupResult = await artifactCleanup;
+                if (
+                    cleanupResult.kind === 'failed'
+                    && latestAttemptGeneration === attempt.generation
+                    && active === null
+                    && !snapshot.failure
+                ) {
+                    publish({
+                        sessionId: null,
+                        status: 'idle',
+                        failure: {
+                            id: nextFailureId++,
+                            sessionId: attempt.sessionId,
+                            kind: 'provider_error',
+                            reason: 'capture_failed',
+                        },
+                    });
+                }
+            } else {
+                void artifactCleanup;
             }
         })();
         return attempt.cleanupPromise;
@@ -411,13 +458,21 @@ export function createVoiceDictationController(deps: Readonly<{
                             });
                             return { kind: 'cancelled' } as const;
                         }
-                        rawText = await deps.transcribeRecordedAudio({
-                            sessionId: attempt.sessionId,
-                            uri: stopped.uri,
-                            executionMachineId: attempt.executionMachineId,
-                            settings: attempt.settings,
-                            signal: attempt.abortController.signal,
-                        });
+                        try {
+                            rawText = await deps.transcribeRecordedAudio({
+                                sessionId: attempt.sessionId,
+                                uri: stopped.uri,
+                                executionMachineId: attempt.executionMachineId,
+                                settings: attempt.settings,
+                                signal: attempt.abortController.signal,
+                            });
+                        } catch (error) {
+                            failAttempt(attempt, {
+                                kind: 'provider_error',
+                                reason: resolveDictationTranscriptionFailureReason(error),
+                            });
+                            return { kind: 'cancelled' } as const;
+                        }
                     }
                 } else {
                     rawText = stopped.text;
@@ -436,13 +491,6 @@ export function createVoiceDictationController(deps: Readonly<{
                     failAttempt(attempt, {
                         kind: 'provider_error',
                         reason: 'transcript_character_limit_exceeded',
-                    });
-                    return { kind: 'cancelled' } as const;
-                }
-                if (text && textEncoder.encode(text).byteLength > VOICE_DICTATION_LIMITS.transcriptUtf8Bytes) {
-                    failAttempt(attempt, {
-                        kind: 'provider_error',
-                        reason: 'transcript_utf8_limit_exceeded',
                     });
                     return { kind: 'cancelled' } as const;
                 }
@@ -562,6 +610,7 @@ export function createVoiceDictationController(deps: Readonly<{
             runtimeSettings: settings,
         } = resolveVoiceDictationSttCapturePlan(deps.getSettings());
         const attempt: ActiveDictation = {
+            generation: ++latestAttemptGeneration,
             sessionId,
             provider: plan.provider,
             executionMachineId: deps.resolveExecutionMachineId?.() ?? null,
@@ -576,6 +625,7 @@ export function createVoiceDictationController(deps: Readonly<{
             stopCaptureSettled: false,
             stopSessionPromise: null,
             recordedAudioCleanup: createRecordedAudioArtifactCleanup(deps.deleteRecordedAudio),
+            artifactCleanupPromise: null,
             cleanupPromise: null,
         };
         active = attempt;

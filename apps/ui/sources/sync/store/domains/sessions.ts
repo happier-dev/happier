@@ -1075,7 +1075,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
 
                 const nextSession: Session = {
                     ...session,
-                    metadata: (session.metadataLayoutVersion ?? 0) === 0
+                    metadata: (
+                        session.metadataLayoutVersion === undefined
+                        || session.metadataLayoutVersion === 0
+                    )
                         ? preserveSessionRuntimeLocalMetadata(
                             state.sessions[session.id]?.metadata,
                             session.metadata,

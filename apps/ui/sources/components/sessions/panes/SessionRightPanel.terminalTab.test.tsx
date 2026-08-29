@@ -267,6 +267,8 @@ describe('SessionRightPanel (terminal tab)', () => {
                     machineId: 'machine-global',
                     serverId: 'server-global',
                     platform: 'web',
+                    clientExecutableActivation: { status: 'ready' },
+                    reloadClientExecutables: () => {},
                 }}
             >
                 <SessionRightPanel sessionId="s1" scopeId="session:s1" />

@@ -1050,6 +1050,7 @@ export const ja = {
       event: ({ eventId }: { eventId: string }) => `イベント: ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `ターンが終了したとき · ${sessionId}`,
       noAutomaticTriggers: '自動トリガーはありません',
+      moreTriggers: ({ count }: { count: number }) => `他 ${count} 件`,
       noNextRun: "次回の実行なし",
       nextRun: ({ time }: { time: string }) => `次回: ${time}`,
       nextRunPending: "次回の実行は保留中",
@@ -3265,6 +3266,10 @@ localTailscale: {
   connectedServices: {
     accountScopeMismatchTitle: '続行するにはサーバーアカウントを切り替えてください',
     accountScopeMismatchDescription: 'このマシンは別のサーバーアカウントに属しています。接続済みアカウントを管理するには、そのサーバーアカウントに切り替えてください。',
+    purposeTargets: {
+      requiredPrompt: 'アカウントまたはグループを選択',
+      legacyUnavailable: 'このサーバーではまだ接続済みアカウントの対象を表示できません',
+    },
     fallbackName: "連携サービス",
     serviceNames: {
       claudeSubscription: "Claude サブスクリプション",
@@ -6822,6 +6827,10 @@ localTailscale: {
       captureDurationExceeded: "ディクテーションが 60 秒の聞き取り上限に達しました。続けるにはもう一度開始してください。",
       transcriptionDeadlineExceeded: "文字起こしに 30 秒以上かかりました。短いディクテーションでもう一度お試しください。",
       transcriptLimitExceeded: "ディクテーションしたテキストが入力欄には長すぎます。短いディクテーションをお試しください。",
+      transcriptionCredentialsRequired: "選択した音声プロバイダーの認証情報が必要です。設定を確認して、もう一度お試しください。",
+      transcriptionMachineUnavailable: "ディクテーション用マシンまたはローカル音声モデルを利用できません。再接続するか、選択したモデルを確認してください。",
+      transcriptionTransferFailed: "録音をディクテーション用マシンへ送信できませんでした。接続を確認して、もう一度お試しください。",
+      transcriptionFailed: "選択した音声プロバイダーは録音を文字起こしできませんでした。もう一度試すか、設定を確認してください。",
       recordedAudioSizeUnavailable: "Happier は録音のサイズを確認できませんでした。もう一度録音してください。",
       recordedAudioLimitExceeded: "録音が 8 MB の上限を超えています。短いディクテーションをお試しください。",
       microphoneOwnedByVoice: "ディクテーションを開始する前に Voice を終了してください。",
@@ -11467,6 +11476,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "設定履歴",
+      footer: "保存済みのスナップショットからアカウントの設定を復元します。アプリデータ・シークレット・資格情報は現在の値のままです。",
+      loading: "履歴を読み込み中…",
+      empty: "保存されたスナップショットはまだありません",
+      unavailable: "履歴を利用できません",
+      entryTitle: ({ version }: { version: string }) => `バージョン ${version} を復元`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `${recordedAt} に保存`,
+      restoreConfirmTitle: "設定を復元しますか？",
+      restoreConfirmBody: "アカウントの設定が選択したスナップショットの値に置き換えられます。",
+      restoreConfirmAction: "復元",
+      restoredTitle: "設定を復元しました",
+      restoredBody: "アカウントの設定を選択したスナップショットから復元しました。",
+      unchangedBody: "現在のアカウント設定は、選択したスナップショットとすでに一致しています。",
+      conflictTitle: "設定が変更されました",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `復元中に設定が変更されました（現在のバージョン ${currentVersion}）。何も書き込まれていません。現在の設定を確認して再試行してください。`,
+      outcomeUnknownBody: "復元が完了したかどうかを確認できません。再試行する前に現在の設定を確認してください。",
+      invalidBody: "選択したスナップショットは安全に復元できません。何も書き込まれていません。",
+      unavailableBody: "選択したスナップショットを復元できませんでした。何も書き込まれていません。",
+    },
     // Account settings screen
     accountInformation: "アカウント情報",
     status: "ステータス",

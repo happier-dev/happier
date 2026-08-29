@@ -194,6 +194,26 @@ type RepositoryOptions = Readonly<{
 
 const STORAGE_PREFIX = 'session-drafts-repository-v1';
 
+function isIntrinsicDraftFieldDefault(path: DraftFieldPathV1, value: StrictJsonValue): boolean {
+    if (path.kind === 'composer' && path.field === 'text') {
+        return typeof value === 'string' && value.trim().length === 0;
+    }
+    if (path.kind === 'composer') return Array.isArray(value) && value.length === 0;
+    if (path.kind === 'routing') return value === null;
+    return false;
+}
+
+function areDraftFieldsSemanticallyEqual(
+    path: DraftFieldPathV1,
+    left: Readonly<{ value: StrictJsonValue }> | null,
+    right: Readonly<{ value: StrictJsonValue }> | null,
+): boolean {
+    if (left && right) return areJsonValuesEqual(left.value, right.value);
+    if (!left && !right) return true;
+    const present = left ?? right;
+    return present !== null && isIntrinsicDraftFieldDefault(path, present.value);
+}
+
 function cloneDocument(document: SessionDraftDocumentV1): SessionDraftDocumentV1 {
     return JSON.parse(JSON.stringify(document)) as SessionDraftDocumentV1;
 }
@@ -993,7 +1013,7 @@ export class SessionDraftRepository {
                 localDocument = setField(localDocument, mutation.path, remoteField);
                 continue;
             }
-            if (areJsonValuesEqual(remoteField?.value ?? null, mutation.field?.value ?? null)) {
+            if (areDraftFieldsSemanticallyEqual(mutation.path, remoteField, mutation.field)) {
                 localDocument = setField(localDocument, mutation.path, remoteField);
                 continue;
             }
@@ -1007,6 +1027,10 @@ export class SessionDraftRepository {
             });
         }
         const meaningfulContent = hasMeaningfulContent(localDocument);
+        if (remoteDocument === null && remaining.length === 0 && conflicts.length === 0 && !meaningfulContent) {
+            this.deleteReplica(scope, address);
+            return 'rebased';
+        }
         const documentChanged = !areJsonValuesEqual(replica.localRawDocument, localDocument);
         this.writeReplica(scope, {
             ...replica,

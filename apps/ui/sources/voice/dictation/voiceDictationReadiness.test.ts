@@ -10,7 +10,7 @@ import {
   writeLocalConversationVoiceSettings,
   writeLocalDirectVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { upsertAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
+import { saveAndUseAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
 import { resolveVoiceProviderLocalAvailability } from '@/voice/settings/voiceProviderLocalAvailability';
 
 import {
@@ -31,10 +31,16 @@ describe('resolveVoiceDictationReadiness', () => {
     const contribution = providerId === 'happier.voice.google/gemini-stt'
       ? { pluginId: 'happier.voice.google', localId: 'gemini-stt' }
       : { pluginId: 'happier.voice.openai-compat', localId: 'stt' };
-    return upsertAccountVoiceCredential({
+    const entry = registry.get(providerId);
+    if (entry?.kind !== 'voice.speech-engine.v1' || entry.declaration?.kind !== 'speech') {
+      throw new Error(`Expected current speech declaration ${providerId}`);
+    }
+    return saveAndUseAccountVoiceCredential({
       settings,
       contribution,
       credentialSlotId: 'api_key',
+      expectedSettingsVersion: 0,
+      currentDeclaration: entry.declaration,
       machineId,
       value: `${providerId}-${credentialSlotId}`,
       generateId: () => `${providerId}-${credentialSlotId}-${machineId}`,
@@ -549,12 +555,23 @@ describe('resolveVoiceDictationReadiness', () => {
         },
       };
       const missing = settingsParse({ voice });
-      const project = (settings: Settings) => resolveVoiceDictationReadiness({
+      const project = (settings: Settings, credentialReady = false) => resolveVoiceDictationReadiness({
         registry,
         platform: 'web',
         executionMachineId: 'machine-a',
         localAvailability: daemonReadyAvailability,
         settings,
+        ...(credentialReady ? {
+          rawCredentialAuthorization: {
+            contribution: providerId === GOOGLE_STT_PROVIDER_ID
+              ? { pluginId: 'happier.voice.google', localId: 'gemini-stt' }
+              : { pluginId: 'happier.voice.openai-compat', localId: 'stt' },
+            machineId: 'machine-a',
+            realm: 'daemon',
+            phase: 'speech',
+            status: 'ready',
+          },
+        } : {}),
       });
 
       const credentialRequired = providerId === GOOGLE_STT_PROVIDER_ID;
@@ -563,13 +580,13 @@ describe('resolveVoiceDictationReadiness', () => {
         : { providerId, status: 'ready', code: 'ready' });
 
       const ready = addCredential(missing, providerId, credentialSlotId, 'machine-a');
-      expect(project(ready)).toMatchObject({
+      expect(project(ready, true)).toMatchObject({
         providerId,
         status: 'ready',
         code: 'ready',
       });
 
-      expect(project(settingsParse({ ...ready, secrets: [] }))).toMatchObject(credentialRequired
+      expect(project(settingsParse({ ...ready, secrets: [] }), true)).toMatchObject(credentialRequired
         ? { providerId, status: 'needs_setup', code: 'credential_missing' }
         : { providerId, status: 'ready', code: 'ready' });
     },
@@ -591,12 +608,21 @@ describe('resolveVoiceDictationReadiness', () => {
       },
     );
     const missing = settingsParse({ voice });
-    const project = (settings: Settings) => resolveVoiceDictationReadiness({
+    const project = (settings: Settings, credentialReady = false) => resolveVoiceDictationReadiness({
       registry,
       platform: 'web',
       executionMachineId: 'machine-a',
       localAvailability: daemonReadyAvailability,
       settings,
+      ...(credentialReady ? {
+        rawCredentialAuthorization: {
+          contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
+          machineId: 'machine-a',
+          realm: 'daemon',
+          phase: 'speech',
+          status: 'ready',
+        },
+      } : {}),
     });
 
     expect(project(missing)).toMatchObject({
@@ -604,7 +630,7 @@ describe('resolveVoiceDictationReadiness', () => {
       status: 'needs_setup',
       code: 'credential_missing',
     });
-    expect(project(addCredential(missing, 'happier.voice.google/gemini-stt', 'api_key', 'machine-a'))).toMatchObject({
+    expect(project(addCredential(missing, 'happier.voice.google/gemini-stt', 'api_key', 'machine-a'), true)).toMatchObject({
       providerId: 'happier.voice.google/gemini-stt',
       status: 'ready',
       code: 'ready',

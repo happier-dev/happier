@@ -94,6 +94,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'providerModelGroups'
         | 'providerModelProjectionAuthoritative'
         | 'providerModelProjectionError'
+        | 'providerModelProjectionFailures'
         | 'retryProviderModelProjection'
         | 'providerCurrentSelectionRecovery'
         | 'hiddenNativeModelKeys'

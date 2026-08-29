@@ -116,6 +116,36 @@ describe('useNewSessionPreflightModelsState (cache)', () => {
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
   });
 
+  it('keeps the model probe idle while the selected Agent Settings record loads', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicModelProbeCacheForTests();
+
+    const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+
+    function Harness() {
+      const result = useNewSessionPreflightModelsState({
+        backendTarget: { kind: 'backend', backendId: 'acme.review.backend' },
+        runtimeCarrierAgentId: 'acme.review/provider',
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo',
+        enabled: false,
+      });
+      expect(result.preflightModels).toBeNull();
+      expect(result.probe.phase).toBe('idle');
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(0);
+  });
+
   it('keeps a freeform-only probe result when the backend supports custom model ids without listing models', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();

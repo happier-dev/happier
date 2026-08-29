@@ -463,6 +463,8 @@ export type VoiceWebRtcRemoteOutputAttachment = Readonly<{
   setOutputFocusState(state: VoiceOutputFocusState): VoiceOutputFocusApplication;
 }>;
 
+export type VoiceWebRtcRemoteStreamOwnership = 'peer' | 'host_fallback';
+
 export function createWebRtcConnection(input: Readonly<{
   micStream: MediaStream;
   duckGain: number;
@@ -470,7 +472,10 @@ export function createWebRtcConnection(input: Readonly<{
   control: VoiceHostNegotiatedWebRtcInput['control'];
   onClosed?: VoiceHostNegotiatedWebRtcInput['onClosed'];
   maxQueuedControlEvents?: number;
-  attachRemoteStream?: (stream: MediaStream | null) => VoiceWebRtcRemoteOutputAttachment;
+  attachRemoteStream?: (
+    stream: MediaStream | null,
+    ownership: VoiceWebRtcRemoteStreamOwnership,
+  ) => VoiceWebRtcRemoteOutputAttachment;
   createPeerConnection?: () => RTCPeerConnection;
   createMediaStream?: (tracks: MediaStreamTrack[]) => MediaStream | null;
 }>): VoiceRealtimeConnection {
@@ -683,6 +688,7 @@ export function createWebRtcConnection(input: Readonly<{
   };
   const attachRemoteStream: (
     stream: MediaStream | null,
+    ownership: VoiceWebRtcRemoteStreamOwnership,
   ) => VoiceWebRtcRemoteOutputAttachment = input.attachRemoteStream ?? ((stream) => {
     if (typeof document === 'undefined') {
       return Object.freeze({
@@ -776,13 +782,17 @@ export function createWebRtcConnection(input: Readonly<{
           nextPeer.addTrack(track, input.micStream);
         }
         listen(nextPeer, 'track', (event) => {
-          const stream = event.streams[0]
+          const peerStream = event.streams[0] ?? null;
+          const streamOwnership: VoiceWebRtcRemoteStreamOwnership = peerStream
+            ? 'peer'
+            : 'host_fallback';
+          const stream = peerStream
             ?? input.createMediaStream?.([event.track])
             ?? (typeof MediaStream === 'function' ? new MediaStream([event.track]) : null);
           disposeRemoteOutput();
           let nextRemoteOutput: VoiceWebRtcRemoteOutputAttachment;
           try {
-            nextRemoteOutput = attachRemoteStream(stream);
+            nextRemoteOutput = attachRemoteStream(stream, streamOwnership);
           } catch {
             failRemoteAudioPlayback();
             return;

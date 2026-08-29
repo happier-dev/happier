@@ -13,7 +13,7 @@
  */
 
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, Pressable, View, type ViewProps } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -167,6 +167,8 @@ export function PlanOptionRow(props: Readonly<{
      * markup it has always emitted.
      */
     cellPlacement?: SelectionListGridCellPlacement | null;
+    /** Multi-column grid row layout style; applied to the gridcell itself so rows own cells directly. */
+    columnCellStyle?: ViewProps['style'];
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const optionLabel = props.option.renderLabel?.() ?? props.option.label;
@@ -285,14 +287,18 @@ export function PlanOptionRow(props: Readonly<{
             ? props.positionInSet
             : undefined,
     });
-    const cardWrapperProps = isCard
-        ? {
-            style: [
+    const wrapperStyle = [
+        props.columnCellStyle,
+        ...(isCard
+            ? [
                 cardStyles.container,
                 cardFillStyle,
                 cardRowGapPx === undefined ? null : { marginTop: cardRowGapPx },
-            ],
-        }
+            ]
+            : []),
+    ];
+    const cardWrapperProps = props.columnCellStyle !== undefined || isCard
+        ? { style: wrapperStyle }
         : {};
     // In card mode the trailing accessory leaves the row's flow entirely and
     // becomes a corner overlay, so stacking a selection mark above a favourite

@@ -1,5 +1,7 @@
 import type { VoiceProviderConversationService } from '@happier-dev/plugin-sdk/voice/client';
 
+import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/voiceProviderConversationRetention';
+
 type ProviderConversationSession = {
   mutationTail: Promise<void>;
   activeAttemptEpoch: number;
@@ -26,8 +28,12 @@ function normalizeConversationId(value: string | null): string | null {
  * attempt fencing. Provider leaves never receive app session storage access.
  */
 export function createProviderConversationServiceFactory(input: Readonly<{
-  read(conversationSessionId: string): Promise<string | null>;
+  read(conversationSessionId: string): Promise<Readonly<{
+    conversationId: string;
+    updatedAt: number;
+  }> | null>;
   write(conversationId: string | null, conversationSessionId: string): Promise<void>;
+  now?: () => number;
 }>): ProviderConversationServiceFactory {
   const sessions = new Map<string, ProviderConversationSession>();
   let nextAttemptEpoch = 0;
@@ -45,12 +51,12 @@ export function createProviderConversationServiceFactory(input: Readonly<{
     sessions.set(conversationSessionId, created);
     return created;
   };
-  const enqueue = (
+  const enqueue = <T>(
     session: ProviderConversationSession,
-    operation: () => Promise<void>,
-  ): Promise<void> => {
+    operation: () => Promise<T>,
+  ): Promise<T> => {
     const result = session.mutationTail.then(operation);
-    session.mutationTail = result.catch(() => {});
+    session.mutationTail = result.then(() => undefined, () => undefined);
     return result;
   };
 
@@ -69,10 +75,18 @@ export function createProviderConversationServiceFactory(input: Readonly<{
 
       return Object.freeze({
         async read(): Promise<string | null> {
-          await session.mutationTail;
-          if (!isCurrent() || session.forgotten) return null;
-          const conversationId = normalizeConversationId(await input.read(conversationSessionId));
-          return isCurrent() && !session.forgotten ? conversationId : null;
+          return await enqueue(session, async () => {
+            if (!isCurrent() || session.forgotten) return null;
+            const state = await input.read(conversationSessionId);
+            const conversationId = normalizeConversationId(state?.conversationId ?? null);
+            if (!isCurrent() || session.forgotten || !conversationId || !state) return null;
+            const now = input.now?.() ?? Date.now();
+            if (now - state.updatedAt >= VOICE_PROVIDER_CONVERSATION_RETENTION_MS) {
+              await input.write(null, conversationSessionId);
+              return null;
+            }
+            return isCurrent() && !session.forgotten ? conversationId : null;
+          });
         },
         async write(conversationId: string): Promise<void> {
           const normalized = normalizeConversationId(conversationId);
@@ -118,7 +132,7 @@ export function getProviderConversationServiceFactory(
     readProviderConversationState?(input: Readonly<{
       providerId: string;
       conversationSessionId: string;
-    }>): Promise<Readonly<{ conversationId: string }> | null>;
+    }>): Promise<Readonly<{ conversationId: string; updatedAt: number }> | null>;
     writeProviderConversationState?(input: Readonly<{
       providerId: string;
       conversationSessionId: string;
@@ -149,7 +163,7 @@ export function getProviderConversationServiceFactory(
       return (await readProviderConversationState({
         providerId,
         conversationSessionId,
-      }))?.conversationId ?? null;
+      })) ?? null;
     },
     async write(conversationId, conversationSessionId) {
       await writeProviderConversationState({

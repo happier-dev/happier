@@ -1116,6 +1116,11 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             const owned = resolveOwnedAdapter();
             if (!owned) return 'unsupported';
             const ownedSessionId = owned.snapshot.sessionId ?? sessionId;
+            const attemptAdmission =
+                realtimeCaptureAdmission?.adapter === owned.adapter
+                && realtimeCaptureAdmission.sessionId === ownedSessionId
+                    ? realtimeCaptureAdmission
+                    : null;
             if (!owned.adapter.setOutputFocusState) {
                 // Local Voice output is not a realtime connection transport;
                 // preserve its existing native playback ownership instead of
@@ -1134,9 +1139,13 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 application = 'unsupported';
             }
             // A session id is reusable. The captured adapter object is the
-            // lifecycle owner's exact incumbent, so never stop a replacement
-            // that happens to report the same session id.
-            if (resolveOwnedAdapter()?.adapter !== owned.adapter) return 'unsupported';
+            // lifecycle owner's exact incumbent, and capture admission is the
+            // attempt identity when the same adapter object starts again. Never
+            // let a stale focus result stop either kind of replacement.
+            if (
+                resolveOwnedAdapter()?.adapter !== owned.adapter
+                || (attemptAdmission && realtimeCaptureAdmission !== attemptAdmission)
+            ) return 'unsupported';
             if (application === 'applied') return 'applied';
             await stopAdapter(owned.adapter, ownedSessionId).catch(() => undefined);
             return 'unsupported';

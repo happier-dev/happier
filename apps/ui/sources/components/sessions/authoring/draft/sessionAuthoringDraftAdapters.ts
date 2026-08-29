@@ -16,6 +16,7 @@ import {
     type SessionSpawnNewInputV2,
     type SessionSpawnSourceContextV1,
 } from '@happier-dev/protocol';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
     DEFAULT_AGENT_ID,
@@ -1211,6 +1212,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     sessionOnlySecretValueEncByProfileIdByEnvVarName: NewSessionDraft['sessionOnlySecretValueEncByProfileIdByEnvVarName'];
     backendNewSessionOptionStateByTargetKey: NewSessionDraft['backendNewSessionOptionStateByTargetKey'];
     composerAttachments?: NewSessionDraft['composerAttachments'];
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     preferredPersistedAgentId?: unknown;
     updatedAt: number;
 }>): NewSessionDraft {
@@ -1246,6 +1248,9 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         input: params.draft.displayText || params.draft.prompt,
         ...(params.composerAttachments && params.composerAttachments.length > 0
             ? { composerAttachments: params.composerAttachments }
+            : {}),
+        ...(params.placementCandidates !== undefined
+            ? { placementCandidates: params.placementCandidates }
             : {}),
         selectedMachineId: params.machineId,
         executionTarget: params.draft.executionTarget,

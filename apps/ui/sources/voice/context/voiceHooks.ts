@@ -24,6 +24,7 @@ import type { AgentRequestKind } from '@/utils/sessions/permissions/permissionPr
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
 import type { CurrentUiContextSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
 import type { HostAuthoredContextClass, VoiceHostAuthoredContextScope } from '@/voice/session/types';
+import { resolveVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -375,33 +376,11 @@ export const voiceHooks = {
   onVoiceStarted(sessionId: string, scope: VoiceHostAuthoredContextScope): string {
     emitVoiceDebugDiagnostic('voice_session_started', { sessionId });
     voiceAttemptShownSessionIds.clear();
-    if (scope === 'current_ui_only') return '';
-    const state: any = storage.getState();
-    const normalized = String(sessionId ?? '').trim();
-
-    if (!normalized) {
-      return (
-        'VOICE SESSION STARTED\n\n' +
-        '<session_context>none</session_context>\n' +
-        'No session is currently tracked. Use tools to discover sessions and request the sessionId explicitly before acting.'
-      );
+    const resolution = resolveVoiceInitialContext(sessionId, { scope });
+    if (resolution.kind === 'session') {
+      voiceAttemptShownSessionIds.add(resolution.sessionId);
     }
-
-    const session = resolveVoiceContextSessionFromState(normalized, state);
-    if (!session) {
-      return (
-        'VOICE SESSION STARTED\n\n' +
-        `<session_id>${normalized}</session_id>\n` +
-        '<session_not_found>true</session_not_found>\n' +
-        'Use tools to list sessions and select a valid sessionId.'
-      );
-    }
-
-    const prompt =
-      'THIS IS AN ACTIVE SESSION: \n\n' +
-      formatSessionFull(session, readStoredSessionMessages(state, normalized), getVoiceContextPrefs(normalized));
-    voiceAttemptShownSessionIds.add(normalized);
-    return prompt;
+    return resolution.initialContext;
   },
 
   onReady(sessionId: string, messages?: Message[]) {

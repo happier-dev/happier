@@ -11,7 +11,10 @@ import {
 import { resolveNewSessionCompatAgentType } from '@/components/sessions/new/modules/resolveNewSessionCompatAgentType';
 import { resolveDraftBackendTarget } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type {
+    NewSessionComposerAttachmentSeedV1,
+    NewSessionDraft,
+} from '@/sync/domains/state/persistence';
 import {
     flushSessionDraft,
     getSessionDraftSnapshot,
@@ -50,6 +53,9 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
             ? snapshot.document.composer.text.value
             : '',
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
+        ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
+            ? { composerAttachmentSeeds: localState.composerAttachmentSeeds }
+            : {}),
         ...(snapshot.localSupplement.launchUserAttemptId
             ? { launchUserAttemptId: snapshot.localSupplement.launchUserAttemptId }
             : {}),
@@ -57,6 +63,9 @@ export function readNewSessionDraftFromRepository(input: Readonly<{
         selectedPath: authoring.directory ?? null,
         targetServerId: executionTarget?.serverId ?? null,
         executionTarget,
+        ...(Array.isArray(localState?.placementCandidates) && localState.placementCandidates.length > 0
+            ? { placementCandidates: localState.placementCandidates }
+            : {}),
         agentTarget,
         agentType: resolveNewSessionCompatAgentType({
             backendTarget,
@@ -148,4 +157,30 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
         flushSessionDraft({ scope: input.scope, address: { kind: 'newSession', draftId: input.draftId } }),
         { tag: 'newSessionDraftRepository.flush' },
     );
+}
+
+/** Clear only the host-created pending Composer requests that were admitted. */
+export function clearNewSessionComposerAttachmentSeedsFromRepository(input: Readonly<{
+    scope: ServerAccountScope;
+    draftId: string;
+    seeds: readonly NewSessionComposerAttachmentSeedV1[];
+}>): void {
+    if (input.seeds.length === 0) return;
+    const address = { kind: 'newSession' as const, draftId: input.draftId };
+    const snapshot = getSessionDraftSnapshot(input.scope, address);
+    const localState = snapshot?.localSupplement.newSessionLocalState;
+    const pending = localState?.composerAttachmentSeeds;
+    if (!snapshot || !pending || pending.length === 0) return;
+    const admittedIds = new Set(input.seeds.map((seed) => seed.instanceId));
+    const remaining = pending.filter((seed) => !admittedIds.has(seed.instanceId));
+    const { composerAttachmentSeeds: _removed, ...rest } = localState;
+    writeSessionDraftLocalSupplement({
+        scope: input.scope,
+        address,
+        patch: {
+            newSessionLocalState: remaining.length > 0
+                ? { ...rest, composerAttachmentSeeds: remaining }
+                : rest,
+        },
+    });
 }

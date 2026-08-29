@@ -29,6 +29,7 @@ import {
     getAutomationEditorTriggerEnabled,
     getAutomationEditorTriggerKind,
     type AutomationEditorDraft,
+    type AutomationTriggerEditorValue,
     type AutomationEditorTriggerDraft,
 } from '@/sync/domains/automations/automationEditorDraft';
 import { clampAutomationIntervalMinutes } from '@/sync/domains/automations/automationDraft';
@@ -52,10 +53,7 @@ export type AutomationPluginEventEditorRender = (props: Readonly<{
     onCancel: () => void;
 }>) => React.ReactNode;
 
-export type AutomationPluralEditorScreenProps = Readonly<{
-    value: AutomationEditorDraft;
-    onChange: (next: AutomationEditorDraft) => void;
-    variant: 'create' | 'edit' | 'embedded';
+type AutomationTriggerEditorSharedProps = Readonly<{
     sessionOptions?: ReadonlyArray<AutomationEditorSessionOption>;
     /**
      * Re-resolves the Session owner's current exact parent turn at activation.
@@ -73,6 +71,24 @@ export type AutomationPluralEditorScreenProps = Readonly<{
     onCancel?: () => void;
     submitting?: boolean;
     submitDisabled?: boolean;
+}>;
+
+export type AutomationPluralEditorScreenProps = AutomationTriggerEditorSharedProps & Readonly<{
+    value: AutomationEditorDraft;
+    onChange: (next: AutomationEditorDraft) => void;
+    variant: 'create' | 'edit';
+}>;
+
+export type AutomationTriggerEditorProps = AutomationTriggerEditorSharedProps & Readonly<{
+    value: AutomationTriggerEditorValue;
+    onChange: (next: AutomationTriggerEditorValue) => void;
+}>;
+
+type AutomationTriggerEditorContentsProps = AutomationTriggerEditorSharedProps & Readonly<{
+    value: AutomationTriggerEditorValue;
+    onChange: (next: AutomationTriggerEditorValue) => void;
+    variant: 'create' | 'edit' | 'embedded';
+    recipeEditor?: React.ReactNode;
 }>;
 
 type EditorState =
@@ -228,10 +244,10 @@ function triggerSubtitle(
 }
 
 function replaceTrigger(
-    draft: AutomationEditorDraft,
+    draft: AutomationTriggerEditorValue,
     clientId: string,
     definition: AutomationTriggerDefinitionInput,
-): AutomationEditorDraft {
+): AutomationTriggerEditorValue {
     return {
         ...draft,
         triggers: draft.triggers.map((trigger) => (
@@ -260,9 +276,9 @@ function replaceTrigger(
 }
 
 function appendTrigger(
-    draft: AutomationEditorDraft,
+    draft: AutomationTriggerEditorValue,
     definition: AutomationTriggerDefinitionInput,
-): Readonly<{ draft: AutomationEditorDraft; clientId: string }> {
+): Readonly<{ draft: AutomationTriggerEditorValue; clientId: string }> {
     const clientId = createAutomationEditorTriggerClientId();
     return {
         clientId,
@@ -471,15 +487,15 @@ function EditorActions(props: Readonly<{
     );
 }
 
-export const AutomationPluralEditorScreen = React.memo(function AutomationPluralEditorScreen(
-    props: AutomationPluralEditorScreenProps,
+const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEditorContents(
+    props: AutomationTriggerEditorContentsProps,
 ): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [editor, setEditor] = React.useState<EditorState>({ kind: 'none' });
     const [lifecycleSelectionStale, setLifecycleSelectionStale] = React.useState(false);
 
-    const updateMetadata = React.useCallback((patch: Partial<AutomationEditorDraft>) => {
+    const updateMetadata = React.useCallback((patch: Partial<AutomationTriggerEditorValue>) => {
         props.onChange({ ...props.value, ...patch });
     }, [props]);
 
@@ -644,9 +660,7 @@ export const AutomationPluralEditorScreen = React.memo(function AutomationPlural
                 </ItemGroupColumns>
             </ItemGroup>
 
-            {props.variant === 'embedded' ? null : (
-                <AutomationRecipeComposer value={props.value} onChange={props.onChange} />
-            )}
+            {props.recipeEditor ?? null}
 
             <View style={styles.sectionLead}>
                 <Text style={styles.sectionLeadText}>{t('automations.pluralEditor.orSemantics')}</Text>
@@ -887,5 +901,25 @@ export const AutomationPluralEditorScreen = React.memo(function AutomationPlural
                 </View>
             ) : null}
         </View>
+    );
+});
+
+/** Recipe-independent editor used by embedded authoring surfaces. */
+export const AutomationTriggerEditor = React.memo(function AutomationTriggerEditor(
+    props: AutomationTriggerEditorProps,
+): React.ReactElement {
+    return <AutomationTriggerEditorContents {...props} variant="embedded" />;
+});
+
+/** Full Automation editor composes the shared trigger editor with the canonical recipe owner. */
+export const AutomationPluralEditorScreen = React.memo(function AutomationPluralEditorScreen(
+    props: AutomationPluralEditorScreenProps,
+): React.ReactElement {
+    return (
+        <AutomationTriggerEditorContents
+            {...props}
+            onChange={(next) => props.onChange({ ...props.value, ...next })}
+            recipeEditor={<AutomationRecipeComposer value={props.value} onChange={props.onChange} />}
+        />
     );
 });

@@ -106,6 +106,21 @@ export const PluginTranscriptActivityCard = React.memo(
             () => resolvePluginTranscriptActivityPresentation(props.activity),
             [props.activity],
         );
+        if (props.activity.aggregateHiddenCount !== undefined) {
+            return (
+                <View testID="plugin-transcript-activity-overflow">
+                    <ItemGroup title={t('common.more')}>
+                        <Item
+                            title={t('tools.common.more', { count: props.activity.aggregateHiddenCount })}
+                            mode="info"
+                            showChevron={false}
+                            accessibilityRole="text"
+                            accessibilityLabel={t('tools.common.more', { count: props.activity.aggregateHiddenCount })}
+                        />
+                    </ItemGroup>
+                </View>
+            );
+        }
         return (
             <View testID="plugin-transcript-activity-card">
                 <PluginTranscriptActivityAccessibilityStatus

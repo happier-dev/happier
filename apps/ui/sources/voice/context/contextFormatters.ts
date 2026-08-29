@@ -1,6 +1,6 @@
 import {
+    buildAgentRequestSemanticSummary,
     formatPermissionRequestSummary,
-    isAskUserQuestionToolName,
 } from "@happier-dev/protocol";
 import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
@@ -34,17 +34,6 @@ export interface VoiceContextFormatterPrefs {
 
 export type ResolvedVoiceContextFormatterPrefs = Readonly<Required<VoiceContextFormatterPrefs>>;
 
-interface AskUserQuestionOptionLike {
-    label?: unknown;
-    description?: unknown;
-}
-
-interface AskUserQuestionLike {
-    header?: unknown;
-    question?: unknown;
-    options?: unknown;
-}
-
 function asObject(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
@@ -67,38 +56,26 @@ function collectUserActionSummary(
     toolArgs: unknown,
     prefs: Readonly<{ voiceShareFilePaths: boolean }>,
 ): string | null {
-    if (!isAskUserQuestionToolName(toolName)) return null;
-    const questions = Array.isArray((toolArgs as { questions?: unknown })?.questions)
-        ? (toolArgs as { questions: ReadonlyArray<AskUserQuestionLike> }).questions
-        : null;
-    if (!questions || questions.length === 0) return null;
+    const questions = buildAgentRequestSemanticSummary({
+        kind: 'user_action',
+        toolName,
+        toolInput: toolArgs,
+    }).questions;
+    if (questions.length === 0) return null;
 
     const lines: string[] = [];
-    for (const [index, rawQuestion] of questions.entries()) {
-        if (!rawQuestion || typeof rawQuestion !== 'object') continue;
-        const header = typeof rawQuestion.header === 'string' && rawQuestion.header.trim()
-            ? maybeRedactVoiceString(rawQuestion.header.trim(), prefs.voiceShareFilePaths)
+    for (const [index, questionSummary] of questions.entries()) {
+        const header = questionSummary.header && questionSummary.header !== questionSummary.question
+            ? maybeRedactVoiceString(questionSummary.header, prefs.voiceShareFilePaths)
             : null;
-        const question = typeof rawQuestion.question === 'string' && rawQuestion.question.trim()
-            ? maybeRedactVoiceString(rawQuestion.question.trim(), prefs.voiceShareFilePaths)
-            : null;
-        const options = Array.isArray(rawQuestion.options)
-            ? rawQuestion.options
-                .map((option): string | null => {
-                    if (!option || typeof option !== 'object') return null;
-                    const labelValue = (option as AskUserQuestionOptionLike).label;
-                    const descriptionValue = (option as AskUserQuestionOptionLike).description;
-                    const label = typeof labelValue === 'string'
-                        ? labelValue.trim()
-                        : '';
-                    const description = typeof descriptionValue === 'string'
-                        ? maybeRedactVoiceString(descriptionValue.trim(), prefs.voiceShareFilePaths)
-                        : '';
-                    if (!label && !description) return null;
-                    return description ? `${label} — ${description}` : label;
-                })
-                .filter((value): value is string => Boolean(value && value.trim()))
-            : [];
+        const question = maybeRedactVoiceString(questionSummary.question, prefs.voiceShareFilePaths);
+        const options = questionSummary.choices.map((choice) => {
+            const label = maybeRedactVoiceString(choice.label, prefs.voiceShareFilePaths);
+            const description = choice.description
+                ? maybeRedactVoiceString(choice.description, prefs.voiceShareFilePaths)
+                : '';
+            return description ? `${label} — ${description}` : label;
+        });
 
         if (header) lines.push(`<question_header index="${index + 1}">${header}</question_header>`);
         if (question) lines.push(`<question_text index="${index + 1}">${question}</question_text>`);

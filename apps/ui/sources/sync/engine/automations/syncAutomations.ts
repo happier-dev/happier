@@ -13,7 +13,13 @@ import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 
 export async function fetchAndApplyAutomations(params: {
     credentials: AuthCredentials | null | undefined;
-    applyAutomations: (automations: AutomationDefinition[]) => void;
+    applyAutomations: (automations: AutomationDefinition[], nextCursor: string | null) => void;
+    appendAutomations?: (
+        expectedCursor: string,
+        automations: AutomationDefinition[],
+        nextCursor: string | null,
+    ) => void;
+    cursor?: string;
     loadedAutomationRunIds?: readonly string[];
     /**
      * The list refresh restates the newest Run page for lists that are already
@@ -27,12 +33,12 @@ export async function fetchAndApplyAutomations(params: {
     ) => void;
     runsLimit?: number;
     shouldContinue?: () => boolean;
-}): Promise<void> {
+}): Promise<{ nextCursor: string | null }> {
     const shouldContinue = params.shouldContinue ?? (() => true);
     if (!params.credentials) {
-        return;
+        return { nextCursor: null };
     }
-    if (!shouldContinue()) return;
+    if (!shouldContinue()) return { nextCursor: null };
 
     const { serverId } = getActiveServerSnapshot();
     const automationsEnabled = await isRuntimeFeatureEnabled({
@@ -41,35 +47,42 @@ export async function fetchAndApplyAutomations(params: {
         timeoutMs: 400,
     });
     if (!automationsEnabled) {
-        return;
+        return { nextCursor: null };
     }
-    if (!shouldContinue()) return;
+    if (!shouldContinue()) return { nextCursor: null };
 
-    const rows = await listAutomationDefinitions(params.credentials);
-    if (!shouldContinue()) return;
-    const automations = rows.map(createAutomationDefinitionSummary);
-    if (!shouldContinue()) return;
-    params.applyAutomations(automations);
+    const result = await listAutomationDefinitions(params.credentials, {
+        ...(params.cursor ? { cursor: params.cursor } : {}),
+    });
+    if (!shouldContinue()) return { nextCursor: null };
+    const automations = result.automations.map(createAutomationDefinitionSummary);
+    if (!shouldContinue()) return { nextCursor: null };
+    if (params.cursor) {
+        params.appendAutomations?.(params.cursor, automations, result.nextCursor);
+    } else {
+        params.applyAutomations(automations, result.nextCursor);
+    }
 
-    if (!params.refreshAutomationRunsWindow) {
-        return;
+    if (params.cursor || !params.refreshAutomationRunsWindow) {
+        return { nextCursor: result.nextCursor };
     }
 
     const loadedAutomationRunIds = Array.from(new Set(params.loadedAutomationRunIds ?? []));
     if (loadedAutomationRunIds.length === 0) {
-        return;
+        return { nextCursor: result.nextCursor };
     }
 
     const rowIds = new Set(automations.map((automation) => automation.id));
     const idsToRefresh = loadedAutomationRunIds.filter((automationId) => rowIds.has(automationId));
     if (idsToRefresh.length === 0) {
-        return;
+        return { nextCursor: result.nextCursor };
     }
 
     const limit = params.runsLimit ?? 20;
-    // The Account definition ceiling allows thousands of listed Automations,
-    // and every one whose run list has been opened stays in this set for the
-    // rest of the session. Opening one request per cached list at once turned a
+    // An Account may contain a high-cardinality Automation catalog with no
+    // invented aggregate definition ceiling, and every definition whose run
+    // list has been opened stays in this set for the rest of the session.
+    // Opening one request per cached list at once turned a
     // single run update into an unbounded request burst, so the refresh runs
     // through the same request-concurrency owner the Automation detail
     // hydration already uses rather than a fan-out of its own.
@@ -86,6 +99,7 @@ export async function fetchAndApplyAutomations(params: {
         }),
         loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit,
     );
+    return { nextCursor: result.nextCursor };
 }
 
 export async function fetchAndApplyAutomationRuns(params: {

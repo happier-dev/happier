@@ -204,12 +204,14 @@ export async function describeProviderModels(input: Readonly<{
     serverId: string | null;
     agentTargetKey: string;
     mode?: 'picker' | 'management';
+    forceRefresh?: true;
     currentSelection?: z.input<typeof DaemonProviderModelProjectionRequestV1Schema>['currentSelection'];
 }>): Promise<DaemonProviderModelProjectionResponseV1> {
     const payload = DaemonProviderModelProjectionRequestV1Schema.parse({
         machineId: input.machineId,
         agentTargetKey: input.agentTargetKey,
         ...(input.mode ? { mode: input.mode } : {}),
+        ...(input.forceRefresh ? { forceRefresh: true as const } : {}),
         ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
     });
     return await requestProviderRpcResponse(DaemonProviderModelProjectionResponseV1Schema, 'read', {

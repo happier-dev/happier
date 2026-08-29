@@ -93,6 +93,7 @@ describe('openNewSession Host API producer', () => {
                 checkoutIntent: 'reuseWorkspace',
                 prompt: 'Review this',
                 placement: {
+                    kind: 'exactTarget',
                     serverId: 'server-a',
                     machineId: 'machine-a',
                     directory: '/workspaces/happier-review',
@@ -129,7 +130,11 @@ describe('openNewSession Host API producer', () => {
         });
         await expect(handler(request({
             checkoutIntent: 'preparedReviewWorkspace',
-            placement: { machineId: 'machine-b' },
+            placement: {
+                kind: 'exactTarget',
+                serverId: 'server-a',
+                machineId: 'machine-b',
+            },
         }), { targetedOperation: operation, selectedActionInput: selected })).resolves.toEqual({
             code: 'invalid_payload',
             diagnostics: ['prepared_review_workspace_selection_invalid'],

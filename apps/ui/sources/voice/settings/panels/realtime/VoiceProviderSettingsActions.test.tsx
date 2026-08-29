@@ -19,9 +19,11 @@ import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRe
 const state = vi.hoisted(() => ({
   config: { billingMode: 'byo', agentId: '', tts: {} } as Record<string, unknown>,
   settingsVersion: 4,
-  conflict: false,
+  conflict: null as null | 'unrelated' | 'provider',
+  mutationAttempts: 0,
   outcomeUnknown: false,
   mutationApplied: false,
+  advanceDuringPreparation: false,
   registration: null as any,
   selectedProviderId: '' as string,
   accountSettings: null as Record<string, unknown> | null,
@@ -80,6 +82,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
       settingsScope: state.accountSettings
         ? { serverId: 'server-1', accountId: 'account-1' }
         : null,
+      settingsVersion: state.settingsVersion,
     }),
   },
 }));
@@ -97,7 +100,9 @@ vi.mock('@/sync/domains/settings/voiceSettings', async (importOriginal) => {
   };
 });
 vi.mock('@/voice/settings/resolveVoiceProviderId', () => ({
-  resolveVoiceProviderIdForSettingsAction: (_settings: unknown, value: unknown) => value,
+  resolveVoiceProviderIdForSettingsAction: (_settings: unknown, fallback: unknown) => (
+    state.selectedProviderId || fallback
+  ),
 }));
 vi.mock('@/voice/registry/externalVoiceProviderRegistrations', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/voice/registry/externalVoiceProviderRegistrations')>();
@@ -108,12 +113,24 @@ vi.mock('@/voice/registry/externalVoiceProviderRegistrations', async (importOrig
 });
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({
   getSyncSingleton: () => ({
-    prepareAccountSettingsForDaemonSpawn: async () => ({
-      accountSettingsVersionHint: state.settingsVersion,
-    }),
+    prepareAccountSettingsForDaemonSpawn: async () => {
+      const accountSettingsVersionHint = state.settingsVersion;
+      if (state.advanceDuringPreparation) {
+        state.settingsVersion += 1;
+        state.config = { ...state.config, billingMode: 'hosted' };
+      }
+      return { accountSettingsVersionHint };
+    },
     mutateAccountSettingsOnce: async (input: any) => {
+      state.mutationAttempts += 1;
       if (state.conflict) {
-        return { status: 'conflict', currentSettingsVersion: state.settingsVersion + 1 };
+        const conflict = state.conflict;
+        state.conflict = null;
+        state.settingsVersion += 1;
+        if (conflict === 'provider') {
+          state.config = { ...state.config, billingMode: 'hosted' };
+        }
+        return { status: 'conflict', currentSettingsVersion: state.settingsVersion };
       }
       const result = input.mutate({
         voiceSettingsV1: {
@@ -171,9 +188,11 @@ describe('VoiceProviderSettingsActions', () => {
   beforeEach(() => {
     state.config = { billingMode: 'byo', agentId: '', tts: {} };
     state.settingsVersion = 4;
-    state.conflict = false;
+    state.conflict = null;
+    state.mutationAttempts = 0;
     state.outcomeUnknown = false;
     state.mutationApplied = false;
+    state.advanceDuringPreparation = false;
     state.selectedProviderId = PROVIDER_ID;
     state.accountSettings = null;
     spies.modalConfigs.length = 0;
@@ -255,8 +274,57 @@ describe('VoiceProviderSettingsActions', () => {
     expect(state.config.agentId).toBe('agent-created');
   });
 
-  it('applies nothing when the canonical Account Settings owner reports a stale CAS conflict', async () => {
-    state.conflict = true;
+  it('pairs action values with the same canonical revision when settings advance during preparation', async () => {
+    state.advanceDuringPreparation = true;
+    const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<VoiceProviderSettingsActions
+        providerId={PROVIDER_ID}
+        owner={owner}
+        actions={[action]}
+        placement={{ kind: 'afterField', fieldId: 'agentId' }}
+      />);
+    });
+    await act(async () => {
+      tree.root.findByProps({ testID: 'voice-settings-action-create-agent' }).props.onPress();
+      await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+      spies.modalConfigs[0].props.onConfirm();
+      await vi.waitFor(() => expect(state.mutationApplied).toBe(true));
+    });
+
+    expect(spies.execute).toHaveBeenCalledWith(expect.objectContaining({
+      settings: expect.objectContaining({ billingMode: 'hosted' }),
+      settingsRevision: '5',
+    }));
+    expect(state.mutationAttempts).toBe(1);
+  });
+
+  it('reconciles once when a CAS conflict changed no provider config read by the action', async () => {
+    state.conflict = 'unrelated';
+    const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
+    let tree!: renderer.ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(<VoiceProviderSettingsActions
+        providerId={PROVIDER_ID}
+        owner={owner}
+        actions={[action]}
+        placement={{ kind: 'afterField', fieldId: 'agentId' }}
+      />);
+    });
+    await act(async () => {
+      tree.root.findByProps({ testID: 'voice-settings-action-create-agent' }).props.onPress();
+      await vi.waitFor(() => expect(spies.modalConfigs).toHaveLength(1));
+      spies.modalConfigs[0].props.onConfirm();
+      await vi.waitFor(() => expect(state.mutationApplied).toBe(true));
+    });
+    expect(state.mutationAttempts).toBe(2);
+    expect(state.config.agentId).toBe('agent-created');
+    expect(spies.alertAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not merge after a CAS conflict changed provider config read by the action', async () => {
+    state.conflict = 'provider';
     const { VoiceProviderSettingsActions } = await import('./VoiceProviderSettingsActions');
     let tree!: renderer.ReactTestRenderer;
     await act(async () => {
@@ -275,9 +343,11 @@ describe('VoiceProviderSettingsActions', () => {
     });
     expect(state.mutationApplied).toBe(false);
     expect(state.config.agentId).toBe('');
+    expect(state.config.billingMode).toBe('hosted');
+    expect(state.mutationAttempts).toBe(1);
     expect(spies.alertAsync).toHaveBeenCalledWith(
       'common.error',
-      'settingsVoice.realtimeProviders.operationFailed',
+      'settingsProviders.errors.mutationOutcomeUnknownDescription',
     );
   });
 
@@ -428,6 +498,12 @@ describe('VoiceProviderSettingsActions', () => {
         });
       }
       if (request.pathname === '/v1/convai/agents/agent-existing') {
+        if (init?.method === 'GET') {
+          return new Response(JSON.stringify({
+            agent_id: 'agent-existing',
+            conversation_config: { agent: { prompt: { tool_ids: [] } } },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
         expect(init?.method).toBe('PATCH');
         return failureResponse;
       }

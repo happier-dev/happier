@@ -16,6 +16,7 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { AgentExecutionTargetV1, BackendTargetRefV2, SessionExecutionTargetV1, SessionModelSelectionV1, SessionOrganizationPlacementV1 } from '@happier-dev/protocol';
 import type { AgentId } from '@/agents/catalog/catalog';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
@@ -64,6 +65,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     draftScope?: ServerAccountScope | null;
     draftId?: string;
     launchUserAttemptId?: string | null;
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
 }>): Readonly<{
     authoringContext: ReturnType<typeof buildNewSessionAuthoringContext>;
     currentAuthoringDraft: SessionAuthoringDraft;
@@ -187,6 +189,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
             sessionOnlySecretValueEncByProfileIdByEnvVarName: params.getSessionOnlySecretValueEncByProfileIdByEnvVarName(),
             backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
             composerAttachments: params.composerAttachments,
+            placementCandidates: params.placementCandidates,
             preferredPersistedAgentId: draftAgentId,
             updatedAt: Date.now(),
         });
@@ -209,6 +212,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.staticAgentId,
         params.backendNewSessionOptionStateByTargetKey,
         params.composerAttachments,
+        params.placementCandidates,
         params.automationRequestedByRoute,
         draftAgentId,
         params.getSessionOnlySecretValueEncByProfileIdByEnvVarName,

@@ -1,5 +1,6 @@
 import type { ComposerAttachmentAuthorValueV1 } from '@happier-dev/protocol';
 import type {
+    PluginUiNewSessionPlacementV1,
     PluginUiSessionCheckoutIntentV1,
     PluginUiSessionPlacementCandidateV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -8,7 +9,10 @@ import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type {
+    NewSessionComposerAttachmentSeedV1,
+    NewSessionDraft,
+} from '@/sync/domains/state/persistence';
 
 /**
  * The ONE way anything outside the New Session screen puts something into that
@@ -31,9 +35,9 @@ import type { NewSessionDraft } from '@/sync/domains/state/persistence';
  * host-minted instance id, host-qualified contribution identity, host-resolved
  * type label — and only a mounted composer target resolves those. A seeder that
  * wrote them would be a second, unauthoritative attachment owner. A seed
- * therefore carries the author-shaped REQUEST, which the existing one-shot
- * `tempDataStore` handoff holds until the real composer mounts and applies it
- * through the one attachment authority.
+ * therefore carries the author-shaped REQUEST, which the existing
+ * Account+draft keyed attachment owner holds until the real composer mounts
+ * and applies it through the one attachment authority.
  */
 
 export type NewSessionDraftPromptSeedV1 = Readonly<{
@@ -46,11 +50,7 @@ export type NewSessionDraftPromptSeedV1 = Readonly<{
     mode: 'replace' | 'append';
 }>;
 
-export type NewSessionDraftPlacementSeedV1 = Readonly<{
-    serverId?: string;
-    machineId?: string;
-    directory?: string;
-}>;
+export type NewSessionDraftPlacementSeedV1 = PluginUiNewSessionPlacementV1;
 
 /**
  * One author-shaped composer attachment request, exactly as a live
@@ -73,11 +73,7 @@ export type NewSessionDraftSeedV1 = Readonly<{
      */
     checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: NewSessionDraftPlacementSeedV1;
-    /**
-     * An unresolved placement stays outside the persisted New Session draft.
-     * The screen's mounted placement chooser consumes it before it writes a
-     * concrete server/machine/path selection through the existing owner.
-     */
+    /** Unresolved placement choices remain owned by this draft until selected. */
     candidates?: readonly PluginUiSessionPlacementCandidateV1[];
     attachments?: readonly NewSessionDraftAttachmentSeedV1[];
 }>;
@@ -106,9 +102,7 @@ export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1)
         // is not persisted into this draft because it is not yet a concrete
         // worktree selection, but it is still a whole user-visible request.
         || seed.checkoutIntent !== undefined
-        || normalizedNonEmpty(seed.placement?.serverId) !== null
-        || normalizedNonEmpty(seed.placement?.machineId) !== null
-        || normalizedNonEmpty(seed.placement?.directory) !== null
+        || seed.placement !== undefined
         // Candidate placement is a real user-visible request even though it
         // cannot become a persisted selection until the reader picks one.
         || (seed.candidates?.length ?? 0) > 0
@@ -147,9 +141,11 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
     const base = input.existingDraft ?? emptyNewSessionDraft(input.updatedAt);
     const promptText = normalizedNonEmpty(input.seed.prompt?.text);
     const profileId = normalizedNonEmpty(input.seed.profileId);
-    const serverId = normalizedNonEmpty(input.seed.placement?.serverId);
-    const machineId = normalizedNonEmpty(input.seed.placement?.machineId);
-    const directory = normalizedNonEmpty(input.seed.placement?.directory);
+    const placement = input.seed.placement;
+    const exactTarget = placement?.kind === 'exactTarget'
+        ? { serverId: placement.serverId, machineId: placement.machineId }
+        : null;
+    const directory = placement?.directory;
 
     return {
         ...base,
@@ -161,9 +157,17 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
                     : promptText,
             }),
         ...(profileId === null ? {} : { selectedProfileId: profileId }),
-        ...(serverId === null ? {} : { targetServerId: serverId }),
-        ...(machineId === null ? {} : { selectedMachineId: machineId }),
-        ...(directory === null ? {} : { selectedPath: directory }),
+        ...(exactTarget === null
+            ? {}
+            : {
+                targetServerId: exactTarget.serverId,
+                selectedMachineId: exactTarget.machineId,
+                executionTarget: exactTarget,
+            }),
+        ...(directory === undefined ? {} : { selectedPath: directory }),
+        ...(input.seed.candidates === undefined
+            ? {}
+            : { placementCandidates: input.seed.candidates }),
         // A seeded New Session is a Session. An Automation draft left in the
         // scope would otherwise swallow the seed into an Automation definition.
         entryIntent: 'session',
@@ -177,18 +181,23 @@ export function seedNewSessionDraftV1(input: Readonly<{
     nowMs?: () => number;
     createDraftId?: () => string;
     writeDraft?: typeof writeNewSessionDraftToRepository;
+    /** Device-local pending Composer requests, retained with the draft across restart. */
+    attachmentSeeds?: readonly NewSessionComposerAttachmentSeedV1[];
 }>): string | null {
     if (!newSessionDraftSeedDeclaresChangeV1(input.seed) || !input.scope) return null;
     const scope = input.scope;
     const draftId = (input.createDraftId ?? randomUUID)();
-    (input.writeDraft ?? writeNewSessionDraftToRepository)({
-        scope,
-        draftId,
-        draft: applyNewSessionDraftSeedV1({
+    const draft = applyNewSessionDraftSeedV1({
         seed: input.seed,
         existingDraft: null,
         updatedAt: input.nowMs?.() ?? Date.now(),
-        }),
+    });
+    (input.writeDraft ?? writeNewSessionDraftToRepository)({
+        scope,
+        draftId,
+        draft: input.attachmentSeeds === undefined
+            ? draft
+            : { ...draft, composerAttachmentSeeds: input.attachmentSeeds },
     });
     return draftId;
 }

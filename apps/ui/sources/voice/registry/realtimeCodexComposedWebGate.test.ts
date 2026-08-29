@@ -91,6 +91,13 @@ type CreateAgentSessionRealtimeService = NonNullable<
   BundledRealtimeProviderRuntimeHost['createAgentSessionRealtimeService']
 >;
 
+const CODEX_CONNECTED_SERVICE_KEY = buildQualifiedPluginContributionKey(
+  createPluginContributionIdentity({
+    pluginId: 'happier.agent.codex',
+    localId: 'openai-codex',
+  }),
+);
+
 function readEntryProviderId(entry: Readonly<{
   pluginId: string;
   declaration: Readonly<{ id: string }>;
@@ -307,6 +314,8 @@ describe('realtime_codex normal web composed gate', () => {
   it('composes public activation, exact direct binding, bound V3 authority, host WebRTC, finals, and reverse terminal cleanup', async () => {
     const consoleError = vi.spyOn(console, 'error');
     const watchResolvers: Array<(value: unknown) => void> = [];
+    let resolveFirstStop!: (value: unknown) => void;
+    let stopCount = 0;
     rpcBoundary.sessionRpc.mockImplementation(async (input: Readonly<{
       sessionId: string;
       method: string;
@@ -328,6 +337,12 @@ describe('realtime_codex normal web composed gate', () => {
         });
       }
       if (input.method.endsWith('.stop')) {
+        stopCount += 1;
+        if (stopCount === 1) {
+          return await new Promise((resolve) => {
+            resolveFirstStop = resolve;
+          });
+        }
         return { ok: true, status: 'stopped' };
       }
       throw new Error(`unexpected session RPC: ${input.method}`);
@@ -496,6 +511,9 @@ describe('realtime_codex normal web composed gate', () => {
       ([input]) => String((input as { method?: unknown }).method).endsWith('.stop'),
     )).toHaveLength(1));
     await vi.waitFor(() => expect(browser.peer.close).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
+    expect(secondBrowser.peer.createDataChannel).not.toHaveBeenCalled();
+    resolveFirstStop({ ok: true, status: 'stopped' });
     await vi.waitFor(() => expect(secondBrowser.peer.createDataChannel).toHaveBeenCalledTimes(1));
     secondBrowser.peer.channel.open();
     await vi.waitFor(() => expect(runtime.adapter.getSnapshot()).toMatchObject({
@@ -749,7 +767,7 @@ describe('realtime_codex normal web composed gate', () => {
     const connectedServices = {
       v: 1 as const,
       bindingsByServiceId: {
-        'openai-codex': {
+        [CODEX_CONNECTED_SERVICE_KEY]: {
           source: 'connected' as const,
           selection: 'profile' as const,
           profileId: 'voice-profile',
@@ -1093,7 +1111,7 @@ describe('realtime_codex normal web composed gate', () => {
     const connectedServices = {
       v: 1 as const,
       bindingsByServiceId: {
-        'openai-codex': {
+        [CODEX_CONNECTED_SERVICE_KEY]: {
           source: 'connected' as const,
           selection: 'profile' as const,
           profileId: 'codex-global-profile',

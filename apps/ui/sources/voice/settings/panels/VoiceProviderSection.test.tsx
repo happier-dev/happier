@@ -10,6 +10,7 @@ import type {
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import {
     ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
 } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
@@ -33,6 +34,15 @@ const passiveSetupBoundary = vi.hoisted(() => ({
     invoke: vi.fn<(...args: unknown[]) => Promise<unknown>>(
         async () => ({ supported: false, reason: 'error' }),
     ),
+}));
+const rawCredentialReadiness = vi.hoisted(() => vi.fn(async () => 'ready' as const));
+
+vi.mock('@/voice/credentials/rawCredentialAuthorizationClient', () => ({
+    inspectRawCredentialAuthorizationReadiness: rawCredentialReadiness,
+    rawCredentialAuthorizationClient: {
+        inspect: vi.fn(async () => { throw new Error('unavailable'); }),
+        request: vi.fn(async () => { throw new Error('unavailable'); }),
+    },
 }));
 
 const activeAccountLifetimeBoundary = vi.hoisted(() => ({
@@ -85,6 +95,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroupSelectionContext: React.createContext(null),
 }));
 
+vi.mock('@/components/ui/lists/Item', () => ({
+    Item: (props: any) => React.createElement('Item', props, props.children),
+}));
+
 vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => ({
     useItemGroupRowPosition: () => 'middle',
 }));
@@ -99,6 +113,7 @@ vi.mock('@/components/ui/rendering/normalizeNodeForView', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
+    TextInput: (props: any) => React.createElement('TextInput', props),
 }));
 
 vi.mock('expo-clipboard', () => ({
@@ -121,6 +136,8 @@ vi.mock('@/sync/ops/capabilities', () => ({
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
+    useSettings: () => storageBoundary.settings ?? settingsParse({}),
+    useSettingsVersion: () => 1,
     useMachineCliDetectionTarget: () => passiveSetupBoundary.machineTarget,
     useProfile: () => passiveSetupBoundary.profile ?? { connectedServicesV2: [] },
     useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : null,
@@ -146,6 +163,8 @@ const OPENAI_PROVIDER_ID = 'happier.voice.openai/realtime-openai';
 const XAI_PROVIDER_ID = 'happier.voice.xai/realtime-grok';
 const ELEVENLABS_PROVIDER_ID = 'happier.voice.elevenlabs/realtime-elevenlabs';
 const CODEX_PROVIDER_ID = 'happier.agent.codex/realtime-codex';
+const CODEX_CONNECTED_SERVICE_KEY = 'happier.agent.codex/openai-codex';
+const CLAUDE_CONNECTED_SERVICE_KEY = 'happier.agent.claude/anthropic';
 
 function installCodexConnectedAccountDescriptor() {
     installConnectedAccountDescriptorProjection({
@@ -255,7 +274,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -289,7 +308,7 @@ describe('VoiceProviderSection', () => {
                     connectedServices: {
                         v: 1,
                         bindingsByServiceId: {
-                            'openai-codex': {
+                            [CODEX_CONNECTED_SERVICE_KEY]: {
                                 source: 'connected',
                                 selection: 'profile',
                                 profileId: 'codex-profile',
@@ -301,15 +320,11 @@ describe('VoiceProviderSection', () => {
             { timeoutMs: 30_000 },
         );
         const readinessHost = screen.findHostByTestId('settings.voice.provider.readiness');
-        expect(readinessHost?.type).toBe('View');
+        expect(readinessHost?.type).toBe('Item');
         expect(readinessHost?.props.onPress).toBeUndefined();
         expect(readinessHost?.props.role).toBeUndefined();
-        const readinessText = readinessHost?.findAllByType('Text' as any)
-            .map((node) => node.props.children)
-            .filter((value): value is string => typeof value === 'string')
-            .join(' ') ?? '';
-        expect(readinessText).toContain('voice.readiness.runtime_unknown');
-        expect(readinessText).not.toContain('voice.readiness.actions.switch_provider');
+        expect(readinessHost?.props.subtitle).toContain('voice.readiness.runtime_unknown');
+        expect(readinessHost?.props.subtitle).not.toContain('voice.readiness.actions.switch_provider');
         const status = screen.findHostByTestId('settings.voice.provider.readiness-status');
         expect(status).not.toBeNull();
         if (status === null) return;
@@ -347,7 +362,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -419,7 +434,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -485,7 +500,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -547,7 +562,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -611,7 +626,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -677,7 +692,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -747,7 +762,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -869,7 +884,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -939,7 +954,7 @@ describe('VoiceProviderSection', () => {
                             globalConnectedServices: {
                                 v: 1,
                                 bindingsByServiceId: {
-                                    'openai-codex': {
+                                    [CODEX_CONNECTED_SERVICE_KEY]: {
                                         source: 'connected',
                                         selection: 'profile',
                                         profileId: 'codex-profile',
@@ -1002,7 +1017,8 @@ describe('VoiceProviderSection', () => {
             'voice.readiness.actions.open_provider_settings',
         );
         expect(screen.getTextContent()).not.toContain('voice.readiness.ready');
-        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.type).toBe('Pressable');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.type).toBe('Item');
+        expect(screen.findHostByTestId('settings.voice.provider.readiness')?.props.onPress).toBeTypeOf('function');
         await screen.pressByTestIdAsync('settings.voice.provider.readiness');
         expect(onRecoveryAction).toHaveBeenCalledWith('open_provider_settings');
 
@@ -1022,7 +1038,7 @@ describe('VoiceProviderSection', () => {
         }));
         await withoutRecoveryHandler.pressByTestIdAsync('settings.voice.provider.checkSetup');
         const passiveOnlyReadiness = withoutRecoveryHandler.findHostByTestId('settings.voice.provider.readiness');
-        expect(passiveOnlyReadiness?.type).toBe('View');
+        expect(passiveOnlyReadiness?.type).toBe('Item');
         expect(passiveOnlyReadiness?.props.onPress).toBeUndefined();
         expect(withoutRecoveryHandler.findHostByTestId('settings.voice.provider.testLive')).toBeNull();
         expect(setVoice).not.toHaveBeenCalled();
@@ -2350,7 +2366,8 @@ describe('VoiceProviderSection', () => {
             writeLocalConversationVoiceSettings,
         } = await import('@/sync/domains/settings/voiceSettings');
         const { settingsParse } = await import('@/sync/domains/settings/settings');
-        const { upsertAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
+        const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
         const local = readLocalConversationVoiceSettings(voiceSettingsDefaults);
         const voice = writeLocalConversationVoiceSettings(
             {
@@ -2380,10 +2397,18 @@ describe('VoiceProviderSection', () => {
                 tts: { ...local.tts, provider: 'happier.voice.google/google-cloud-tts' },
             },
         );
-        const sttReady = upsertAccountVoiceCredential({
+        const registry = createDefaultVoiceProviderRegistry();
+        const sttDeclaration = registry.get('happier.voice.google/gemini-stt')?.declaration;
+        const ttsDeclaration = registry.get('happier.voice.google/google-cloud-tts')?.declaration;
+        if (sttDeclaration?.kind !== 'speech' || ttsDeclaration?.kind !== 'speech') {
+            throw new Error('expected current Google speech declarations');
+        }
+        const sttReady = saveAndUseAccountVoiceCredential({
             settings: settingsParse({ voice }),
             contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
             credentialSlotId: 'api_key',
+            expectedSettingsVersion: 0,
+            currentDeclaration: sttDeclaration,
             machineId: 'machine-online',
             value: 'google-stt-key',
             generateId: () => 'google-stt-secret',
@@ -2391,10 +2416,12 @@ describe('VoiceProviderSection', () => {
             expectedSecretId: null,
             expectedSecretUpdatedAt: null,
         }).settings;
-        const ready = upsertAccountVoiceCredential({
+        const ready = saveAndUseAccountVoiceCredential({
             settings: sttReady,
             contribution: { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' },
             credentialSlotId: 'api_key',
+            expectedSettingsVersion: 0,
+            currentDeclaration: ttsDeclaration,
             machineId: 'machine-online',
             value: 'google-tts-key',
             generateId: () => 'google-tts-secret',
@@ -2402,9 +2429,12 @@ describe('VoiceProviderSection', () => {
             expectedSecretId: null,
             expectedSecretUpdatedAt: null,
         }).settings;
+        rawCredentialReadiness.mockClear();
         storageBoundary.settings = ready;
+        passiveSetupBoundary.machineTarget = { daemonStateVersion: 1, isOnline: true };
         onTestFinished(() => {
             storageBoundary.settings = null;
+            passiveSetupBoundary.machineTarget = { daemonStateVersion: 0, isOnline: false };
         });
 
         const setVoice = vi.fn();
@@ -2427,13 +2457,11 @@ describe('VoiceProviderSection', () => {
                 nativeDevice: { requested: false },
             },
         });
-        const { tree } = await renderScreen(render(ready.voice));
+        const screen = await renderScreen(render(ready.voice));
+        const { tree } = screen;
 
-        await act(async () => {
-            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
-                testID: 'settings.voice.provider.checkSetup',
-            })?.props.onPress();
-        });
+        await screen.pressByTestIdAsync('settings.voice.provider.checkSetup');
+        expect(rawCredentialReadiness).toHaveBeenCalledTimes(2);
         expect(findTestInstanceByTypeWithProps(tree, 'Item' as any, {
             testID: 'settings.voice.provider.readiness',
         })?.props.subtitle).toContain('voice.readiness.ready');
@@ -3014,12 +3042,12 @@ describe('VoiceProviderSection', () => {
         const binding = {
             v: 1 as const,
             bindingsByServiceId: {
-                anthropic: {
+                [CLAUDE_CONNECTED_SERVICE_KEY]: {
                     source: 'connected' as const,
                     selection: 'profile' as const,
                     profileId: 'anthropic-account-a',
                 },
-                'openai-codex': {
+                [CODEX_CONNECTED_SERVICE_KEY]: {
                     source: 'connected' as const,
                     selection: 'profile' as const,
                     profileId: 'codex-account-a',
@@ -3067,7 +3095,7 @@ describe('VoiceProviderSection', () => {
         const binding = {
             v: 1 as const,
             bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_CONNECTED_SERVICE_KEY]: {
                     source: 'connected' as const,
                     selection: 'profile' as const,
                     profileId: 'codex-account-b',

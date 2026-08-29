@@ -169,7 +169,6 @@ function automation(input: Partial<AutomationDefinitionListItem> = {}): Automati
         createdAt: 1,
         updatedAt: 1,
         assignments: [],
-        retiredTriggers: [],
         triggers: [eventTrigger()],
         ...input,
     });

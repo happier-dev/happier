@@ -20,6 +20,7 @@ import {
 import { AccountStoredContentClientUpgradeRequiredError } from '@/sync/api/capabilities/accountStoredContentCompatibility';
 import {
   clearMountedSessionRealtimeTranscriptConsumers,
+  readMountedSessionRealtimeTranscriptConsumerSessionIds,
   readMountedSessionTranscriptConsumerSessionIdsForRetention,
 } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { planSessionTranscriptEviction } from '@/sync/engine/sessions/sessionTranscriptRetention';
@@ -119,7 +120,7 @@ describe('VoiceHistoryScreen', () => {
     modalMock.spies.alert.mockClear();
   });
 
-  it('holds the discovered carrier against transcript eviction only while History is mounted', async () => {
+  it('routes and retains the discovered carrier only while History is mounted', async () => {
     const consumer = createVoiceHistoryConsumer(createDeps([]));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
     const screen = await renderScreen(
@@ -127,6 +128,8 @@ describe('VoiceHistoryScreen', () => {
     );
 
     await flushAsyncState();
+    expect(readMountedSessionRealtimeTranscriptConsumerSessionIds())
+      .toEqual(['voice-history-session']);
     expect(readMountedSessionTranscriptConsumerSessionIdsForRetention())
       .toEqual(['voice-history-session']);
     const plan = () => planSessionTranscriptEviction({
@@ -144,6 +147,7 @@ describe('VoiceHistoryScreen', () => {
     expect(plan().evictSessionIds).toEqual(['ordinary-session']);
 
     await screen.unmount();
+    expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
     expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
     expect(plan().evictSessionIds).toEqual(['ordinary-session', 'voice-history-session']);
   });
@@ -209,6 +213,8 @@ describe('VoiceHistoryScreen', () => {
     expect(newerRow?.props.accessibilityLabel).toContain('A newer response');
     expect(screen.findByTestId('voice-history-search')?.props.accessibilityLabel)
       .toBe('Search Voice History');
+    expect(initialText).toContain('Read-only: decrypt the previous page of Voice History on this device.');
+    expect(initialText).toContain('Loading older messages does not change or lock Voice History on any device.');
 
     await act(async () => {
       screen.changeTextByTestId('voice-history-search', 'newer');
@@ -279,6 +285,24 @@ describe('VoiceHistoryScreen', () => {
     });
 
     expect(screen.getTextContent()).toContain('The live answer');
+
+    // A remote authoritative correction updates the existing durable row while
+    // the full transcript consumer remains mounted. History must render that
+    // correction without polling, remounting, or creating another projection.
+    await act(async () => {
+      messages[1] = voiceMessage({
+        id: 'live',
+        role: 'assistant',
+        text: 'The corrected live answer',
+        createdAt: 200,
+        source: OPENAI_SOURCE,
+      });
+      messagesRevision += 1;
+      for (const listener of [...listeners]) listener();
+    });
+
+    expect(screen.getTextContent()).toContain('The corrected live answer');
+    expect(screen.getTextContent()).not.toContain('The live answer');
   });
 
   it('keeps the latest reachable search query when an older-page load completes', async () => {
@@ -519,8 +543,44 @@ describe('VoiceHistoryScreen', () => {
       .toBe('Voice History was cleared.');
     expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
       .toBe('Voice History was cleared.');
+    expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
+    expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
     expect(screen.findByTestId('voice-history-export')).toBeNull();
     expect(screen.findByTestId('voice-history-clear')).toBeNull();
+  });
+
+  it('keeps the current History view when a stale clear safely does nothing', async () => {
+    const messages: Message[] = [
+      voiceMessage({
+        id: 'one',
+        role: 'assistant',
+        text: 'Keep this filtered result',
+        createdAt: 100,
+        source: OPENAI_SOURCE,
+      }),
+    ];
+    const actualConsumer = createVoiceHistoryConsumer(createDeps(messages));
+    const consumer = {
+      ...actualConsumer,
+      clear: vi.fn(async () => ({ cleared: false as const })),
+    };
+    const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
+    const screen = await renderScreen(
+      <VoiceHistoryScreen consumer={consumer} saveExportArtifact={vi.fn()} />,
+    );
+    await flushAsyncState();
+
+    await act(async () => {
+      screen.changeTextByTestId('voice-history-search', 'filtered');
+    });
+    await screen.pressByTestIdAsync('voice-history-clear');
+
+    expect(consumer.clear).toHaveBeenCalledTimes(1);
+    expect(screen.findByTestId('voice-history-search')?.props.value).toBe('filtered');
+    expect(screen.findByTestId('voice-history-row-one')).not.toBeNull();
+    expect(screen.findByTestId('voice-history-action-message')).toBeNull();
+    expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
+      .toBe('');
   });
 
   it('tells the user to end Voice before clearing when an active-call clear is refused', async () => {
@@ -546,9 +606,9 @@ describe('VoiceHistoryScreen', () => {
     await screen.pressByTestIdAsync('voice-history-clear');
 
     expect(screen.findByTestId('voice-history-action-message')?.props.children)
-      .toBe('End Voice before clearing Voice History.');
+      .toBe('End the standalone Voice conversation using this History on this device before clearing it.');
     expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
-      .toBe('End Voice before clearing Voice History.');
+      .toBe('End the standalone Voice conversation using this History on this device before clearing it.');
     expect(screen.getTextContent()).not.toContain('Voice History could not be cleared.');
     expect(deleteSession).not.toHaveBeenCalled();
   });
@@ -789,6 +849,8 @@ describe('VoiceHistoryScreen', () => {
       await flushAsyncState();
       expect(screen.getTextContent()).toContain('Account A private answer');
       expect(screen.findByTestId('voice-history-row-account-a')).not.toBeNull();
+      expect(readMountedSessionRealtimeTranscriptConsumerSessionIds())
+        .toEqual(['voice-history-session-a']);
 
       // Same server, different Account.
       await act(async () => {
@@ -801,6 +863,8 @@ describe('VoiceHistoryScreen', () => {
       expect(screen.findByTestId('voice-history-row-account-a')).toBeNull();
       expect(screen.getTextContent()).not.toContain('Account A private answer');
       expect(screen.findByTestId('voice-history-loading')).not.toBeNull();
+      expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
+      expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
       await vi.waitFor(() => expect(discoveries).toBe(2));
 
       await act(async () => {

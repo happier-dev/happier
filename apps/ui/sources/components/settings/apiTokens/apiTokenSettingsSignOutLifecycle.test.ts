@@ -60,7 +60,8 @@ describe('completeApiTokenSettingsSignOutEverywhere', () => {
 
     it('states the API-token authority and one-time secret guidance truthfully', () => {
         const copy = apiTokenSettingsTranslations.en.settingsApiTokens;
-        expect(copy.emptyBody).toContain('Tokens let scripts and tools act as you.');
+        expect(copy.emptyBody).toContain('trusted scripts and tools perform the automated actions you allow');
+        expect(copy.emptyBody).not.toContain('act as you');
         expect(`${copy.create.actionSettingsPrefix} ${copy.create.actionSettingsLink}`)
             .toBe('This token can perform any operation enabled for External API & SDK in your Action settings.');
         expect(copy.reveal.accessibilityAnnouncement).toBe('Copy your token now — it is shown once.');

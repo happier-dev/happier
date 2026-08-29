@@ -14,6 +14,7 @@ import {
   type SecretStringV1,
   type VoiceCredentialSourceSelection,
   type VoiceProviderContribution,
+  type VoiceRawCredentialGrantDeclaration,
   VoiceProviderContributionSchema,
 } from '@happier-dev/protocol';
 
@@ -76,7 +77,7 @@ function hasPersistedAccountVoiceCredentialSource(
 }
 
 export function resolveAccountVoiceCredentialSourceSelection(params: Readonly<{
-  settings: Settings;
+  settings: Pick<Settings, 'voiceSettingsV1' | 'secrets' | 'connectedAccountPurposeBindingsV1'>;
   contribution: PluginContributionIdentityV1;
   credentialSlotId: string;
   purpose: QualifiedConnectedAccountPurposeV1;
@@ -136,6 +137,36 @@ function qualifyCredentialService(
   return typeof service === 'string'
     ? Object.freeze({ pluginId, localId: service })
     : service;
+}
+
+/**
+ * Raw grants belong to the exact source the user selected for this credential
+ * slot. Keeping that source matching here prevents readiness and disclosure UI
+ * from independently treating any declaration alternative as current.
+ */
+export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
+  declaration: VoiceProviderContribution;
+  contribution: PluginContributionIdentityV1;
+  selection: VoiceCredentialSourceSelection;
+}>): readonly VoiceRawCredentialGrantDeclaration[] {
+  if (!params.declaration.credentials || params.selection.kind === 'none') return Object.freeze([]);
+  const selectedService = params.selection.kind === 'connectedAccount'
+    ? params.selection.target.kind === 'account'
+      ? params.selection.target.account.service
+      : params.selection.target.service
+    : null;
+  const grants = params.declaration.credentials.sources.flatMap((source) => {
+    if (params.selection.kind === 'savedSecret') {
+      return source.kind === 'savedSecret' ? source.rawGrants ?? [] : [];
+    }
+    if (source.kind !== 'connectedAccount' || selectedService === null) return [];
+    const sourceService = qualifyCredentialService(source.service, params.contribution.pluginId);
+    return sourceService.pluginId === selectedService.pluginId
+      && sourceService.localId === selectedService.localId
+      ? source.rawGrants ?? []
+      : [];
+  });
+  return Object.freeze(grants);
 }
 
 function sortByCanonicalJson<T>(values: readonly T[]): readonly T[] {

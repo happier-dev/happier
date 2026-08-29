@@ -1672,6 +1672,18 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         });
     });
 
+    it('uses the shared exact confirmation decoder used by the hosted carrier', async () => {
+        const adapter = createAdapterOverHost({
+            confirm: async () => ({ confirmed: true, extra: 'not part of the Host API result' }),
+        });
+
+        await expect(adapter.api.confirm('Delete the preview?')).rejects.toMatchObject({
+            name: 'PluginError',
+            code: 'invalid_payload',
+            diagnostics: [{ code: 'confirm_response_invalid', severity: 'error' }],
+        });
+    });
+
     it('refuses an uninstalled method with a typed diagnostic instead of dispatching it', async () => {
         const adapter = createAdapterOverHost({});
 

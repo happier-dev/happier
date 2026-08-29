@@ -6,6 +6,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import { t } from '@/text';
+import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 
 import {
   resolveQualifiedConnectedAccountLabel,
@@ -106,9 +107,16 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
   accountLabel?: string | null;
   legacyServiceId?: ConnectedServiceId | null;
   serviceTitle: string | null | undefined;
+  /** Negotiated source state used only when the exact structured target is absent. */
+  sourceNegotiation?: ConnectedAccountUiNegotiation;
 }>): QualifiedConnectedAccountTargetPresentation {
   const serviceTitle = nonEmptyText(input.serviceTitle)
     ?? t('connectedServices.fallbackName');
+  const missingTargetLabel = input.sourceNegotiation === 'indeterminate'
+    ? t('common.loading')
+    : input.sourceNegotiation === 'legacy'
+      ? t('connectedServices.purposeTargets.legacyUnavailable')
+      : t('common.unavailable');
   const target = input.target;
   if (target.kind === 'account') {
     const accountRef = target.account;
@@ -119,7 +127,7 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
     if (!account) {
       return createPresentation({
         serviceTitle,
-        primaryLabel: t('common.unavailable'),
+        primaryLabel: missingTargetLabel,
         secondaryParts: [],
       });
     }
@@ -153,7 +161,7 @@ export function presentQualifiedConnectedAccountTarget(input: Readonly<{
   if (!group) {
     return createPresentation({
       serviceTitle,
-      primaryLabel: t('common.unavailable'),
+      primaryLabel: missingTargetLabel,
       secondaryParts: [],
     });
   }

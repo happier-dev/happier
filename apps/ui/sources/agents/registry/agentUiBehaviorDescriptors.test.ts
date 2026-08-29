@@ -26,7 +26,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     dialogs: [{
                         dialogId: 'review_scope_confirmation',
                         settingMutation: {
-                            settingId: 'reviewScopePreference',
+                            settingId: { scope: 'account', localId: 'reviewScopePreference' },
                             allowedValues: ['ask_every_time', 'always_include'],
                         },
                         terminalNotice: {
@@ -51,7 +51,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             dialogs: [{
                 dialogId: 'review_scope_confirmation',
                 settingMutation: {
-                    settingId: 'reviewScopePreference',
+                    settingId: { scope: 'account', localId: 'reviewScopePreference' },
                     allowedValues: ['ask_every_time', 'always_include'],
                 },
                 terminalNotice: {
@@ -679,7 +679,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 },
                 resume: {
                     experimentSwitches: [
-                        { id: 'directStorage', settingKey: 'directTranscriptStorageMode' },
+                        { id: 'directStorage', settingKey: { scope: 'account', localId: 'directTranscriptStorageMode' } },
                     ],
                 },
                 newSession: {
@@ -908,6 +908,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             agentId: 'claude',
             launchInput: { teamIds: ['team-1'] },
         })]);
+        expect(renderedLaunchSurfaces[0]).not.toHaveProperty('machineId');
         const detailsTab = behavior.sessionSubagents?.createTeammateLauncherDetailsTab?.({
             session,
             teamId: 'team-1',
@@ -930,6 +931,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 iconName: 'users',
             },
         });
+        expect(detailsTab.resource).not.toHaveProperty('pluginInlineSurface.machineId');
     });
 
     it('fails closed for unsupported descriptor kinds and payload adapter ids', () => {
@@ -972,7 +974,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 environmentVariables: {
                     backendMode: {
                         envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
-                        settingKey: 'opencodeBackendMode',
+                        settingKey: { scope: 'account', localId: 'opencodeBackendMode' },
                         legacyMetadataKey: 'opencodeBackendMode',
                         runtimeDescriptorField: 'backendMode',
                         defaultValue: 'server',
@@ -980,8 +982,8 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     },
                     serverBaseUrl: {
                         envKey: 'HAPPIER_OPENCODE_SERVER_URL',
-                        settingKey: 'opencodeServerBaseUrl',
-                        byServerIdSettingKey: 'opencodeServerBaseUrlByServerIdV1',
+                        settingKey: { scope: 'account', localId: 'opencodeServerBaseUrl' },
+                        byServerIdSettingKey: { scope: 'account', localId: 'opencodeServerBaseUrlByServerIdV1' },
                         legacyMetadataKey: 'opencodeServerBaseUrl',
                         legacyExplicitMetadataKey: 'opencodeServerBaseUrlExplicit',
                         runtimeDescriptorField: 'serverBaseUrl',
@@ -1040,7 +1042,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                 environmentVariables: {
                     backendMode: {
                         envKey: 'HAPPIER_OPENCODE_BACKEND_MODE',
-                        settingKey: 'opencodeBackendMode',
+                        settingKey: { scope: 'account', localId: 'opencodeBackendMode' },
                         legacyMetadataKey: 'opencodeBackendMode',
                         runtimeDescriptorField: 'backendMode',
                         defaultValue: 'server',
@@ -1049,8 +1051,8 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     serverBaseUrl: {
                         envKey: 'HAPPIER_OPENCODE_SERVER_URL',
                         explicitEnvKey: 'HAPPIER_OPENCODE_SERVER_URL_EXPLICIT',
-                        settingKey: 'opencodeServerBaseUrl',
-                        byServerIdSettingKey: 'opencodeServerBaseUrlByServerIdV1',
+                        settingKey: { scope: 'account', localId: 'opencodeServerBaseUrl' },
+                        byServerIdSettingKey: { scope: 'account', localId: 'opencodeServerBaseUrlByServerIdV1' },
                         legacyMetadataKey: 'opencodeServerBaseUrl',
                         legacyExplicitMetadataKey: 'opencodeServerBaseUrlExplicit',
                         runtimeDescriptorField: 'serverBaseUrl',

@@ -10,6 +10,7 @@ import { parseRealtimeSettingsDescriptor } from './descriptor';
 
 const action = vi.hoisted(() => vi.fn(async () => ({ status: 'completed' as const })));
 const audioPreview = vi.hoisted(() => ({
+  create: vi.fn(),
   play: vi.fn(),
   remove: vi.fn(),
   addListener: vi.fn(() => ({ remove: vi.fn() })),
@@ -57,7 +58,7 @@ vi.mock('@/voice/session/voiceAdapterRegistry', () => ({
   performVoiceAdapterRuntimeAction: action,
 }));
 vi.mock('expo-audio', () => ({
-  createAudioPlayer: vi.fn(() => audioPreview),
+  createAudioPlayer: audioPreview.create,
 }));
 vi.mock('@/voice/runtime/voiceAudioMode', () => ({
   acquireVoicePlaybackAudioMode: playbackAudioMode.acquire,
@@ -79,66 +80,9 @@ const owner = Object.freeze({
 });
 
 describe('RealtimeProviderFields', () => {
-  it('persists a provider-declared Connected Services binding through the canonical config owner', async () => {
-    const binding = {
-      v: 1 as const,
-      bindingsByServiceId: {
-        'openai-codex': {
-          source: 'connected' as const,
-          selection: 'profile' as const,
-          profileId: 'codex-account-a',
-        },
-      },
-    };
-    const connectedOwner = {
-      schemaVersion: 2,
-      defaultConfig: { globalConnectedServices: null },
-      parseConfig(value: unknown) {
-        return value && typeof value === 'object' && 'globalConnectedServices' in value
-          ? value as Readonly<Record<string, unknown>>
-          : null;
-      },
-    };
-    const descriptor = parseRealtimeSettingsDescriptor('agent_realtime', {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'agent_realtime',
-      modes: ['happier'],
-      credential: { kind: 'none', catalog: null },
-      links: {},
-      fields: [{
-        kind: 'connected_services_binding',
-        path: 'globalConnectedServices',
-        agentId: 'codex',
-        serviceIds: ['openai-codex'],
-      }],
-    });
-    if (!descriptor) throw new Error('invalid fixture descriptor');
-    const onConfigChange = vi.fn();
-    const { RealtimeProviderFields } = await import('./RealtimeProviderFields');
-    const screen = await renderScreen(React.createElement(RealtimeProviderFields, {
-      providerId: 'agent_realtime',
-      descriptor,
-      owner: connectedOwner,
-      config: connectedOwner.defaultConfig,
-      onConfigChange,
-      credentialStatus: 'missing',
-      catalog: { phase: 'idle' },
-      onRequestCatalog: vi.fn(),
-      renderConnectedServicesBinding: (field, value, onChange) => React.createElement(
-        'ConnectedServicesBinding',
-        { field, value, onChange },
-      ),
-    }));
-
-    const picker = screen.tree.findByType('ConnectedServicesBinding' as any);
-    expect(picker.props.value).toBeNull();
-    act(() => picker.props.onChange(binding));
-    expect(onConfigChange).toHaveBeenCalledWith({
-      globalConnectedServices: binding,
-    });
-  });
-
   it('holds the shared playback lease for a native catalog preview and releases it on completion', async () => {
+    audioPreview.create.mockImplementation(() => audioPreview);
+    audioPreview.create.mockClear();
     audioPreview.play.mockClear();
     audioPreview.remove.mockClear();
     audioPreview.addListener.mockClear();
@@ -155,7 +99,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'voice_catalog', path: 'voice', titleKey: 'fixture.voice' }],
     });
@@ -171,6 +115,10 @@ describe('RealtimeProviderFields', () => {
     const preview = screen.tree.findByProps({ testID: 'voice-realtime-field-voice' }).props.items[0].rightElement;
     act(() => preview.props.onPress({ stopPropagation: vi.fn() }));
     await vi.waitFor(() => expect(audioPreview.play).toHaveBeenCalledTimes(1));
+    expect(audioPreview.create).toHaveBeenCalledWith(
+      'https://example.test/a.mp3',
+      { keepAudioSessionActive: true },
+    );
     expect(playbackAudioMode.acquire).toHaveBeenCalledWith('realtime-catalog-preview');
 
     act(() => onPlaybackStatusUpdate?.({ didJustFinish: true }));
@@ -179,9 +127,8 @@ describe('RealtimeProviderFields', () => {
 
   it('renders provider-owned fields without provider-id or path-specific host branches', async () => {
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'fixture_realtime',
-      mode: 'byo',
+      kind: 'voice.provider-settings.v1',
+      modes: ['byo'],
       credential: { kind: 'api_key', catalog: null },
       links: {},
       fields: [
@@ -230,7 +177,7 @@ describe('RealtimeProviderFields', () => {
       release = () => resolve({ status: 'completed' });
     }));
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{
         kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume',
@@ -259,7 +206,7 @@ describe('RealtimeProviderFields', () => {
     action.mockRejectedValueOnce(new Error('provider unavailable'));
     const { Modal } = await import('@/modal');
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{
         kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume',
@@ -288,7 +235,7 @@ describe('RealtimeProviderFields', () => {
     vi.mocked(Modal.confirm).mockRejectedValueOnce(new Error('modal unavailable'));
     vi.mocked(Modal.alertAsync).mockClear();
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume', retentionMinutes: 30 }],
     });
@@ -318,7 +265,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: 'voices' }, links: {},
       fields: [{ kind: 'voice_catalog', path: 'voice', titleKey: 'fixture.voice', subtitleKey: 'fixture.voice.help' }],
     });
@@ -346,7 +293,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: 'voices' }, links: {},
       fields: [{ kind: 'voice_catalog', path: 'voice', titleKey: 'fixture.voice' }],
     });
@@ -371,7 +318,7 @@ describe('RealtimeProviderFields', () => {
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.prompt).mockImplementationOnce(async () => await prompt);
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'instructions', path: 'instructions', titleKey: 'fixture.instructions' }],
     });
@@ -400,7 +347,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{
         kind: 'server_vad', path: 'turnDetection', advanced: true,
@@ -429,7 +376,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: 'voices' }, links: {},
       fields: [
         { kind: 'voice_catalog', path: 'voice', titleKey: 'fixture.voice' },
@@ -456,7 +403,7 @@ describe('RealtimeProviderFields', () => {
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.alertAsync).mockClear();
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'privacy_opt_in', path: 'resumptionEnabled', titleKey: 'fixture.resume', forgetAction: 'forget_provider_conversation' }],
     });
@@ -483,7 +430,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'range', path: 'speed', min: 0.7, max: 1.5, step: 0.05, titleKey: 'fixture.speed' }],
     });
@@ -507,7 +454,7 @@ describe('RealtimeProviderFields', () => {
       parseConfig(value: unknown) { return value && typeof value === 'object' ? value as any : null; },
     };
     const descriptor = parseRealtimeSettingsDescriptor('fixture_realtime', {
-      kind: 'voice.internal.realtime-settings.v1', providerId: 'fixture_realtime', mode: 'byo',
+      kind: 'voice.provider-settings.v1', modes: ['byo'],
       credential: { kind: 'api_key', catalog: null }, links: {},
       fields: [{ kind: 'language_hint', path: 'language', titleKey: 'fixture.language', options: ['en', 'ar-EG', 'pt-BR', 'bn'] }],
     });

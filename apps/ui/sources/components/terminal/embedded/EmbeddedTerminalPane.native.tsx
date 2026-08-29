@@ -76,19 +76,22 @@ export const EmbeddedTerminalPane = React.memo(function EmbeddedTerminalPaneNati
     // accessible xterm WebView while a screen reader is active unless the native
     // module reports native accessibility. Explicit `native` is the informed
     // override that accepts the fallback-required accessibility gap; it never
-    // bypasses package, legal, module, ABI, feature, crash, or quarantine gates.
+    // bypasses package, module, ABI, feature, crash, or quarantine gates.
     const nativeAccessibilityAcceptedByPolicy = terminalRendererPreference === 'native'
         || (terminalRendererPreference === 'auto' && !screenReaderActive);
     const resolvedNativeRendererOptions = React.useMemo(
-        () => props.nativeRenderer ?? createDefaultNativeRendererOptions({
-            platform: nativePlatform,
-            byteStreamFeatureEnabled,
-            nativeFeatureEnabled,
-            iosGhosttyFeatureEnabled,
-            androidTermuxFeatureEnabled,
-            terminalRendererPreference,
-            accessibilityAcceptedByPolicy: nativeAccessibilityAcceptedByPolicy,
-        }),
+        () => applyNativeAccessibilityPolicy(
+            props.nativeRenderer ?? createDefaultNativeRendererOptions({
+                platform: nativePlatform,
+                byteStreamFeatureEnabled,
+                nativeFeatureEnabled,
+                iosGhosttyFeatureEnabled,
+                androidTermuxFeatureEnabled,
+                terminalRendererPreference,
+                accessibilityAcceptedByPolicy: nativeAccessibilityAcceptedByPolicy,
+            }),
+            nativeAccessibilityAcceptedByPolicy,
+        ),
         [
             androidTermuxFeatureEnabled,
             byteStreamFeatureEnabled,
@@ -324,11 +327,9 @@ function resolveEmbeddedNativeRendererSelection(input: Readonly<{
         return selection.renderer === 'ios-ghosttykit' ? 'ios-ghosttykit' : 'xterm-webview';
     }
 
-    const nativeRenderer = input.nativeRenderer as Partial<TermuxRendererSelectionOptions>;
     const selection = resolveTermuxRendererSelection({
         ...input.nativeRenderer,
         platform: 'android',
-        legalAccepted: nativeRenderer.legalAccepted === true,
     });
     return selection.renderer === 'android-termux' ? 'android-termux' : 'xterm-webview';
 }
@@ -377,7 +378,6 @@ function createDefaultNativeRendererOptions(input: Readonly<{
             platform: 'android',
             availability,
             accessibilityAccepted,
-            legalAccepted: availability.available,
             packageProofAccepted: availability.available,
             crashFallbackAvailable: true,
         };
@@ -399,4 +399,15 @@ function hasAcceptedNativeAccessibility(
     }
     const availability = normalizeTerminalNativeAvailability(nativeRenderer.availability);
     return availability.available && availability.accessibility === 'native';
+}
+
+function applyNativeAccessibilityPolicy(
+    nativeRenderer: GhosttyRendererSelectionOptions | TermuxRendererSelectionOptions | undefined,
+    accessibilityAcceptedByPolicy: boolean,
+): GhosttyRendererSelectionOptions | TermuxRendererSelectionOptions | undefined {
+    if (!nativeRenderer) return undefined;
+    return {
+        ...nativeRenderer,
+        accessibilityAccepted: accessibilityAcceptedByPolicy || hasAcceptedNativeAccessibility(nativeRenderer),
+    };
 }

@@ -115,6 +115,28 @@ describe('resolveExistingSessionAutomationAvailability', () => {
         });
     });
 
+    it('blocks a hidden system Session even when its resume metadata is Automation-eligible', () => {
+        expect(resolveExistingSessionAutomationAvailability({
+            sessionHydrated: true,
+            session: {
+                id: 'voice-history',
+                encryptionMode: 'plain',
+                metadata: {
+                    flavor: 'claude',
+                    claudeSessionId: 'claude-history',
+                    claudeTranscriptPath: '/tmp/claude-history.jsonl',
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
+            machineIdOverride: 'm1',
+            sessionDekBase64: null,
+            accountSettings: {},
+        })).toEqual({
+            kind: 'blocked',
+            reason: 'session_not_user_facing',
+        });
+    });
+
     it('blocks encrypted sessions until the resume key is available', () => {
         expect(resolveExistingSessionAutomationAvailability({
             sessionHydrated: true,

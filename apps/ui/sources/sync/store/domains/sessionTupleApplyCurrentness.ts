@@ -1,4 +1,5 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 export type SessionTupleApplyCurrentness = Readonly<{
     metadataCurrent: boolean;
@@ -34,15 +35,18 @@ export function classifySessionTupleApplyCurrentness(
     incomingSession: SessionTupleOrderingFields,
 ): SessionTupleApplyCurrentness {
     if (!previousSession) {
+        const metadataCurrent =
+            readSessionMetadataLayoutVersion(incomingSession.metadataLayoutVersion) >= 0;
         return {
-            metadataCurrent: true,
+            metadataCurrent,
             agentStateCurrent: true,
-            fullyCurrent: true,
+            fullyCurrent: metadataCurrent,
         };
     }
 
-    const previousLayoutVersion = normalizeOrderingNumber(previousSession.metadataLayoutVersion) ?? 0;
-    const incomingLayoutVersion = normalizeOrderingNumber(incomingSession.metadataLayoutVersion) ?? 0;
+    const previousLayoutVersion = readSessionMetadataLayoutVersion(previousSession.metadataLayoutVersion);
+    const incomingLayoutVersion = readSessionMetadataLayoutVersion(incomingSession.metadataLayoutVersion);
+    const metadataLayoutVersionsValid = previousLayoutVersion >= 0 && incomingLayoutVersion >= 0;
     const isParticipantProjection =
         incomingSession.accessLevel === 'view'
         || incomingSession.accessLevel === 'edit'
@@ -52,10 +56,11 @@ export function classifySessionTupleApplyCurrentness(
         && incomingLayoutVersion === 1
         && isParticipantProjection;
     const metadataCurrent =
-        isAuthoritativeParticipantPrivacyContraction
-        || (
-            incomingLayoutVersion >= previousLayoutVersion
-            && isIncomingRevisionCurrent(incomingSession.metadataVersion, previousSession.metadataVersion)
+        metadataLayoutVersionsValid
+        && (
+            isAuthoritativeParticipantPrivacyContraction
+            || (incomingLayoutVersion >= previousLayoutVersion
+                && isIncomingRevisionCurrent(incomingSession.metadataVersion, previousSession.metadataVersion))
         );
     const agentStateCurrent =
         isAuthoritativeParticipantPrivacyContraction

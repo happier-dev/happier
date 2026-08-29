@@ -1,6 +1,7 @@
 import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
 
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 type SessionRouteDataCandidate = Readonly<{
     metadataLayoutVersion?: number;
@@ -20,7 +21,7 @@ export function hasAuthoritativeSessionRouteData(
     session: SessionRouteDataCandidate,
 ): boolean {
     if (!session) return false;
-    const metadataLayoutVersion = session.metadataLayoutVersion ?? 0;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
     if (metadataLayoutVersion === 0) {
         return session.metadata != null;
     }

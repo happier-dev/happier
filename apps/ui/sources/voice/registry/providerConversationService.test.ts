@@ -4,6 +4,11 @@ import {
   createProviderConversationServiceFactory,
   getProviderConversationServiceFactory,
 } from './providerConversationService';
+import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/voiceProviderConversationRetention';
+
+function retainedConversation(conversationId: string) {
+  return Object.freeze({ conversationId, updatedAt: Date.now() });
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -19,7 +24,7 @@ describe('provider conversation service', () => {
     const durableStates: Array<string | null> = [];
     const factory = createProviderConversationServiceFactory({
       async read() {
-        return 'conv-old';
+        return retainedConversation('conv-old');
       },
       async write(conversationId) {
         if (conversationId === 'conv-stale') await staleWrite.promise;
@@ -81,7 +86,7 @@ describe('provider conversation service', () => {
     const writes: Array<readonly [string, string | null]> = [];
     const factory = createProviderConversationServiceFactory({
       async read(sessionId) {
-        return sessionId === 'session-a' ? 'conv-a' : null;
+        return sessionId === 'session-a' ? retainedConversation('conv-a') : null;
       },
       async write(conversationId, sessionId) {
         writes.push([sessionId, conversationId]);
@@ -144,7 +149,7 @@ describe('provider conversation service', () => {
     const writes: Array<string | null> = [];
     const factory = createProviderConversationServiceFactory({
       async read() {
-        return 'conv-old';
+        return retainedConversation('conv-old');
       },
       async write(conversationId) {
         writes.push(conversationId);
@@ -160,6 +165,28 @@ describe('provider conversation service', () => {
     await attempt.write('conv-late');
     await expect(attempt.forget()).resolves.toBeUndefined();
     expect(writes).toEqual([null, null]);
+  });
+
+  it('accepts an identity inside the window, then rejects and durably removes it at the exact retention boundary', async () => {
+    const writes: Array<readonly [string, string | null]> = [];
+    const now = 10_000_000;
+    const factory = createProviderConversationServiceFactory({
+      async read(sessionId) {
+        return {
+          conversationId: sessionId === 'fresh' ? 'conv-fresh' : 'conv-expired',
+          updatedAt: now - VOICE_PROVIDER_CONVERSATION_RETENTION_MS
+            + (sessionId === 'fresh' ? 1 : 0),
+        };
+      },
+      async write(conversationId, sessionId) {
+        writes.push([sessionId, conversationId]);
+      },
+      now: () => now,
+    });
+
+    await expect(factory.createAttempt('fresh').read()).resolves.toBe('conv-fresh');
+    await expect(factory.createAttempt('expired').read()).resolves.toBeNull();
+    expect(writes).toEqual([['expired', null]]);
   });
 
   it('does not let an older in-flight forget suppress forgetting a replacement conversation', async () => {

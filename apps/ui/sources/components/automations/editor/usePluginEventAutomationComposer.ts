@@ -485,14 +485,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         readonly PluginEventAutomationObservationDraft['kind'][]
     >(() => {
         if (!selectedEvent) return Object.freeze(['checkpointedPull' as const]);
-        return Object.freeze((['checkpointedPull', 'durablePush'] as const)
+        return Object.freeze((['checkpointedPull', 'socket', 'durablePush'] as const)
             .filter((kind) => supportsPluginEventAutomationObservationTransport(selectedEvent, kind)));
     }, [selectedEvent]);
     // A retired or replaced Event declaration must never leave the composer
-    // holding a transport its source contract no longer serves.
+    // holding a transport its source contract no longer serves; the first
+    // declared transport is the typed fallback.
     const effectiveObservationTransport = availableObservationTransports.includes(observationTransport)
         ? observationTransport
-        : 'checkpointedPull';
+        : availableObservationTransports[0] ?? 'checkpointedPull';
     const setObservationTransport = React.useCallback((
         kind: PluginEventAutomationObservationDraft['kind'],
     ) => {
@@ -556,13 +557,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             initialEditSeed.eventRef.localId,
             initialEditSeed.source.sourceInstanceId,
             initialEditSeed.observation.kind,
-            initialEditSeed.observation.kind === 'checkpointedPull'
-                ? initialEditSeed.observation.watcherMaterializationRef
-                : [
+            initialEditSeed.observation.kind === 'durablePush'
+                ? [
                     initialEditSeed.observation.webhookEndpointId,
                     initialEditSeed.observation.webhookRoutingSourceInstanceId,
                     initialEditSeed.observation.endpointMaterializationRef ?? null,
-                ],
+                ]
+                : initialEditSeed.observation.watcherMaterializationRef,
             initialEditSeed.filter,
             initialEditSeed.maximumObservationAgeMs,
         ])
@@ -627,10 +628,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             seed: initialEditSeed,
         });
         const seedObservation = initialEditSeed.observation;
-        // Both arms name one selected plugin materialization: the pull arm's
-        // watcher, and the push arm's endpoint target as the endpoint owner
-        // currently holds it.
+        // Both arms name one selected plugin materialization: the watcher arms'
+        // assigned watcher, and the push arm's endpoint target as the endpoint
+        // owner currently holds it.
         const seededMaterializationRef = seedObservation.kind === 'checkpointedPull'
+            || seedObservation.kind === 'socket'
             ? seedObservation.watcherMaterializationRef
             : seedObservation.endpointMaterializationRef
                 ?? seededWebhookBinding?.targetMaterialization
@@ -651,12 +653,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 // reuses the endpoint it was authored with, so an ordinary
                 // prompt, filter, or target correction never re-runs the
                 // one-time credential setup.
-                observation: seedObservation.kind === 'checkpointedPull'
-                    ? { kind: 'checkpointedPull' }
-                    : {
+                observation: seedObservation.kind === 'durablePush'
+                    ? {
                         kind: 'durablePush',
                         webhookEndpointId: seedObservation.webhookEndpointId,
-                    },
+                    }
+                    : { kind: seedObservation.kind },
                 filter: initialEditSeed.filter,
                 maximumObservationAgeMs: initialEditSeed.maximumObservationAgeMs,
             })

@@ -191,7 +191,6 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
                 }>) => await bundledSpeechDaemonClient.executeSettingsAction({
                   entry: descriptor,
                   actionId: action.actionId,
-                  settings: action.settings,
                   expectedSettingsVersion: Number(action.settingsRevision),
                   signal: action.signal,
                 }),

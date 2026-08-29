@@ -98,6 +98,7 @@ export interface ItemProps {
     onHoverOut?: () => void;
     accessibilityRole?: AccessibilityRole;
     accessibilityLabel?: string;
+    accessibilityHint?: string;
     accessibilityLiveRegion?: ViewProps['accessibilityLiveRegion'];
     accessibilityExpanded?: boolean;
     webRole?: ViewProps['role'];
@@ -351,6 +352,7 @@ export const Item = React.memo<ItemProps>((props) => {
         onHoverOut,
         accessibilityRole,
         accessibilityLabel,
+        accessibilityHint,
         accessibilityLiveRegion,
         accessibilityExpanded,
         webRole,
@@ -963,6 +965,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         {...(interactiveWebRole ? { role: interactiveWebRole } : undefined)}
                         accessibilityRole={interactiveAccessibilityRole}
                         accessibilityLabel={resolvedAccessibilityLabel}
+                        accessibilityHint={accessibilityHint}
                         aria-label={resolvedAccessibilityLabel}
                         accessibilityState={interactiveAccessibilityState}
                         aria-selected={interactiveWebRole === 'option' && selected !== undefined ? selected : undefined}
@@ -1032,6 +1035,7 @@ export const Item = React.memo<ItemProps>((props) => {
                 {...(interactiveWebRole ? { role: interactiveWebRole } : undefined)}
                 accessibilityRole={interactiveAccessibilityRole}
                 accessibilityLabel={resolvedAccessibilityLabel}
+                accessibilityHint={accessibilityHint}
                 aria-label={resolvedAccessibilityLabel}
                 accessibilityState={interactiveAccessibilityState}
                 aria-selected={interactiveWebRole === 'option' && selected !== undefined ? selected : undefined}
@@ -1060,6 +1064,7 @@ export const Item = React.memo<ItemProps>((props) => {
             {...(isWeb && webRole ? { role: webRole } : undefined)}
             accessibilityRole={isWeb ? undefined : accessibilityRole}
             accessibilityLabel={accessibilityLabel ?? (webRole ? generatedAccessibilityLabel : undefined)}
+            accessibilityHint={accessibilityHint}
             accessibilityLiveRegion={accessibilityLiveRegion}
             aria-label={accessibilityLabel ?? (webRole ? generatedAccessibilityLabel : undefined)}
             aria-live={accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion}

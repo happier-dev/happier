@@ -24,7 +24,6 @@ import type { PluginAccountAvailabilityReader } from '@/sync/domains/plugins/ava
 import {
     createActivePluginAccountKvClient,
 } from './activePluginAccountKvClient';
-import { createActivePluginAccountSettingsClient } from './activePluginAccountSettingsClient';
 import {
     createActivePluginCollectionClientForContractRef,
     type ActivePluginCollectionClientForContractRefOutcomeV1,
@@ -302,6 +301,17 @@ export function createPluginUiDataClient(input: Readonly<{
                     deleted: true as const,
                 });
             },
+            async forget(rowId, options) {
+                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options.signal);
+                const outcome = await active.client.forget(rowId, options.expectedRevision, options);
+                assertCurrent(input.accountLifetime, options.signal);
+                if (outcome.status === 'forgotten') return Object.freeze({ rowId, forgotten: true as const });
+                if (outcome.status === 'conflict') {
+                    throw dataError(COLLECTION_CONFLICT_CODE, 'Collection forget conflicted with a newer row revision or absence epoch');
+                }
+                if (outcome.status === 'rejected') throw rejectedError(outcome);
+                throw unavailableError(outcome.reason);
+            },
             async query(request, options) {
                 const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal);
                 const outcome = await active.client.query({
@@ -374,7 +384,7 @@ export function createPluginUiDataClient(input: Readonly<{
         if (descriptors.length !== 1) {
             throw dataError(
                 COLLECTION_UNDECLARED_CODE,
-                'The requested Account Collection UI query is not declared',
+                'The requested Account Account Data is not declared',
             );
         }
         assertCurrent(input.accountLifetime, query.signal);
@@ -398,16 +408,6 @@ export function createPluginUiDataClient(input: Readonly<{
         accountKv: createActivePluginAccountKvClient({
             pluginId: input.pluginId,
             accountLifetime: input.accountLifetime,
-        }),
-        // The plugin's own Account Settings record, through the one host
-        // Settings owner. Its declaration comes from the same Account
-        // availability projection this client already reads for Collections, so
-        // a surface reads and writes its durable user state with no daemon in
-        // the path.
-        accountSettings: createActivePluginAccountSettingsClient({
-            pluginId: input.pluginId,
-            accountLifetime: input.accountLifetime,
-            availabilityReader: input.availabilityReader,
         }),
     });
 }

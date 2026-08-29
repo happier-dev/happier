@@ -110,6 +110,7 @@ export function resolveProjectRightSidebarTabs(
 
 export type RightSidebarTabSelection<TTab extends string = string> =
     | Readonly<{ kind: 'available'; tab: RightSidebarTabDefinitionFor<TTab> }>
+    | Readonly<{ kind: 'none' }>
     | Readonly<{ kind: 'unresolved'; tabId: string }>
     | Readonly<{ kind: 'unavailable'; tabId: string; reason: string }>;
 
@@ -125,8 +126,12 @@ export function resolveRightSidebarTabSelection<TTab extends string>(input: Read
     selectedDestination?: SelectedPaneDestinationV1 | null;
     tabs: readonly RightSidebarTabDefinition[];
     projectionPhase: PluginUiProjectionPhase;
+    scope?: RightSidebarScope;
 }>): RightSidebarTabSelection<TTab> {
     const activeTabId = input.activeTabId ?? null;
+    if (input.scope === 'app' && activeTabId === null && input.selectedDestination == null) {
+        return { kind: 'none' };
+    }
     const selectedPluginDestination = input.selectedDestination?.kind === 'plugin'
         ? input.selectedDestination.destination
         : null;

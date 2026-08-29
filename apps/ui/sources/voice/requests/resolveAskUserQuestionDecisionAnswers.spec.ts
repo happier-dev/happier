@@ -40,4 +40,24 @@ describe('resolveAskUserQuestionDecisionAnswers tool-name matching', () => {
   it('returns null for unrelated tools', () => {
     expect(resolveAskUserQuestionDecisionAnswers(makeRequest('write'), 'allow')).toBeNull();
   });
+
+  it('uses the canonical question summary for choice aliases', () => {
+    const request: PendingPermissionRequest = {
+      ...makeRequest('AskUserQuestion'),
+      arguments: {
+      questions: [{
+        id: 'continue',
+        question: 'Continue?',
+        choices: [
+          { id: 'yes', label: 'Yes, proceed' },
+          { id: 'no', label: 'No, stop' },
+        ],
+      }],
+      },
+    };
+
+    expect(resolveAskUserQuestionDecisionAnswers(request, 'deny')).toEqual([
+      { question: 'Continue?', values: ['No, stop'] },
+    ]);
+  });
 });

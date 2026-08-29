@@ -32,6 +32,9 @@ type PluginEventEditorObservationPlacement = Readonly<{
     kind: 'checkpointedPull';
     watcherMaterializationRef: Readonly<{ machineId: string }>;
 }> | Readonly<{
+    kind: 'socket';
+    watcherMaterializationRef: Readonly<{ machineId: string }>;
+}> | Readonly<{
     kind: 'durablePush';
     endpointMaterializationRef?: Readonly<{ machineId: string }> | null;
 }>;
@@ -46,7 +49,10 @@ export function resolvePluginEventEditorProjectionMachineId(params: Readonly<{
     observation: PluginEventEditorObservationPlacement | null;
     authoringMachineId: string | null;
 }>): string | null {
-    if (params.observation?.kind === 'checkpointedPull') {
+    if (
+        params.observation?.kind === 'checkpointedPull'
+        || params.observation?.kind === 'socket'
+    ) {
         return params.observation.watcherMaterializationRef.machineId;
     }
     if (params.observation?.kind === 'durablePush') {

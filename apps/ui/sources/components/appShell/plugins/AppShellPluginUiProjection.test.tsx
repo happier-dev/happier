@@ -20,6 +20,7 @@ import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from 
 import {
     selectCurrentAppShellPluginExecutionOrigins,
     selectCurrentAppShellPluginUiCurrentness,
+    isAppShellPluginClientExecutableAvailable,
     settleAppShellPluginRuntimeUpdate,
     useAppShellPluginUiProjection,
 } from './AppShellPluginUiProjection';
@@ -835,14 +836,14 @@ describe('AppShellPluginUiProjectionProvider', () => {
             invalidate: async () => { throw new Error('invalidation failed'); },
             activate: activationAfterFailedInvalidation,
             isCancelled: () => false,
-        })).resolves.toBeUndefined();
+        })).resolves.toEqual({ status: 'unavailable', failures: [] });
         expect(activationAfterFailedInvalidation).not.toHaveBeenCalled();
 
         await expect(settleAppShellPluginRuntimeUpdate({
             invalidate: async () => {},
             activate: async () => { throw new Error('activation failed'); },
             isCancelled: () => false,
-        })).resolves.toBeUndefined();
+        })).resolves.toEqual({ status: 'unavailable', failures: [] });
 
         const supersededInvalidation = vi.fn(async () => {});
         const supersededActivation = vi.fn(async () => {});
@@ -850,9 +851,55 @@ describe('AppShellPluginUiProjectionProvider', () => {
             invalidate: supersededInvalidation,
             activate: supersededActivation,
             isCancelled: () => true,
-        })).resolves.toBeUndefined();
+        })).resolves.toEqual({ status: 'cancelled' });
         expect(supersededInvalidation).not.toHaveBeenCalled();
         expect(supersededActivation).not.toHaveBeenCalled();
+    });
+
+    it('preserves typed complete-set activation failures for AppShell availability', async () => {
+        const settlement = await settleAppShellPluginRuntimeUpdate({
+            invalidate: async () => {},
+            activate: async () => [{
+                activation: {
+                    pluginId: 'acme.shared-runtime',
+                    target: {
+                        artifactId: 'shared-runtime',
+                        modulePath: './sharedRuntime',
+                        exportName: 'activate',
+                        platform: 'web',
+                    },
+                    executionOrigin: {
+                        serverIdentityId: 'srv_shared_runtime',
+                        materializationRef: {
+                            pluginId: 'acme.shared-runtime',
+                            machineId: 'machine-1',
+                            materializationId: 'materialization-1',
+                        },
+                    },
+                    projectionGeneration: 12,
+                },
+                result: {
+                    ok: false,
+                    code: 'invalid_executable_export',
+                    diagnostics: ['invalid_executable_export'],
+                },
+                reused: false,
+            } as never],
+            isCancelled: () => false,
+        });
+        expect(settlement).toEqual({
+            status: 'unavailable',
+            failures: [expect.objectContaining({
+                pluginId: 'acme.shared-runtime',
+                code: 'invalid_executable_export',
+                target: expect.objectContaining({ artifactId: 'shared-runtime' }),
+                executionOrigin: expect.objectContaining({ serverIdentityId: 'srv_shared_runtime' }),
+                projectionGeneration: 12,
+            })],
+        });
+        if (settlement.status === 'cancelled') throw new Error('unexpected cancellation');
+        expect(isAppShellPluginClientExecutableAvailable(settlement, 'acme.shared-runtime')).toBe(false);
+        expect(isAppShellPluginClientExecutableAvailable(settlement, 'acme.healthy-runtime')).toBe(true);
     });
 
     it('invalidates from the last applied projection when a queued refresh is superseded', async () => {
@@ -1499,15 +1546,29 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(pluginRuntimeSpies.activate).not.toHaveBeenCalled();
         expect(headerControl().props.disabled).toBe(true);
         expect(headerControl().props.onPress).toBeUndefined();
+        expect(screen.tree.findByType('ProjectionProbe' as never).props.value).toEqual(
+            expect.objectContaining({
+                phase: 'current',
+                interactionEnabled: true,
+                clientExecutableActivation: expect.objectContaining({
+                    status: 'unavailable',
+                    failures: [expect.objectContaining({
+                        pluginId,
+                        code: 'activation_failed',
+                    })],
+                }),
+                reloadClientExecutables: expect.any(Function),
+            }),
+        );
 
-        // Projection invalidation is the incumbent reload signal. It must
-        // re-run the same complete-set owner without AppShell adding a retry
-        // loop or a second availability projection.
+        // The AppShell owner exposes one explicit reload of the same complete
+        // set. Recovery must not depend on a daemon projection change, a timer,
+        // or a second executable index.
         const recoveredActivationArtifactAvailability = createAvailableClientArtifactHandle();
         appShellClientExecutableRuntimeState.availability = recoveredActivationArtifactAvailability.availability;
         failActivation = false;
         await act(async () => {
-            projectionRefreshState.publish();
+            screen.tree.findByType('ProjectionProbe' as never).props.value.reloadClientExecutables();
         });
         await flushHookEffects({ cycles: 6 });
         await vi.waitFor(() => {
@@ -1524,6 +1585,13 @@ describe('AppShellPluginUiProjectionProvider', () => {
                 projectionGeneration: generation,
                 platform: 'web',
             })).not.toBeNull();
+            expect(screen.tree.findByType('ProjectionProbe' as never).props.value).toEqual(
+                expect.objectContaining({
+                    phase: 'current',
+                    interactionEnabled: true,
+                    clientExecutableActivation: { status: 'ready' },
+                }),
+            );
             expect(headerControl().props.disabled).toBe(false);
             expect(headerControl().props.onPress).toEqual(expect.any(Function));
         });

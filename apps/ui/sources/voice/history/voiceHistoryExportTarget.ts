@@ -34,9 +34,11 @@ export async function saveVoiceHistoryExportArtifactToWeb(
   ) {
     throw new Error('Voice History export is unavailable on this platform');
   }
-  // The chunk sequence is handed straight to Blob as its part list: the browser
-  // copies each part once, and no concatenated whole-document string is built
-  // alongside it.
+  // Web's standard object-URL download boundary requires a concrete Blob-parts
+  // sequence and one complete Blob, so unlike the native file sink it cannot
+  // provide a bounded-memory guarantee. Keep that unavoidable materialization
+  // here at the platform owner; do not hide a cap or concatenate a second
+  // whole-document string in the History consumer.
   const objectUrl = URL.createObjectURL(new Blob([...artifact.chunks()], {
     type: artifact.mimeType,
   }));

@@ -34,7 +34,11 @@ const ensureSessionVisibleForMessageRoute = vi.fn(async (_sessionId: string, _op
 const refreshSessionMessages = vi.fn(async (_sessionId: string) => {});
 const ensureVoiceAgentInstallablesBackground = vi.fn(async (_args: unknown) => {});
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _updater: (metadata: any) => any) => {});
-const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({ run: null }));
+const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({
+  ok: false,
+  error: 'Execution run not found',
+  errorCode: 'execution_run_not_found',
+}));
 const sessionExecutionRunList = vi.fn(async (..._args: any[]): Promise<any> => ({ runs: [] }));
 const sessionExecutionRunStop = vi.fn(async (..._args: any[]): Promise<any> => ({ ok: true }));
 const buildVoiceInitialContext = vi.fn((sessionId: string, options?: { targetSessionId?: string | null }) => {
@@ -72,6 +76,18 @@ function trackPromise<T>(promise: Promise<T>): Readonly<{
   return {
     isSettled: () => settled,
     settled: settledPromise,
+  };
+}
+
+function createLocallyControllableSessionMetadata(
+  overrides: Readonly<Record<string, unknown>> = {},
+): Record<string, unknown> {
+  return {
+    flavor: 'claude',
+    agentRuntimeCapabilitiesV1: {
+      localControl: { supported: true },
+    },
+    ...overrides,
   };
 }
 
@@ -149,7 +165,7 @@ function createVoiceControllerState(options: Readonly<{
         modelMode: 'default',
         metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
       },
-      s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+      s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
     },
     sessionMessages: options.sessionMessages ?? {},
     ...(options.machines ? { machines: options.machines } : {}),
@@ -210,7 +226,7 @@ const getState = vi.fn((): any => ({
         local_conversation: { schemaVersion: 1, config: {
           streaming: {
             enabled: true,
-            // new config knobs (expected to be respected by VoiceAgentSessionController)
+            // new config knobs (expected to be respected by VoiceExecutionTransport)
             turnReadPollIntervalMs: 50,
             turnReadMaxEvents: 7,
             turnStreamTimeoutMs: 1200,
@@ -223,7 +239,7 @@ const getState = vi.fn((): any => ({
   },
   sessions: {
     sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-    s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+    s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
   },
   sessionMessages: {},
 }));
@@ -250,11 +266,11 @@ vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
   resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
 }));
 
-describe('VoiceAgentSessionController (streaming)', () => {
-  let createVoiceAgentSessionController: () => any;
+describe('VoiceExecutionTransport (streaming)', () => {
+  let createVoiceExecutionTransport: () => any;
 
   beforeAll(async () => {
-    ({ createVoiceAgentSessionController } = await import('./VoiceAgentSessionController'));
+    ({ createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport'));
   }, 60_000);
 
   beforeEach(() => {
@@ -303,7 +319,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('uses configured maxEvents when reading the streamed turn', async () => {
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn('s1', 'hello');
 
@@ -333,7 +349,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       updatedAt: 1,
     } as any);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -376,7 +392,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     };
@@ -399,7 +415,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       updatedAt: 1,
     } as any);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       message: 'Target session is inactive. Resume it before starting local voice.',
@@ -416,7 +432,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       Object.assign(new Error('Voice agent busy'), { rpcErrorCode: 'execution_run_busy' }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn('s1', 'hello')).rejects.toMatchObject({
       message: 'Voice agent busy',
@@ -437,7 +453,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       outcome: Promise.resolve({ t: 'sendSessionMessage', args: {}, result: { ok: true } }),
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const activeTurn = trackPromise(controller.sendTurn('s1', 'hello'));
     await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
 
@@ -461,7 +477,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
     readTurnStream.mockImplementationOnce(async () => await blockedRead.promise);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const activeTurn = trackPromise(controller.sendTurn('s1', 'active turn'));
     await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
 
@@ -495,7 +511,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       return { ok: true };
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunning('s1');
 
     const firstStop = trackPromise(controller.stop('s1'));
@@ -516,11 +532,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   it('surfaces a clear error when starting local voice on an inactive target session', async () => {
     setVoiceControllerState({
       sessions: {
-        s1: { id: 's1', active: false, modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: false, modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.ensureRunningAndMaybeWelcome('s1')).rejects.toMatchObject({
       message: 'Target session is inactive. Resume it before starting local voice.',
@@ -532,11 +548,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
   it('surfaces a clear error when starting local voice on an offline target session', async () => {
     setVoiceControllerState({
       sessions: {
-        s1: { id: 's1', active: true, presence: 'offline', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'offline', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.ensureRunningAndMaybeWelcome('s1')).rejects.toMatchObject({
       message: 'Target session is offline. Reconnect it before starting local voice.',
@@ -552,7 +568,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.ensureRunningAndMaybeWelcome('s1')).rejects.toMatchObject({
       message: 'Target session provider does not support local voice control.',
@@ -577,7 +593,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.ensureRunningAndMaybeWelcome('s1')).rejects.toMatchObject({
       message: 'Target session provider does not support local voice control.',
@@ -595,11 +611,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -652,12 +668,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             },
           },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.sendTurn('s1', 'hello');
 
     expect(startTurnStream).toHaveBeenCalledWith(
@@ -668,7 +684,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   });
 
   it('delivers interrupting text updates as immediate follow-up turns', async () => {
-    const controller: any = createVoiceAgentSessionController();
+    const controller: any = createVoiceExecutionTransport();
 
     await controller.sendTextUpdate('s1', 'Permission required for writing /tmp/file.txt. Ask whether to allow it.');
 
@@ -687,7 +703,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
     );
     readTurnStream.mockImplementationOnce(async () => await blockedRead.promise);
 
-    const controller: any = createVoiceAgentSessionController();
+    const controller: any = createVoiceExecutionTransport();
     const firstTurn = controller.sendTurn('s1', 'hello');
     await vi.waitFor(() => expect(readTurnStream).toHaveBeenCalledTimes(1));
 
@@ -735,12 +751,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const welcomed = await controller.ensureRunningAndMaybeWelcome('s1');
     expect(welcomed).toBe('Welcome!');
     expect(welcome).toHaveBeenCalledTimes(1);
@@ -770,8 +786,8 @@ describe('VoiceAgentSessionController (streaming)', () => {
                 transcript: { persistenceMode: 'ephemeral', epoch: 0 },
                 providerChat: {
                   status: 'configured',
-                  chat: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'chat-model' },
-                  commit: { agentTargetKey: 'backend:opencode', providerConnectionId: 'provider-chat', modelId: 'commit-model' },
+                  chat: { agentTargetKey: 'agent:happier.agent.opencode/opencode', providerConnectionId: 'provider-chat', modelId: 'chat-model' },
+                  commit: { agentTargetKey: 'agent:happier.agent.opencode/opencode', providerConnectionId: 'provider-chat', modelId: 'commit-model' },
                   configuration: { temperature: null },
                 },
               },
@@ -786,12 +802,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const welcomed = await controller.ensureRunningAndMaybeWelcome('s1');
     expect(welcomed).toBe('Welcome!');
     expect(welcome).toHaveBeenCalledTimes(1);
@@ -829,12 +845,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunningAndMaybeWelcome('s1');
 
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ bootstrapMode: 'none' }));
@@ -873,11 +889,11 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunning('s1');
 
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ bootstrapMode: 'ready_handshake', bootstrapTimeoutMs: 60_000 }));
@@ -914,7 +930,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
           active: true,
           presence: 'online',
           modelMode: 'default',
-          metadata: { flavor: 'claude', machineId: 'machine-1' },
+          metadata: createLocallyControllableSessionMetadata({ machineId: 'machine-1' }),
         },
       },
       machines: {
@@ -923,7 +939,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunning('s1');
 
     expect(ensureVoiceAgentInstallablesBackground).toHaveBeenCalledWith(
@@ -969,12 +985,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
       sessions: {
         sys_voice: { id: 'sys_voice', modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } } },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunning('s1');
 
     expect(start).toHaveBeenCalledWith(
@@ -999,7 +1015,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       done: false,
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
     await flushHookEffects({ cycles: 1, advanceTimersMs: 1300 });
@@ -1046,12 +1062,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             modelMode: 'default',
             metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
           },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
         },
       }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
     await flushHookEffects({ cycles: 1, advanceTimersMs: 1800 });
@@ -1085,12 +1101,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             modelMode: 'default',
             metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
           },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
         },
       }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
@@ -1116,7 +1132,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         };
       });
 
-      const controller = createVoiceAgentSessionController();
+      const controller = createVoiceExecutionTransport();
       const abortController = new AbortController();
 
       const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello', { signal: abortController.signal } as any));
@@ -1162,12 +1178,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             modelMode: 'default',
             metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
           },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
         },
       }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     const sendTurnOutcome = trackPromise(controller.sendTurn('s1', 'hello'));
 
@@ -1205,12 +1221,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             modelMode: 'default',
             metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true } },
           },
-          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+          s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
         },
       }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn('s1', 'hello')).resolves.toMatchObject({ assistantText: 'ok' });
     expect(readTurnStream).toHaveBeenCalledWith(
@@ -1224,7 +1240,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   it('uses the hidden voice conversation session id when starting the daemon agent for the global agent session', async () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1243,7 +1259,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       updatedAt: 1,
     } as any);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1275,7 +1291,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       Object.assign(new Error('execution_run_not_found'), { rpcErrorCode: 'execution_run_not_found' }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.commit(VOICE_AGENT_GLOBAL_SESSION_ID);
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'first turn');
@@ -1302,7 +1318,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       Object.assign(new Error('execution_run_not_found'), { rpcErrorCode: 'execution_run_not_found' }),
     );
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'first turn');
 
@@ -1325,7 +1341,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       updatedAt: 1,
     } as any);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     await controller.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
     for (let index = 0; index < 8; index += 1) {
       controller.appendContextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, `ORDINARY_CONTEXT_${index}`);
@@ -1347,7 +1363,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
   it('passes the clean user turn separately from wrapped context updates when streaming a daemon voice turn', async () => {
     useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
     controller.appendContextUpdate(VOICE_AGENT_GLOBAL_SESSION_ID, 'Session asks what should be handled in this workspace.');
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'Create the file.');
@@ -1387,7 +1403,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
           modelMode: 'default',
           metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {
         sys_voice: {
@@ -1416,7 +1432,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       };
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'LOCAL_HELLO',
@@ -1465,13 +1481,16 @@ describe('VoiceAgentSessionController (streaming)', () => {
           active: true,
           presence: 'online',
           modelMode: 'default',
-          metadata: { flavor: 'claude', machineId: 'machine_active', path: '/Users/leeroy/Documents/Development/happier/dev' },
+          metadata: createLocallyControllableSessionMetadata({
+            machineId: 'machine_active',
+            path: '/Users/leeroy/Documents/Development/happier/dev',
+          }),
         },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1520,7 +1539,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       return { voiceAgentId: 'm1' };
     }) as any);
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       rpcErrorCode: 'execution_run_invalid_action_input',
@@ -1581,7 +1600,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
             },
           },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {
         sys_voice: {
@@ -1608,7 +1627,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1685,12 +1704,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
             },
           },
         },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1725,12 +1744,12 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
       sessions: {
         sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -1764,7 +1783,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
       sessions: {
         sys_voice: { id: 'sys_voice', active: true, modelMode: 'default', metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } } },
-        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
+        s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: createLocallyControllableSessionMetadata() },
       },
       sessionMessages: {},
     }));
@@ -1788,7 +1807,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
       },
     });
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 

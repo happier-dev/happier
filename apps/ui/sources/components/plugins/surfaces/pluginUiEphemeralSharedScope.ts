@@ -1,4 +1,5 @@
 import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
 import { useLayoutEffect, useState } from 'react';
 
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -16,7 +17,7 @@ type GenerationScope = {
 };
 
 type PluginScopeRecord = {
-    current: GenerationScope | null;
+    readonly slots: Map<string, { current: GenerationScope | null }>;
 };
 
 type AccountScopeRecord = {
@@ -47,9 +48,21 @@ function retireAccount(record: AccountScopeRecord): void {
     if (record.retired) return;
     record.retired = true;
     for (const plugin of record.plugins.values()) {
-        if (plugin.current) retireGeneration(plugin.current);
+        for (const slot of plugin.slots.values()) {
+            if (slot.current) retireGeneration(slot.current);
+        }
     }
     record.plugins.clear();
+}
+
+function readExecutionOriginSlot(executionOrigin: PluginMachineExecutionOriginV1 | null | undefined): string {
+    if (!executionOrigin) return 'unqualified';
+    return JSON.stringify([
+        executionOrigin.serverIdentityId,
+        executionOrigin.materializationRef.pluginId,
+        executionOrigin.materializationRef.machineId,
+        executionOrigin.materializationRef.materializationId,
+    ]);
 }
 
 function readAccountRecord(
@@ -71,7 +84,7 @@ function readAccountRecord(
 function createGenerationFacade(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     account: AccountScopeRecord;
-    plugin: PluginScopeRecord;
+    slot: { current: GenerationScope | null };
     generation: GenerationScope;
     isCurrent(): boolean;
 }>): PluginUiEphemeralSharedScope {
@@ -83,7 +96,7 @@ function createGenerationFacade(input: Readonly<{
             if (
                 input.account.retired
                 || input.generation.retired
-                || input.plugin.current !== input.generation
+                || input.slot.current !== input.generation
                 || !input.accountLifetime.isCurrent()
                 || !input.isCurrent()
             ) return null;
@@ -102,7 +115,7 @@ function createGenerationFacade(input: Readonly<{
                 if (
                     input.account.retired
                     || input.generation.retired
-                    || input.plugin.current !== input.generation
+                    || input.slot.current !== input.generation
                     || !input.accountLifetime.isCurrent()
                     || !input.isCurrent()
                 ) {
@@ -140,6 +153,8 @@ export function getPluginUiEphemeralSharedScope(input: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
     immutableGenerationId: string;
+    /** Exact producer execution/materialization origin; local mounts use one slot. */
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
     isCurrent(): boolean;
 }>): PluginUiEphemeralSharedScope | null {
     if (!input.accountLifetime || !input.isCurrent()) return null;
@@ -148,11 +163,17 @@ export function getPluginUiEphemeralSharedScope(input: Readonly<{
 
     let plugin = account.plugins.get(input.pluginId);
     if (!plugin) {
-        plugin = { current: null };
+        plugin = { slots: new Map() };
         account.plugins.set(input.pluginId, plugin);
     }
 
-    let generation = plugin.current;
+    const originSlot = readExecutionOriginSlot(input.executionOrigin);
+    let slot = plugin.slots.get(originSlot);
+    if (!slot) {
+        slot = { current: null };
+        plugin.slots.set(originSlot, slot);
+    }
+    let generation = slot.current;
     if (!generation || generation.immutableGenerationId !== input.immutableGenerationId) {
         if (generation) {
             retireGeneration(generation);
@@ -162,13 +183,13 @@ export function getPluginUiEphemeralSharedScope(input: Readonly<{
             values: new Map(),
             retired: false,
         };
-        plugin.current = generation;
+        slot.current = generation;
     }
 
     return createGenerationFacade({
         accountLifetime: input.accountLifetime,
         account,
-        plugin,
+        slot,
         generation,
         isCurrent: input.isCurrent,
     });
@@ -178,6 +199,7 @@ type MountedScopeInput = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     pluginId: string;
     immutableGenerationId: string;
+    executionOrigin?: PluginMachineExecutionOriginV1 | null;
     mountLifetime: Readonly<{ isCurrent(): boolean }>;
 }>;
 
@@ -189,6 +211,7 @@ function isSameMountedScopeInput(state: MountedScopeState, input: MountedScopeIn
     return state.accountLifetime === input.accountLifetime
         && state.pluginId === input.pluginId
         && state.immutableGenerationId === input.immutableGenerationId
+        && readExecutionOriginSlot(state.executionOrigin) === readExecutionOriginSlot(input.executionOrigin)
         && state.mountLifetime === input.mountLifetime;
 }
 
@@ -200,6 +223,7 @@ function isSameMountedScopeInput(state: MountedScopeState, input: MountedScopeIn
 export function usePluginUiEphemeralSharedScopeBinding(
     input: MountedScopeInput,
 ): PluginUiEphemeralSharedScope | null {
+    const executionOriginSlot = readExecutionOriginSlot(input.executionOrigin);
     const [state, setState] = useState<MountedScopeState>(() => ({ ...input, scope: null }));
     if (!isSameMountedScopeInput(state, input)) {
         setState({ ...input, scope: null });
@@ -213,12 +237,13 @@ export function usePluginUiEphemeralSharedScopeBinding(
             accountLifetime: input.accountLifetime,
             pluginId: input.pluginId,
             immutableGenerationId: input.immutableGenerationId,
+            executionOrigin: input.executionOrigin,
             isCurrent: input.mountLifetime.isCurrent,
         });
         setState((current) => isSameMountedScopeInput(current, input)
             ? { ...input, scope }
             : current);
-    }, [input.accountLifetime, input.immutableGenerationId, input.mountLifetime, input.pluginId]);
+    }, [executionOriginSlot, input.accountLifetime, input.immutableGenerationId, input.mountLifetime, input.pluginId]);
 
     return effectiveState.scope;
 }

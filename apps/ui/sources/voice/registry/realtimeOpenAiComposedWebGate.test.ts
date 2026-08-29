@@ -2672,6 +2672,110 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     }
   });
 
+  it('persists a final and its correction in order when both arrive before typed-turn acceptance', async () => {
+    const carrierId = 'voice-history-openai-typed-barrier-final-correction';
+    storage.setState((current) => ({
+      ...current,
+      sessions: {
+        ...current.sessions,
+        [carrierId]: createSessionFixture({
+          id: carrierId,
+          active: false,
+          encryptionMode: 'plain',
+          metadata: {
+            path: '/voice-transcript-history',
+            host: 'happier.test',
+            ...buildVoiceTranscriptHistorySessionMetadata(),
+          },
+        }),
+      },
+    }) as never);
+    allowedTranscriptMessageUrls.add(transcriptMessageUrl(carrierId));
+    const browser = installVoiceWebRtcBrowserBoundary();
+    const composed = createSourceComposedOpenAiRuntime(browser, {
+      initialConversationSessionId: carrierId,
+    });
+    const acceptanceStarted = createDeferredVoid();
+    const releaseAcceptance = createDeferredVoid();
+    let typedTurn: Promise<void> | null = null;
+
+    try {
+      const starting = composed.runtime.adapter.start({ sessionId: '', initialContext: '' });
+      await vi.waitFor(() => expect(
+        browser.peer.createDataChannel,
+      ).toHaveBeenCalledWith('oai-events'));
+      browser.peer.channel.open();
+      await starting;
+
+      typedTurn = composed.runtime.adapter.sendTextTurn!({
+        controlSessionId: composed.controlSessionId,
+        conversationSessionId: carrierId,
+        text: 'hold final and correction until accepted',
+        localId: 'typed-barrier-final-correction',
+        deliveryCommand: 'interrupt_and_send',
+        onAccepted: async () => {
+          acceptanceStarted.resolve();
+          await releaseAcceptance.promise;
+        },
+      });
+      await acceptanceStarted.promise;
+
+      browser.peer.channel.message(JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        event_id: 'typed-chain-final',
+        item_id: 'typed-chain-item',
+        content_index: 0,
+        transcript: 'provider final A',
+        usage: { type: 'duration', seconds: 1 },
+      }));
+      browser.peer.channel.message(JSON.stringify({
+        type: 'conversation.item.input_audio_transcription.completed',
+        event_id: 'typed-chain-correction',
+        item_id: 'typed-chain-item',
+        content_index: 0,
+        transcript: 'provider corrected B before acceptance',
+        usage: { type: 'duration', seconds: 1 },
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(transcriptRequest.mock.calls.filter(
+        ([input]) => String(input) === transcriptMessageUrl(carrierId),
+      )).toHaveLength(0);
+
+      releaseAcceptance.resolve();
+      await typedTurn;
+      await vi.waitFor(() => expect(transcriptRequest.mock.calls.filter(
+        ([input]) => String(input) === transcriptMessageUrl(carrierId),
+      )).toHaveLength(2));
+      const writes = transcriptRequest.mock.calls
+        .filter(([input]) => String(input) === transcriptMessageUrl(carrierId))
+        .map(([, init]) => JSON.parse(String(init?.body)) as Readonly<{
+          content: Readonly<{
+            t: 'plain';
+            v: Readonly<{ content: Readonly<{ text: string }> }>;
+          }>;
+        }>);
+      expect(writes.map((write) => write.content.v.content.text)).toEqual([
+        'provider final A',
+        'provider corrected B before acceptance',
+      ]);
+      expect(readCanonicalVoiceTranscriptSnapshot(carrierId)).toEqual([
+        expect.objectContaining({
+          itemId: 'typed-chain-item',
+          text: 'provider corrected B before acceptance',
+          revision: 2,
+          corrected: true,
+        }),
+      ]);
+    } finally {
+      releaseAcceptance.resolve();
+      await typedTurn?.catch(() => {});
+      await composed.runtime.adapter.stop({ sessionId: composed.controlSessionId }).catch(() => {});
+      await composed.runtime.dispose().catch(() => {});
+      composed.hostLease.revoke();
+      browser.restore();
+    }
+  });
+
   it('commits an A final admitted before a typed acceptance barrier after B replaces its carrier authority', async () => {
     const recreatedCarrierId = 'voice-history-openai-typed-barrier-recreated';
     storage.setState((current) => ({

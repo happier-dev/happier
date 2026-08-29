@@ -25,6 +25,7 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
+import type { AppShellClientExecutableActivationState } from './AppShellPluginUiProjection';
 
 import {
     resolvePluginAppPages,
@@ -541,6 +542,8 @@ async function renderPage(input: Readonly<{
     machineId?: string | null;
     serverId?: string | null;
     withTargetNavigation?: boolean;
+    clientExecutableActivation?: AppShellClientExecutableActivationState;
+    reloadClientExecutables?: () => void;
     /** Wraps the page the way a real enclosing pane/underlay would. */
     wrap?: (children: React.ReactNode) => React.ReactElement;
 }> = {}) {
@@ -559,6 +562,8 @@ async function renderPage(input: Readonly<{
                 machineId: input.machineId === undefined ? 'machine-1' : input.machineId,
                 serverId: input.serverId === undefined ? 'server-1' : input.serverId,
                 platform: 'web',
+                clientExecutableActivation: input.clientExecutableActivation ?? { status: 'ready' },
+                reloadClientExecutables: input.reloadClientExecutables ?? (() => {}),
             }}
         >
             <AppTargetNavigationScope model={model} enabled={input.withTargetNavigation !== false}>
@@ -693,6 +698,8 @@ async function loadPageHost(): Promise<React.ComponentType<PageHostProps>> {
                     machineId: props.machineId ?? 'machine-1',
                     serverId: props.serverId ?? 'server-1',
                     platform: 'web',
+                    clientExecutableActivation: { status: 'ready' },
+                    reloadClientExecutables: () => {},
                 }}
             >
                 <AppTargetNavigationScope model={props.model}>
@@ -795,6 +802,8 @@ describe('plugin app page host route (EU-5b)', () => {
                     machineId: null,
                     serverId: null,
                     platform: 'web',
+                    clientExecutableActivation: { status: 'establishing' },
+                    reloadClientExecutables: () => {},
                 }}
             >
                 <PluginAppPageScreen
@@ -948,6 +957,55 @@ describe('plugin app page host route (EU-5b)', () => {
         const action = screen.findByTestId('plugin-app-page-unavailable-action');
         expect(action).toBeTruthy();
         expect(action?.props.accessibilityLabel).toBe('Manage plugin');
+    });
+
+    it('keeps page recovery local when one plugin client executable is unavailable', async () => {
+        const reloadClientExecutables = vi.fn();
+        const screen = await renderPage({
+            subPath: null,
+            clientExecutableActivation: { status: 'unavailable', failures: [] },
+            reloadClientExecutables,
+        });
+
+        const action = screen.findByTestId('plugin-app-page-unavailable-action');
+        expect(action?.props.accessibilityLabel).toBe('Manage plugin');
+        action?.props.onPress();
+        expect(reloadClientExecutables).not.toHaveBeenCalled();
+        expect(routerPushes).toEqual([{
+            pathname: '/(app)/settings/plugins/[pluginId]',
+            params: { pluginId: NOTES_PLUGIN_ID },
+        }]);
+    });
+
+    it('keeps plugin B interactive when plugin A executable activation failed', async () => {
+        await renderPage({
+            clientExecutableActivation: {
+                status: 'unavailable',
+                failures: [{
+                    pluginId: 'acme.failed-plugin-a',
+                    target: {
+                        artifactId: 'failed-runtime',
+                        modulePath: './failedRuntime',
+                        exportName: 'activate',
+                        platform: 'web',
+                    },
+                    executionOrigin: {
+                        serverIdentityId: 'srv_failed_a',
+                        materializationRef: {
+                            pluginId: 'acme.failed-plugin-a',
+                            machineId: 'machine-1',
+                            materializationId: 'failed-a-install',
+                        },
+                    },
+                    projectionGeneration: 12,
+                    code: 'activation_failed',
+                }],
+            },
+        });
+
+        expect(reactNativeSurfaceProps.at(-1)).toEqual(expect.objectContaining({
+            interactionEnabled: true,
+        }));
     });
 
     it('routes each plugin to its OWN page when both declare the same local id', async () => {

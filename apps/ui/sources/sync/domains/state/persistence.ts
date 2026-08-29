@@ -39,6 +39,7 @@ import {
     AcpConfigOptionOverridesV1Schema,
     AgentExecutionTargetV1Schema,
     ComposerAttachmentDraftV1Schema,
+    type ComposerAttachmentAuthorValueV1,
     ExternalSessionRefreshCursorV1Schema,
     MAX_COMPOSER_ATTACHMENT_INSTANCES_V1,
     SessionModelSelectionV1Schema,
@@ -62,6 +63,7 @@ import {
     type SessionOrganizationPlacementV1,
     type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import { getPersistenceStorage } from './persistenceStorage';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { prepareSessionPersistenceScopeForActivation } from './sessionPersistence';
@@ -150,8 +152,27 @@ function sessionModelModeUpdatedAtsKey(): string {
     return 'session-model-mode-updated-ats-v1';
 }
 
+/**
+ * A draft-local attachment request waiting for the mounted Composer to admit
+ * it against the current contribution catalog. It is intentionally distinct
+ * from a canonical ComposerAttachmentDraftV1: only the mounted Composer can
+ * supply the generation-bound contribution identity and presentation.
+ */
+export type NewSessionComposerAttachmentSeedV1 = Readonly<{
+    instanceId: string;
+    pluginId: string;
+    attachmentLocalId: string;
+    value: ComposerAttachmentAuthorValueV1;
+}>;
+
 export interface NewSessionDraft {
     input: string;
+    /**
+     * Host-created attachment requests waiting for the mounted Composer to
+     * resolve the current contribution catalog. These remain device-local
+     * draft custody and are never projected into the synchronized document.
+     */
+    composerAttachmentSeeds?: readonly NewSessionComposerAttachmentSeedV1[];
     /**
      * Canonical contentless plugin attachment drafts for the new-Session
      * composer. The submission owner prepares them after a Session exists.
@@ -162,6 +183,8 @@ export interface NewSessionDraft {
     selectedMachineId: string | null;
     selectedPath: string | null;
     targetServerId?: string | null;
+    /** Unresolved placement choices seeded by a host, owned by this draft. */
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     executionTarget?: SessionExecutionTargetV1 | null;
     organizationPlacement?: SessionOrganizationPlacementV1;
     windowsRemoteSessionLaunchModeOverride?: Readonly<{

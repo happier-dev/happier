@@ -50,7 +50,7 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         expect(first?.capabilityParams).not.toBe(second?.capabilityParams);
     });
 
-    it('returns null for plugin backend targets (no built-in runtimeKind probing)', async () => {
+    it('probes an installed Agent backend through its operational identity', async () => {
         vi.resetModules();
 
         const resolveConfiguredAgentRuntimeKindFromUiBehavior = vi.fn(() => 'appServer');
@@ -63,8 +63,20 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
         const settings = {} as any;
         const backendTarget = { kind: 'builtInAgent', agentId: 'acme.review.backend' } as any;
 
-        expect(resolveNewSessionCapabilityProbeContext({ backendTarget, settings })).toBeNull();
-        expect(resolveConfiguredAgentRuntimeKindFromUiBehavior).toHaveBeenCalledTimes(0);
+        expect(resolveNewSessionCapabilityProbeContext({
+            backendTarget,
+            settings,
+            runtimeCarrierAgentId: 'acme.review.backend',
+            machineId: 'machine-a',
+        })).toEqual({
+            cacheKeySuffixParts: ['appServer'],
+            capabilityParams: {},
+        });
+        expect(resolveConfiguredAgentRuntimeKindFromUiBehavior).toHaveBeenCalledWith({
+            agentId: 'acme.review.backend',
+            settings: expect.any(Object),
+            machineId: 'machine-a',
+        });
     });
 
     it('uses the projected runtime carrier for plugin backend targets when available', async () => {

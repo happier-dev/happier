@@ -124,6 +124,7 @@ function ExactTurnNewAutomationRoute(props: Readonly<{
         routeServerId: props.observed.sourceServerId,
         activeServerId: getActiveServerSnapshot().serverId,
         automationsEnabled: support.enabled,
+        accountSettings: storage.getState().settings,
         accountLifetime: captureActiveServerAccountScopeLifetime(),
         readCurrent: () => ({
             session: storage.getState().sessions[props.observed.sourceSessionId] ?? null,
@@ -131,6 +132,7 @@ function ExactTurnNewAutomationRoute(props: Readonly<{
             routeServerId: props.observed.sourceServerId,
             activeServerId: getActiveServerSnapshot().serverId,
             automationsEnabled: supportRef.current,
+            accountSettings: storage.getState().settings,
         }),
     }), [
         accountScopeKey,

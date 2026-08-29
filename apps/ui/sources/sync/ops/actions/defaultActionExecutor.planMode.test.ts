@@ -172,8 +172,8 @@ describe('createDefaultActionExecutor plan mode integration', () => {
     const executor = createDefaultActionExecutor();
     const result = await executor.execute(
       'agents.models.list',
-      { agentId: 'claude', machineId: 'm1', serverId: 'server-b', limit: 3 },
-      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel' },
+      { agentId: 'claude', machineId: 'm1', limit: 3 },
+      { defaultSessionId: 's1', surface: 'voice', placement: 'voice_panel', serverId: 'server-b' },
     );
 
     expect(result.ok).toBe(true);

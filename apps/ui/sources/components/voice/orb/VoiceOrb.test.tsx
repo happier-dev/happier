@@ -8,10 +8,7 @@ import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/u
 import type { VoiceControlAction } from '@/components/voice/controls/VoiceControls';
 
 import { VoiceOrb, type VoiceOrbLabels } from './VoiceOrb';
-import {
-    VOICE_ORB_DOCK_HEADROOM,
-    VOICE_ORB_HIT_TARGET,
-} from './voiceOrbGeometry';
+import { VOICE_ORB_HIT_TARGET } from './voiceOrbGeometry';
 
 vi.mock('@/sync/store/hooks', () => ({ useLocalSetting: () => 1 }));
 
@@ -417,8 +414,8 @@ describe('VoiceOrb', () => {
      *
      * `236` is a default-scale target: a long locale, 200% web text or Dynamic Type makes the
      * status block taller, and a short viewport or an open keyboard makes the space smaller. The
-     * bar carries End Voice and every recovery action, so it keeps its measured height and the
-     * caption becomes the sheet's single scroll owner.
+     * bar carries End Voice and every recovery action, so it keeps its measured height. Decorative
+     * dock clearance yields first; after that the caption is the sheet's single scroll owner.
      */
     it('scrolls the caption and keeps the transport bar whole when space runs out', async () => {
         const control = createControl({ live: true, canStop: true, canMute: true, surfaceState: 'listening' });
@@ -442,7 +439,7 @@ describe('VoiceOrb', () => {
         expect(scrolled?.props.scrollEnabled).toBe(true);
         // Padding at `restingBottomInset: 24` is `24 + 34 - 12`.
         expect(flattenStyle(scrolled?.props.style).maxHeight)
-            .toBeCloseTo(260 - VOICE_ORB_DOCK_HEADROOM - 60 - 46, 5);
+            .toBeCloseTo(260 - 60 - 46, 5);
         // The bar absorbed none of the clamp.
         expect(flattenStyle(barAfter?.props.style).flexShrink).toBe(0);
         expect(findTransportControl(screen, labels.transport.end)).toHaveLength(1);

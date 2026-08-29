@@ -111,6 +111,24 @@ import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/h
 import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
 import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
+import type {
+    AgentPluginSettingsReadiness,
+    AgentPluginSettingsSnapshot,
+} from '@/agents/registry/registryUiBehavior';
+import {
+    readScopedPluginSettingsDeclaredFieldValue,
+    projectScopedPluginSettingsFields,
+    useScopedPluginSettingsProjection,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
+import { scopedPluginSettingsAdapter } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import {
+    resolveScopedPluginSettingsServerIdentity,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import { resolveScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import {
+    resolveAgentScopedPluginSettingsDeclarations,
+    type AgentScopedPluginSettingsDeclarations,
+} from '@/agents/registry/agentScopedPluginSettingsDeclarations';
 import { resolveNewSessionOperationalBackendTarget } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { buildNewSessionLaunchStatusBadges } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
@@ -175,10 +193,21 @@ function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
     return ref;
 }
 
-function buildNewSessionDraftSignature(draft: NewSessionDraft | null): string {
+function buildNewSessionScreenAuthoringDraftSignature(draft: NewSessionDraft | null): string {
     if (draft === null) return 'null';
     try {
-        return JSON.stringify(draft) ?? 'null';
+        // Composer text and attachments are observed by the incumbent repository
+        // Composer document. Keeping them out of the screen-model signature prevents
+        // that same repository notification from re-rendering the entire New Session
+        // hook tree on each keystroke while authoring/routing changes still hydrate it.
+        const screenAuthoringDraft = Object.fromEntries(
+            Object.entries(draft).filter(([field]) => (
+                field !== 'input'
+                && field !== 'composerAttachments'
+                && field !== 'updatedAt'
+            )),
+        );
+        return JSON.stringify(screenAuthoringDraft) ?? 'null';
     } catch {
         return 'unserializable';
     }
@@ -212,6 +241,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
      * automation-draft owner; route params are never the mutation owner.
      */
     automationExactTurnRetarget?: ExactTurnAutomationPrefill | null;
+    /** Exact scoped Settings values for an installed Agent declaration. */
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
 }>): NewSessionScreenModel {
     const { theme, rt } = useUnistyles();
     const router = useRouter();
@@ -282,40 +313,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
         }
         return null;
     }, [dataId]);
-    const seededPlacementHandoffKey = typeof dataId === 'string' && dataId.trim().length > 0
-        ? dataId.trim()
-        : null;
-    const initialSeededPlacementCandidates = tempSessionData?.pluginNewSessionSeed?.placementCandidates ?? [];
-    const [seededPlacementCandidates, setSeededPlacementCandidates] = React.useState<
-        readonly PluginUiSessionPlacementCandidateV1[]
-    >(() => initialSeededPlacementCandidates);
-    const seededPlacementHandoffKeyRef = React.useRef<string | null>(seededPlacementHandoffKey);
-    React.useEffect(() => {
-        if (seededPlacementHandoffKeyRef.current === seededPlacementHandoffKey) return;
-        seededPlacementHandoffKeyRef.current = seededPlacementHandoffKey;
-        setSeededPlacementCandidates(initialSeededPlacementCandidates);
-    }, [initialSeededPlacementCandidates, seededPlacementHandoffKey]);
-    const selectSeededPlacement = React.useCallback((candidate: PluginUiSessionPlacementCandidateV1) => {
-        try {
-            // Reuse the one New Session route selection owner. The candidate is
-            // not persisted or treated as selected until this exact reader
-            // action updates the normal server/machine/path route inputs.
-            router.setParams({
-                spawnServerId: candidate.serverId,
-                machineId: candidate.machineId,
-                directory: candidate.rootPath,
-            });
-        } catch {
-            return;
-        }
-        setSeededPlacementCandidates([]);
-    }, [router]);
-    const seededPlacementActionChip = React.useMemo(() => (
-        createNewSessionSeededPlacementActionChip({
-            candidates: seededPlacementCandidates,
-            onSelect: selectSeededPlacement,
-        })
-    ), [seededPlacementCandidates, selectSeededPlacement]);
     const shouldReplacePersistedDraftSelections = tempSessionData?.replacePersistedDraftSelections === true;
     const loadScopedNewSessionDraft = React.useCallback(() => {
         return draftScope ? readNewSessionDraftFromRepository({ scope: draftScope, draftId }) : null;
@@ -323,9 +320,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     // Load persisted draft state (survives remounts/screen navigation).
     const [scopedPersistedDraft, setScopedPersistedDraft] = React.useState(() => loadScopedNewSessionDraft());
-    const scopedPersistedDraftSignatureRef = React.useRef(buildNewSessionDraftSignature(scopedPersistedDraft));
+    const scopedPersistedDraftSignatureRef = React.useRef(buildNewSessionScreenAuthoringDraftSignature(scopedPersistedDraft));
     const setLoadedScopedPersistedDraft = React.useCallback((nextDraft: NewSessionDraft | null) => {
-        const nextSignature = buildNewSessionDraftSignature(nextDraft);
+        const nextSignature = buildNewSessionScreenAuthoringDraftSignature(nextDraft);
         if (scopedPersistedDraftSignatureRef.current === nextSignature) {
             return;
         }
@@ -333,6 +330,17 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setScopedPersistedDraft(nextDraft);
     }, []);
     const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const initialSeededPlacementCandidates = React.useMemo(() => (
+        persistedDraft?.placementCandidates
+            ?? tempSessionData?.pluginNewSessionSeed?.placementCandidates
+            ?? []
+    ), [persistedDraft?.placementCandidates, tempSessionData?.pluginNewSessionSeed?.placementCandidates]);
+    const [seededPlacementCandidates, setSeededPlacementCandidates] = React.useState<
+        readonly PluginUiSessionPlacementCandidateV1[]
+    >(() => initialSeededPlacementCandidates);
+    React.useEffect(() => {
+        setSeededPlacementCandidates(initialSeededPlacementCandidates);
+    }, [initialSeededPlacementCandidates]);
     const [launchUserAttemptId, setLaunchUserAttemptId] = React.useState<string | null>(() => (
         typeof persistedDraft?.launchUserAttemptId === 'string' ? persistedDraft.launchUserAttemptId : null
     ));
@@ -747,6 +755,134 @@ export function useNewSessionScreenModel(input?: Readonly<{
         tempAgentType: agentTypeParam,
         projectionPhase: daemonMergedProjection.phase,
     });
+    /**
+     * The selected installed Agent's declarations are the only owners of the
+     * settings consumed by its behavior. Account and daemon groups are both
+     * legitimate and are projected independently through the canonical hook;
+     * this model only selects exact Agent-targeted groups and never reads a
+     * record directly.
+     */
+    const selectedAgentScopedSettingsDeclarations = React.useMemo<AgentScopedPluginSettingsDeclarations>(() => (
+        resolveAgentScopedPluginSettingsDeclarations({
+            agentId: selectedRuntimeCarrierAgentId,
+            projectionInputs: currentProjectionInputs,
+        })
+    ), [currentProjectionInputs, selectedRuntimeCarrierAgentId]);
+    const selectedAgentSettingsTargets = React.useMemo(() => {
+        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(targetServerId);
+        const resolveTarget = (declaration: typeof selectedAgentScopedSettingsDeclarations.account) => (
+            declaration
+                ? resolveScopedPluginSettingsTarget({
+                    scope: declaration.scope,
+                    serverIdentityId,
+                    machineId: selectedMachineId,
+                    serverId: targetServerId,
+                })
+                : null
+        );
+        return Object.freeze({
+            account: resolveTarget(selectedAgentScopedSettingsDeclarations.account),
+            daemon: resolveTarget(selectedAgentScopedSettingsDeclarations.daemon),
+        });
+    }, [selectedAgentScopedSettingsDeclarations, selectedMachineId, targetServerId]);
+    const selectedAgentSettingsFields = React.useMemo(() => Object.freeze({
+        account: selectedAgentScopedSettingsDeclarations.account
+            ? projectScopedPluginSettingsFields(selectedAgentScopedSettingsDeclarations.account.fields)
+            : [],
+        daemon: selectedAgentScopedSettingsDeclarations.daemon
+            ? projectScopedPluginSettingsFields(selectedAgentScopedSettingsDeclarations.daemon.fields)
+            : [],
+    }), [selectedAgentScopedSettingsDeclarations]);
+    const selectedAgentAccountSettings = useScopedPluginSettingsProjection({
+        pluginId: selectedAgentScopedSettingsDeclarations.account?.pluginId ?? '',
+        scope: { kind: 'account' },
+        target: selectedAgentSettingsTargets.account,
+        accountLifetime,
+        fields: selectedAgentSettingsFields.account,
+        sourceLifetimeIdentity: selectedAgentScopedSettingsDeclarations.account?.sourceLifetimeIdentity,
+        perActiveServerIdentityId: resolveScopedPluginSettingsServerIdentity(targetServerId),
+        enabled: projectionCurrent && selectedAgentSettingsTargets.account !== null,
+        adapter: scopedPluginSettingsAdapter,
+    });
+    const selectedAgentDaemonSettings = useScopedPluginSettingsProjection({
+        pluginId: selectedAgentScopedSettingsDeclarations.daemon?.pluginId ?? '',
+        scope: { kind: 'daemon' },
+        target: selectedAgentSettingsTargets.daemon,
+        accountLifetime,
+        fields: selectedAgentSettingsFields.daemon,
+        sourceLifetimeIdentity: selectedAgentScopedSettingsDeclarations.daemon?.sourceLifetimeIdentity,
+        perActiveServerIdentityId: resolveScopedPluginSettingsServerIdentity(targetServerId),
+        enabled: projectionCurrent && selectedAgentSettingsTargets.daemon !== null,
+        adapter: scopedPluginSettingsAdapter,
+    });
+    const selectedAgentSettingsSources = React.useMemo(() => [
+        {
+            declaration: selectedAgentScopedSettingsDeclarations.daemon,
+            projection: selectedAgentDaemonSettings,
+        },
+        {
+            declaration: selectedAgentScopedSettingsDeclarations.account,
+            projection: selectedAgentAccountSettings,
+        },
+    ] as const, [
+        selectedAgentAccountSettings,
+        selectedAgentDaemonSettings,
+        selectedAgentScopedSettingsDeclarations.account,
+        selectedAgentScopedSettingsDeclarations.daemon,
+    ]);
+    const selectedAgentHasScopedSettings = React.useMemo(
+        () => selectedAgentSettingsSources.some((source) => source.declaration !== null),
+        [selectedAgentSettingsSources],
+    );
+    const selectedAgentSettingsReady = React.useMemo(
+        () => !selectedAgentHasScopedSettings
+            || selectedAgentSettingsSources.every((source) => source.declaration === null || source.projection.state.ready),
+        [selectedAgentHasScopedSettings, selectedAgentSettingsSources],
+    );
+    const selectedAgentPluginSettings: AgentPluginSettingsSnapshot | null = React.useMemo(() => {
+        if (!selectedAgentHasScopedSettings || !selectedAgentSettingsReady) return null;
+        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(targetServerId);
+        const values: Record<'account' | 'daemon', Record<string, unknown>> = {
+            account: {},
+            daemon: {},
+        };
+        // Preserve both scope records independently. A declaration may reuse a
+        // local field id in Account and daemon scopes; deduping here would make
+        // the daemon-first iteration order an accidental precedence rule.
+        for (const source of selectedAgentSettingsSources) {
+            if (!source.declaration) continue;
+            const scope = source.declaration.scope.kind;
+            for (const field of source.declaration.fields) {
+                const value = readScopedPluginSettingsDeclaredFieldValue({
+                    values: source.projection.state.values,
+                    field,
+                    serverIdentityId,
+                });
+                if (value !== undefined) values[scope][field.key] = value;
+            }
+        }
+        return Object.freeze({
+            account: Object.freeze(values.account),
+            daemon: Object.freeze(values.daemon),
+        });
+    }, [selectedAgentHasScopedSettings, selectedAgentSettingsReady, selectedAgentSettingsSources, targetServerId]);
+    // Explicit embedding values are accepted only when this screen has an
+    // identified selected Agent. Never let an unqualified snapshot become a
+    // global availability input for every catalog Agent.
+    const selectedPluginSettingsAgentId = selectedRuntimeCarrierAgentId ?? staticAgentId;
+    const effectiveAgentPluginSettings = selectedAgentPluginSettings
+        ?? (selectedPluginSettingsAgentId ? input?.pluginSettings ?? null : null);
+    const effectiveAgentPluginSettingsReadiness: AgentPluginSettingsReadiness | null = React.useMemo(
+        () => selectedAgentHasScopedSettings
+            ? {
+                ready: selectedAgentSettingsReady,
+                settled: selectedAgentSettingsSources.every((source) => source.declaration === null || source.projection.state.settled),
+                loading: selectedAgentSettingsSources.some((source) => source.declaration !== null && source.projection.state.loading),
+                error: selectedAgentSettingsSources.find((source) => source.declaration !== null && source.projection.state.error)?.projection.state.error ?? null,
+            }
+            : null,
+        [selectedAgentHasScopedSettings, selectedAgentSettingsReady, selectedAgentSettingsSources],
+    );
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
@@ -1008,6 +1144,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         capabilityServerId,
         externalSessionsFeatureEnabled,
         settings,
+        pluginSettings: effectiveAgentPluginSettings,
+        pluginSettingsAgentId: selectedRuntimeCarrierAgentId ?? staticAgentId,
+        pluginSettingsReadiness: effectiveAgentPluginSettingsReadiness,
         staticAgentId,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
         pluginProjectionV2: currentProjectionInputs?.pluginProjectionV2 ?? null,
@@ -1081,6 +1220,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         backendTarget,
         runtimeCarrierAgentId: selectedRuntimeCarrierAgentId,
         settings,
+        pluginSettings: effectiveAgentPluginSettings,
+        pluginSettingsReadiness: effectiveAgentPluginSettingsReadiness,
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
@@ -1162,6 +1303,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftScope,
         promptStore,
         persistedAttachments: scopedPersistedDraft?.composerAttachments ?? [],
+        persistedAttachmentSeeds: scopedPersistedDraft?.composerAttachmentSeeds ?? [],
         composerAttachmentEntriesById,
         composerPluginProjection: {
             machineId: selectedMachineId,
@@ -1646,10 +1788,42 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getSessionOnlySecretValueEncByProfileIdByEnvVarName,
         backendNewSessionOptionStateByTargetKey,
         composerAttachments: newSessionComposerDocument.attachments,
+        placementCandidates: seededPlacementCandidates,
         draftScope,
         draftId,
         launchUserAttemptId,
     });
+    const selectSeededPlacement = React.useCallback((candidate: PluginUiSessionPlacementCandidateV1) => {
+        try {
+            router.setParams({
+                spawnServerId: candidate.serverId,
+                machineId: candidate.machineId,
+                directory: candidate.rootPath,
+            });
+        } catch {
+            return;
+        }
+        setSeededPlacementCandidates([]);
+        // The unresolved choices belong to this draft. Clear them durably so
+        // a remount or route detour cannot resurrect a choice already made.
+        persistDraftIfEnabled({
+            ...buildCurrentPersistedDraft(),
+            targetServerId: candidate.serverId,
+            selectedMachineId: candidate.machineId,
+            selectedPath: candidate.rootPath,
+            executionTarget: {
+                serverId: candidate.serverId,
+                machineId: candidate.machineId,
+            },
+            placementCandidates: [],
+        });
+    }, [buildCurrentPersistedDraft, persistDraftIfEnabled, router]);
+    const seededPlacementActionChip = React.useMemo(() => (
+        createNewSessionSeededPlacementActionChip({
+            candidates: seededPlacementCandidates,
+            onSelect: selectSeededPlacement,
+        })
+    ), [seededPlacementCandidates, selectSeededPlacement]);
     const effectiveCurrentAuthoringDraft = currentAuthoringDraft;
     const onLaunchUserAttemptIdChange = React.useCallback((nextUserAttemptId: string | null) => {
         const normalized = typeof nextUserAttemptId === 'string' && nextUserAttemptId.trim().length > 0
@@ -1706,6 +1880,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         checkoutCreationDraft,
         transcriptStorage,
         settings,
+        pluginSettings: effectiveAgentPluginSettings,
+        pluginSettingsReadiness: effectiveAgentPluginSettingsReadiness,
         useProfiles,
         selectedProfileId,
         profileMap,
@@ -1753,6 +1929,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
 
     const canCreate = canCreateFromAuthoring
+        && selectedAgentSettingsReady
         && organizationPlacementState.valid
         && !confirmExperimentalProviderModel.pending
         // V1 requires the source Session and the target to share a server. Block
@@ -1954,6 +2131,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 : [],
             providerModelProjectionAuthoritative: providerModelProjection.status === 'success',
             providerModelProjectionError: providersFeatureEnabled ? providerModelProjection.error : null,
+            providerModelProjectionFailures: providersFeatureEnabled ? providerModelProjection.refreshFailures : [],
             retryProviderModelProjection: providersFeatureEnabled ? providerModelProjection.refresh : null,
             providerCurrentSelectionRecovery: providersFeatureEnabled
                 ? providerModelProjection.data?.currentSelectionRecovery ?? null

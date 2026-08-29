@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { storage } from '@/sync/domains/state/storage';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 const EMPTY_DISMISSED_ACTIVITY_IDS: ReadonlySet<string> = new Set();
@@ -13,11 +14,20 @@ type DismissalBinding = Readonly<{
 }>;
 
 type DismissalEntry = {
+    readonly sessionId: string;
+    readonly machineId: string;
+    readonly serverId: string | null;
+    readonly generation: string;
     dismissedActivityIds: ReadonlySet<string>;
     /** Each dismissal belongs to one authoritative Activity Resource source. */
     dismissedSourceKeyByActivityId: ReadonlyMap<string, string>;
     readonly listeners: Set<() => void>;
     disposed: boolean;
+    consumers: number;
+};
+
+type AccountEntries = {
+    entries: Map<string, DismissalEntry>;
     retirement: Readonly<{ dispose(): void }> | null;
 };
 
@@ -51,10 +61,7 @@ function createDismissalOwner(): PluginTranscriptActivityDismissalOwner {
     // Dismissal is intentionally UI-only, but duplicate mounts of one live
     // Session card must observe one decision. Exact lifetime identity prevents
     // an Account replacement from borrowing that ephemeral state.
-    const entriesByAccountLifetime = new Map<
-        ActiveServerAccountScopeLifetime,
-        Map<string, DismissalEntry>
-    >();
+    const entriesByAccountLifetime = new Map<ActiveServerAccountScopeLifetime, AccountEntries>();
     let disposed = false;
 
     const notify = (entry: DismissalEntry): void => {
@@ -63,40 +70,81 @@ function createDismissalOwner(): PluginTranscriptActivityDismissalOwner {
     const disposeEntry = (entry: DismissalEntry): void => {
         if (entry.disposed) return;
         entry.disposed = true;
-        entry.retirement?.dispose();
-        entry.retirement = null;
         entry.listeners.clear();
         entry.dismissedActivityIds = EMPTY_DISMISSED_ACTIVITY_IDS;
         entry.dismissedSourceKeyByActivityId = new Map();
+        entry.consumers = 0;
     };
+    // A dismissed binding is intentionally dormant across route navigation so
+    // A → B → A preserves the user's decision while Session A remains live.
+    // Its lifetime is nevertheless bounded by the canonical Session deletion,
+    // generation retirement, and Account retirement owners below; this is not
+    // an arbitrary count or time-based cache.
+    // Session deletion is owned by the sessions store, not by route mounts.
+    // Observe that canonical fact so a dismissed entry cannot survive after
+    // its last transcript consumer unmounts before the Session is deleted.
+    const unsubscribeSessionRetirement = storage.subscribe((state) => {
+        for (const accountEntries of entriesByAccountLifetime.values()) {
+            for (const [key, entry] of accountEntries.entries) {
+                if (!state.deletedSessionIds[entry.sessionId]) continue;
+                disposeEntry(entry);
+                accountEntries.entries.delete(key);
+            }
+        }
+    });
 
     return Object.freeze({
         acquire(binding) {
-            if (disposed || !binding.accountLifetime.isCurrent()) return null;
+            if (
+                disposed
+                || !binding.accountLifetime.isCurrent()
+                || storage.getState().deletedSessionIds[binding.sessionId] === true
+            ) return null;
 
             const key = bindingKey(binding);
-            let entries = entriesByAccountLifetime.get(binding.accountLifetime);
-            if (!entries) {
-                entries = new Map();
-                entriesByAccountLifetime.set(binding.accountLifetime, entries);
+            let accountEntries = entriesByAccountLifetime.get(binding.accountLifetime);
+            if (!accountEntries) {
+                accountEntries = { entries: new Map(), retirement: null };
+                const capturedAccountEntries = accountEntries;
+                accountEntries.retirement = binding.accountLifetime.onRetire(() => {
+                    for (const entry of capturedAccountEntries.entries.values()) disposeEntry(entry);
+                    capturedAccountEntries.entries.clear();
+                    entriesByAccountLifetime.delete(binding.accountLifetime);
+                });
+                entriesByAccountLifetime.set(binding.accountLifetime, accountEntries);
+            }
+            const entries = accountEntries.entries;
+            // A generation replacement can happen while this Session is not
+            // mounted. Retire its dormant prior-generation presentation state
+            // when the canonical replacement is next acquired.
+            for (const [oldKey, oldEntry] of entries) {
+                if (
+                    oldEntry.consumers === 0
+                    && oldEntry.sessionId === binding.sessionId
+                    && oldEntry.machineId === binding.machineId
+                    && oldEntry.serverId === binding.serverId
+                    && oldEntry.generation !== binding.generation
+                ) {
+                    disposeEntry(oldEntry);
+                    entries.delete(oldKey);
+                }
             }
             let entry = entries.get(key);
             if (!entry || entry.disposed) {
                 entry = {
+                    sessionId: binding.sessionId,
+                    machineId: binding.machineId,
+                    serverId: binding.serverId,
+                    generation: binding.generation,
                     dismissedActivityIds: EMPTY_DISMISSED_ACTIVITY_IDS,
                     dismissedSourceKeyByActivityId: new Map(),
                     listeners: new Set(),
                     disposed: false,
-                    retirement: null,
+                    consumers: 0,
                 };
                 entries.set(key, entry);
-                const retireEntry = (): void => {
-                    if (entry!.disposed) return;
-                    disposeEntry(entry!);
-                    if (entries!.get(key) === entry) entries!.delete(key);
-                };
-                entry.retirement = binding.accountLifetime.onRetire(retireEntry);
             }
+            entry.consumers += 1;
 
             let released = false;
             return Object.freeze({
@@ -142,21 +190,27 @@ function createDismissalOwner(): PluginTranscriptActivityDismissalOwner {
                 dispose(): void {
                     if (released) return;
                     released = true;
-                    // Dismissal is presentation continuity, not a Resource
-                    // lease. Navigating away from Session A leaves it with no
-                    // transcript consumer, but returning to the same exact
-                    // Account/Session/generation binding must preserve the
-                    // user's terminal-card dismissal. Entry retirement remains
-                    // owned by the Account lifetime or the true provider
-                    // unmount; consumer release only scopes subscriptions.
+                    entry!.consumers = Math.max(0, entry!.consumers - 1);
+                    // Empty bindings have no presentation state worth
+                    // retaining. Dismissed bindings remain available for the
+                    // approved A → B → A continuity until account/generation
+                    // retirement.
+                    if (entry!.consumers === 0 && entry!.dismissedActivityIds.size === 0) {
+                        disposeEntry(entry!);
+                        if (entries.get(key) === entry) entries.delete(key);
+                    }
                 },
             });
         },
         dispose(): void {
             if (disposed) return;
             disposed = true;
-            for (const entries of entriesByAccountLifetime.values()) {
-                for (const entry of entries.values()) disposeEntry(entry);
+            unsubscribeSessionRetirement();
+            for (const accountEntries of entriesByAccountLifetime.values()) {
+                accountEntries.retirement?.dispose();
+                accountEntries.retirement = null;
+                for (const entry of accountEntries.entries.values()) disposeEntry(entry);
+                accountEntries.entries.clear();
             }
             entriesByAccountLifetime.clear();
         },

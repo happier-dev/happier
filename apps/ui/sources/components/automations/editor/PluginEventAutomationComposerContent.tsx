@@ -465,7 +465,9 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                             <Text numberOfLines={1} style={styles.targetButtonText}>
                                                                 {kind === 'durablePush'
                                                                     ? t('automations.form.trigger.observationDurablePush')
-                                                                    : t('automations.form.trigger.observationCheckpointedPull')}
+                                                                    : kind === 'socket'
+                                                                        ? t('automations.form.trigger.observationSocket')
+                                                                        : t('automations.form.trigger.observationCheckpointedPull')}
                                                             </Text>
                                                         </Pressable>
                                                     );

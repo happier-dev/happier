@@ -44,6 +44,8 @@ import type { AutomationDefinitionRun } from '@/sync/domains/automations/automat
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { readPluginEventAutomationPrivateDetail } from '@/components/automations/editor/pluginEventAutomationEditSeed';
 import { buildPluginEventAutomationPayloadBrowser } from '@/components/automations/editor/pluginEventAutomationPayloadBrowser';
 import { AutomationHistoryGapRecoveryAction } from './AutomationHistoryGapRecoveryAction';
@@ -79,17 +81,6 @@ function formatDate(ms: number, unknownLabel: string): string {
         return new Date(ms).toLocaleString();
     } catch {
         return unknownLabel;
-    }
-}
-
-function formatRetiredTriggerKind(kind: 'schedule' | 'pluginEvent' | 'sessionLifecycle'): string {
-    switch (kind) {
-        case 'schedule':
-            return t('automations.detail.runMeta.cause.schedule');
-        case 'pluginEvent':
-            return t('automations.detail.runMeta.cause.pluginEvent');
-        case 'sessionLifecycle':
-            return t('automations.detail.runMeta.cause.sessionLifecycle');
     }
 }
 
@@ -194,9 +185,9 @@ function AutomationTriggerOverview(props: Readonly<{
     const { trigger } = props;
     const activeServer = useActiveServerSnapshot();
     const eventMachineId = trigger.kind === 'pluginEvent'
-        ? (trigger.observation.kind === 'checkpointedPull'
-            ? trigger.observation.watcher?.machineId
-            : trigger.observation.endpointMaterializationRef?.machineId ?? null)
+        ? (trigger.observation.kind === 'durablePush'
+            ? trigger.observation.endpointMaterializationRef?.machineId ?? null
+            : trigger.observation.watcher?.machineId ?? null)
         : null;
     const eventProjection = useDaemonMergedProjectionInputs({
         machineId: eventMachineId,
@@ -294,9 +285,9 @@ function AutomationTriggerOverview(props: Readonly<{
         );
     }
 
-    const watcher = trigger.observation.kind === 'checkpointedPull'
-        ? trigger.observation.watcher
-        : null;
+    const watcher = trigger.observation.kind === 'durablePush'
+        ? null
+        : trigger.observation.watcher;
     const watcherMachine = watcher
         ? props.machines.find((candidate) => candidate.id === watcher.machineId)
         : undefined;
@@ -309,7 +300,7 @@ function AutomationTriggerOverview(props: Readonly<{
     const endpointMachine = endpointMaterializationRef
         ? props.machines.find((candidate) => candidate.id === endpointMaterializationRef.machineId)
         : undefined;
-    const observerRuntimeHealth = trigger.observation.kind === 'checkpointedPull'
+    const observerRuntimeHealth = trigger.observation.kind !== 'durablePush'
         ? resolveAutomationEventObserverRuntimeHealth({
             projection: eventProjection.inputs?.pluginProjectionV2,
             eventPluginId: trigger.eventRef.pluginId,
@@ -337,10 +328,14 @@ function AutomationTriggerOverview(props: Readonly<{
                 title={t('automations.detail.event.transportTitle')}
                 detail={t(trigger.observation.kind === 'durablePush'
                     ? 'automations.detail.event.transportDurablePush'
-                    : 'automations.detail.event.transportCheckpointedPull')}
+                    : trigger.observation.kind === 'socket'
+                        ? 'automations.detail.event.transportSocket'
+                        : 'automations.detail.event.transportCheckpointedPull')}
                 subtitle={t(trigger.observation.kind === 'durablePush'
                     ? 'automations.detail.event.disclosureDurablePush'
-                    : 'automations.detail.event.disclosureCheckpointedPull')}
+                    : trigger.observation.kind === 'socket'
+                        ? 'automations.detail.event.disclosureSocket'
+                        : 'automations.detail.event.disclosureCheckpointedPull')}
                 subtitleLines={0}
                 showChevron={false}
             />
@@ -537,6 +532,10 @@ export function AutomationDetailScreen() {
         generation: routeGeneration,
         value: false,
     });
+    const assignmentReplacementTailRef = React.useRef<Readonly<{
+        scopeKey: string;
+        promise: Promise<void>;
+    }> | null>(null);
     // A reused route must remain in loading state until its own refresh begins;
     // otherwise an uncached next Automation can flash a false not-found result.
     const loading = loadingState.generation !== routeGeneration || loadingState.value;
@@ -773,23 +772,50 @@ export function AutomationDetailScreen() {
         } as any));
     }, [automationId, router]);
 
-    const handleToggleMachineAssignment = React.useCallback(async (machineId: string, enabled: boolean) => {
+    const handleToggleMachineAssignment = React.useCallback((machineId: string, enabled: boolean) => {
         if (!automationId || !automation || !mutationsEnabled) return;
-        const request = { automationId, generation: routeGeneration };
-        try {
+        const request = {
+            automationId,
+            generation: routeGeneration,
+            accountLifetime: captureActiveServerAccountScopeLifetime(),
+        };
+        const replacementScopeKey = `${request.automationId}:${request.accountLifetime
+            ? serverAccountScopeKeySuffix(request.accountLifetime.scope)
+            : 'no-account'}`;
+        // The server owns one whole assignment set. Preserve that single owner
+        // while preventing two UI intents from deriving competing replacement
+        // sets from the same rendered snapshot: each queued intent starts from
+        // the canonical projection installed by the preceding Sync response.
+        const existingTail = assignmentReplacementTailRef.current;
+        const prior = existingTail?.scopeKey === replacementScopeKey
+            ? existingTail.promise
+            : Promise.resolve();
+        const promise = prior.catch(() => undefined).then(async () => {
+            if (
+                !isCurrentRoute(request.automationId, request.generation)
+                || request.accountLifetime?.isCurrent() === false
+            ) return;
+            const currentAutomation = storage.getState().automations[request.automationId];
+            if (!currentAutomation) return;
             const nextAssignments = upsertAutomationAssignmentToggle({
-                assignments: automation.assignments,
+                assignments: currentAutomation.assignments,
                 machineId,
                 enabled,
             });
-            await sync.replaceAutomationAssignments(request.automationId, nextAssignments);
-        } catch (error) {
-            if (!isCurrentRoute(request.automationId, request.generation)) return;
-            await Modal.alert(
-                t('common.error'),
-                error instanceof Error ? error.message : t('automations.detail.assignmentsUpdateFailed')
-            );
-        }
+            try {
+                await sync.replaceAutomationAssignments(request.automationId, nextAssignments);
+            } catch (error) {
+                if (
+                    !isCurrentRoute(request.automationId, request.generation)
+                    || request.accountLifetime?.isCurrent() === false
+                ) return;
+                await Modal.alert(
+                    t('common.error'),
+                    error instanceof Error ? error.message : t('automations.detail.assignmentsUpdateFailed')
+                );
+            }
+        });
+        assignmentReplacementTailRef.current = { scopeKey: replacementScopeKey, promise };
     }, [automation, automationId, isCurrentRoute, mutationsEnabled, routeGeneration]);
 
     const unknownDate = t('automations.detail.unknownDate');
@@ -971,26 +997,6 @@ export function AutomationDetailScreen() {
                     />
                 ))}
 
-                {automation.retiredTriggers.length > 0 ? (
-                    <ItemGroup title={t('automations.detail.runMeta.triggerRetired')}>
-                        {automation.retiredTriggers.map((trigger) => (
-                            <Item
-                                key={trigger.id}
-                                testID={`automation-retired-trigger-${trigger.id}`}
-                                title={formatRetiredTriggerKind(trigger.kind)}
-                                subtitle={t('automations.detail.runMeta.triggerIdentity', {
-                                    id: trigger.id,
-                                    revision: trigger.revision,
-                                })}
-                                detail={formatDate(trigger.retiredAt, unknownDate)}
-                                subtitleLines={0}
-                                showChevron={false}
-                                mode="info"
-                            />
-                        ))}
-                    </ItemGroup>
-                ) : null}
-
                 <ItemGroup title={t('automations.detail.actionsGroupTitle')}>
                     <Item
                         title={t('automations.detail.runNowTitle')}
@@ -1059,7 +1065,7 @@ export function AutomationDetailScreen() {
                                     <Switch
                                         value={isEnabled}
                                         onValueChange={mutationsEnabled
-                                            ? () => void handleToggleMachineAssignment(machine.id, !isEnabled)
+                                            ? (nextEnabled) => handleToggleMachineAssignment(machine.id, nextEnabled)
                                             : undefined}
                                         disabled={!mutationsEnabled}
                                         accessibilityLabel={[

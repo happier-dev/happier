@@ -1741,7 +1741,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         runEntryRestoreAttempt,
         verifyWebEntryRestoreTransaction,
     } = entryHost;
-    const onSuccessfulRouteJumpSettled = React.useCallback((settledSessionId: string): void => {
+    const onRouteJumpSettled = React.useCallback((settledSessionId: string): void => {
         if (!sessionOpenLatch.onJumpEntrySettled({ sessionId: settledSessionId })) return;
         observeCommittedProjectionLayoutRef.current();
     }, [sessionOpenLatch]);
@@ -1778,7 +1778,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         listRef,
         messagesById: props.messagesById,
         onJumpLanded: props.onJumpLanded,
-        onSuccessfulRouteJumpSettled,
+        onRouteJumpSettled,
         onViewportChangeRef,
         pendingJumpSeqViewportPromotionRef,
         pinThresholdPx,
@@ -1977,6 +1977,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         pinThresholdPx,
         pinThresholdPxRef,
         platformOS: Platform.OS,
+        preemptExplicitJumpForUserTakeover: jumpHost.preemptExplicitJumpForUserTakeover,
         preemptEntryRestoreTransaction,
         prependHost,
         promotedJumpSeqViewportProtectionRef,

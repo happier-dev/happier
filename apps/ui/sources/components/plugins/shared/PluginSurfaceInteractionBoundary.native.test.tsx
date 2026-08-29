@@ -29,6 +29,127 @@ vi.mock('react-native', async () => {
 });
 
 describe('PluginSurfaceInteractionBoundary.native', () => {
+    it('omits the loaded runtime marker until a current native runtime identity is present', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const markerA = loadedRuntimeMarkerId('surface-native-load-lifecycle', 'acme.panels', 'generation-a');
+        const screen = await renderScreen(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-load-lifecycle"
+                snapshotTitle="Build summary"
+                enabled
+            >
+                <PluginNativeSnapshot testID="plugin-native-load-lifecycle-snapshot" />
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId(markerA)).toBeNull();
+
+        await screen.update(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-load-lifecycle"
+                snapshotTitle="Build summary"
+                enabled
+                loadedRuntimeIdentity={{
+                    pluginId: 'acme.panels',
+                    generation: 'generation-a',
+                    artifactDigest: 'sha256-runtime',
+                    machineId: 'machine-a',
+                    serverId: 'server-1',
+                }}
+            >
+                <PluginNativeSnapshot testID="plugin-native-load-lifecycle-snapshot" />
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId(markerA)).toBeTruthy();
+    });
+
+    it('replaces the loaded runtime marker when a newer native runtime identity loads', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const markerA = loadedRuntimeMarkerId('surface-native-replacement', 'acme.panels', 'generation-a');
+        const markerB = loadedRuntimeMarkerId('surface-native-replacement', 'acme.panels', 'generation-b');
+        const element = (generation: string) => (
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-replacement"
+                snapshotTitle="Build summary"
+                enabled
+                loadedRuntimeIdentity={{
+                    pluginId: 'acme.panels',
+                    generation,
+                    artifactDigest: 'sha256-runtime',
+                    machineId: 'machine-a',
+                    serverId: 'server-1',
+                }}
+            >
+                <PluginNativeSnapshot testID="plugin-native-replacement-snapshot" />
+            </PluginSurfaceInteractionBoundary>
+        );
+        const screen = await renderScreen(element('generation-a'));
+
+        expect(screen.findByTestId(markerA)).toBeTruthy();
+        expect(screen.findByTestId(markerB)).toBeNull();
+
+        await screen.update(element('generation-b'));
+        expect(screen.findByTestId(markerA)).toBeNull();
+        expect(screen.findByTestId(markerB)).toBeTruthy();
+    });
+
+    it('omits the loaded runtime marker for retained stale or failed native snapshots', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const markerA = loadedRuntimeMarkerId('surface-native-stale', 'acme.panels', 'generation-a');
+        const screen = await renderScreen(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-stale"
+                snapshotTitle="Build summary"
+                enabled={false}
+            >
+                <PluginNativeSnapshot testID="plugin-native-stale-snapshot" />
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId('plugin-native-stale-snapshot')).toBeTruthy();
+        expect(screen.findByTestId(markerA)).toBeNull();
+    });
+
+    it('carries loaded runtime identity as a non-accessible diagnostic marker', async () => {
+        const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
+        const screen = await renderScreen(
+            <PluginSurfaceInteractionBoundary
+                surfaceId="surface-native-loaded-runtime"
+                snapshotTitle="Build summary"
+                enabled
+                loadedRuntimeIdentity={{
+                    pluginId: 'acme.panels',
+                    generation: 'generation-7',
+                    artifactDigest: 'sha256-runtime',
+                    machineId: 'machine-a',
+                    serverId: 'server-1',
+                }}
+            >
+                <PluginNativeSnapshot testID="plugin-native-loaded-runtime-snapshot" />
+            </PluginSurfaceInteractionBoundary>,
+        );
+
+        expect(screen.findByTestId('plugin-surface-interaction-boundary:surface-native-loaded-runtime')?.props.dataSet)
+            .toBeUndefined();
+        expect(screen.findByTestId([
+            'plugin-surface-interaction-boundary',
+            'surface-native-loaded-runtime',
+            'surface-native-loaded-runtime',
+            'acme.panels',
+            'generation-7',
+            'sha256-runtime',
+            'machine-a',
+            'server-1',
+        ].map((part) => encodeURIComponent(part)).join(':'))?.props).toMatchObject({
+            accessible: false,
+            pointerEvents: 'none',
+            accessibilityElementsHidden: true,
+            importantForAccessibility: 'no-hide-descendants',
+        });
+        expect(screen.findByTestId('plugin-surface-snapshot:surface-native-loaded-runtime')).toBeTruthy();
+    });
+
     it('keeps an enabled but presentation-ineligible snapshot inert without an offline announcement', async () => {
         const { PluginSurfaceInteractionBoundary } = await import('./PluginSurfaceInteractionBoundary.native');
         const screen = await renderScreen(
@@ -180,6 +301,19 @@ describe('PluginSurfaceInteractionBoundary.native', () => {
         expect(nativeFocus.setAccessibilityFocus).not.toHaveBeenCalled();
     });
 });
+
+function loadedRuntimeMarkerId(surfaceId: string, pluginId: string, generation: string): string {
+    return [
+        'plugin-surface-interaction-boundary',
+        'surface-native-loaded-runtime',
+        surfaceId,
+        pluginId,
+        generation,
+        'sha256-runtime',
+        'machine-a',
+        'server-1',
+    ].map((part) => encodeURIComponent(part)).join(':');
+}
 
 function PluginNativeSnapshot(props: Readonly<{ testID: string }>): React.ReactElement {
     return React.createElement('PluginNativeSnapshot', props);

@@ -244,4 +244,78 @@ describe('useProviderModelProjection', () => {
         expect(rendered.getCurrent().data?.groups).toEqual([{ connectionId: 'pc_a' }]);
         expect(rendered.getCurrent().error?.code).toBe('provider_endpoint_rate_limited');
     });
+
+    it('keeps mixed cold-refresh groups authoritative while exposing their typed partial failure', async () => {
+        describeProviderModels.mockResolvedValueOnce({
+            status: 'success',
+            agentTargetKey: 'backend:codex',
+            groups: [{ connectionId: 'pc_warm' }],
+            refreshFailures: [{
+                connectionId: 'pc_cold',
+                error: {
+                    v: 1,
+                    code: 'provider_endpoint_unavailable',
+                    retryable: true,
+                    action: 'retry',
+                    connectionId: 'pc_cold',
+                    machineId: 'machine-a',
+                },
+            }],
+        });
+        const rendered = await renderHook(() => useProviderModelProjection({
+            enabled: true,
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            agentTargetKey: 'backend:codex',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(rendered.getCurrent()).toMatchObject({
+            status: 'success',
+            data: { groups: [{ connectionId: 'pc_warm' }] },
+            error: null,
+            refreshFailures: [{
+                connectionId: 'pc_cold',
+                error: { code: 'provider_endpoint_unavailable', connectionId: 'pc_cold' },
+            }],
+        });
+    });
+
+    it('keeps every per-connection refresh failure and forces only explicit retry reads', async () => {
+        describeProviderModels.mockResolvedValue({
+            status: 'success',
+            agentTargetKey: 'backend:codex',
+            groups: [],
+            refreshFailures: [
+                {
+                    connectionId: 'pc_secret',
+                    error: {
+                        v: 1, code: 'provider_secret_missing', retryable: true,
+                        action: 'add_secret', connectionId: 'pc_secret', machineId: 'machine-a',
+                    },
+                },
+                {
+                    connectionId: 'pc_endpoint',
+                    error: {
+                        v: 1, code: 'provider_endpoint_unavailable', retryable: true,
+                        action: 'retry', connectionId: 'pc_endpoint', machineId: 'machine-a',
+                    },
+                },
+            ],
+        });
+        const rendered = await renderHook(() => useProviderModelProjection({
+            enabled: true,
+            machineId: 'machine-a',
+            serverId: 'server-a',
+            agentTargetKey: 'backend:codex',
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(describeProviderModels).toHaveBeenNthCalledWith(1, expect.not.objectContaining({ forceRefresh: true }));
+        expect(rendered.getCurrent().refreshFailures.map((failure) => failure.connectionId))
+            .toEqual(['pc_secret', 'pc_endpoint']);
+
+        await act(async () => { await rendered.getCurrent().refresh(); });
+        expect(describeProviderModels).toHaveBeenNthCalledWith(2, expect.objectContaining({ forceRefresh: true }));
+    });
 });

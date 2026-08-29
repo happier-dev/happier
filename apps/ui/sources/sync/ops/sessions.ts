@@ -61,6 +61,9 @@ import {
 } from './providerDaemonSessionCompatibility';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getPendingQueueWakeResumeOptions } from '@/sync/domains/pending/pendingQueueWake';
 import { supportsSessionForkRequestId } from '@/utils/system/versionUtils';
 export {
@@ -530,11 +533,29 @@ export async function rollbackSessionConversation(options: Readonly<{
     const session = storage.getState().sessions[options.sessionId];
     if (session?.active === false && target.type === 'before_user_message') {
         const state = storage.getState();
+        const serverId = options.serverId ?? resolvePreferredServerIdForSessionId(options.sessionId);
+        const machineId = readMachineControlTargetForSession(options.sessionId)?.machineId ?? null;
+        const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        const pluginSettings = await readAgentScopedPluginSettingsSnapshot({
+            agentId,
+            machineId,
+            serverId,
+            accountLifetime,
+        });
+        if (accountLifetime && !accountLifetime.isCurrent()) {
+            return {
+                ok: false,
+                errorCode: 'session_rollback_resume_unavailable',
+                errorMessage: 'This inactive session cannot be resumed for rollback',
+            };
+        }
         const resumeOptions = getPendingQueueWakeResumeOptions({
             sessionId: options.sessionId,
             session,
             resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
                 settings: state.settings,
+                pluginSettings,
                 results: undefined,
             }),
         });
@@ -546,7 +567,6 @@ export async function rollbackSessionConversation(options: Readonly<{
             };
         }
 
-        const serverId = options.serverId ?? resolvePreferredServerIdForSessionId(options.sessionId);
         const resumeResult = await resumeSession({
             ...resumeOptions,
             ...(serverId ? { serverId } : {}),

@@ -241,6 +241,7 @@ describe('buildModelCatalogRows', () => {
     expect(row.state).toBe('error');
     expect(row.lastError).toBe('boom');
     expect(row.canInstall).toBe(true);
+    expect(row.canRemove).toBe(true);
   });
 
   it('keeps retry and remove available after a failed reinstall retains live bytes', () => {
@@ -307,7 +308,7 @@ describe('buildModelCatalogRows', () => {
 
     expect(row.state).toBe('error');
     expect(row.canInstall).toBe(true);
-    expect(row.canRemove).toBe(false);
+    expect(row.canRemove).toBe(true);
   });
 
   it('maps every row to an uninstallable unknown state when the daemon status is unavailable', () => {

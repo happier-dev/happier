@@ -480,7 +480,7 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
                     }
                 },
             },
-            clearAcceptedSnapshot: () => participantComposerDocumentOwner.clearAccepted(submittedCurrentness),
+            clearAcceptedSnapshot: () => participantComposerDocumentOwner.clearAccepted(submittedCurrentness).changed,
         }).then((result) => {
             if (
                 result.status === 'blocked'

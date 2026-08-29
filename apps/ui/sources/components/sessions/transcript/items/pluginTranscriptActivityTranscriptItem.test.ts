@@ -36,7 +36,7 @@ function activity(params: Readonly<{
 }
 
 describe('appendPluginTranscriptActivityTranscriptItems', () => {
-    it('keeps colliding local activity ids qualified, ordered, bounded, and outside the sequence axis', () => {
+    it('keeps colliding local activity ids qualified, ordered, and outside the sequence axis with a truthful overflow row', () => {
         const rows = appendPluginTranscriptActivityTranscriptItems([], {
             sessionId: 'session-1',
             activities: [
@@ -52,8 +52,8 @@ describe('appendPluginTranscriptActivityTranscriptItems', () => {
             isActionAvailable: () => true,
         });
 
-        expect(rows).toHaveLength(16);
-        expect(rows.map((row) => row.kind)).toEqual(Array(16).fill('plugin-transcript-activity'));
+        expect(rows).toHaveLength(17);
+        expect(rows.map((row) => row.kind)).toEqual(Array(17).fill('plugin-transcript-activity'));
         expect(rows.map((row) => row.id)).toEqual(expect.arrayContaining([
             expect.stringContaining('plugin-a'),
             expect.stringContaining('plugin-z'),
@@ -65,6 +65,32 @@ describe('appendPluginTranscriptActivityTranscriptItems', () => {
             contributionId: 'same-profile',
             localActivityId: 'same-local-id',
         });
+        expect(rows.at(-1)).toMatchObject({ aggregateHiddenCount: 20 });
+    });
+
+    it('bounds the aggregate across profiles and reports the omitted valid rows', () => {
+        const rows = appendPluginTranscriptActivityTranscriptItems([], {
+            sessionId: 'session-1',
+            activities: [
+                ...Array.from({ length: 16 }, (_, index) => activity({
+                    pluginId: 'plugin-one',
+                    contributionId: 'progress-card',
+                    localActivityId: `one-${String(index).padStart(2, '0')}`,
+                })),
+                ...Array.from({ length: 16 }, (_, index) => activity({
+                    pluginId: 'plugin-two',
+                    contributionId: 'progress-card',
+                    localActivityId: `two-${String(index).padStart(2, '0')}`,
+                })),
+            ],
+            dismissedActivityIds: new Set(),
+            isActionAvailable: () => true,
+        });
+
+        expect(rows).toHaveLength(17);
+        expect(rows.filter((row) => row.pluginId === 'plugin-one')).toHaveLength(16);
+        expect(rows.filter((row) => row.pluginId === 'plugin-two')).toHaveLength(0);
+        expect(rows.at(-1)).toMatchObject({ aggregateHiddenCount: 16 });
     });
 
     it('keeps only the mounted session and drops a locally dismissed terminal activity', () => {

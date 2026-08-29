@@ -247,7 +247,7 @@ describe('machine-owned decisions read the owning machine\'s declaration', () =>
             environmentVariables: {
                 backendMode: {
                     envKey: 'HAPPIER_ACME_BACKEND_MODE',
-                    settingKey: 'acmeBackendMode',
+                    settingKey: { scope: 'account', localId: 'acmeBackendMode' },
                     legacyMetadataKey: 'acmeBackendMode',
                     runtimeDescriptorField: 'backendMode',
                     defaultValue: 'acp',
@@ -531,6 +531,7 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
             surfaceId: 'subagent-launch',
             sessionId: 'session-1',
         })]);
+        expect(renderedLaunchSurfaces[0]).not.toHaveProperty('machineId');
         const detailsTab = externalBehavior.sessionSubagents?.createTeammateLauncherDetailsTab?.({
             session: sessionFixture(),
             teamId: 'team-1',
@@ -542,10 +543,10 @@ describe('public Agent UI grammar conformance with the descriptor interpreter', 
                     pluginId: 'acme',
                     agentId: EXTERNAL_AGENT_ID,
                     surfaceId: 'subagent-details',
-                    machineId: MACHINE_ID,
                 },
             },
         });
+        expect(detailsTab?.resource).not.toHaveProperty('pluginInlineSurface.machineId');
     });
 });
 
@@ -608,7 +609,7 @@ describe('external Agent runtime-descriptor declarations', () => {
                 sessionExtras: {
                     outputKey: 'acmeBackendMode',
                     values: ['turbo', 'classic'],
-                    settingKey: 'acmeBackendMode',
+                    settingKey: { scope: 'account', localId: 'acmeBackendMode' },
                     aliases: { fast: 'turbo' },
                     defaultValue: 'classic',
                 },

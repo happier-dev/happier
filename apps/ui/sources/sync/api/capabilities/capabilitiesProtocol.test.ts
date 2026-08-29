@@ -54,6 +54,30 @@ describe('capabilitiesProtocol', () => {
         });
     });
 
+    it('retains qualified installed-Agent capability identities through describe and detect', () => {
+        const qualifiedId = 'cli.com.acme.agent/assistant';
+        expect(parseCapabilitiesDescribeResponse({
+            protocolVersion: 1,
+            capabilities: [{ id: qualifiedId, kind: 'cli' }],
+            checklists: { default: [{ id: qualifiedId }] },
+        })).toEqual({
+            protocolVersion: 1,
+            capabilities: [{ id: qualifiedId, kind: 'cli' }],
+            checklists: { default: [{ id: qualifiedId }] },
+        });
+        expect(parseCapabilitiesDetectResponse({
+            protocolVersion: 1,
+            results: {
+                [qualifiedId]: { ok: true, checkedAt: 1, data: { available: true } },
+            },
+        })).toEqual({
+            protocolVersion: 1,
+            results: {
+                [qualifiedId]: { ok: true, checkedAt: 1, data: { available: true } },
+            },
+        });
+    });
+
     it('parses detect responses and ignores invalid capability ids or malformed results', () => {
         const result = parseCapabilitiesDetectResponse({
             protocolVersion: 1,

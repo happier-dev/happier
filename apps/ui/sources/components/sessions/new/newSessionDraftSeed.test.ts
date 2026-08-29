@@ -26,7 +26,12 @@ describe('applyNewSessionDraftSeedV1', () => {
             seed: {
                 prompt: { text: 'Repair the failing check', mode: 'replace' },
                 profileId: 'profile-review',
-                placement: { serverId: 'server-b', machineId: 'machine-b', directory: '/work/repo' },
+                placement: {
+                    kind: 'exactTarget',
+                    serverId: 'server-b',
+                    machineId: 'machine-b',
+                    directory: '/work/repo',
+                },
             },
             existingDraft: existingDraft(),
             updatedAt: 99,
@@ -38,6 +43,7 @@ describe('applyNewSessionDraftSeedV1', () => {
             targetServerId: 'server-b',
             selectedMachineId: 'machine-b',
             selectedPath: '/work/repo',
+            executionTarget: { serverId: 'server-b', machineId: 'machine-b' },
             // A seeded New Session is a Session: an Automation draft left in the
             // scope must not swallow the seed into an Automation definition.
             entryIntent: 'session',
@@ -74,7 +80,7 @@ describe('applyNewSessionDraftSeedV1', () => {
         const seeded = applyNewSessionDraftSeedV1({
             seed: {
                 prompt: { text: 'Fresh', mode: 'append' },
-                placement: { machineId: 'machine-b' },
+                placement: { kind: 'currentTarget', directory: '/work/repo-b' },
             },
             existingDraft: null,
             updatedAt: 4,
@@ -83,11 +89,56 @@ describe('applyNewSessionDraftSeedV1', () => {
         expect(seeded).toMatchObject({
             input: 'Fresh',
             entryIntent: 'session',
-            selectedMachineId: 'machine-b',
-            selectedPath: null,
+            selectedMachineId: null,
+            selectedPath: '/work/repo-b',
             selectedProfileId: null,
             updatedAt: 4,
         });
+    });
+
+    it('applies an exact target as one atomic server and machine fact', () => {
+        const seeded = applyNewSessionDraftSeedV1({
+            seed: {
+                placement: {
+                    kind: 'exactTarget',
+                    serverId: 'server-b',
+                    machineId: 'machine-b',
+                },
+            },
+            existingDraft: existingDraft({
+                targetServerId: 'server-a',
+                selectedMachineId: 'machine-a',
+                selectedPath: '/repo-a',
+                executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
+            }),
+            updatedAt: 5,
+        });
+
+        expect(seeded).toMatchObject({
+            targetServerId: 'server-b',
+            selectedMachineId: 'machine-b',
+            executionTarget: { serverId: 'server-b', machineId: 'machine-b' },
+            selectedPath: '/repo-a',
+        });
+    });
+
+    it('keeps unresolved placement choices on the same draft owner', () => {
+        const candidates = [{
+            projectKey: { id: 'project-b' },
+            serverId: 'server-b',
+            machineId: 'machine-b',
+            rootPath: '/repo-b',
+            reachable: true,
+            worktrees: [],
+        }] as const;
+
+        const seeded = applyNewSessionDraftSeedV1({
+            seed: { candidates },
+            existingDraft: null,
+            updatedAt: 5,
+        });
+
+        expect(seeded.placementCandidates).toEqual(candidates);
     });
 });
 

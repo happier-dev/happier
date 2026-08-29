@@ -21,7 +21,12 @@ const completeReview = {
     version: '2.0.0',
     packageIdentity: { name: '@example/plugin', version: '2.0.0' },
     publisherIdentity: { status: 'unverified', id: 'example', displayName: 'Example Publisher' },
-    source: { kind: 'npm', locator: 'https://registry.example.test/example-plugin.tgz', integrity: 'sha512-exact' },
+    source: {
+        kind: 'npm',
+        locator: 'https://registry.example.test/example-plugin.tgz',
+        integrity: 'sha512-exact',
+        integrityBasis: 'expected',
+    },
     updateChannel: {
         kind: 'npm',
         packageName: '@example/plugin',
@@ -239,7 +244,7 @@ describe('installed marketplace catalog formatting', () => {
         }, 'install', 'example.plugin')).toBeNull();
     });
 
-    it('rejects a fabricated content-integrity claim for a local path review', () => {
+    it('accepts archive observed integrity but rejects local path and npm observed integrity claims', () => {
         const review = {
             ...completeReview,
             packageIdentity: { name: null, version: '2.0.0' },
@@ -260,6 +265,35 @@ describe('installed marketplace catalog formatting', () => {
             action: 'install',
             pluginId: 'example.plugin',
             change: { kind: 'reviewRequired', pendingChangeId: 'pending-local-integrity', review },
+        }, 'install', 'example.plugin')).toBeNull();
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: {
+                kind: 'reviewRequired',
+                pendingChangeId: 'pending-archive-observed',
+                review: {
+                    ...completeReview,
+                    source: {
+                        kind: 'archive',
+                        locator: 'https://registry.example.test/example-plugin.tgz',
+                        integrity: 'sha512-observed',
+                        integrityBasis: 'observed',
+                    },
+                },
+            },
+        }, 'install', 'example.plugin')?.pendingChangeId).toBe('pending-archive-observed');
+        expect(readPendingPluginChangeReview({
+            action: 'install',
+            pluginId: 'example.plugin',
+            change: {
+                kind: 'reviewRequired',
+                pendingChangeId: 'pending-npm-observed',
+                review: {
+                    ...completeReview,
+                    source: { ...completeReview.source, integrityBasis: 'observed' },
+                },
+            },
         }, 'install', 'example.plugin')).toBeNull();
     });
 

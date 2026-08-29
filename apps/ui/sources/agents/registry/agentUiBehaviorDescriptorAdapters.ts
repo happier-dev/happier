@@ -1,4 +1,8 @@
-import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type {
+    AgentUiSettingReferenceV1,
+    ExternalSessionsSource,
+    RuntimeDescriptorV1,
+} from '@happier-dev/protocol';
 import {
     isSupportedRuntimeDescriptorProviderId,
     readSessionMetadataRuntimeDescriptor,
@@ -21,6 +25,8 @@ import {
     type UiProjectionDiagnostic,
 } from './uiDescriptorDiagnostics';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { Settings } from '@/sync/domains/settings/settings';
+import { readAgentUiSetting } from './agentUiSettingLookup';
 
 type RuntimeDescriptorAgentExtraDescriptor = Readonly<{
     owner: string;
@@ -33,7 +39,7 @@ type EnvironmentDescriptor = Readonly<{
     providerId: string;
     backendMode: Readonly<{
         envKey: string;
-        settingKey: string;
+        settingKey: AgentUiSettingReferenceV1;
         legacyMetadataKey: string;
         runtimeDescriptorField: string;
         defaultValue: string;
@@ -42,8 +48,8 @@ type EnvironmentDescriptor = Readonly<{
     serverBaseUrl?: Readonly<{
         envKey: string;
         explicitEnvKey: string;
-        settingKey: string;
-        byServerIdSettingKey: string;
+        settingKey: AgentUiSettingReferenceV1;
+        byServerIdSettingKey: AgentUiSettingReferenceV1;
         legacyMetadataKey: string;
         legacyExplicitMetadataKey: string;
         runtimeDescriptorField: string;
@@ -79,7 +85,7 @@ type ConnectedServiceProfileSourceDescriptor = Readonly<{
     keyPrefix: string;
     labelKey: string;
     labelParams?: Readonly<Record<string, string>>;
-    detailSettingsKey?: string;
+    detailSettingsKey?: AgentUiSettingReferenceV1;
     source: Readonly<Record<string, unknown>>;
     serviceIdField: string;
     profileIdField: string;
@@ -210,8 +216,16 @@ function readEnvironmentAffinity(metadata: unknown, descriptor: EnvironmentDescr
     };
 }
 
-function readSetting(settings: unknown, key: string): unknown {
-    return isRecord(settings) ? settings[key] : undefined;
+function readSettingReference(value: unknown): AgentUiSettingReferenceV1 | null {
+    if (!isRecord(value)) return null;
+    if (value.scope !== 'host' && value.scope !== 'account' && value.scope !== 'daemon') return null;
+    if (typeof value.localId !== 'string') return null;
+    const localId = value.localId.trim();
+    return localId.length > 0 ? { scope: value.scope, localId } : null;
+}
+
+function readSetting(settings: unknown, key: AgentUiSettingReferenceV1): unknown {
+    return isRecord(settings) ? readAgentUiSetting(settings as Settings, key) : undefined;
 }
 
 function readTranscriptStorageModes(value: unknown): readonly AgentTranscriptStorageMode[] {
@@ -333,7 +347,7 @@ function readEnvironmentDescriptor(
     const backendModeConfig = providerId && backendMode
         ? {
             envKey: readString(backendMode.envKey),
-            settingKey: readString(backendMode.settingKey),
+            settingKey: readSettingReference(backendMode.settingKey),
             legacyMetadataKey: readString(backendMode.legacyMetadataKey),
             runtimeDescriptorField: readString(backendMode.runtimeDescriptorField),
             defaultValue: readString(backendMode.defaultValue),
@@ -363,8 +377,8 @@ function readEnvironmentDescriptor(
         ? {
             envKey: readString(serverBaseUrl.envKey) ?? '',
             explicitEnvKey: readString(serverBaseUrl.explicitEnvKey) ?? '',
-            settingKey: readString(serverBaseUrl.settingKey) ?? '',
-            byServerIdSettingKey: readString(serverBaseUrl.byServerIdSettingKey) ?? '',
+            settingKey: readSettingReference(serverBaseUrl.settingKey),
+            byServerIdSettingKey: readSettingReference(serverBaseUrl.byServerIdSettingKey),
             legacyMetadataKey: readString(serverBaseUrl.legacyMetadataKey) ?? '',
             legacyExplicitMetadataKey: readString(serverBaseUrl.legacyExplicitMetadataKey) ?? '',
             runtimeDescriptorField: readString(serverBaseUrl.runtimeDescriptorField) ?? '',
@@ -404,7 +418,7 @@ function readEnvironmentDescriptor(
         providerId,
         backendMode: backendModeConfig as EnvironmentDescriptor['backendMode'],
         ...(serverBaseUrlConfig && hasValidServerBaseUrlConfig
-            ? { serverBaseUrl: serverBaseUrlConfig }
+            ? { serverBaseUrl: serverBaseUrlConfig as EnvironmentDescriptor['serverBaseUrl'] }
             : {}),
         ...(agentExtraOwner && agentExtraSchemaId && agentExtraVersion && runtimeHandleFields.length > 0
             ? {
@@ -447,7 +461,7 @@ function readConnectedServiceProfileSourceDescriptors(value: unknown): readonly 
         const keyPrefix = readString(entry.keyPrefix);
         const labelKey = readString(entry.labelKey);
         const labelParams = readStringRecord(entry.labelParams);
-        const detailSettingsKey = readString(entry.detailSettingsKey);
+    const detailSettingsKey = readSettingReference(entry.detailSettingsKey);
         const serviceIdField = readString(entry.serviceIdField);
         const profileIdField = readString(entry.profileIdField);
         const sourceKind = readString(entry.source.kind);
@@ -960,12 +974,12 @@ function mergeHandoffProviderPatches(
 
 function readProfileLabelFromSettings(opts: Readonly<{
     settings: unknown;
-    settingKey?: string;
+    settingKey?: AgentUiSettingReferenceV1;
     serviceId: string;
     profileId: string;
 }>): string | null {
-    if (!opts.settingKey || !isRecord(opts.settings)) return null;
-    const labels = opts.settings[opts.settingKey];
+    if (!opts.settingKey) return null;
+    const labels = readSetting(opts.settings, opts.settingKey);
     if (!isRecord(labels)) return null;
     return normalizeOptionalString(labels[`${opts.serviceId}/${opts.profileId}`]);
 }

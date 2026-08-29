@@ -23,6 +23,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 
 const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
+const MAX_VISIBLE_TRIGGER_SUMMARY_LINES = 3;
 
 type Props = Readonly<{
     title?: string;
@@ -72,7 +73,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
     }, [mutationsEnabled, props.isInvocationCurrent, runNowController]);
 
     const handleSetEnabled = React.useCallback(async (automationId: string, nextEnabled: boolean) => {
-        if (!mutationsEnabled) return;
+        if (!mutationsEnabled || !props.isInvocationCurrent()) return;
         try {
             if (!nextEnabled) {
                 await sync.pauseAutomation(automationId);
@@ -80,12 +81,13 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 await sync.resumeAutomation(automationId);
             }
         } catch (error) {
+            if (!props.isInvocationCurrent()) return;
             await Modal.alert(
                 t('common.error'),
                 error instanceof Error ? error.message : t('automations.edit.updateFailed'),
             );
         }
-    }, [mutationsEnabled]);
+    }, [mutationsEnabled, props.isInvocationCurrent]);
 
     const openAutomation = React.useCallback((automationId: string) => {
         if (props.onOpenAutomation) {
@@ -108,7 +110,7 @@ export const AutomationListGroup = React.memo((props: Props) => {
                 const runNowDisabled = !mutationsEnabled || runNowPending;
                 const triggerLines = automation.triggers.length === 0
                     ? [t('automations.list.noAutomaticTriggers')]
-                    : automation.triggers.map((trigger) => [
+                    : automation.triggers.slice(0, MAX_VISIBLE_TRIGGER_SUMMARY_LINES).map((trigger) => [
                         formatAutomationTriggerLabel(trigger),
                         formatAutomationTriggerStatusLabel(trigger, automation.enabled),
                         ...(automation.enabled
@@ -119,7 +121,16 @@ export const AutomationListGroup = React.memo((props: Props) => {
                             : []),
                         ...(trigger.kind === 'schedule' ? [formatAutomationNextRun(trigger.nextRunAt)] : []),
                     ].join(' · '));
-                const subtitle = triggerLines.join('\n');
+                const hiddenTriggerCount = Math.max(
+                    0,
+                    automation.triggers.length - MAX_VISIBLE_TRIGGER_SUMMARY_LINES,
+                );
+                const subtitle = [
+                    ...triggerLines,
+                    ...(hiddenTriggerCount > 0
+                        ? [t('automations.list.moreTriggers', { count: hiddenTriggerCount })]
+                        : []),
+                ].join('\n');
 
                 return (
                     <Item

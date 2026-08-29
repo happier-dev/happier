@@ -38,6 +38,7 @@ import { readSessionHandoffSessionActivity } from '../domains/sessionHandoff/rea
 import { resolveSessionHandoffRuntimeConfig } from '../domains/sessionHandoff/sessionHandoffRuntimeConfig';
 import { resolveSessionHandoffSourceMachineId as resolveCanonicalSessionHandoffSourceMachineId } from '../domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
 import { stabilizeSessionHandoffTargetBinding } from '../domains/sessionHandoff/stabilizeSessionHandoffTargetBinding';
+import { readSessionMetadataLayoutVersion } from '../engine/sessions/parsePlainSessionPayload';
 import { runSessionHandoffRetryLoop } from '../domains/sessionHandoff/runSessionHandoffRetryLoop';
 import { publishSessionHandoffProgress } from '../domains/sessionHandoff/sessionHandoffProgressEvents';
 import {
@@ -293,10 +294,12 @@ function writeSessionMetadataToLocalSession(sessionId: string, metadata: Metadat
     if (!currentSession) {
         return null;
     }
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(currentSession.metadataLayoutVersion);
+    if (metadataLayoutVersion < 0) return null;
 
     state.applySessions([{
         ...currentSession,
-        ...((currentSession.metadataLayoutVersion ?? 0) === 1
+        ...(metadataLayoutVersion === 1
             ? { ownerMetadataView: metadata }
             : { metadata }),
     }]);

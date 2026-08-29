@@ -143,14 +143,17 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
   // cleared with the attempt.
   const finalizedItemMetadata = new Map<string, FinalizedItemMetadata>();
   const eventIdOrder: string[] = [];
-  type PendingAdmittedPersistenceEvent = Readonly<{
+  type PendingAdmittedPersistenceEvent = {
     admission: CanonicalVoiceTranscriptPersistenceAdmission;
     eventId: string;
     fingerprint: string;
     item: CanonicalVoiceTranscriptItem;
     epoch: number;
     attemptIdentity: string;
-  }>;
+    predecessor: PendingAdmittedPersistenceEvent | null;
+    successor: PendingAdmittedPersistenceEvent | null;
+    committed: boolean;
+  };
   // Reservations affect validation only while their attempt remains current.
   // The opaque admission itself survives a newer attempt so its exact durable
   // persistence event can drain without restoring the retired attempt's snapshot/epoch.
@@ -232,7 +235,41 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       pendingAdmittedPersistenceEventsByEventId.delete(pending.eventId);
     }
     if (pendingAdmittedPersistenceEventsByItemId.get(pending.item.itemId) === pending) {
-      pendingAdmittedPersistenceEventsByItemId.delete(pending.item.itemId);
+      const predecessor = pending.predecessor;
+      if (
+        predecessor
+        && admittedPersistenceEvents.get(predecessor.admission) === predecessor
+      ) {
+        pendingAdmittedPersistenceEventsByItemId.set(pending.item.itemId, predecessor);
+      } else {
+        pendingAdmittedPersistenceEventsByItemId.delete(pending.item.itemId);
+      }
+    }
+  };
+
+  const releasePendingAdmissionChain = (first: PendingAdmittedPersistenceEvent): void => {
+    const retainedPredecessor = (
+      first.predecessor
+      && admittedPersistenceEvents.get(first.predecessor.admission) === first.predecessor
+    ) ? first.predecessor : null;
+    const currentTail = pendingAdmittedPersistenceEventsByItemId.get(first.item.itemId) ?? null;
+    let releasedCurrentTail = false;
+    let pending: PendingAdmittedPersistenceEvent | null = first;
+    while (pending) {
+      const successor: PendingAdmittedPersistenceEvent | null = pending.successor;
+      if (pending === currentTail) releasedCurrentTail = true;
+      admittedPersistenceEvents.delete(pending.admission);
+      if (pendingAdmittedPersistenceEventsByEventId.get(pending.eventId) === pending) {
+        pendingAdmittedPersistenceEventsByEventId.delete(pending.eventId);
+      }
+      pending = successor;
+    }
+    if (!releasedCurrentTail) return;
+    if (retainedPredecessor) {
+      retainedPredecessor.successor = null;
+      pendingAdmittedPersistenceEventsByItemId.set(first.item.itemId, retainedPredecessor);
+    } else {
+      pendingAdmittedPersistenceEventsByItemId.delete(first.item.itemId);
     }
   };
 
@@ -403,11 +440,9 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
     const previous = items.get(event.itemId) ?? null;
     const finalized = finalizedItemMetadata.get(event.itemId) ?? null;
     const pendingByItemId = pendingAdmittedPersistenceEventsByItemId.get(event.itemId);
-    if (pendingByItemId) {
-      if (pendingByItemId.fingerprint !== fingerprint) diagnose('late_after_final', event);
-      return null;
-    }
-    const previousRole = previous?.role ?? finalized?.role;
+    const pendingPredecessor = pendingByItemId ?? null;
+    const previousAuthority = pendingPredecessor?.item ?? previous;
+    const previousRole = previousAuthority?.role ?? finalized?.role;
     if (previousRole && previousRole !== event.role) {
       diagnose('conflicting_duplicate', event);
       return null;
@@ -428,20 +463,21 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       return null;
     }
     const isCorrection = event.type === 'voice.transcript.corrected';
-    if (isCorrection && !finalized) {
+    const hasFinalAuthority = Boolean(pendingPredecessor?.item.final || finalized);
+    if (isCorrection && !hasFinalAuthority) {
       diagnose('correction_without_final', event);
       return null;
     }
-    if (finalized && !isCorrection) {
+    if ((pendingPredecessor?.item.final || finalized) && !isCorrection) {
       diagnose('late_after_final', event);
       return null;
     }
-    const previousRevision = previous?.revision ?? finalized?.revision;
+    const previousRevision = previousAuthority?.revision ?? finalized?.revision;
     if (previousRevision !== undefined && event.revision <= previousRevision) {
       diagnose('conflicting_duplicate', event);
       return null;
     }
-    const previousLastSequence = previous?.lastSequence ?? finalized?.lastSequence;
+    const previousLastSequence = previousAuthority?.lastSequence ?? finalized?.lastSequence;
     if (
       previousLastSequence !== undefined
       && event.provenance === 'live'
@@ -460,20 +496,24 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
       final: true,
       corrected: isCorrection,
       revision: event.revision,
-      firstSequence: previous?.firstSequence ?? finalized?.firstSequence ?? event.sequence,
+      firstSequence: previousAuthority?.firstSequence ?? finalized?.firstSequence ?? event.sequence,
       lastSequence: event.sequence,
       provenance: event.provenance,
       announce: event.provenance === 'live' ? 'polite' : 'none',
     });
     const admission = Object.freeze({}) as CanonicalVoiceTranscriptPersistenceAdmission;
-    const pending: PendingAdmittedPersistenceEvent = Object.freeze({
+    const pending: PendingAdmittedPersistenceEvent = {
       admission,
       eventId: event.eventId,
       fingerprint,
       item,
       epoch: event.epoch,
       attemptIdentity: attemptIdentity!,
-    });
+      predecessor: pendingPredecessor,
+      successor: null,
+      committed: false,
+    };
+    if (pendingPredecessor) pendingPredecessor.successor = pending;
     admittedPersistenceEvents.set(admission, pending);
     pendingAdmittedPersistenceEventsByEventId.set(event.eventId, pending);
     pendingAdmittedPersistenceEventsByItemId.set(event.itemId, pending);
@@ -485,10 +525,15 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
   ): CanonicalVoiceTranscriptPersistenceCommit | null => {
     const pending = admittedPersistenceEvents.get(admission);
     if (!pending) return null;
+    // Persistence admissions for one item form an arrival-ordered chain. A
+    // correction may validate against a still-pending final, but it must never
+    // overtake that predecessor at the durable boundary.
+    if (pending.predecessor && !pending.predecessor.committed) return null;
     // Consume before the callback: re-entrant or duplicate completion cannot
     // produce a second durable row.
     admittedPersistenceEvents.delete(admission);
     forgetPendingAdmission(pending);
+    pending.committed = true;
 
     const appliedToCurrentSnapshot = (
       epoch === pending.epoch
@@ -514,8 +559,9 @@ export function createCanonicalVoiceTranscriptProjector(deps: CanonicalVoiceTran
   ): boolean => {
     const pending = admittedPersistenceEvents.get(admission);
     if (!pending) return false;
-    admittedPersistenceEvents.delete(admission);
-    forgetPendingAdmission(pending);
+    // A correction admitted against this reservation has no independent
+    // authority if its predecessor is cancelled. Release the exact suffix.
+    releasePendingAdmissionChain(pending);
     return true;
   };
 

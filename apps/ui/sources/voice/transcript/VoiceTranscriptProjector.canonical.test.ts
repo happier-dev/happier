@@ -961,6 +961,89 @@ describe('canonical voice transcript projector', () => {
     ]);
   });
 
+  it('serializes a final and correction both admitted before the acceptance barrier releases', async () => {
+    const persisted: PersistSessionTranscriptMessageInput[] = [];
+    const source = Object.freeze({
+      pluginId: 'happier.voice.pending-chain',
+      contributionId: 'realtime-pending-chain',
+    });
+    const projector = createVoiceTranscriptProjector({
+      getState: () => ({ sessionMessages: {} }),
+      persistFinal: vi.fn(async (input: PersistSessionTranscriptMessageInput) => {
+        persisted.push(input);
+      }),
+    });
+    const attempt = projector.beginCanonicalAttempt('carrier');
+    const admittedFinal = projector.admitCanonicalPersistenceEvent({
+      conversationSessionId: 'carrier',
+      source,
+      event: event({
+        type: 'voice.transcript.final',
+        epoch: attempt.epoch,
+        eventId: 'pending-chain-final',
+        itemId: 'pending-chain-turn',
+        role: 'user',
+        text: 'provider final A',
+      }),
+    });
+    const admittedCorrection = projector.admitCanonicalPersistenceEvent({
+      conversationSessionId: 'carrier',
+      source,
+      event: event({
+        type: 'voice.transcript.corrected',
+        epoch: attempt.epoch,
+        sequence: 2,
+        revision: 2,
+        eventId: 'pending-chain-correction',
+        itemId: 'pending-chain-turn',
+        role: 'user',
+        text: 'provider corrected B before acceptance',
+      }),
+    });
+
+    expect(admittedFinal).not.toBeNull();
+    expect(admittedCorrection).not.toBeNull();
+    expect(projector.canonicalSnapshot('carrier')).toEqual([]);
+    const entryId = deriveCanonicalVoiceTranscriptEntryId({
+      attemptIdentity: attempt.attemptIdentity,
+      itemId: 'pending-chain-turn',
+      role: 'user',
+    });
+    expect(projector.commitAdmittedCanonicalPersistenceEvent(admittedFinal!)).toBe(entryId);
+    expect(projector.commitAdmittedCanonicalPersistenceEvent(admittedCorrection!)).toBe(entryId);
+
+    await vi.waitFor(() => expect(persisted).toHaveLength(2));
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        rawRecord: expect.objectContaining({
+          content: { type: 'text', text: 'provider final A' },
+          meta: expect.objectContaining({
+            happier: expect.objectContaining({
+              conversationTurnOriginV1: expect.objectContaining({ source }),
+            }),
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        rawRecord: expect.objectContaining({
+          content: { type: 'text', text: 'provider corrected B before acceptance' },
+          meta: expect.objectContaining({
+            happier: expect.objectContaining({
+              conversationTurnOriginV1: expect.objectContaining({ source }),
+            }),
+          }),
+        }),
+      }),
+    ]);
+    expect(projector.canonicalSnapshot('carrier')).toEqual([
+      expect.objectContaining({
+        text: 'provider corrected B before acceptance',
+        revision: 2,
+        corrected: true,
+      }),
+    ]);
+  });
+
   it('releases a canceled exact-final admission without retaining its duplicate reservation', () => {
     const projector = createVoiceTranscriptProjector({
       getState: () => ({ sessionMessages: {} }),

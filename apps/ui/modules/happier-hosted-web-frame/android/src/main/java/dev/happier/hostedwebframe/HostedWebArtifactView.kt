@@ -320,9 +320,12 @@ internal class HostedWebArtifactView(
 
   private fun deleteRetiredProfile(profileName: String) {
     markProfileRetired(profileName)
-    if (!deleteProfile(profileName)) {
-      onLoadError(mapOf("code" to "hosted_web_profile_cleanup_pending"))
-    }
+    // A retired-profile deletion is owner-local maintenance. AndroidX may
+    // reject it while the old WebView is still draining; deleteProfile keeps
+    // the name pending, logs the failure, and the next natural frame/module
+    // lifecycle retries it. Do not report this through the current frame's
+    // load-error channel: the frame itself may already be healthy.
+    deleteProfile(profileName)
   }
 
   private fun isActiveArtifactPage(candidate: WebView? = webView): Boolean {

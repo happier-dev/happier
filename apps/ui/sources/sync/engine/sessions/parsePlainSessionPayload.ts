@@ -5,9 +5,10 @@ import {
 } from '@happier-dev/protocol';
 
 export function readSessionMetadataLayoutVersion(value: unknown): number {
+    if (value === undefined) return 0;
     return typeof value === 'number' && Number.isInteger(value) && value >= 0
         ? value
-        : 0;
+        : -1;
 }
 
 export function compareSessionMetadataRevisions(params: Readonly<{
@@ -18,6 +19,9 @@ export function compareSessionMetadataRevisions(params: Readonly<{
 }>): number {
     const incomingLayoutVersion = readSessionMetadataLayoutVersion(params.incomingLayoutVersion);
     const storedLayoutVersion = readSessionMetadataLayoutVersion(params.storedLayoutVersion);
+    if (incomingLayoutVersion < 0 || storedLayoutVersion < 0) {
+        return 0;
+    }
     if (incomingLayoutVersion !== storedLayoutVersion) {
         return incomingLayoutVersion - storedLayoutVersion;
     }

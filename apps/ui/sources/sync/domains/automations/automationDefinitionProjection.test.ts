@@ -65,7 +65,6 @@ function detail(overrides: Partial<AutomationDefinitionDetail> = {}): Automation
         createdAt: timestamp,
         updatedAt: timestamp,
         assignments: [],
-        retiredTriggers: [],
         triggers: [
             scheduleTrigger('11111111-1111-4111-8111-111111111111', 2),
             eventTrigger('33333333-3333-4333-8333-333333333333', 7),

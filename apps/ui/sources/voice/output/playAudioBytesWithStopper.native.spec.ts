@@ -9,7 +9,7 @@ const { playbackLeaseRelease, acquirePlaybackLease } = vi.hoisted(() => {
   };
 });
 const native = vi.hoisted(() => {
-  type Event = { status: 'started' | 'finished' | 'failed'; reason?: string };
+  type Event = { status: 'started' | 'finished' | 'failed' | 'replaced'; reason?: string };
   let listener: ((event: Event) => void) | null = null;
   const start = vi.fn(async () => undefined);
   const stop = vi.fn(async () => undefined);
@@ -168,6 +168,23 @@ describe('playAudioBytesWithStopper (native iOS)', () => {
     native.emit({ status: 'finished' });
 
     expect(native.stop).toHaveBeenCalledOnce();
+    expect(playbackLeaseRelease).toHaveBeenCalledOnce();
+  });
+
+  it('settles replacement as cancellation and releases its file and audio lease once', async () => {
+    const promise = playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: () => () => {},
+    });
+    await vi.waitFor(() => expect(native.start).toHaveBeenCalledOnce());
+
+    native.emit({ status: 'replaced', reason: 'encoded_audio_replaced' });
+    await promise;
+    native.emit({ status: 'finished' });
+
+    expect(native.stop).toHaveBeenCalledOnce();
+    expect(fileDelete).toHaveBeenCalledOnce();
     expect(playbackLeaseRelease).toHaveBeenCalledOnce();
   });
 });

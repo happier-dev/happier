@@ -554,6 +554,49 @@ describe('sectioned composer suggestions (EU-3)', () => {
             }
         });
 
+        it('settles on a late healthy reference provider after the kind deadline', async () => {
+            let releaseHealthy: ((value: unknown) => void) | undefined;
+            let stalledSignal: AbortSignal | undefined;
+            machineRpcWithServerScopeMock.mockImplementation((rawParams: unknown) => {
+                const params = rawParams as Readonly<{
+                    payload?: Readonly<{ reference?: Readonly<{ localId?: string }> }>;
+                    signal?: AbortSignal;
+                }>;
+                if (params.payload?.reference?.localId === 'healthy') {
+                    return new Promise((resolve) => { releaseHealthy = resolve; });
+                }
+                stalledSignal = params.signal;
+                return new Promise(() => {});
+            });
+            const { getSuggestions, COMPOSER_SUGGESTION_KIND_DEADLINE_MS } = await importSuggestions();
+            vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+            const pending = getSuggestions('s1', '@issue', {
+                kinds: ['composerReference'],
+                composerReferenceHost: {
+                    machineId: 'machine-a',
+                    serverId: 'server-a',
+                    projection: composerReferenceProjection([
+                        { pluginId: 'acme.issues', localId: 'healthy' },
+                        { pluginId: 'acme.issues', localId: 'stalled' },
+                    ]),
+                    isCurrent: () => true,
+                },
+            });
+
+            await vi.advanceTimersByTimeAsync(COMPOSER_SUGGESTION_KIND_DEADLINE_MS + 1);
+            releaseHealthy?.({
+                ok: true,
+                reference: { pluginId: 'acme.issues', localId: 'healthy' },
+                page: [{ id: 'issue-42', label: 'Issue 42' }],
+            });
+            await vi.advanceTimersByTimeAsync(0);
+
+            expect((await pending).map((suggestion) => suggestion.key)).toEqual([
+                'composer-reference-["acme.issues","healthy","issue-42"]',
+            ]);
+            expect(stalledSignal?.aborted).toBe(true);
+        });
+
         it('forwards cancellation to reference work and fences a result that arrives after its host retires', async () => {
             let current = true;
             let releaseSearch: ((value: unknown) => void) | undefined;

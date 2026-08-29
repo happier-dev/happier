@@ -6,6 +6,7 @@ import {
     SessionSharedMetadataV1Schema,
 } from '@happier-dev/protocol';
 
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type SessionPresentationAgentIdInput = Readonly<{
@@ -18,7 +19,7 @@ type SessionPresentationAgentIdInput = Readonly<{
 export function readSessionPresentationAgentId(
     session: SessionPresentationAgentIdInput,
 ): string | null {
-    const metadataLayoutVersion = session.metadataLayoutVersion ?? 0;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
     if (metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
         const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(session.metadata);
         const sharedAgentId = sharedMetadata.success

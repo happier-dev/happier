@@ -1,13 +1,46 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import {
+    createCapturingLegendListMock,
+    createDeferred,
+    findTestInstanceByTypeContainingText,
+    flushHookEffects,
+    pressTestInstance,
+    renderScreen,
+} from '@/dev/testkit';
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
 import type { StorageState } from '@/sync/store/types';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const legendListMock = createCapturingLegendListMock({ renderItems: true });
+
+vi.mock('@/components/ui/lists/virtualized', () => ({
+    VirtualizedList: (props: any) => {
+        const renderSlot = (slot: any) => {
+            if (!slot) return null;
+            return React.isValidElement(slot) ? slot : React.createElement(slot);
+        };
+        return React.createElement(
+            React.Fragment,
+            null,
+            renderSlot(props.ListHeaderComponent),
+            React.createElement(legendListMock.module.LegendList, {
+                ...props,
+                // Render the slots once outside the host test element. Passing
+                // each same React element as both a host prop and a child makes
+                // react-test-renderer's JSON graph circular and hides the
+                // actual Session/Account assertions this suite owns.
+                ListHeaderComponent: null,
+                ListFooterComponent: null,
+            }),
+            renderSlot(props.ListFooterComponent),
+        );
+    },
+}));
 
 type AutomationListItem = Readonly<{
     id: string;
@@ -23,12 +56,6 @@ type AutomationListItem = Readonly<{
         kind: 'schedule';
         schedule: { kind: 'cron' | 'interval'; everyMs: number | null; scheduleExpr: string | null; timezone: string | null };
         nextRunAt: number | null;
-    }>>;
-    retiredTriggers: ReadonlyArray<Readonly<{
-        id: string;
-        kind: 'schedule' | 'pluginEvent' | 'sessionLifecycle';
-        revision: number;
-        retiredAt: number;
     }>>;
     lastRunAt: number | null;
     targetType: 'newSession' | 'existingSession' | 'executionRun';
@@ -79,7 +106,6 @@ function createScheduleDefinition(input: Readonly<{
         createdAt: 1,
         updatedAt: 1,
         assignments: [],
-        retiredTriggers: [],
         detail: input.detail === 'unloaded'
             ? { kind: 'unloaded', templateVersion }
             : { kind: 'available', templateVersion, value: { templateCiphertext: 'template' } },
@@ -100,12 +126,19 @@ const storageState = vi.hoisted(() => ({
 const settingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
+const activeAccountScopeState = vi.hoisted(() => ({
+    value: { serverId: 'server-a', accountId: 'account-a' } as { serverId: string; accountId: string } | null,
+}));
+const translationCallState = vi.hoisted(() => ({
+    keys: [] as string[],
+}));
 const hydrateReadyState = vi.hoisted(() => ({
     ready: true,
 }));
 
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
+    loadMoreAutomations: vi.fn(async () => ({ nextCursor: null })),
     refreshAutomationDefinitionDetail: vi.fn<(automationId: string) => Promise<void>>(
         async (_automationId) => {},
     ),
@@ -152,8 +185,10 @@ installAutomationScreensCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useAutomations: () => automationsState.list,
+            useAutomationDefinitionNextCursor: () => null,
             useSession: () => sessionState.value,
             useSettings: () => settingsState.value,
+            useActiveServerAccountScope: () => activeAccountScopeState.value,
             storage: Object.assign(
                 ((selector?: (value: StorageState) => unknown) => (
                     typeof selector === 'function'
@@ -172,6 +207,7 @@ installAutomationScreensCommonModuleMocks({
     },
     text: {
         translate: (key: string) => {
+            translationCallState.keys.push(key);
             const labels: Record<string, string> = {
                 'automations.session.emptyTitle': 'No automations yet',
                 'automations.session.emptyBody': 'Create an automation to trigger work for this session.',
@@ -180,6 +216,7 @@ installAutomationScreensCommonModuleMocks({
                 'common.actions': 'Actions',
                 'common.error': 'Error',
                 'automations.session.failedToLoad': 'Failed to load automations',
+                'automations.list.moreTriggers': '+7 more',
                 'sessionInfo.automationsTitle': 'Automations',
                 'session.inactiveNotResumableNoticeTitle': 'This session can’t be resumed',
             };
@@ -213,6 +250,8 @@ function setStorageStateForSession(input: Readonly<{
 
 describe('SessionAutomationsScreen', () => {
     beforeEach(() => {
+        legendListMock.state.reset();
+        translationCallState.keys = [];
         automationsState.list = [];
         sessionState.value = {
             id: 's1',
@@ -228,6 +267,7 @@ describe('SessionAutomationsScreen', () => {
             },
         };
         settingsState.value = {};
+        activeAccountScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
         hydrateReadyState.ready = true;
         setStorageStateForSession({
             session: sessionState.value,
@@ -302,11 +342,168 @@ describe('SessionAutomationsScreen', () => {
         const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
 
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Linked')).toBeTruthy();
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Linked' }).props.disabled)
+            .toBe(true);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(true);
 
         await act(async () => {
             refresh.resolve();
             await refresh.promise;
         });
+        expect(screen.findByProps({ accessibilityLabel: 'automations.detail.runNowTitle: Linked' }).props.disabled)
+            .toBe(false);
+        expect(screen.findByType('Switch' as any).props.disabled).toBe(false);
+    });
+
+    it('partitions private-detail completion by server-account scope', async () => {
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account A automation',
+            targetType: 'existingSession',
+            detail: 'unloaded',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+        expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledTimes(1);
+
+        activeAccountScopeState.value = { serverId: 'server-a', accountId: 'account-b' };
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account B automation',
+            targetType: 'existingSession',
+            detail: 'unloaded',
+        })];
+        await screen.update(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+
+        expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not let an Account A private-detail failure retire Account B with the same definition id', async () => {
+        syncSpies.refreshAutomationDefinitionDetail.mockRejectedValueOnce(new Error('Account A detail failed'));
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account A automation',
+            targetType: 'existingSession',
+            detail: 'unloaded',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+        expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledTimes(1);
+
+        activeAccountScopeState.value = { serverId: 'server-a', accountId: 'account-b' };
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account B automation',
+            targetType: 'existingSession',
+            detail: 'unloaded',
+        })];
+        await screen.update(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+
+        expect(syncSpies.refreshAutomationDefinitionDetail).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not publish an Account A refresh failure into Account B for the same Session id', async () => {
+        const accountARefresh = createDeferred<void>();
+        syncSpies.refreshAutomations.mockImplementationOnce(() => accountARefresh.promise);
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account A automation',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        activeAccountScopeState.value = { serverId: 'server-a', accountId: 'account-b' };
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account B automation',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        syncSpies.refreshAutomations.mockResolvedValueOnce();
+        await screen.update(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+
+        await act(async () => {
+            accountARefresh.reject(new Error('late Account A failure'));
+            await Promise.resolve();
+        });
+        expect(screen.findAllByProps({ testID: 'session-automations-stale-refresh-error' })).toHaveLength(0);
+    });
+
+    it('does not publish an Account A pause failure after Account B becomes current', async () => {
+        const accountAPause = createDeferred<void>();
+        syncSpies.pauseAutomation.mockImplementationOnce(() => accountAPause.promise);
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account A automation',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+        act(() => {
+            screen.findByType('Switch' as any).props.onValueChange(false);
+        });
+        expect(syncSpies.pauseAutomation).toHaveBeenCalledWith('same-id');
+
+        activeAccountScopeState.value = { serverId: 'server-a', accountId: 'account-b' };
+        automationsState.list = [createScheduleDefinition({
+            id: 'same-id',
+            name: 'Account B automation',
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+        })];
+        await screen.update(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await act(async () => {
+            accountAPause.reject(new Error('late Account A failure'));
+            await Promise.resolve();
+        });
+
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
+    it('virtualizes a large linked catalog and bounds trigger subtitles without hiding definitions', async () => {
+        automationsState.list = Array.from({ length: 200 }, (_unused, index) => createScheduleDefinition({
+            id: `a${index}`,
+            name: `Automation ${index}`,
+            targetType: 'existingSession',
+            linkedExistingSessionId: 's1',
+            triggers: Array.from({ length: 10 }, (_trigger, triggerIndex) => ({
+                id: `a${index}-schedule-${triggerIndex}`,
+                revision: 1,
+                enabled: true,
+                createdAt: 1,
+                updatedAt: 1,
+                kind: 'schedule' as const,
+                schedule: { kind: 'interval' as const, everyMs: 60_000, scheduleExpr: null, timezone: null },
+                nextRunAt: null,
+            })),
+        }));
+        const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
+
+        const screen = await renderScreen(React.createElement(SessionAutomationsScreen, { sessionId: 's1' }));
+        await flushHookEffects();
+
+        const listProps = legendListMock.state.props;
+        expect(listProps, 'Expected Session Automations to use the canonical virtualized list.').not.toBeNull();
+        const rows = listProps.data as ReadonlyArray<{ kind: string; automations?: readonly unknown[] }>;
+        expect(rows.reduce((sum, row) => sum + (row.automations?.length ?? 0), 0)).toBe(200);
+        expect(rows.reduce((max, row) => Math.max(max, row.automations?.length ?? 0), 0)).toBeLessThanOrEqual(8);
+
+        const firstAutomationRow = findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Automation 0');
+        expect(firstAutomationRow).toBeTruthy();
+        const rendered = JSON.stringify(screen.tree.toJSON());
+        expect(rendered).toContain('+7 more');
     });
 
     it('shows an announced retryable error instead of a scoped empty state after the initial refresh fails', async () => {

@@ -347,6 +347,53 @@ describe('NativeMicSession', () => {
         expect(record).toHaveBeenCalledTimes(1);
     });
 
+    it('deletes one concrete artifact from a native start that settles after cancellation and teardown without touching retry', async () => {
+        (Platform as { OS: string }).OS = 'ios';
+        let resolveLateStart!: () => void;
+        const lateStart = new Promise<void>((resolve) => {
+            resolveLateStart = resolve;
+        });
+        const staleStop = vi.fn(async () => 'file:///tmp/stale-after-cancel.m4a');
+        const retryStop = vi.fn(async () => 'file:///tmp/retry.m4a');
+        const createNativeFileRecording = vi.fn()
+            .mockReturnValueOnce({
+                start: vi.fn(() => lateStart),
+                setMuted: vi.fn(async () => {}),
+                stop: staleStop,
+            })
+            .mockReturnValueOnce({
+                start: vi.fn(async () => {}),
+                setMuted: vi.fn(async () => {}),
+                stop: retryStop,
+            });
+        const deleteRecordedAudio = vi.fn(async () => {});
+        const session = createExpoAudioRecordingMicSession({
+            createRecorder,
+            createNativeFileRecording,
+            requestPermission,
+            showPermissionDenied,
+            acquireAudioMode,
+            deleteRecordedAudio,
+        });
+        const abortController = new AbortController();
+
+        const starting = session.beginRecording(abortController.signal);
+        await vi.waitFor(() => expect(createNativeFileRecording).toHaveBeenCalledTimes(1));
+        abortController.abort();
+        await session.teardown();
+        resolveLateStart();
+        await starting;
+
+        expect(staleStop).toHaveBeenCalledTimes(1);
+        expect(deleteRecordedAudio).toHaveBeenCalledTimes(1);
+        expect(deleteRecordedAudio).toHaveBeenCalledWith('file:///tmp/stale-after-cancel.m4a');
+
+        await session.beginRecording();
+        await expect(session.stopRecording()).resolves.toBe('file:///tmp/retry.m4a');
+        expect(retryStop).toHaveBeenCalledTimes(1);
+        expect(deleteRecordedAudio).toHaveBeenCalledTimes(1);
+    });
+
     it('tracks muted state and pauses an active recorder until unmuted', async () => {
         const session = createExpoAudioRecordingMicSession({
             createRecorder,

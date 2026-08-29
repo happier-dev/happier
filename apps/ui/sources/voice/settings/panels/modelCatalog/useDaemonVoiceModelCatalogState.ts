@@ -101,6 +101,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     ) => Promise<void>;
     acceptLicense: (review: NonNullable<DaemonVoiceInferenceModelStatus['licenseReview']>) => Promise<void>;
     remove: (packId: string) => Promise<void>;
+    cancel: () => void;
 }> {
     const providedClient = params?.client;
     const enabled = params?.enabled !== false;
@@ -119,6 +120,7 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
     const refreshSequenceRef = React.useRef(0);
     const nextActionTokenRef = React.useRef(0);
     const activeActionTokenRef = React.useRef<number | null>(null);
+    const activeActionAbortControllerRef = React.useRef<AbortController | null>(null);
     const actionScopeGenerationRef = React.useRef(0);
     const enabledRef = React.useRef(enabled);
 
@@ -212,6 +214,8 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
                 // after unmount (or after this client/scope is replaced).
                 actionScopeGenerationRef.current += 1;
                 activeActionTokenRef.current = null;
+                activeActionAbortControllerRef.current?.abort();
+                activeActionAbortControllerRef.current = null;
             };
         }
         setState((current) => ({
@@ -222,6 +226,8 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         }));
         actionScopeGenerationRef.current += 1;
         activeActionTokenRef.current = null;
+        activeActionAbortControllerRef.current?.abort();
+        activeActionAbortControllerRef.current = null;
         return () => {
             enabledRef.current = false;
             refreshSequenceRef.current += 1;
@@ -235,16 +241,30 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         if (!shouldPoll) {
             return;
         }
-        const interval = setInterval(() => {
-            void refresh();
-        }, params?.pollIntervalMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.statusPollMs);
-        return () => clearInterval(interval);
+        const pollIntervalMs = params?.pollIntervalMs
+            ?? VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference.statusPollMs;
+        let cancelled = false;
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        const poll = async () => {
+            await refresh();
+            if (cancelled) return;
+            timeout = setTimeout(() => {
+                void poll();
+            }, pollIntervalMs);
+        };
+        timeout = setTimeout(() => {
+            void poll();
+        }, pollIntervalMs);
+        return () => {
+            cancelled = true;
+            if (timeout !== null) clearTimeout(timeout);
+        };
     }, [anyInstalling, enabled, params?.pollIntervalMs, refresh, state.actionPackId]);
 
     const runAction = React.useCallback(async (
         packId: string,
         operation: 'install' | 'remove',
-        action: (id: string, isCurrent: () => boolean) => Promise<unknown>,
+        action: (id: string, isCurrent: () => boolean, signal: AbortSignal) => Promise<unknown>,
     ) => {
         if (!enabledRef.current) {
             return;
@@ -252,7 +272,9 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         if (activeActionTokenRef.current !== null) return;
         const actionToken = ++nextActionTokenRef.current;
         const actionScopeGeneration = actionScopeGenerationRef.current;
+        const actionAbortController = new AbortController();
         activeActionTokenRef.current = actionToken;
+        activeActionAbortControllerRef.current = actionAbortController;
         const actionStillOwnsState = () => (
             enabledRef.current
             && activeActionTokenRef.current === actionToken
@@ -265,9 +287,10 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             errorCode: null,
         }));
         try {
-            await action(packId, actionStillOwnsState);
+            await action(packId, actionStillOwnsState, actionAbortController.signal);
         } catch (error) {
             if (!actionStillOwnsState()) return;
+            if (actionAbortController.signal.aborted) return;
             const errorCode = readErrorCode(error) ?? 'internal_error';
             setState((current) => ({
                 ...current,
@@ -277,6 +300,9 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
             if (!actionStillOwnsState()) return;
             setState((current) => ({ ...current, actionPackId: null }));
             activeActionTokenRef.current = null;
+            if (activeActionAbortControllerRef.current === actionAbortController) {
+                activeActionAbortControllerRef.current = null;
+            }
             // Mutation completion and status reconciliation are different
             // lifecycle phases. Do not keep the row visually/action-locked
             // while route discovery or a remote status request is slow; the
@@ -289,14 +315,14 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         (
             packId: string,
             prepare?: (isCurrent: () => boolean) => Promise<boolean>,
-        ) => runAction(packId, 'install', async (id, isCurrent) => {
+        ) => runAction(packId, 'install', async (id, isCurrent, signal) => {
             // License review is part of the same user-visible catalog
             // operation. Acquire the one existing mutation owner before the
             // confirmation opens so another row cannot race the review.
             if (prepare && !(await prepare(isCurrent))) return;
             if (!isCurrent()) return;
-            if (machineScope) await client.installModel({ packId: id }, machineScope);
-            else await client.installModel({ packId: id });
+            if (machineScope) await client.installModel({ packId: id, signal }, machineScope);
+            else await client.installModel({ packId: id, signal });
         }),
         [client, machineScope, runAction],
     );
@@ -326,5 +352,9 @@ export function useDaemonVoiceModelCatalogState(params?: Readonly<{
         [client, machineScope, runAction],
     );
 
-    return { state, refresh, install, acceptLicense, remove };
+    const cancel = React.useCallback(() => {
+        activeActionAbortControllerRef.current?.abort();
+    }, []);
+
+    return { state, refresh, install, acceptLicense, remove, cancel };
 }

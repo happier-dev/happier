@@ -1061,6 +1061,7 @@ export const zhHans = {
       event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `当轮次结束时 · ${sessionId}`,
       noAutomaticTriggers: '没有自动触发器',
+      moreTriggers: ({ count }: { count: number }) => `另有 ${count} 个`,
       noNextRun: "没有下次运行",
       nextRun: ({ time }: { time: string }) => `下次：${time}`,
       nextRunPending: "下次运行待定",
@@ -2887,6 +2888,10 @@ export const zhHans = {
   connectedServices: {
     accountScopeMismatchTitle: '切换服务器帐户以继续',
     accountScopeMismatchDescription: '此机器属于另一个服务器帐户。请切换到该服务器帐户以管理其已连接帐户。',
+    purposeTargets: {
+      requiredPrompt: '选择帐户或群组',
+      legacyUnavailable: '此服务器暂时无法显示已连接帐户目标',
+    },
     fallbackName: "已连接服务",
     serviceNames: {
       claudeSubscription: "Claude 订阅",
@@ -6352,6 +6357,10 @@ export const zhHans = {
       captureDurationExceeded: "听写已达到 60 秒的聆听上限。请重新开始以继续。",
       transcriptionDeadlineExceeded: "转写用时超过 30 秒。请改用更短的听写重试。",
       transcriptLimitExceeded: "听写的文本对输入框来说过长。请尝试更短的听写。",
+      transcriptionCredentialsRequired: "听写需要所选语音提供商的凭据。请检查其设置后重试。",
+      transcriptionMachineUnavailable: "听写设备或本地语音模型不可用。请重新连接或检查所选模型。",
+      transcriptionTransferFailed: "Happier 无法将录音发送到听写设备。请检查连接后重试。",
+      transcriptionFailed: "所选语音提供商无法转写此录音。请重试或检查其设置。",
       recordedAudioSizeUnavailable: "Happier 无法确认录音大小。请重新录制。",
       recordedAudioLimitExceeded: "录音超过 8 MB 上限。请尝试更短的听写。",
       microphoneOwnedByVoice: "请先结束 Voice，再开始听写。",
@@ -10857,6 +10866,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "设置历史",
+      footer: "从已保存的快照恢复账户偏好。应用数据、密钥和凭据保持当前值不变。",
+      loading: "正在加载历史…",
+      empty: "尚无已保存的快照",
+      unavailable: "历史不可用",
+      entryTitle: ({ version }: { version: string }) => `恢复版本 ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `保存于 ${recordedAt}`,
+      restoreConfirmTitle: "恢复设置？",
+      restoreConfirmBody: "您的账户偏好将被所选快照中的值替换。",
+      restoreConfirmAction: "恢复",
+      restoredTitle: "设置已恢复",
+      restoredBody: "您的账户偏好已从所选快照恢复。",
+      unchangedBody: "您当前的账户偏好已与所选快照一致。",
+      conflictTitle: "设置已更改",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `恢复期间设置已更改（当前版本 ${currentVersion}）。未写入任何内容——请查看当前设置后重试。`,
+      outcomeUnknownBody: "无法确定恢复是否完成。重试前请先查看当前设置。",
+      invalidBody: "无法安全地恢复所选快照。未写入任何内容。",
+      unavailableBody: "无法恢复所选快照。未写入任何内容。",
+    },
     // Account settings screen
     accountInformation: "账户信息",
     status: "状态",

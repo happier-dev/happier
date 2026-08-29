@@ -38,15 +38,7 @@ import {
     type PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
 
-import {
-    addStructuredMessageToKindMap,
-    isStructuredMessage,
-    type PluginUiStructuredMessageProjection,
-} from './structuredMessages';
-
 type UnknownRecord = Readonly<Record<string, unknown>>;
-
-export type { PluginUiStructuredMessageProjection };
 
 export type PluginUiTranslationsProjection = UnknownRecord & Readonly<{
     id: string;
@@ -301,7 +293,6 @@ export type PluginUiProjectionModel = Readonly<{
      */
     installedPackagesById: Readonly<Record<string, PluginProjectionInstalledPackageV2>>;
     translationsByPluginId: Readonly<Record<string, PluginUiTranslationsProjection>>;
-    structuredMessagesByKind: Readonly<Record<string, PluginUiStructuredMessageProjection>>;
     sessionHeaderActionsById: Readonly<Record<string, PluginUiSessionHeaderActionProjection>>;
     hostedWebById: Readonly<Record<string, PluginUiHostedWebProjection>>;
     reactNativeBundlesById: Readonly<Record<string, PluginUiReactNativeBundleProjection>>;
@@ -328,7 +319,6 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     generation: null,
     installedPackagesById: Object.freeze({}),
     translationsByPluginId: Object.freeze({}),
-    structuredMessagesByKind: Object.freeze({}),
     sessionHeaderActionsById: Object.freeze({}),
     hostedWebById: Object.freeze({}),
     reactNativeBundlesById: Object.freeze({}),
@@ -786,8 +776,6 @@ export function normalizePluginUiProjection(
     }
 
     const translationsByPluginId: Record<string, PluginUiTranslationsProjection> = {};
-    const structuredMessagesByKind: Record<string, PluginUiStructuredMessageProjection> = {};
-    const ambiguousStructuredMessageKinds = new Set<string>();
     const sessionHeaderActionsById: Record<string, PluginUiSessionHeaderActionProjection> = {};
     const hostedWebById: Record<string, PluginUiHostedWebProjection> = {};
     const reactNativeBundlesById: Record<string, PluginUiReactNativeBundleProjection> = {};
@@ -809,16 +797,6 @@ export function normalizePluginUiProjection(
                 ...entry,
                 locales: Object.freeze(readStringArray(entry.locales)),
             });
-        } else if (isStructuredMessage(entry)) {
-            if (ambiguousStructuredMessageKinds.has(entry.kind)) {
-                continue;
-            }
-            if (Object.hasOwn(structuredMessagesByKind, entry.kind)) {
-                delete structuredMessagesByKind[entry.kind];
-                ambiguousStructuredMessageKinds.add(entry.kind);
-                continue;
-            }
-            addStructuredMessageToKindMap(structuredMessagesByKind, entry);
         } else if (isSessionHeaderAction(entry)) {
             const action = resolveSessionHeaderAction(entry);
             if (action) {
@@ -905,7 +883,6 @@ export function normalizePluginUiProjection(
         generation: projection.generation,
         installedPackagesById,
         translationsByPluginId: Object.freeze(translationsByPluginId),
-        structuredMessagesByKind: Object.freeze(structuredMessagesByKind),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
         hostedWebById: Object.freeze(hostedWebById),
         reactNativeBundlesById: Object.freeze(reactNativeBundlesById),

@@ -255,7 +255,7 @@ export type BundledRealtimeProviderRuntimeHost = Readonly<{
   readProviderConversationState?(input: Readonly<{
     providerId: string;
     conversationSessionId: string;
-  }>): Promise<Readonly<{ conversationId: string }> | null>;
+  }>): Promise<Readonly<{ conversationId: string; updatedAt: number }> | null>;
   writeProviderConversationState?(input: Readonly<{
     providerId: string;
     conversationSessionId: string;

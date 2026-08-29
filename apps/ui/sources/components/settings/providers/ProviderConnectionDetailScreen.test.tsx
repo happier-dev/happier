@@ -133,6 +133,11 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 const activeServer = vi.hoisted(() => ({ serverId: 'srv_test' }));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: activeServer.serverId }) }));
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: activeServer.serverId,
+        serverUrl: 'https://server-a.example.test',
+        generation: 1,
+    }),
     // Stands in for the MMKV-backed profile registry: identifiers resolve to
     // the profile that owns them, so an identity id and a device-local id of
     // the same profile are equivalent and two distinct profiles are not.
@@ -173,6 +178,10 @@ vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
     useProjectedConnectedServicesRegistry: () => ({
         scopeKey: 'server-a', status: 'ready', errorReason: null, entries: connectedServiceRegistryState.entries,
     }),
+    useProjectedPluginLocalizedTextResolver: () => (
+        _pluginId: string,
+        value: string | Readonly<{ key: string; fallback: string }>,
+    ) => typeof value === 'string' ? value : `localized:${value.key}`,
 }));
 vi.mock('@/sync/domains/connectedServices/connectedServiceRegistry', () => ({
     getConnectedAccountAuthentication: () => ({
@@ -387,7 +396,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         expect(providerHarness.state.requests.some((request) => (
             request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
-            && (request.payload as { serverId?: string }).serverId === 'server-b'
+            && request.serverId === 'server-b'
         ))).toBe(true);
         for (const testID of [
             'provider-connection-account-api-key',
@@ -1413,6 +1422,20 @@ describe('ProviderConnectionDetailScreen', () => {
     });
 
     it('activates managed deployment with a structured group choice through the existing connection CAS', async () => {
+        connectedAccountProfileState.accounts = [{
+            ref: {
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                accountId: 'work',
+            },
+            status: 'connected',
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'cred-work',
+            configurationReady: true,
+            configurationRevision: null,
+            displayName: 'Work account',
+            scopes: [],
+        }];
         connectedAccountProfileState.groups = [{
             v: 1,
             ref: {
@@ -1425,13 +1448,21 @@ describe('ProviderConnectionDetailScreen', () => {
             incarnation: 'qualified-group-row-team',
             displayName: 'Team pool',
             policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
-            activeConnectedAccountId: null,
+            activeConnectedAccountId: 'work',
             generation: 1,
             runtimeStateRevision: 1,
             state: { status: 'ready' },
             createdAt: 1,
             updatedAt: 1,
-            members: [],
+            members: [{
+                v: 1,
+                connectedAccountId: 'work',
+                priority: 1,
+                enabled: true,
+                state: {},
+                createdAt: 1,
+                updatedAt: 1,
+            }],
         }];
         state.connection = connection({
             deployment: { kind: 'external' },
@@ -1465,6 +1496,7 @@ describe('ProviderConnectionDetailScreen', () => {
         const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser).find(
             (item) => item.props.testID === 'provider-connection-managed-purpose-chooser:upstream',
         );
+        expect(chooser?.props.localizedTextPluginId).toBe('acme.plugin');
         await act(async () => {
             chooser?.props.onChange({
                 kind: 'group',
@@ -1700,6 +1732,39 @@ describe('ProviderConnectionDetailScreen', () => {
         }, 'deployment:managedLocal');
     });
 
+    it('refuses an empty managed-purpose save only when the producer explicitly requires one binding', async () => {
+        state.connection = connection({
+            deployment: { kind: 'external' },
+            managedLocalOption: {
+                targetMachineId: 'machine-a',
+                connectedAccountPurposeBindingPolicy: { minimumBound: 1 },
+                connectedAccountPurposes: [{
+                    purpose: 'telemetry',
+                    service: {
+                        pluginId: 'happier.connected-account.openai',
+                        localId: 'openai',
+                    },
+                    required: false,
+                }],
+            },
+        });
+
+        const { ProviderConnectionDetailScreen } = await import('./ProviderConnectionDetailScreen');
+        const screen = await renderScreen(<ProviderConnectionDetailScreen connectionId="pc_a" />);
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-configure',
+        ));
+        await pressAndFlush(screen.findAllByType('Item').find(
+            (item) => item.props.testID === 'provider-connection-managed-purpose-save',
+        ));
+
+        expect(alert).toHaveBeenCalledWith(
+            'settingsProviders.local.invalidPurposeTargetTitle',
+            'settingsProviders.local.invalidPurposeTargetDescription',
+        );
+        expect(run).not.toHaveBeenCalled();
+    });
+
     it('reloads Connected Accounts through the canonical profile owner while the chooser is open', async () => {
         state.connection = connection({
             deployment: { kind: 'external' },
@@ -1815,8 +1880,10 @@ describe('ProviderConnectionDetailScreen', () => {
         await act(async () => {
             screen.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({
                 kind: 'account',
-                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
-                accountId: 'work',
+                account: {
+                    service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                    accountId: 'work',
+                },
             });
             await Promise.resolve();
         });
@@ -1838,6 +1905,20 @@ describe('ProviderConnectionDetailScreen', () => {
     });
 
     it('edits future managed defaults and explicitly contracts back to external', async () => {
+        connectedAccountProfileState.accounts = [{
+            ref: {
+                service: { pluginId: 'happier.connected-account.openai', localId: 'openai' },
+                accountId: 'work',
+            },
+            status: 'connected',
+            authenticationModeId: 'oauth',
+            revisionSemantics: 'revisioned',
+            credentialRevision: 'cred-work',
+            configurationReady: true,
+            configurationRevision: null,
+            displayName: 'Work account',
+            scopes: [],
+        }];
         connectedAccountProfileState.groups = [{
             v: 1,
             ref: {
@@ -1847,13 +1928,21 @@ describe('ProviderConnectionDetailScreen', () => {
             incarnation: 'qualified-group-row-future-team',
             displayName: 'Future team pool',
             policy: { v: 1, strategy: 'least_limited', autoSwitch: true, switchOn: { quota: true, usageLimit: true } },
-            activeConnectedAccountId: null,
+            activeConnectedAccountId: 'work',
             generation: 1,
             runtimeStateRevision: 1,
             state: { status: 'ready' },
             createdAt: 1,
             updatedAt: 1,
-            members: [],
+            members: [{
+                v: 1,
+                connectedAccountId: 'work',
+                priority: 1,
+                enabled: true,
+                state: {},
+                createdAt: 1,
+                updatedAt: 1,
+            }],
         }];
         state.connection = connection({
             revision: 4,

@@ -16,6 +16,7 @@ export function getExistingSessionAutomationUnavailableReason(
         case 'resume_key_missing':
             return t('automations.create.missingResumeKey');
         case 'session_not_eligible':
+        case 'session_not_user_facing':
             return t('session.inactiveNotResumableNoticeTitle');
         default:
             return null;

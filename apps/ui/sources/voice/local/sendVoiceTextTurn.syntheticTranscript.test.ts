@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { attachVoiceAgentActionEffectId } from '@/voice/agent/types';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const appendUser = vi.fn();
 const appendAssistant = vi.fn();
@@ -85,9 +86,17 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 function buildAccountSettings() {
   return {
+    ...settingsDefaults,
+    experiments: true,
+    featureToggles: {
+      ...settingsDefaults.featureToggles,
+      voice: true,
+    },
     voice: {
+      ...settingsDefaults.voice,
       providerId: 'local_conversation',
       providers: {
+        ...settingsDefaults.voice.providers,
         local_conversation: {
           schemaVersion: 1,
           config: {
@@ -266,7 +275,7 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         captureEpoch: () => 1,
         isEpochCurrent: () => true,
       },
-      voiceAgentSessions: { sendTurn },
+      voiceAgentSessions: { sendTurn, stop: vi.fn(async () => {}) },
     });
 
     const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
@@ -344,6 +353,54 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
     });
     expect(appendAssistant).not.toHaveBeenCalled();
     expect(appendNote).not.toHaveBeenCalled();
+  });
+
+  it('records a bounded-limit status without persisting or executing the terminal action-bearing response', async () => {
+    const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
+    const { voiceOutputStatusStore } = await import('@/voice/runtime/outputStatus/voiceOutputStatusStore');
+    const sendTurn = vi.fn(async (_sessionId, _userText, opts?: AcceptedTurnOptions) => {
+      await opts?.onUserTranscriptAccepted?.();
+      const round = sendTurn.mock.calls.length;
+      return {
+        assistantText: round === 4 ? 'Done. I sent it again.' : `Round ${round}.`,
+        actions: [attachVoiceAgentActionEffectId(
+          { t: 'sendSessionMessage', args: { message: `hello-${round}` } },
+          `bounded-turn:client:${round}:0`,
+        )],
+      };
+    });
+
+    await sendVoiceTextTurn({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      settings: buildAccountSettings(),
+      userText: 'keep sending',
+      playbackController: {
+        registerStopper: () => () => {},
+        interrupt: () => {},
+        captureEpoch: () => 1,
+        isEpochCurrent: () => true,
+      },
+      voiceAgentSessions: { sendTurn, stop: vi.fn(async () => {}) },
+    });
+
+    expect(sendTurn).toHaveBeenCalledTimes(4);
+    expect(submitMessage).toHaveBeenCalledTimes(3);
+    expect(submitMessage).not.toHaveBeenCalledWith(
+      's1',
+      'hello-4',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(appendAssistant).not.toHaveBeenCalled();
+    expect(voiceOutputStatusStore.readForSession(VOICE_AGENT_GLOBAL_SESSION_ID)).toMatchObject({
+      statusId: 'tool_round_limit_reached',
+      text: 'Tool round limit reached before the requested actions could run.',
+    });
+    voiceOutputStatusStore.clear({
+      sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      turnId: 'local_voice_agent:tool_round_limit',
+    });
   });
 
   it('resolves implicit tool session ids from the bound target session', async () => {

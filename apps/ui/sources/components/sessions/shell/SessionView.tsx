@@ -67,7 +67,10 @@ import {
     useStableComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
+import {
+    COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1,
+    composerRefV1Key,
+} from '@happier-dev/protocol/plugins/ui/composerRef';
 import {
     PluginContextualResourceStoreProvider,
 } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
@@ -76,7 +79,10 @@ import {
 } from '@/components/sessions/composer/composerAttachmentProjection';
 import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
 import { createPendingMessageComposerDocumentOwner } from '@/components/sessions/composer/pendingMessageComposerDocumentOwner';
-import type { MutableComposerDocumentOwner } from '@/components/sessions/composer/composerDocumentOwner';
+import type {
+    ComposerDraftFieldCurrentness,
+    MutableComposerDocumentOwner,
+} from '@/components/sessions/composer/composerDocumentOwner';
 import {
     createEphemeralComposerDocumentOwner,
     sameComposerAttachmentViews,
@@ -90,11 +96,9 @@ import {
     resolveCurrentComposerAttachmentCatalogEntry,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import {
-    readComposerSubmissionFieldCurrentness,
     submitComposerSnapshot,
     type ComposerSubmissionAdmissionHandoff,
     type ComposerSubmissionAdmissionOutcome,
-    type ComposerSubmissionFieldCurrentness,
     type ComposerSubmissionResult,
     type ComposerSubmissionSnapshot,
 } from '@/components/sessions/composer/composerSubmissionCoordinator';
@@ -108,7 +112,7 @@ import type { PendingMessageEditRequest } from '@/components/sessions/pending/Pe
 import { TranscriptMessageSelectionProvider } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
 import { TranscriptSelectionToolbarController } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbarController';
 import type { TranscriptSelectionToolbarMessage } from '@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar';
-import { appendTranscriptSelectionToNewSessionDraft } from '@/components/sessions/transcript/messageSelection/appendTranscriptSelectionToNewSessionDraft';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { openTranscriptSendToSessionModal } from '@/components/sessions/transcript/messageSelection/openTranscriptSendToSessionModal';
 import { sendTranscriptSelectionToSession } from '@/components/sessions/transcript/messageSelection/sendTranscriptSelectionToSession';
 import { useTranscriptSelectionEligibleMessageIds } from '@/components/sessions/transcript/messageSelection/useTranscriptSelectionEligibleMessageIds';
@@ -201,6 +205,7 @@ import { readSessionPresentationAgentId } from '@/sync/domains/session/presentat
 import { sync } from '@/sync/sync';
 import {
     acceptPendingMessageComposerAdmission,
+    abandonPendingMessageComposerAdmission,
     preparePendingMessageComposerAdmission,
 } from '@/sync/ops/pendingMessageComposerAdmission';
 import type { SessionTranscriptLoadIssue } from '@/sync/store/domains/transcriptLoading';
@@ -214,7 +219,6 @@ import {
 import { resolveSessionComposerSend } from '@/sync/domains/input/slashCommands/resolveSessionComposerSend';
 import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashCommands/expandPromptTemplateInvocation';
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
-import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '@/sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
 import type {
     SessionArmedAgentContinuationSubmission,
     SessionDraftValueFieldId,
@@ -407,12 +411,14 @@ import { resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals
 import { selectSyncErrorForServer } from '@/sync/runtime/connectivity/syncErrorScope';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { StorageState } from '@/sync/store/types';
 import {
     ConnectedServiceIdSchema,
     RawIngressStructuredInputV1Schema,
     type ComposerAttachmentDraftV1,
     type ComposerAttachmentInputV1,
+    type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
     type ComposerRefV1,
     type ComposerSnapshotV1,
     type ComposerTransactionResultV1,
@@ -637,11 +643,13 @@ function hasCanonicalOutboundHandoffForLocalId(sessionId: string, localId: strin
 type ComposerSemanticDraftCurrentnessSnapshot = Readonly<{
     values: ComposerSemanticDraftSnapshot;
     repositoryCurrentness: SessionDraftCurrentness;
+    composerCurrentness: ComposerDraftFieldCurrentness;
 }>;
 
-const SESSION_COMPOSER_DRAFT_FIELD_IDS = Object.keys(
-    SESSION_DRAFT_VALUE_FIELD_CATALOG,
-) as SessionDraftValueFieldId[];
+type ComposerSemanticDraftClearResult = Readonly<{
+    clearedFieldIds: readonly SessionDraftValueFieldId[];
+    textCleared: boolean;
+}>;
 
 function readObjectRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -4152,7 +4160,7 @@ function SessionViewLoaded({
         setDraftValue,
         restoreDraft,
         restoreComposerSnapshot,
-    } = useDraft(sessionId, message, setMessage, { active: surfaceFocused });
+    } = useDraft(sessionId, message, setMessage, { active: surfacePresented });
     const sessionDraftAddress = React.useMemo(() => ({
         kind: 'session' as const,
         sessionId,
@@ -4352,27 +4360,49 @@ function SessionViewLoaded({
                 address: { kind: 'session', sessionId },
             })
             : { address: { kind: 'session', sessionId }, mutationIds: {} },
-    }), [activeServerAccountScope, captureComposerSemanticDraftSnapshot, sessionId]);
+        composerCurrentness: existingSessionComposerOwner.captureCurrentness(),
+    }), [activeServerAccountScope, captureComposerSemanticDraftSnapshot, existingSessionComposerOwner, sessionId]);
     const clearSemanticDraftValuesAfterOutboundHandoff = React.useCallback((
         snapshot: ComposerSemanticDraftCurrentnessSnapshot,
-    ): readonly SessionDraftValueFieldId[] => {
-        if (!activeServerAccountScope) return [];
-        const changed = clearSessionDraftCurrentnessLocal({
-            scope: activeServerAccountScope,
-            address: { kind: 'session', sessionId },
-            currentness: snapshot.repositoryCurrentness,
-        });
-        if (!changed) return [];
-        void flushSessionDraft({
-            scope: activeServerAccountScope,
-            address: { kind: 'session', sessionId },
-        });
-        const cleared = [...SESSION_COMPOSER_DRAFT_FIELD_IDS];
+    ): ComposerSemanticDraftClearResult => {
+        const composerClear = existingSessionComposerOwner.clearAccepted(snapshot.composerCurrentness);
+        const changed = activeServerAccountScope
+            ? clearSessionDraftCurrentnessLocal({
+                scope: activeServerAccountScope,
+                address: { kind: 'session', sessionId },
+                currentness: snapshot.repositoryCurrentness,
+                fieldIds: ['target.routing.recipient', 'target.routing.agentContinuation', 'target.routing.executionRunDelivery'],
+            })
+            : false;
+        if (changed && activeServerAccountScope) {
+            void flushSessionDraft({
+                scope: activeServerAccountScope,
+                address: { kind: 'session', sessionId },
+            });
+        }
+        const afterValues = captureComposerSemanticDraftSnapshot();
+        const cleared: SessionDraftValueFieldId[] = [];
+        if (composerClear.changes.structuredInputMentions) cleared.push('structuredInput.mentions');
+        if (composerClear.changes.composerAttachments) cleared.push('structuredInput.composerAttachments');
+        if (changed) {
+            for (const fieldId of [
+                'routing.recipient',
+                'routing.agentContinuation',
+                'routing.executionRunDelivery',
+            ] as const) {
+                if (!sameStrictJsonValue(
+                    snapshot.values[fieldId] ?? null,
+                    afterValues[fieldId] ?? null,
+                )) {
+                    cleared.push(fieldId);
+                }
+            }
+        }
         if (cleared.includes('structuredInput.composerAttachments')) {
             setComposerDocumentRenderEpoch((current) => current + 1);
         }
-        return cleared;
-    }, [activeServerAccountScope, sessionId]);
+        return { clearedFieldIds: cleared, textCleared: composerClear.changes.text };
+    }, [activeServerAccountScope, captureComposerSemanticDraftSnapshot, existingSessionComposerOwner, sessionId]);
     const restoreSemanticDraftValuesFromSnapshot = React.useCallback((input: Readonly<{
         snapshot: ComposerSemanticDraftCurrentnessSnapshot;
         clearedSnapshot: ComposerSemanticDraftCurrentnessSnapshot;
@@ -4401,22 +4431,33 @@ function SessionViewLoaded({
             return currentness.mutationIds[path] === input.clearedSnapshot.repositoryCurrentness.mutationIds[path];
         });
         const values = input.snapshot.values;
+        const restoreMentions = fieldsToRestore.includes('structuredInput.mentions');
+        const restoreAttachments = fieldsToRestore.includes('structuredInput.composerAttachments');
+        if (restoreMentions || restoreAttachments) {
+            const currentOwner = existingSessionComposerOwner.read();
+            existingSessionComposerOwner.apply(currentOwner.revision, {
+                text: currentOwner.document.text,
+                references: restoreMentions
+                    ? [...composerReferencesFromStructuredMentions({
+                        text: currentOwner.document.text,
+                        mentions: (values['structuredInput.mentions'] ?? []) as ComposerStructuredInputMention[],
+                    })]
+                    : [...composerReferencesFromStructuredMentions({
+                        text: currentOwner.document.text,
+                        mentions: currentOwner.document.structuredInputMentions,
+                    })],
+                attachments: (restoreAttachments
+                    ? (values['structuredInput.composerAttachments'] ?? [])
+                    : currentOwner.document.composerAttachments)
+                    .map((attachment) => composerAttachmentDraftToView(attachment as ComposerAttachmentDraftV1, {
+                        entriesById: composerAttachmentAvailabilityEntriesById,
+                    })),
+            });
+        }
         writeExistingSessionDraft({
             scope: activeServerAccountScope,
             sessionId,
             patch: {
-                ...(fieldsToRestore.includes('structuredInput.mentions')
-                    ? {
-                        mentions: (values['structuredInput.mentions'] ?? [])
-                            .map((value) => StrictJsonValueSchema.parse(value)),
-                    }
-                    : {}),
-                ...(fieldsToRestore.includes('structuredInput.composerAttachments')
-                    ? {
-                        attachments: (values['structuredInput.composerAttachments'] ?? [])
-                            .map((value) => StrictJsonValueSchema.parse(value)),
-                    }
-                    : {}),
                 routing: {
                     ...(fieldsToRestore.includes('routing.recipient')
                         ? {
@@ -5113,6 +5154,7 @@ function SessionViewLoaded({
                 providerGroups={providerGroups}
                 providerProjectionAuthoritative={providerModelProjection.status === 'success'}
                 projectionError={providersFeatureEnabled ? providerModelProjection.error : null}
+                projectionFailures={providersFeatureEnabled ? providerModelProjection.refreshFailures : []}
                 retryProjection={providersFeatureEnabled ? providerModelProjection.refresh : null}
                 currentSelectionRecovery={providersFeatureEnabled
                     ? providerModelProjection.data?.currentSelectionRecovery ?? null
@@ -5697,6 +5739,9 @@ function SessionViewLoaded({
             await sendTranscriptSelectionToSession({
                 sourceSessionId: sessionId,
                 sourceServerId: sessionRouteServerId,
+                sourceMachineId: typeof machineId === 'string' && machineId.trim().length > 0
+                    ? machineId
+                    : null,
                 sourceSessionName: getSessionName(session),
                 selectedMessages,
                 bulkCopyFormat: transcriptBulkCopyFormat,
@@ -5716,18 +5761,53 @@ function SessionViewLoaded({
                         }),
                     { serverId });
                 },
-                appendNewSessionDraft: ({ promptText, sourceServerId }) => {
-                    return appendTranscriptSelectionToNewSessionDraft({
-                        promptText,
-                        sourceServerId,
+                openNewSession: async ({ promptText, sourceServerId, placement }) => {
+                    const accountLifetime = captureActiveServerAccountScopeLifetime();
+                    if (!activeServerAccountScope || !accountLifetime) return false;
+                    // A cross-server source must carry its exact machine too.
+                    // Falling back to the active Account's target while keeping
+                    // only the source server would recreate the split placement
+                    // contract this seed deliberately rejects.
+                    if (placement === undefined && activeServerAccountScope.serverId !== sourceServerId) {
+                        return false;
+                    }
+                    const outcome = seedAndOpenNewSession({
+                        seed: {
+                            prompt: promptText,
+                            ...(placement === undefined ? {} : { placement }),
+                        },
+                        // There are no attachment contributions in this flow;
+                        // the canonical seed owner still requires a caller
+                        // identity for the same public boundary used by the
+                        // Host API.
+                        pluginId: 'happier.transcript.selection',
                         scope: activeServerAccountScope,
+                        isCurrent: () => accountLifetime.isCurrent(),
+                        navigateToNewSession: ({
+                            dataId,
+                            draftId,
+                            worktree,
+                            spawnServerId,
+                            machineId,
+                            directory,
+                        }) => {
+                            router.push({
+                                pathname: '/new',
+                                params: {
+                                    draftId,
+                                    ...(dataId === null ? {} : { dataId }),
+                                    ...(worktree === undefined ? {} : { worktree }),
+                                    ...(spawnServerId === undefined ? {} : { spawnServerId }),
+                                    ...(machineId === undefined ? {} : { machineId }),
+                                    ...(directory === undefined ? {} : { directory }),
+                                },
+                            });
+                        },
                     });
+                    return outcome.kind === 'opened';
                 },
                 navigateToSession: ({ sessionId: destinationSessionId, serverId }) => {
                     void navigateToSession(destinationSessionId, { serverId });
-                },
-                navigateToNewSession: (draftId) => {
-                    router.push({ pathname: '/new', params: { draftId } });
                 },
             });
         } catch {
@@ -5735,6 +5815,7 @@ function SessionViewLoaded({
         }
     }, [
         activeServerAccountScope,
+        machineId,
         navigateToSession,
         router,
         session,
@@ -6605,6 +6686,7 @@ function SessionViewLoaded({
                                         ),
                                         admit: async (snapshot) => {
                                             const isStructuredInputCurrent = (): boolean => {
+                                                if (composerPluginActionScopeSignal.aborted) return false;
                                                 const currentEdit = pendingMessageEditRef.current;
                                                 return currentEdit !== null
                                                     && currentEdit.pendingId === activePendingEdit.pendingId
@@ -6627,49 +6709,83 @@ function SessionViewLoaded({
                                                 mentions: snapshot.references,
                                                 composerAttachments: candidate.attachments,
                                             });
-                                            const prepared = await preparePendingMessageComposerAdmission(sessionId, {
-                                                localId: candidate.localId,
-                                                text: snapshot.text,
-                                                structuredInput: rawStructuredInput,
-                                            }, {
-                                                serverId: sessionRouteServerId,
-                                                signal: composerPluginActionScopeSignal,
-                                            });
-                                            if (!prepared.ok || !isStructuredInputCurrent()) {
-                                                return { status: 'rejected' };
-                                            }
-                                            const acceptedComposerAdmission = await sync.updatePendingMessage(
-                                                sessionId,
-                                                activePendingEdit.pendingId,
-                                                prepared.text,
-                                                prepared.structuredInput,
-                                                {
-                                                    ...(candidate.replacementLocalId
-                                                        ? { replacementLocalId: candidate.replacementLocalId }
-                                                        : {}),
-                                                    preparedComposerAdmission: {
-                                                        stagedMediaHandles: prepared.stagedMediaHandles ?? [],
-                                                    },
-                                                },
-                                            );
-                                            if (!acceptedComposerAdmission) {
-                                                throw new Error('Pending Composer PATCH accepted without its canonical admission fact');
-                                            }
-                                            acceptedReplacementLocalId = acceptedComposerAdmission.localId === activePendingEdit.localId
-                                                ? null
-                                                : acceptedComposerAdmission.localId;
-                                            acceptedPreparedAttachments = acceptedComposerAdmission.structuredInput.composerAttachments ?? [];
-                                            try {
-                                                await acceptPendingMessageComposerAdmission(sessionId, acceptedComposerAdmission, {
+                                            let preparedForAbandon: Extract<
+                                                import('@happier-dev/protocol').SessionPendingMessageComposerAdmissionPrepareResponseV1,
+                                                { ok: true }
+                                            > | null = null;
+                                            let pendingPatchAccepted = false;
+                                            let preparedAbandoned = false;
+                                            const abandonPrepared = async (): Promise<void> => {
+                                                if (preparedAbandoned || !preparedForAbandon?.sessionMediaCleanup) return;
+                                                const abandonment: SessionPendingMessageComposerAdmissionAbandonedRequestV1 = {
+                                                    sessionId,
+                                                    localId: candidate.localId,
+                                                    structuredInput: preparedForAbandon.structuredInput,
+                                                    stagedMediaHandles: preparedForAbandon.stagedMediaHandles ?? [],
+                                                    sessionMediaCleanup: preparedForAbandon.sessionMediaCleanup,
+                                                };
+                                                await abandonPendingMessageComposerAdmission(sessionId, abandonment, {
                                                     serverId: sessionRouteServerId,
                                                 });
+                                                preparedAbandoned = true;
+                                            };
+                                            try {
+                                                const prepared = await preparePendingMessageComposerAdmission(sessionId, {
+                                                    localId: candidate.localId,
+                                                    text: snapshot.text,
+                                                    structuredInput: rawStructuredInput,
+                                                }, {
+                                                    serverId: sessionRouteServerId,
+                                                    signal: composerPluginActionScopeSignal,
+                                                });
+                                                if (prepared.ok) preparedForAbandon = prepared;
+                                                if (!prepared.ok || !isStructuredInputCurrent()) {
+                                                    await abandonPrepared();
+                                                    return { status: 'rejected' };
+                                                }
+                                                const acceptedComposerAdmission = await sync.updatePendingMessage(
+                                                    sessionId,
+                                                    activePendingEdit.pendingId,
+                                                    prepared.text,
+                                                    prepared.structuredInput,
+                                                    {
+                                                        ...(candidate.replacementLocalId
+                                                            ? { replacementLocalId: candidate.replacementLocalId }
+                                                            : {}),
+                                                        preparedComposerAdmission: {
+                                                            stagedMediaHandles: prepared.stagedMediaHandles ?? [],
+                                                            ...(prepared.sessionMediaMetadata
+                                                                ? { sessionMediaMetadata: prepared.sessionMediaMetadata }
+                                                                : {}),
+                                                        },
+                                                    },
+                                                );
+                                                if (!acceptedComposerAdmission) {
+                                                    await abandonPrepared();
+                                                    throw new Error('Pending Composer PATCH accepted without its canonical admission fact');
+                                                }
+                                                pendingPatchAccepted = true;
+                                                acceptedReplacementLocalId = acceptedComposerAdmission.localId === activePendingEdit.localId
+                                                    ? null
+                                                    : acceptedComposerAdmission.localId;
+                                                acceptedPreparedAttachments = acceptedComposerAdmission.structuredInput.composerAttachments ?? [];
+                                                try {
+                                                    await acceptPendingMessageComposerAdmission(sessionId, acceptedComposerAdmission, {
+                                                        serverId: sessionRouteServerId,
+                                                    });
+                                                } catch (error) {
+                                                    // The Pending PATCH is already authoritative. Keep
+                                                    // the accepted outcome while surfacing settlement/
+                                                    // notification failure to the user below.
+                                                    postAcceptanceError = error;
+                                                }
+                                                return { status: 'accepted' };
                                             } catch (error) {
-                                                // The Pending PATCH is already authoritative. Keep
-                                                // the accepted outcome while surfacing settlement/
-                                                // notification failure to the user below.
-                                                postAcceptanceError = error;
+                                                if (!pendingPatchAccepted) {
+                                                    await abandonPrepared().catch(() => undefined);
+                                                }
+                                                throw error;
                                             }
-                                            return { status: 'accepted' };
                                         },
                                     },
                                     clearAcceptedSnapshot: (snapshot) => {
@@ -6792,7 +6908,10 @@ function SessionViewLoaded({
                                 Object.keys(preservedSendIntentMetaOverrides).length > 0
                                     ? preservedSendIntentMetaOverrides
                                     : undefined,
-                                Object.keys(snapshotMetaOverrides).length > 0 ? snapshotMetaOverrides : undefined,
+                                {
+                                    ...(Object.keys(snapshotMetaOverrides).length > 0 ? snapshotMetaOverrides : {}),
+                                    [COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1]: snapshot.ref,
+                                },
                             );
                         };
                         const structuredInputMetaOverrides = shouldUseComposerSubmissionCoordinator
@@ -6874,7 +6993,6 @@ function SessionViewLoaded({
 
                         const submittedComposerText = composerTextBeforeSend;
                         const sendSnapshot = { sessionId, text: submittedComposerText };
-                        let semanticDraftSnapshotForFailedHandoffRestore = semanticDraftSnapshot;
                         let semanticDraftSnapshotAfterHandoffClear: ComposerSemanticDraftCurrentnessSnapshot | null = null;
                         let semanticDraftFieldsClearedAtHandoff: readonly SessionDraftValueFieldId[] = [];
                         const transientInputStateHandoff = captureComposerTransientInputStateForOutboundHandoff({
@@ -6883,6 +7001,7 @@ function SessionViewLoaded({
                             restoreTransientInputState: inputComposerPersistence.restoreTransientInputState,
                         });
                         let didClearAtOutboundHandoff = false;
+                        let didClearTextAtOutboundHandoff = false;
                         let outboundHandoffLocalId: string | null = null;
                         let didRecordOutboundAccepted = false;
                         const recordOutboundAccepted = () => {
@@ -6891,62 +7010,19 @@ function SessionViewLoaded({
                             trackMessageSent();
                             requestMountedTranscriptFollow();
                         };
-                        const clearAfterOutboundHandoff = (
-                            currentness?: ComposerSubmissionFieldCurrentness,
-                        ) => {
+                        const clearAfterOutboundHandoff = () => {
                             // Composer admission ends at the durable outbound handoff. Runtime
                             // wake and provider delivery continue through their canonical session/Pending
                             // projections and must not keep the submit button in a local sending state.
                             setIsComposerSending(false);
-                            const mentionsBeforeClear = currentness
-                                ? existingSessionComposerOwner.read().document.structuredInputMentions
-                                : undefined;
-                            let didClear = clearComposerAfterOutboundHandoff({
-                                snapshot: sendSnapshot,
-                                clearDraftForSessionIfCurrentValueMatches,
-                                clearTransientInputState: transientInputStateHandoff.clearTransientInputState,
-                                clearSemanticDraftValuesMatchingSnapshot: () => {
-                                    semanticDraftFieldsClearedAtHandoff = clearSemanticDraftValuesAfterOutboundHandoff(
-                                        semanticDraftSnapshot,
-                                    );
-                                    return semanticDraftFieldsClearedAtHandoff.length > 0;
-                                },
-                            });
-                            if (currentness) {
-                                const reconciledMentions = composerStructuredMentionsFromReferences({
-                                    references: currentness.reconciledReferences,
-                                    existing: mentionsBeforeClear ?? [],
-                                });
-                                const currentOwnerSnapshot = existingSessionComposerOwner.read();
-                                const currentMentions = currentOwnerSnapshot.document.structuredInputMentions;
-                                if (!sameStrictJsonValue(currentMentions, reconciledMentions)) {
-                                    semanticDraftSnapshotForFailedHandoffRestore = {
-                                        ...semanticDraftSnapshot,
-                                        values: {
-                                            ...semanticDraftSnapshot.values,
-                                            'structuredInput.mentions': mentionsBeforeClear,
-                                        },
-                                    };
-                                    existingSessionComposerOwner.apply(currentOwnerSnapshot.revision, {
-                                        text: currentOwnerSnapshot.document.text,
-                                        references: [...composerReferencesFromStructuredMentions({
-                                            text: currentOwnerSnapshot.document.text,
-                                            mentions: reconciledMentions,
-                                        })],
-                                        attachments: currentOwnerSnapshot.document.composerAttachments
-                                            .map((attachment) => composerAttachmentDraftToView(attachment, {
-                                                entriesById: composerAttachmentAvailabilityEntriesById,
-                                            })),
-                                    });
-                                    if (!semanticDraftFieldsClearedAtHandoff.includes('structuredInput.mentions')) {
-                                        semanticDraftFieldsClearedAtHandoff = [
-                                            ...semanticDraftFieldsClearedAtHandoff,
-                                            'structuredInput.mentions',
-                                        ];
-                                    }
-                                    didClear = true;
-                                }
+                            const clearResult = clearSemanticDraftValuesAfterOutboundHandoff(semanticDraftSnapshot);
+                            semanticDraftFieldsClearedAtHandoff = clearResult.clearedFieldIds;
+                            didClearTextAtOutboundHandoff = clearResult.textCleared;
+                            if (clearResult.textCleared) {
+                                transientInputStateHandoff.clearTransientInputState();
                             }
+                            const didClear = clearResult.textCleared
+                                || clearResult.clearedFieldIds.length > 0;
                             if (didClear) {
                                 semanticDraftSnapshotAfterHandoffClear = captureComposerSemanticDraftCurrentnessSnapshot();
                             }
@@ -6988,14 +7064,7 @@ function SessionViewLoaded({
                                     ) {
                                         return false;
                                     }
-                                    const currentness = readComposerSubmissionFieldCurrentness(
-                                        readSessionComposerSubmissionSnapshot(
-                                            readLatestDraftValue(),
-                                        ),
-                                        acceptedSnapshot,
-                                    );
-                                    if (!currentness) return false;
-                                    return clearAfterOutboundHandoff(currentness);
+                                    return clearAfterOutboundHandoff();
                                 },
                             });
                         };
@@ -7023,11 +7092,12 @@ function SessionViewLoaded({
                                     outboundHandoffLocalId,
                                 ),
                                 restoreDraftForSessionIfCurrentValueMatches,
+                                restoreDraftText: didClearTextAtOutboundHandoff,
                                 restoreTransientInputState: transientInputStateHandoff.restoreTransientInputState,
                                 restoreSemanticDraftValuesMatchingClearedSnapshot: () => {
                                     if (!semanticDraftSnapshotAfterHandoffClear) return false;
                                     return restoreSemanticDraftValuesFromSnapshot({
-                                        snapshot: semanticDraftSnapshotForFailedHandoffRestore,
+                                        snapshot: semanticDraftSnapshot,
                                         clearedSnapshot: semanticDraftSnapshotAfterHandoffClear,
                                         clearedFieldIds: semanticDraftFieldsClearedAtHandoff,
                                     }).length > 0;

@@ -12,7 +12,6 @@ export type TermuxRendererSelectionOptions = Readonly<{
     platform: string;
     availability: TerminalNativeAvailability | unknown;
     accessibilityAccepted: boolean;
-    legalAccepted: boolean;
     packageProofAccepted: boolean;
     crashFallbackAvailable: boolean;
 }>;
@@ -24,10 +23,6 @@ export function resolveTermuxRendererSelection(options: TermuxRendererSelectionO
 
     if (!options.featureEnabled) {
         return { renderer: 'xterm-webview', reason: 'feature-disabled' };
-    }
-
-    if (!options.legalAccepted) {
-        return { renderer: 'xterm-webview', reason: 'legal-not-approved' };
     }
 
     if (!options.packageProofAccepted) {

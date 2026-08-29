@@ -54,7 +54,6 @@ import {
     qualifiedPurposeKey,
     type PluginProjectedAgentConnectedAccountPurposeV2,
     type QualifiedConnectedAccountPurposeBindingTargetV1,
-    type PluginProjectionV2,
 } from '@happier-dev/protocol';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
 import { buildBackendTargetKey } from '@happier-dev/protocol';
@@ -69,6 +68,11 @@ import { AgentDetailExternalSessionsSection } from '@/components/settings/extern
 import type {
     ExternalSessionsQualifiedAgent,
 } from '@/components/settings/externalSessions/externalSessionsIntegrationModel';
+import {
+    resolveAgentDetailExternalSessionsBinding,
+    resolveAgentDetailPluginSettingsProjection,
+    resolveAgentDetailQualifiedIdentity,
+} from '@/components/settings/agents/resolveAgentDetailSettingsProjection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
@@ -80,62 +84,6 @@ import {
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { isAdministrationScopedPluginSettingsTargetCurrent } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-
-function resolveExternalSessionsAgentBinding(
-    projection: PluginProjectionV2 | null | undefined,
-    agentId: string,
-    qualifiedAgent?: ExternalSessionsQualifiedAgent | null,
-): Readonly<{
-    agent: ExternalSessionsQualifiedAgent;
-    generation: number;
-    browseAvailable: boolean;
-}> | null {
-    if (!projection || !projection.agentsById[agentId]) return null;
-
-    const externalSessions = projection.agentsById[agentId]?.externalSessions;
-    if (externalSessions?.generation === projection.generation) {
-        return {
-            agent: externalSessions.agent,
-            generation: externalSessions.generation,
-            browseAvailable: true,
-        };
-    }
-
-    const candidates: ExternalSessionsQualifiedAgent[] = [];
-    for (const record of projection.contributionIntrospection?.contributions ?? []) {
-        const contribution = record.contribution;
-        if (
-            record.progression.merged
-            && record.projection.state === 'projected'
-            && contribution.kind === 'localId'
-            && contribution.family === 'agents'
-            && (
-                qualifiedAgent
-                    ? contribution.pluginId === qualifiedAgent.pluginId
-                        && contribution.localId === qualifiedAgent.localId
-                    : contribution.localId === agentId
-            )
-        ) {
-            candidates.push({
-                pluginId: contribution.pluginId,
-                localId: contribution.localId,
-            });
-        }
-    }
-    const uniqueCandidates = [...new Map(
-        candidates.map((candidate) => [
-            `${candidate.pluginId}\u0000${candidate.localId}`,
-            candidate,
-        ]),
-    ).values()];
-    if (uniqueCandidates.length !== 1) return null;
-
-    return {
-        agent: uniqueCandidates[0]!,
-        generation: projection.generation,
-        browseAvailable: false,
-    };
-}
 
 function resolveQualifiedAgentProjectionId(params: Readonly<{
     routeAgent: ExternalSessionsQualifiedAgent | null;
@@ -305,6 +253,7 @@ const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentCon
                     <ConnectedAccountPurposeTargetChooser
                         key={purposeKey}
                         testID={`agent-connected-account-purpose:${declaration.purpose}`}
+                        localizedTextPluginId={identity.pluginId}
                         declaration={declaration}
                         value={targets.get(purposeKey) ?? null}
                         onChange={(target) => setTarget(declaration, target)}
@@ -1083,6 +1032,14 @@ export default React.memo(function AgentSettingsScreen() {
         agentProjectionParams,
         resolvedAgentProjectionId,
     ]);
+    // The one exact Agent identity this screen addresses, derived once: a
+    // qualified route names it outright; otherwise the resolved projection
+    // supplies it. Settings and External Sessions bindings compare
+    // pluginId+localId so a same-localId Agent in another plugin never wins.
+    const resolvedAgentIdentity = resolveAgentDetailQualifiedIdentity({
+        routeQualifiedAgent,
+        projectionIdentity: projection?.identity ?? null,
+    });
     const compatibilityAgentId = projection?.catalogAgentId ?? null;
     const cliAgentId = projection?.cli ? projection.agentId : null;
     const currentAgentCapabilities = React.useMemo(() => readCurrentProjectedAgentCapabilities({
@@ -1095,29 +1052,12 @@ export default React.memo(function AgentSettingsScreen() {
         daemonMergedProjectionInputs?.pluginProjectionV2,
         resolvedAgentProjectionId,
     ]);
-    const pluginSettingsProjection = React.useMemo(() => {
-        for (const entry of Object.values(daemonMergedProjectionInputs?.pluginProjectionById ?? {})) {
-            const matchingGroups = entry.editableSettingsGroups.filter((group) => (
-                group.target.kind === 'agent'
-                && (
-                    routeQualifiedAgent
-                        ? group.target.agent.pluginId === routeQualifiedAgent.pluginId
-                            && group.target.agent.localId === routeQualifiedAgent.localId
-                        : group.target.agent.localId === normalizedAgentId
-                )
-            ));
-            if (matchingGroups.length > 0) {
-                return {
-                    ...entry,
-                    editableSettingsGroups: matchingGroups,
-                };
-            }
-        }
-        return null;
-    }, [
+    const pluginSettingsProjection = React.useMemo(() => resolveAgentDetailPluginSettingsProjection({
+        pluginProjectionById: daemonMergedProjectionInputs?.pluginProjectionById,
+        identity: resolvedAgentIdentity,
+    }), [
         daemonMergedProjectionInputs?.pluginProjectionById,
-        normalizedAgentId,
-        routeQualifiedAgent,
+        resolvedAgentIdentity,
     ]);
     const compatibilityTargetKeys = React.useMemo(() => {
         const providerTargetKey = projection?.backendTargetKey;
@@ -1148,18 +1088,17 @@ export default React.memo(function AgentSettingsScreen() {
         compatibilityAgentId,
     ]);
     const externalSessionsBinding = React.useMemo(() => {
-        const pluginProjection = daemonMergedProjectionInputs?.pluginProjectionV2;
-        return resolvedAgentProjectionId
-            ? resolveExternalSessionsAgentBinding(
-                pluginProjection,
-                resolvedAgentProjectionId,
-                routeQualifiedAgent,
-            )
+        return resolvedAgentProjectionId && resolvedAgentIdentity
+            ? resolveAgentDetailExternalSessionsBinding({
+                projection: daemonMergedProjectionInputs?.pluginProjectionV2,
+                agentId: resolvedAgentProjectionId,
+                identity: resolvedAgentIdentity,
+            })
             : null;
     }, [
         daemonMergedProjectionInputs?.pluginProjectionV2,
         resolvedAgentProjectionId,
-        routeQualifiedAgent,
+        resolvedAgentIdentity,
     ]);
     const externalSessionsRefreshKey = externalSessionsBinding
         ? `${externalSessionsBinding.generation}:${executionTarget?.serverId ?? ''}:${executionTarget?.machine.id ?? ''}`

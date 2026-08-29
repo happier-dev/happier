@@ -11,8 +11,8 @@ import {
     resolveCatalogAgentIdForBackendTarget,
     resolveOperationalBackendTargetForAgentSelection,
 } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveConfiguredAgentRuntimeKindFromUiBehavior } from '@/agents/registry/registryUiBehavior';
+import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -111,18 +111,24 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     settings: Settings;
     runtimeCarrierAgentId?: string | null;
+    machineId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
 }>): NewSessionCapabilityProbeContext | null {
     const backendTarget = resolveNewSessionOperationalBackendTarget(params);
-    const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
-        ? params.runtimeCarrierAgentId
-        : (resolveCatalogAgentIdForBackendTarget(backendTarget)
-            ?? (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
+    // The selected operational identity is authoritative for both bundled and
+    // installed Agents. A qualified installed id may contain `/`; it must not
+    // be narrowed through the bundled roster before the machine-scoped
+    // declaration reader gets a chance to resolve it.
+    const agentId = params.runtimeCarrierAgentId?.trim()
+        || resolveCatalogAgentIdForBackendTarget(backendTarget);
     if (!agentId) {
         return null;
     }
     const runtimeKind = resolveConfiguredAgentRuntimeKindFromUiBehavior({
         agentId,
         settings: settingsParse(params.settings),
+        ...(params.pluginSettings ? { pluginSettings: params.pluginSettings } : {}),
+        ...(params.machineId?.trim() ? { machineId: params.machineId } : {}),
     });
     if (!runtimeKind) return null;
 
@@ -137,15 +143,15 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     settings: Settings;
     runtimeCarrierAgentId?: string | null;
+    machineId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     connectedServices?: ConnectedServiceBindingsV1 | null;
     connectedServicesCacheIdentity?: string | null;
 }>): NewSessionCapabilityProbeContext | null {
     const shared = resolveNewSessionCapabilityProbeContext(params);
     const backendTarget = resolveNewSessionOperationalBackendTarget(params);
-    const agentId = isBundledAgentId(params.runtimeCarrierAgentId)
-        ? params.runtimeCarrierAgentId
-        : (resolveCatalogAgentIdForBackendTarget(backendTarget)
-            ?? (isBundledAgentId(backendTarget.backendId) ? backendTarget.backendId : null));
+    const agentId = params.runtimeCarrierAgentId?.trim()
+        || resolveCatalogAgentIdForBackendTarget(backendTarget);
     const observation = (agentId ? getAgentModelConfig(agentId)?.nativeCatalogObservation : null) ?? null;
     // Released bundled model-config author facts still name their observed
     // Connected service by the bundled scalar id. Canonical bindings are keyed

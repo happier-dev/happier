@@ -1116,6 +1116,7 @@ export const pt = {
       event: ({ eventId }: { eventId: string }) => `Evento: ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Quando um turno terminar · ${sessionId}`,
       noAutomaticTriggers: 'Sem acionadores automáticos',
+      moreTriggers: ({ count }: { count: number }) => `+${count} restantes`,
       noNextRun: "Sem próxima execução",
       nextRun: ({ time }: { time: string }) => `Próxima: ${time}`,
       nextRunPending: "Próxima execução pendente",
@@ -3076,6 +3077,10 @@ export const pt = {
   connectedServices: {
     accountScopeMismatchTitle: 'Muda de conta do servidor para continuar',
     accountScopeMismatchDescription: 'Esta máquina pertence à conta de outro servidor. Muda para essa conta do servidor para gerir as respetivas contas conectadas.',
+    purposeTargets: {
+      requiredPrompt: 'Escolhe uma conta ou um grupo',
+      legacyUnavailable: 'Este servidor ainda não consegue mostrar destinos de contas conectadas',
+    },
     fallbackName: "Serviço conectado",
     serviceNames: {
       claudeSubscription: "Assinatura Claude",
@@ -6670,6 +6675,10 @@ export const pt = {
       captureDurationExceeded: "O ditado atingiu o limite de 60 segundos de escuta. Comece de novo para continuar.",
       transcriptionDeadlineExceeded: "A transcrição demorou mais de 30 segundos. Tente um ditado mais curto.",
       transcriptLimitExceeded: "O texto ditado é demasiado longo para o campo de mensagem. Tente um ditado mais curto.",
+      transcriptionCredentialsRequired: "O ditado precisa das credenciais do fornecedor de voz selecionado. Reveja a configuração e tente de novo.",
+      transcriptionMachineUnavailable: "A máquina de ditado ou o modelo de voz local não está disponível. Volte a ligar ou reveja o modelo selecionado.",
+      transcriptionTransferFailed: "O Happier não conseguiu enviar a gravação para a máquina de ditado. Verifique a ligação e tente de novo.",
+      transcriptionFailed: "O fornecedor de voz selecionado não conseguiu transcrever a gravação. Tente de novo ou reveja a configuração.",
       recordedAudioSizeUnavailable: "O Happier não conseguiu verificar o tamanho da gravação. Grave novamente.",
       recordedAudioLimitExceeded: "A gravação excede o limite de 8 MB. Tente um ditado mais curto.",
       microphoneOwnedByVoice: "Termine o Voice antes de iniciar o ditado.",
@@ -11346,6 +11355,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "Histórico das configurações",
+      footer: "Restaura as preferências da conta a partir de um instantâneo salvo. Dados do aplicativo, segredos e credenciais permanecem com os valores atuais.",
+      loading: "Carregando histórico…",
+      empty: "Ainda não há instantâneos salvos",
+      unavailable: "Histórico indisponível",
+      entryTitle: ({ version }: { version: string }) => `Restaurar versão ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `Salvo em ${recordedAt}`,
+      restoreConfirmTitle: "Restaurar as configurações?",
+      restoreConfirmBody: "As preferências da conta serão substituídas pelos valores do instantâneo selecionado.",
+      restoreConfirmAction: "Restaurar",
+      restoredTitle: "Configurações restauradas",
+      restoredBody: "As preferências da conta foram restauradas do instantâneo selecionado.",
+      unchangedBody: "As preferências atuais da conta já correspondem ao instantâneo selecionado.",
+      conflictTitle: "As configurações mudaram",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `As configurações mudaram durante a restauração (versão atual ${currentVersion}). Nada foi gravado — revise as configurações atuais e tente novamente.`,
+      outcomeUnknownBody: "Não foi possível determinar se a restauração foi concluída. Revise as configurações atuais antes de tentar novamente.",
+      invalidBody: "O instantâneo selecionado não pode ser restaurado com segurança. Nada foi gravado.",
+      unavailableBody: "Não foi possível restaurar o instantâneo selecionado. Nada foi gravado.",
+    },
     // Account settings screen
     accountInformation: "Informações da conta",
     status: "Estado",

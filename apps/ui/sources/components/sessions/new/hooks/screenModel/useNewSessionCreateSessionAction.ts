@@ -54,6 +54,7 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
                     machineId: selectedMachineId,
                     serverId: capabilityServerId,
                     settings: createSessionParams.settings,
+                    pluginSettings: createSessionParams.pluginSettings,
                     resumeSessionId: createSessionParams.resumeSessionId,
                 });
             } catch {

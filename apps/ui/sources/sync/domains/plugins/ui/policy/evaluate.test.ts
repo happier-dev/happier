@@ -205,6 +205,21 @@ describe('evaluatePluginUiPolicy', () => {
             platform: 'web',
             isFeatureEnabled: () => false,
         })).toMatchObject({ visible: false, enabled: false });
+
+        expect(evaluatePluginUiPolicy({
+            id: 'browserAction:acme.preview:unknown-gate',
+            contributionKind: 'browserAction',
+            availability: {
+                disabledWhen: { fact: 'host.feature', operator: 'enabled', value: 'preview.readOnly' },
+                disabledReason: 'Preview is read-only',
+            },
+        }, {
+            platform: 'web',
+        })).toMatchObject({
+            visible: true,
+            enabled: false,
+            diagnostics: ['availability_disabled_fact_unavailable'],
+        });
     });
 
     it('treats a literal boolean enabled flag (browser action schema) as the enabled state', () => {

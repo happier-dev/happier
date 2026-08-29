@@ -62,17 +62,19 @@ export type WorkspaceStatFileResponse =
       modifiedMs?: number;
       /**
        * Status-change time, when the daemon reports it. Size and modification
-       * time alone cannot distinguish an equal-size edit that preserved mtime,
-       * so callers that need a revision to answer for bytes include this.
+       * time alone cannot distinguish an equal-size edit that preserved mtime;
+       * exact revision consumers request `contentHash` below.
        */
       changedMs?: number;
+      /** SHA-256 of the file bytes when the daemon can provide an exact revision. */
+      contentHash?: string;
     }>
   | Readonly<{ success: false; error: string; errorCode?: string }>;
 
 export async function workspaceStatFile(
     target: WorkspaceFileSystemTarget,
     path: string,
-    options?: Readonly<{ signal?: AbortSignal | null }>,
+    options?: Readonly<{ signal?: AbortSignal | null; includeContentHash?: boolean }>,
 ): Promise<WorkspaceStatFileResponse> {
     return await callDaemonWorkspaceStatFileRpc({
         machineId: target.machineId,
@@ -80,6 +82,7 @@ export async function workspaceStatFile(
         rootPath: target.rootPath,
         agentRootPath: target.agentRootPath,
         request: { path },
+        ...(options?.includeContentHash ? { includeContentHash: true } : {}),
         ...(options?.signal ? { signal: options.signal } : {}),
     });
 }

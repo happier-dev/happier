@@ -70,7 +70,7 @@ function normalizeLocalNeuralTtsSettings(tts: VoiceLocalTtsSettings): Readonly<{
     execution: VoiceLocalTtsSettings['localNeural']['execution'];
     model: string;
     speed: number;
-    voiceId: string;
+    voiceId: string | null;
 }> {
     const localNeural = (tts.localNeural ?? null) as any;
     return {
@@ -78,7 +78,7 @@ function normalizeLocalNeuralTtsSettings(tts: VoiceLocalTtsSettings): Readonly<{
         execution: localNeural?.execution ?? 'auto',
         model: typeof localNeural?.model === 'string' && localNeural.model.trim() ? localNeural.model.trim() : 'kokoro',
         speed: typeof localNeural?.speed === 'number' && Number.isFinite(localNeural.speed) ? localNeural.speed : 1,
-        voiceId: typeof localNeural?.voiceId === 'string' && localNeural.voiceId.trim() ? localNeural.voiceId.trim() : 'af_heart',
+        voiceId: typeof localNeural?.voiceId === 'string' && localNeural.voiceId.trim() ? localNeural.voiceId.trim() : null,
     };
 }
 
@@ -110,14 +110,14 @@ async function speakWithLocalNeuralDeviceRuntime(
     params: Readonly<{
         assetSetId: string | null;
         speed: number;
-        voiceId: string;
+        voiceId: string | null;
     }>,
 ): Promise<void> {
     try {
         await speakKokoroText({
             text: ctx.text,
             assetSetId: params.assetSetId,
-            voiceId: params.voiceId,
+            voiceId: params.voiceId ?? 'af_heart',
             speed: params.speed,
             timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
             registerPlaybackStopper: ctx.registerPlaybackStopper,
@@ -133,7 +133,7 @@ async function speakWithLocalNeuralDaemonRuntime(
     params: Readonly<{
         assetSetId: string | null;
         speed: number;
-        voiceId: string;
+        voiceId: string | null;
     }>,
 ): Promise<void> {
     try {

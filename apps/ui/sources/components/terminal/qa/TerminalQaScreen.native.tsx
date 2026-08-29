@@ -177,7 +177,7 @@ function TerminalQaScreenEnabled(): React.ReactElement {
                         />
                     </ButtonRow>
                     <Text style={{ color: theme.colors.text.secondary }}>
-                        This internal route bypasses server rollout discovery only. It never bypasses package, ABI, legal, module, accessibility, or crash-fallback gates.
+                        This internal route bypasses server rollout discovery only. It never bypasses package, ABI, source-closure, module, accessibility, or crash-fallback gates.
                     </Text>
                 </Section>
 
@@ -305,7 +305,6 @@ export function createTerminalQaNativeRendererOptions(
             featureEnabled: true,
             platform,
             availability,
-            accessibilityAccepted: true,
             packageProofAccepted: availability.available,
             crashFallbackAvailable: true,
         };
@@ -315,8 +314,6 @@ export function createTerminalQaNativeRendererOptions(
             featureEnabled: true,
             platform,
             availability,
-            accessibilityAccepted: true,
-            legalAccepted: availability.available,
             packageProofAccepted: availability.available,
             crashFallbackAvailable: true,
         };

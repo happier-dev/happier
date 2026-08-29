@@ -13,6 +13,7 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 export type SessionSuggestionCatalogRequest = Readonly<{
     vendorPlugins?: boolean;
@@ -119,6 +120,8 @@ function applyCatalogSnapshots(
     if (!snapshots.vendorPluginCatalog && !snapshots.skillCatalog) return;
     const session = storage.getState().sessions[sessionId];
     if (!session) return;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
+    if (metadataLayoutVersion < 0) return;
     const metadata = MetadataSchema.parse({
         ...(readSessionOwnerMetadataView(session) ?? {}),
         ...(snapshots.vendorPluginCatalog
@@ -131,7 +134,7 @@ function applyCatalogSnapshots(
     storage.getState().applySessions([
         {
             ...session,
-            ...((session.metadataLayoutVersion ?? 0) === 1
+            ...(metadataLayoutVersion === 1
                 ? { ownerMetadataView: metadata }
                 : { metadata }),
         },

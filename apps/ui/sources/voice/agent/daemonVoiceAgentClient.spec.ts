@@ -99,6 +99,31 @@ describe('DaemonVoiceAgentClient', () => {
     ).rejects.toMatchObject({ message: 'unsupported', rpcErrorCode: 'VOICE_AGENT_UNSUPPORTED' });
   });
 
+  it.each([undefined, '', '   '])('rejects missing or blank agentId before RPC (%s)', async (agentId) => {
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    await expect(
+      client.start({
+        sessionId: 's1',
+        agentSource: 'session',
+        ...(agentId === undefined ? {} : { agentId }),
+        verbosity: 'short',
+        chatModelId: 'fast',
+        commitModelId: 'fast',
+        permissionIntent: 'read-only',
+        idleTtlSeconds: 300,
+        initialContext: 'ctx',
+      }),
+    ).rejects.toMatchObject({
+      message: 'voice_agent_selection_unavailable',
+      code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
+    });
+
+    expect(vi.mocked(sessionRpcWithServerScope)).not.toHaveBeenCalled();
+  });
+
   it('uses execution.run.ensureOrStart when starting a daemon voice agent', async () => {
     const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
     vi.mocked(sessionRpcWithServerScope).mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
@@ -149,12 +174,12 @@ describe('DaemonVoiceAgentClient', () => {
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
     const client = new DaemonVoiceAgentClient();
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
-      agentTargetKey: 'backend:opencode',
+      agentTargetKey: 'agent:happier.agent.opencode/opencode',
       providerConnectionId: 'voice-openai-compatible-chat',
       modelId: 'chat-model',
     });
     const commitModelSelection = ProviderBoundModelRefSchema.parse({
-      agentTargetKey: 'backend:opencode',
+      agentTargetKey: 'agent:happier.agent.opencode/opencode',
       providerConnectionId: 'voice-openai-compatible-chat',
       modelId: 'commit-model',
     });
@@ -202,7 +227,7 @@ describe('DaemonVoiceAgentClient', () => {
       const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
       const client = new DaemonVoiceAgentClient();
       const providerSelection = ProviderBoundModelRefSchema.parse({
-        agentTargetKey: 'backend:opencode',
+        agentTargetKey: 'agent:happier.agent.opencode/opencode',
         providerConnectionId: 'voice-openai-compatible-chat',
         modelId: `${role}-model`,
       });
@@ -538,7 +563,7 @@ describe('DaemonVoiceAgentClient', () => {
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
     const client = new DaemonVoiceAgentClient();
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
-      agentTargetKey: 'backend:opencode',
+      agentTargetKey: 'agent:happier.agent.opencode/opencode',
       providerConnectionId: 'voice-openai-compatible-chat',
       modelId: 'fast',
     });
@@ -577,6 +602,7 @@ describe('DaemonVoiceAgentClient', () => {
       client.start({
         sessionId: 's1',
         agentSource: 'session',
+        agentId: 'codex',
         verbosity: 'short',
         chatModelId: 'fast',
         commitModelId: 'fast',

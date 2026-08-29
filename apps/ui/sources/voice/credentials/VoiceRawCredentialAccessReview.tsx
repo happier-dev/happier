@@ -5,6 +5,7 @@ import type {
   DaemonVoiceClientRawCredentialAuthorizationV1,
   DaemonVoiceClientRawCredentialReviewV1,
   PluginContributionIdentityV1,
+  VoiceRawCredentialGrantDeclaration,
 } from '@happier-dev/protocol';
 
 import { PluginPermissionGrantSheet } from '@/components/plugins/permissions/PluginPermissionGrantSheet';
@@ -35,6 +36,7 @@ type AuthorizationInspection = Readonly<{
 
 export type VoiceRawCredentialAccessReviewProps = Readonly<{
   contribution: PluginContributionIdentityV1;
+  rawGrant: VoiceRawCredentialGrantDeclaration;
   client?: Pick<RawCredentialAuthorizationClient, 'inspect' | 'request'>;
   actions?: PluginPermissionGrantActions;
   testID?: string;
@@ -154,7 +156,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
 
   const inspect = React.useCallback(async (signal?: AbortSignal): Promise<AuthorizationInspection | null> => {
     try {
-      const response = await client.inspect(props.contribution, signal);
+      const response = await client.inspect(props.contribution, props.rawGrant, signal);
       const next = Object.freeze({
         authorization: response.authorization,
         review: response.review,
@@ -168,7 +170,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
       setUnavailable(true);
       return null;
     }
-  }, [client, props.contribution]);
+  }, [client, props.contribution, props.rawGrant]);
 
   // The authorization subject is derived from account settings, so a settings
   // change invalidates the current inspection and the pending request rendered
@@ -234,7 +236,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
           return;
         }
         if (pendingRequest) return;
-        const requested = await client.request(props.contribution);
+        const requested = await client.request(props.contribution, props.rawGrant);
         if (!sameAuthorization(requested.authorization, current.authorization)) {
           setInspection(Object.freeze({
             authorization: requested.authorization,
@@ -262,6 +264,7 @@ export function VoiceRawCredentialAccessReview(props: VoiceRawCredentialAccessRe
     pendingRequest,
     permissionGrants,
     props.contribution,
+    props.rawGrant,
   ]);
 
   /**

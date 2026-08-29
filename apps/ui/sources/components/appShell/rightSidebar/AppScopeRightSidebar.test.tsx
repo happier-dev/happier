@@ -409,11 +409,16 @@ describe('AppScopeRightSidebar', () => {
 
     it('mounts an available app-scope plugin tab surface through the canonical host', async () => {
         const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
+        paneScopeSeed.selectedDestination = {
+            kind: 'plugin',
+            destination: appSidebarPlacement.binding.destination,
+        };
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
                 scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith(appSidebarPlacement)}
+                projectionPhase="current"
                 platform="web"
                 testID="app-scope-right-sidebar"
             />,
@@ -425,11 +430,16 @@ describe('AppScopeRightSidebar', () => {
 
     it('does not construct a fallback app-target navigation binding outside the shell host', async () => {
         const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
+        paneScopeSeed.selectedDestination = {
+            kind: 'plugin',
+            destination: appSidebarPlacement.binding.destination,
+        };
 
         const screen = await renderScreen(
             <AppScopeRightSidebar
                 scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                 pluginUiProjection={projectionWith(appSidebarPlacement)}
+                projectionPhase="current"
                 platform="web"
             />,
         );
@@ -472,12 +482,17 @@ describe('AppScopeRightSidebar', () => {
         endpointConnectivityState.status = 'offline';
         const { AppScopeRightSidebar } = await import('./AppScopeRightSidebar');
         const projection = projectionWith(appSidebarPlacement);
+        paneScopeSeed.selectedDestination = {
+            kind: 'plugin',
+            destination: appSidebarPlacement.binding.destination,
+        };
 
         await renderScreen(
             <AppTargetNavigationScope projection={projection}>
                 <AppScopeRightSidebar
                     scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
                     pluginUiProjection={projection}
+                    projectionPhase="current"
                     platform="web"
                 />
             </AppTargetNavigationScope>,
@@ -576,7 +591,7 @@ describe('AppScopeRightSidebar', () => {
                     materializationId: 'install-a',
                 }),
             );
-            return renderScreen(
+            const screen = await renderScreen(
                 <AppTargetNavigationScope projection={projection}>
                     <AppScopeRightSidebar
                         scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
@@ -586,6 +601,10 @@ describe('AppScopeRightSidebar', () => {
                     />
                 </AppTargetNavigationScope>,
             );
+            await act(async () => {
+                screen.pressByTestId('app-scope-right-sidebar-tab:plugin:acme.preview:app-panel');
+            });
+            return screen;
         }
 
         it('delivers author-supplied launch input to the destination render context', async () => {
@@ -643,7 +662,7 @@ describe('AppScopeRightSidebar', () => {
                 }),
                 appDetailPlacement,
             );
-            await renderScreen(
+            const screen = await renderScreen(
                 <AppTargetNavigationScope projection={projection}>
                     <AppScopeRightSidebar
                         scopeId={APP_RIGHT_SIDEBAR_PANE_SCOPE_ID}
@@ -652,6 +671,9 @@ describe('AppScopeRightSidebar', () => {
                     />
                 </AppTargetNavigationScope>,
             );
+            await act(async () => {
+                screen.pressByTestId('app-scope-right-sidebar-tab:plugin:acme.preview:app-panel');
+            });
             const caller = await createMountedHostApiClient('app-panel');
 
             await act(async () => {
@@ -717,6 +739,9 @@ describe('AppScopeRightSidebar', () => {
                 );
             };
             const screen = await renderScreen(sidebarAtGeneration(4));
+            await act(async () => {
+                screen.pressByTestId('app-scope-right-sidebar-tab:plugin:acme.preview:app-panel');
+            });
             const caller = await createMountedHostApiClient('app-panel');
             await act(async () => {
                 await caller.api.openSurface({ pluginId: 'acme.preview', localId: 'detail-panel' }, { itemId: 'item-7' });
@@ -758,6 +783,9 @@ describe('AppScopeRightSidebar', () => {
                 );
             };
             const screen = await renderScreen(sidebarAtMaterialization('install-a'));
+            await act(async () => {
+                screen.pressByTestId('app-scope-right-sidebar-tab:plugin:acme.preview:app-panel');
+            });
             const caller = await createMountedHostApiClient('app-panel');
 
             await act(async () => {

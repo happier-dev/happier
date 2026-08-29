@@ -37,6 +37,23 @@ export type ComposerDraftFieldCurrentness = Readonly<{
     composerAttachmentsMutationRevision: number;
 }>;
 
+export type ComposerDraftDocumentFieldChanges = Readonly<{
+    text: boolean;
+    structuredInputMentions: boolean;
+    composerAttachments: boolean;
+}>;
+
+export type ComposerDraftClearAcceptedResult = Readonly<{
+    changed: boolean;
+    changes: ComposerDraftDocumentFieldChanges;
+}>;
+
+const NO_COMPOSER_DOCUMENT_CHANGES: ComposerDraftDocumentFieldChanges = Object.freeze({
+    text: false,
+    structuredInputMentions: false,
+    composerAttachments: false,
+});
+
 export type ComposerDraftClearReason = 'discarded' | 'scopeClosed' | 'submissionAccepted';
 
 export interface ComposerDocumentOwner {
@@ -46,11 +63,12 @@ export interface ComposerDocumentOwner {
     observe(listener: () => void): () => void;
     apply(expectedRevision: number, mutation: ComposerPresentationDocumentMutation): ComposerTransactionResultV1;
     captureCurrentness(): ComposerDraftFieldCurrentness;
-    clearAccepted(currentness: ComposerDraftFieldCurrentness): boolean;
+    clearAccepted(currentness: ComposerDraftFieldCurrentness): ComposerDraftClearAcceptedResult;
     clear(reason: ComposerDraftClearReason): void;
 }
 
 export type MutableComposerDocumentOwner = ComposerDocumentOwner & Readonly<{
+    /** Replaces the complete canonical document for host-owned seed hydration. */
     replaceDocument(document: ComposerDraftDocument): number;
 }>;
 
@@ -59,12 +77,6 @@ const EMPTY_DOCUMENT: ComposerDraftDocument = Object.freeze({
     structuredInputMentions: Object.freeze([]),
     composerAttachments: Object.freeze([]),
 });
-
-export type ComposerDraftDocumentFieldChanges = Readonly<{
-    text: boolean;
-    structuredInputMentions: boolean;
-    composerAttachments: boolean;
-}>;
 
 /**
  * The one Composer semantic-equality rule. Mentions and attachments are strict
@@ -192,29 +204,36 @@ export function createEphemeralComposerDocumentOwner(input: Readonly<{
             composerAttachmentsMutationRevision,
         }),
         clearAccepted: (currentness) => {
-            if (!sameComposerDocumentRef(input.ref, currentness.ref)) return false;
+            if (!sameComposerDocumentRef(input.ref, currentness.ref)) {
+                return { changed: false, changes: NO_COMPOSER_DOCUMENT_CHANGES };
+            }
             const textCurrent = textMutationRevision === currentness.textMutationRevision;
+            const mentionsCurrent = structuredInputMentionsMutationRevision
+                === currentness.structuredInputMentionsMutationRevision;
             const attachmentsCurrent = composerAttachmentsMutationRevision
                 === currentness.composerAttachmentsMutationRevision;
-            // References are text-bound: their exact `[start, end)` occurrence
-            // exists only inside the text they were admitted with. Clearing the
-            // accepted text therefore clears every mention with it — including
-            // newer text-bound ones, which could not bind to anything — while a
-            // surviving text keeps its mentions and lets the exact-range
-            // reconciliation drop only those whose occurrence no longer binds.
-            const nextText = textCurrent ? '' : document.text;
+            // Text and range-bound references form one currentness group. A
+            // reference-only edit after capture must retain both the newer
+            // reference and the visible token; clearing just the text would
+            // strand that edit, while clearing both would lose it.
+            const textAndMentionsCurrent = textCurrent && mentionsCurrent;
+            const nextText = textAndMentionsCurrent ? '' : document.text;
             // "Cleared" is whether this accepted snapshot actually removed
             // something. Reporting true after an A -> B -> A edit, whose text is
             // no longer current and whose other fields were already empty, told
             // the submission owner a draft had been handed off when the live
             // one was untouched.
-            const revisionBeforeClear = revision;
+            const beforeClear = document;
             replaceDocument({
                 text: nextText,
-                structuredInputMentions: nextText === '' ? [] : document.structuredInputMentions,
+                structuredInputMentions: textAndMentionsCurrent ? [] : document.structuredInputMentions,
                 composerAttachments: attachmentsCurrent ? [] : document.composerAttachments,
             });
-            return revision !== revisionBeforeClear;
+            const changes = readComposerDraftDocumentChanges(beforeClear, document);
+            return {
+                changed: changes.text || changes.structuredInputMentions || changes.composerAttachments,
+                changes,
+            };
         },
         clear: () => {
             replaceDocument(EMPTY_DOCUMENT);

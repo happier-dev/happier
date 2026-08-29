@@ -15,6 +15,7 @@ const refreshState = vi.hoisted(() => ({ reject: false }));
 const refreshAutomationsSpy = vi.hoisted(() => vi.fn(async () => {
     if (refreshState.reject) throw new Error('offline');
 }));
+const loadMoreAutomationsSpy = vi.hoisted(() => vi.fn(async () => ({ nextCursor: null })));
 // Lifetime- and scope-sensitive Account state: a same-server Account A→B
 // switch retires the A-era lifetime exactly like the real scope owner.
 const accountScopeState = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const state = vi.hoisted(() => ({
         latestTurnStatus: 'in_progress',
     } as any,
     automations: [] as any[],
+    nextCursor: null as string | null,
 }));
 
 vi.mock('expo-router', async () => {
@@ -47,13 +49,19 @@ vi.mock('@/sync/domains/state/storage', async () => {
     return createStorageModuleStub({
         useSession: () => state.session,
         useAutomations: () => state.automations,
+        useAutomationDefinitionNextCursor: () => state.nextCursor,
         useActiveServerAccountScope: () => accountScopeState.value,
         storage: {
             getState: () => ({ sessions: { [state.session.id]: state.session } }),
         },
     });
 });
-vi.mock('@/sync/sync', () => ({ sync: { refreshAutomations: refreshAutomationsSpy } }));
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        refreshAutomations: refreshAutomationsSpy,
+        loadMoreAutomations: loadMoreAutomationsSpy,
+    },
+}));
 vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => ({ serverId: 'server-1' }),
 }));
@@ -99,8 +107,10 @@ describe('ExactTurnAutomationDestinationScreen', () => {
         routerMock.back.mockClear();
         routerMock.setParams.mockClear();
         refreshAutomationsSpy.mockClear();
+        loadMoreAutomationsSpy.mockClear();
         refreshState.reject = false;
         accountScopeState.value = { serverId: 'server-1', accountId: 'account-1' };
+        state.nextCursor = null;
         state.session = {
             id: 'source-session',
             serverId: 'server-1',
@@ -157,6 +167,21 @@ describe('ExactTurnAutomationDestinationScreen', () => {
             pathname: '/automations/edit',
             params: { id: 'automation-69', ...observed },
         });
+    });
+
+    it('passes the exact server continuation through the existing SelectionList pagination owner', async () => {
+        state.nextCursor = 'definition-cursor-1';
+        const { ExactTurnAutomationDestinationScreen } = await import('./ExactTurnAutomationDestinationScreen');
+        const screen = await renderScreen(<ExactTurnAutomationDestinationScreen observed={observed} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const picker = screen.findByProps({ testID: 'exact-turn-automation-destination' });
+        expect(picker.props.pagination).toMatchObject({
+            hasMore: true,
+            requestKey: 'definition-cursor-1',
+        });
+        await act(async () => picker.props.pagination.onEndReached());
+        expect(loadMoreAutomationsSpy).toHaveBeenCalledWith('definition-cursor-1');
     });
 
     it('shows explicit current-turn recovery when the observed turn is stale without silently navigating', async () => {

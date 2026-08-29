@@ -20,6 +20,12 @@ describe('resolveSessionOwnerMetadataViewRead', () => {
             metadata: METADATA,
             ownerMetadataView: METADATA,
         })).toEqual({ kind: 'unsupported_layout_version' });
+
+        expect(resolveSessionOwnerMetadataViewRead({
+            metadataLayoutVersion: null as never,
+            metadata: METADATA,
+            ownerMetadataView: METADATA,
+        })).toEqual({ kind: 'unsupported_layout_version' });
     });
 
     it('reads the layout-appropriate owner view when one is available', () => {

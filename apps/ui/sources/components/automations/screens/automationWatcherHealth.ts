@@ -96,16 +96,15 @@ export function canPresentAutomationSourceSummary(
 export type AutomationEventObserverRuntimeHealthV1 =
     | Readonly<{ kind: 'current' }>
     | Readonly<{ kind: 'generationReplaced' }>
-    | Readonly<{ kind: 'observerStopped'; reason?: string }>
     | Readonly<{ kind: 'runtimeUnavailable' }>;
 
 /**
  * Joins retained provider status to the daemon's existing runtime lifecycle
- * projection. Source reports prove what a runner last observed; only this
- * host-owned projection can prove that the exact current generation still has
- * a live background observer. A source with no same-plugin background runner
- * remains governed by its own observation owner rather than being guessed
- * unavailable here.
+ * projection. The installation/current-generation join is exact. Generic
+ * background-service contributions are deliberately not consulted: without a
+ * source-to-service identity, plugin ownership alone cannot prove which
+ * service observes this Event source and must not suppress its canonical
+ * retained status.
  */
 export function resolveAutomationEventObserverRuntimeHealth(params: Readonly<{
     projection: PluginProjectionV2 | null | undefined;
@@ -125,33 +124,12 @@ export function resolveAutomationEventObserverRuntimeHealth(params: Readonly<{
         return Object.freeze({ kind: 'generationReplaced' });
     }
 
-    const backgroundServices = (projection.contributionIntrospection?.contributions ?? []).filter((record) => (
-        record.contribution.kind === 'localId'
-        && record.contribution.pluginId === params.eventPluginId
-        && record.contribution.family === 'backgroundServices'
-    ));
-    if (backgroundServices.length === 0) return Object.freeze({ kind: 'current' });
-
-    const expectedGeneration = String(projection.generation);
-    const stopped = backgroundServices.find((record) => (
-        record.registration.state !== 'bound'
-        || record.activation.state !== 'active'
-        || record.registration.generation !== expectedGeneration
-        || record.activation.generation !== expectedGeneration
-    ));
-    if (!stopped) return Object.freeze({ kind: 'current' });
-    return Object.freeze({
-        kind: 'observerStopped',
-        ...(stopped.diagnostics[0]?.data.message
-            ? { reason: stopped.diagnostics[0].data.message }
-            : {}),
-    });
+    return Object.freeze({ kind: 'current' });
 }
 
 export function formatAutomationEventObserverRuntimeImpediment(
     health: AutomationEventObserverRuntimeHealthV1,
 ): string | undefined {
     if (health.kind === 'current') return undefined;
-    if (health.kind === 'observerStopped' && health.reason) return health.reason;
     return t('automations.detail.event.sourceStatusUnavailable');
 }

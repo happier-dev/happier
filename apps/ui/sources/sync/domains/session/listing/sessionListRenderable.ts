@@ -5,6 +5,7 @@ import {
     type PrimaryTurnStatusV1,
     type SessionRuntimeIssueV1,
 } from '@happier-dev/protocol';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
@@ -228,7 +229,7 @@ function readSessionListRenderableSourceMetadata(
         'metadata' | 'metadataLayoutVersion' | 'ownerMetadataView' | 'accessLevel'
     >,
 ): Metadata | null {
-    const metadataLayoutVersion = session.metadataLayoutVersion ?? 0;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
     if (metadataLayoutVersion === 0) {
         return session.metadata;
     }
@@ -414,7 +415,8 @@ export function buildSessionListRenderableFromSession(
         !layout1OwnerMetadataUnavailable
         && renderableSourceMetadata == null
         && previous?.metadata != null
-        && (session.metadataLayoutVersion ?? 0) === (previous.metadataLayoutVersion ?? 0);
+        && readSessionMetadataLayoutVersion(session.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(previous.metadataLayoutVersion);
     const preservePendingFlags = shouldPreserveSessionListRenderablePendingFlags(session, previous);
     const suppressPendingAttention = session.active !== true;
     const pending = (() => {
@@ -597,7 +599,8 @@ export function preserveSessionListRenderableStaleFields(
         next.metadataUnavailable !== true
         && next.metadata == null
         && previous?.metadata != null
-        && (next.metadataLayoutVersion ?? 0) === (previous.metadataLayoutVersion ?? 0);
+        && readSessionMetadataLayoutVersion(next.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(previous.metadataLayoutVersion);
     const preserveMetadataUnavailable =
         !preserveMetadata
         && next.metadata == null
@@ -609,7 +612,8 @@ export function preserveSessionListRenderableStaleFields(
         previous?.metadata?.externalSessionV1 != null
         && next.metadata != null
         && next.metadata.externalSessionV1 == null
-        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
+        && readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(next.metadataLayoutVersion)
         && previous.metadataVersion === next.metadataVersion;
     const preserveReadyEventSeq = next.latestReadyEventSeq == null && previous?.latestReadyEventSeq != null;
     const preserveReadyEventAt = next.latestReadyEventAt == null && previous?.latestReadyEventAt != null;
@@ -729,7 +733,8 @@ export function areSessionListRenderablesEqual(
         && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
         && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && (previous.lastTurnCompletedAt ?? null) === (next.lastTurnCompletedAt ?? null)
-        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
+        && readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(next.metadataLayoutVersion)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking
@@ -865,7 +870,8 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if (!areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)) return true;
     if ((previous.accessLevel ?? null) !== (next.accessLevel ?? null)) return true;
     if ((previous.canApprovePermissions ?? null) !== (next.canApprovePermissions ?? null)) return true;
-    if ((previous.metadataLayoutVersion ?? 0) !== (next.metadataLayoutVersion ?? 0)) return true;
+    if (readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+        !== readSessionMetadataLayoutVersion(next.metadataLayoutVersion)) return true;
     if (previous.metadataVersion !== next.metadataVersion) return true;
     if (previous.agentStateVersion !== next.agentStateVersion) return true;
 
@@ -917,7 +923,8 @@ export function isSessionListRenderableWarmCacheProgressOnlyChange(
     if (!areRollbackEligibleTurnStartsEqual(previous.rollbackEligibleTurnStarts, next.rollbackEligibleTurnStarts)) return false;
     if ((previous.latestReadyEventSeq ?? null) !== (next.latestReadyEventSeq ?? null)) return false;
     if ((previous.latestReadyEventAt ?? null) !== (next.latestReadyEventAt ?? null)) return false;
-    if ((previous.metadataLayoutVersion ?? 0) !== (next.metadataLayoutVersion ?? 0)) return false;
+    if (readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+        !== readSessionMetadataLayoutVersion(next.metadataLayoutVersion)) return false;
     if (previous.metadataVersion !== next.metadataVersion) return false;
     if (previous.agentStateVersion !== next.agentStateVersion) return false;
     if ((previous.accessLevel ?? null) !== (next.accessLevel ?? null)) return false;

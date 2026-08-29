@@ -3,6 +3,7 @@ import {
     type ExistingSessionAutomationEligibility,
 } from '@happier-dev/agents';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { isAutomationSessionCandidate } from './isAutomationSessionCandidate';
 
 type ExistingSessionAutomationSession = Readonly<{
     id?: string;
@@ -17,6 +18,7 @@ export type ExistingSessionAutomationAvailability =
     | Readonly<{ kind: 'ready'; machineId: string; eligibility: ExistingSessionAutomationEligibility & { eligible: true } }>
     | Readonly<{ kind: 'blocked'; reason: 'session_not_found' }>
     | Readonly<{ kind: 'blocked'; reason: 'machine_id_missing' }>
+    | Readonly<{ kind: 'blocked'; reason: 'session_not_user_facing' }>
     | Readonly<{
         kind: 'blocked';
         reason: 'session_not_eligible';
@@ -63,6 +65,9 @@ export function resolveExistingSessionAutomationAvailability(input: Readonly<{
         }),
         accountSettings: input.accountSettings ?? null,
     });
+    if (eligibility.eligible && !isAutomationSessionCandidate(input.session, input.accountSettings)) {
+        return { kind: 'blocked', reason: 'session_not_user_facing' };
+    }
     if (!eligibility.eligible) {
         return {
             kind: 'blocked',

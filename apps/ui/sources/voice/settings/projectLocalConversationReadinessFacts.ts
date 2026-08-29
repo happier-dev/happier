@@ -5,7 +5,11 @@ import {
   parseLocalVoiceTtsSettings,
   resolveLocalVoiceAdapterSettings,
 } from '@/voice/local/localVoiceSettings';
-import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
+import type {
+  VoiceCredentialReadinessFact,
+  VoiceReadinessFact,
+  VoiceRoleReadiness,
+} from '@/voice/registry/readiness';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
 import { projectVoiceSpeechCredentialReadiness } from '@/voice/registry/speechCredentialReadiness';
 import { projectVoiceSpeechEndpointReadiness } from '@/voice/registry/speechEndpointReadiness';
@@ -51,19 +55,27 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   voice: VoiceSettings;
   voiceSettingsV1: Settings['voiceSettingsV1'];
   secrets: Settings['secrets'];
+  connectedAccountPurposeBindingsV1: Settings['connectedAccountPurposeBindingsV1'];
   platform: VoiceReadinessPlatform;
   local: VoiceLocalProviderModeAvailability;
   localInput: ResolveVoiceProviderAvailabilityInput['local'];
   executionMachineId: string | null | undefined;
   executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   voiceAgentEnabled: boolean;
+  rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
+    contribution: Readonly<{ pluginId: string; localId: string }>;
+    machineId: string | null;
+    realm: 'daemon';
+    phase: 'speech';
+    status: 'ready' | 'approval_required' | 'unknown';
+  }>>>;
 }>): Readonly<{
   serverFeature: VoiceReadinessFact;
   executionMachine: VoiceReadinessFact;
   runtime: VoiceReadinessFact;
   model: VoiceReadinessFact;
   endpoint: VoiceReadinessFact;
-  credential: VoiceReadinessFact;
+  credential: VoiceCredentialReadinessFact;
   daemonRouteReadiness: VoiceRoleReadiness | null;
 }> {
   const local = resolveLocalVoiceAdapterSettings({ voice: input.voice });
@@ -97,21 +109,33 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       registry: input.registry,
       role: 'conversation_stt',
       providerId: stt.provider,
-      settings: { voiceSettingsV1: input.voiceSettingsV1, secrets: input.secrets },
+      settings: {
+        voiceSettingsV1: input.voiceSettingsV1,
+        secrets: input.secrets,
+        connectedAccountPurposeBindingsV1: input.connectedAccountPurposeBindingsV1,
+      },
       executionMachineId: input.executionMachineId,
       providerEnvelope: input.voice.providers[stt.provider] ?? null,
+      rawAuthorization: input.rawCredentialAuthorizationByContribution?.[stt.provider] ?? null,
     }),
     projectVoiceSpeechCredentialReadiness({
       registry: input.registry,
       role: 'conversation_tts',
       providerId: tts.provider,
-      settings: { voiceSettingsV1: input.voiceSettingsV1, secrets: input.secrets },
+      settings: {
+        voiceSettingsV1: input.voiceSettingsV1,
+        secrets: input.secrets,
+        connectedAccountPurposeBindingsV1: input.connectedAccountPurposeBindingsV1,
+      },
       executionMachineId: input.executionMachineId,
       providerEnvelope: input.voice.providers[tts.provider] ?? null,
+      rawAuthorization: input.rawCredentialAuthorizationByContribution?.[tts.provider] ?? null,
     }),
   ];
-  const credential: VoiceReadinessFact = credentialFacts.includes('missing')
+  const credential: VoiceCredentialReadinessFact = credentialFacts.includes('missing')
     ? 'missing'
+    : credentialFacts.includes('approval_required')
+      ? 'approval_required'
     : credentialFacts.includes('unknown')
       ? 'unknown'
       : 'ready';

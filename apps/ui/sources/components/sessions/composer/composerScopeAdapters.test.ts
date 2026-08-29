@@ -441,4 +441,19 @@ describe('composer scope adapters', () => {
         expect(composerStructuredMentionsFromReferences({ references: references.slice(1), existing }))
             .toEqual([existing[1]]);
     });
+
+    it('drops a stale exact-range reference instead of rebinding another equal token', () => {
+        const mention = {
+            kind: 'vendorPlugin',
+            vendorPluginRef: 'plugin://gmail@openai-curated',
+            tokenText: '@gmail',
+            start: 7,
+            end: 13,
+        } satisfies ComposerStructuredInputMention;
+
+        expect(composerReferencesFromStructuredMentions({
+            text: '@gmail first',
+            mentions: [mention],
+        })).toEqual([]);
+    });
 });

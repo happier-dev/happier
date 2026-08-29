@@ -1,10 +1,10 @@
 import {
-  ActionsSettingsV1Schema,
+  ActionApprovalRequestCreatedResultSchema,
   getActionSpec,
-  isActionEnabledByActionsSettings,
-  listActionSpecs,
+  listVoiceToolActionSpecs,
   normalizeSpawnSessionErrorDetail,
   PluginContributionIdentityV1Schema,
+  type ActionExecuteResult,
   type ActionId,
 } from '@happier-dev/protocol';
 import {
@@ -130,6 +130,42 @@ function getNestedActionFailure(value: unknown): { errorCode: string; errorMessa
   };
 }
 
+function serializeVoiceActionExecuteResult(
+  actionId: ActionId,
+  result: ActionExecuteResult,
+  options?: Readonly<{
+    failurePayload?: Record<string, unknown>;
+    executedPayload?: Record<string, unknown>;
+  }>,
+): string {
+  if (!result.ok) {
+    const details = asPlainObject(result.details);
+    const errorDetail = normalizeSpawnSessionErrorDetail(details?.errorDetail);
+    return jsonError(result.errorCode, result.error, {
+      actionId,
+      ...(typeof details?.sessionId === 'string' ? { sessionId: details.sessionId } : {}),
+      ...(errorDetail ? { errorDetail } : {}),
+      ...(options?.failurePayload ?? {}),
+    });
+  }
+
+  const nestedFailure = getNestedActionFailure(result.result);
+  if (nestedFailure) {
+    return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, {
+      actionId,
+      ...(options?.failurePayload ?? {}),
+    });
+  }
+
+  if (ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
+    return jsonOkFromUnknown(result.result);
+  }
+
+  return options?.executedPayload
+    ? jsonOk(options.executedPayload)
+    : jsonOkFromUnknown(result.result);
+}
+
 function asSession(value: unknown): Session | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Session
@@ -177,8 +213,7 @@ function listMatchingPendingRequestsAcrossSessions(
 
 const VOICE_TOOL_ACTION_ID_BY_TOOL_NAME: Readonly<Record<string, ActionId>> = (() => {
   const entries: Array<readonly [string, ActionId]> = [];
-  for (const spec of listActionSpecs() as any[]) {
-    if (!spec?.surfaces?.voice) continue;
+  for (const spec of listVoiceToolActionSpecs()) {
     const name = String(spec?.bindings?.voiceClientToolName ?? '').trim();
     const id = String(spec?.id ?? '').trim();
     if (!name || !id) continue;
@@ -356,94 +391,63 @@ export function createVoiceToolHandlers(
     listContributedActionDefinitions: () => (
       deps.currentUiContext?.listCurrentContributedActionDefinitions?.() ?? []
     ),
-    isActionEnabled: (actionId) => (
-      !isCurrentUiContextVoiceAction(actionId)
-      || isVoiceActionAvailableInState(storage.getState(), actionId)
-    ),
+    isActionEnabled: (actionId) => isVoiceActionAvailableInState(storage.getState(), actionId),
+    sessionSendMessage: async ({ sessionId, message, signal }) => {
+      const session: any = storage.getState().sessions?.[sessionId] ?? null;
+      if (!session) {
+        return { ok: false, errorCode: 'session_not_found', error: 'session_not_found', details: { sessionId } };
+      }
+
+      const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
+      const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
+      const isActiveServer = !targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId);
+      if (isActiveServer) {
+        const encryption = (sync as unknown as { encryption?: { getSessionEncryption?: (id: string) => unknown } }).encryption?.getSessionEncryption?.(sessionId) ?? null;
+        if (!encryption) {
+          return { ok: false, errorCode: 'session_not_ready', error: 'session_not_ready', details: { sessionId } };
+        }
+      }
+
+      if (signal?.aborted) {
+        return { ok: false, errorCode: 'tool_cancelled', error: 'tool_cancelled', details: { sessionId } };
+      }
+
+      try {
+        await sync.submitMessage(sessionId, message, undefined, undefined, {
+          callerSurface: 'voice_turn',
+          forceImmediate: true,
+          hostAdmissionOrigin: 'voice',
+        });
+      } catch (error) {
+        if (readErrorCode(error) === SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE) {
+          return {
+            ok: false,
+            errorCode: SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
+            error: SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
+            details: { sessionId },
+          };
+        }
+        throw error;
+      }
+
+      return { ok: true, status: 'sent', sessionId };
+    },
   });
 
-  const execute = async (toolName: string, parameters: unknown, ctx?: { serverId?: string | null }): Promise<string> => {
+  const execute = async (
+    toolName: string,
+    parameters: unknown,
+    ctx?: { serverId?: string | null; signal?: AbortSignal },
+  ): Promise<string> => {
     const actionId = VOICE_TOOL_ACTION_ID_BY_TOOL_NAME[toolName];
     if (!actionId) return jsonError('unsupported_action', `unsupported_action:${toolName}`);
     const res = await executor.execute(actionId, parameters, {
       surface: 'voice',
       defaultSessionId: deps.resolveSessionId(null),
       ...(ctx?.serverId ? { serverId: ctx.serverId } : {}),
+      ...(ctx?.signal ? { signal: ctx.signal } : {}),
     });
-    if (!res.ok) {
-      const details = asPlainObject(res.details);
-      const errorDetail = normalizeSpawnSessionErrorDetail(details?.errorDetail);
-      return jsonError(res.errorCode, res.error, {
-        actionId,
-        ...(errorDetail ? { errorDetail } : {}),
-      });
-    }
-    return jsonOkFromUnknown(res.result);
-  };
-
-  const sendSessionMessage: VoiceToolHandler = async (parameters, context) => {
-    const spec = getActionSpec('session.message.send');
-    const parsed = spec.inputSchema.safeParse(parameters ?? {});
-    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
-
-    const data = asPlainObject(parsed.data);
-    if (!data) return jsonError('invalid_parameters', 'invalid_parameters');
-
-    const sessionIdParam = typeof data.sessionId === 'string' ? data.sessionId : null;
-    const resolved = resolveSessionIdOrError(sessionIdParam);
-    if (!resolved.ok) return jsonError('session_not_selected', resolved.error);
-
-    const sessionId = resolved.sessionId;
-    const session: any = storage.getState().sessions?.[sessionId] ?? null;
-    if (!session) {
-      return jsonError('session_not_found', 'session_not_found', { sessionId });
-    }
-
-    const actionSettings = ActionsSettingsV1Schema.safeParse(
-      (storage.getState() as { settings?: { actionsSettingsV1?: unknown } }).settings?.actionsSettingsV1,
-    );
-    if (
-      actionSettings.success
-      && !isActionEnabledByActionsSettings('session.message.send', actionSettings.data, { surface: 'voice' })
-    ) {
-      return jsonError('action_disabled', 'action_disabled', { sessionId });
-    }
-
-    const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
-    const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
-    const isActiveServer = !targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId);
-    if (isActiveServer) {
-      const encryption = (sync as unknown as { encryption?: { getSessionEncryption?: (id: string) => unknown } }).encryption?.getSessionEncryption?.(sessionId) ?? null;
-      if (!encryption) {
-        return jsonError('session_not_ready', 'session_not_ready', { sessionId });
-      }
-    }
-
-    const message = typeof data.message === 'string' ? data.message : null;
-    if (!message) return jsonError('invalid_parameters', 'invalid_parameters');
-
-    if (context?.signal?.aborted) {
-      return jsonError('tool_cancelled', 'tool_cancelled', { sessionId });
-    }
-
-    try {
-      await sync.submitMessage(sessionId, message, undefined, undefined, {
-        callerSurface: 'voice_turn',
-        forceImmediate: true,
-        hostAdmissionOrigin: 'voice',
-      });
-    } catch (error) {
-      if (readErrorCode(error) === SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE) {
-        return jsonError(
-          SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
-          SESSION_INPUT_TARGET_UPDATE_REQUIRED_ERROR_CODE,
-          { sessionId },
-        );
-      }
-      throw error;
-    }
-
-    return jsonOk({ status: 'sent', sessionId });
+    return serializeVoiceActionExecuteResult(actionId, res);
   };
 
   const answerUserActionRequest = async (parameters: unknown): Promise<string> => {
@@ -519,15 +523,10 @@ export function createVoiceToolHandlers(
       },
       { surface: 'voice', serverId: targetServerId, defaultSessionId: deps.resolveSessionId(null) },
     );
-    if (!res.ok) {
-      return jsonError(res.errorCode ?? 'permission_update_failed', res.error ?? 'permission_update_failed', { sessionId, requestId });
-    }
-    const nestedFailure = getNestedActionFailure((res as any).result);
-    if (nestedFailure) {
-      return jsonError(nestedFailure.errorCode, nestedFailure.errorMessage, { sessionId, requestId });
-    }
-
-    return jsonOk({ status: 'done', sessionId, requestId });
+    return serializeVoiceActionExecuteResult('session.user_action.answer', res, {
+      failurePayload: { sessionId, requestId },
+      executedPayload: { status: 'done', sessionId, requestId },
+    });
   };
 
   const readCurrentUiContext = async (
@@ -615,7 +614,7 @@ export function createVoiceToolHandlers(
       || actionId === CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID
       || actionId === ACTION_INVOKE_ACTION_ID
     ) continue;
-    handlers[toolName] = async (parameters) => await execute(toolName, parameters);
+    handlers[toolName] = async (parameters, context) => await execute(toolName, parameters, context);
   }
 
   if (
@@ -643,7 +642,6 @@ export function createVoiceToolHandlers(
   }
 
   // Voice surface overrides (extra UX behavior).
-  handlers.sendSessionMessage = sendSessionMessage;
   handlers.answerUserActionRequest = answerUserActionRequest;
 
   return Object.freeze(handlers);

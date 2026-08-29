@@ -541,10 +541,13 @@ describe('createBundledRealtimeProviderRuntime', () => {
     selectedProviderId = 'another_provider';
     expect(controllerInput!.isSelectionCurrent()).toBe(false);
     selectedProviderId = 'realtime_sdk';
+    // The controller owns attempt 1 before its resource preparation begins.
+    // An interruption in that interval must be retained and applied instead
+    // of resolving as a no-op over a later unmuted provider resource.
+    await runtime.adapter.setMuted({ sessionId: 'voice-global', muted: true });
     await resources.prepare({
       controlSessionId: 'voice-global', attemptId: 1, request: {}, signal: new AbortController().signal,
     });
-    await runtime.adapter.setMuted({ sessionId: 'voice-global', muted: true });
     await resources.release({ controlSessionId: 'voice-global', attemptId: 1, reason: { code: 'user_stop' } });
     await runtime.adapter.stop({ sessionId: 'voice-global' });
     await runtime.adapter.start({ sessionId: 'voice-global' });

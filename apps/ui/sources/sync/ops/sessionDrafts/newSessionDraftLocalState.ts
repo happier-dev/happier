@@ -1,5 +1,14 @@
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type {
+    NewSessionComposerAttachmentSeedV1,
+    NewSessionDraft,
+} from '@/sync/domains/state/persistence';
 
+/**
+ * A host-created, draft-addressed attachment request waiting for the mounted
+ * Composer projection to admit it. This is local custody, not a synchronized
+ * Composer attachment: the mounted Composer mints the canonical attachment
+ * record and clears the request after that transaction succeeds.
+ */
 export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'entryIntent'
     | 'selectedSecretId'
@@ -8,6 +17,8 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'sessionConfigOptionOverrides'
     | 'backendNewSessionOptionStateByTargetKey'
     | 'windowsRemoteSessionLaunchModeOverride'
+    | 'placementCandidates'
+    | 'composerAttachmentSeeds'
 >>;
 
 /** Device-local New Session choices that must not enter the synchronized document. */
@@ -23,5 +34,7 @@ export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessi
             ?? draft.agentNewSessionOptionStateByAgentId
             ?? null,
         windowsRemoteSessionLaunchModeOverride: draft.windowsRemoteSessionLaunchModeOverride ?? null,
+        ...(draft.placementCandidates === undefined ? {} : { placementCandidates: draft.placementCandidates }),
+        ...(draft.composerAttachmentSeeds === undefined ? {} : { composerAttachmentSeeds: draft.composerAttachmentSeeds }),
     };
 }

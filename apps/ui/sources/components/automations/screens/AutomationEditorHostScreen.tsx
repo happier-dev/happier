@@ -45,8 +45,9 @@ import {
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
+import { isAutomationSessionCandidate } from '@/sync/domains/automations/isAutomationSessionCandidate';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { storage, useActiveServerAccountScope, useAutomation, useSessions } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope, useAutomation, useSessions, useSettings } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
@@ -190,6 +191,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
     const router = useRouter();
     const definition = useAutomation(props.automationId);
     const sessions = useSessions() ?? [];
+    const settings = useSettings();
     const activeServer = useActiveServerSnapshot();
     const activeAccountScope = useActiveServerAccountScope();
     const editorLifetimeIdentity = activeAccountScope?.serverId === activeServer.serverId
@@ -220,6 +222,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
             routeServerId: exactTurnBinding.sourceServerId,
             activeServerId: activeServer.serverId,
             automationsEnabled: exactTurnSupport.enabled,
+            accountSettings: storage.getState().settings,
             accountLifetime: captureActiveServerAccountScopeLifetime(),
             readCurrent: () => ({
                 session: storage.getState().sessions[exactTurnBinding.sourceSessionId] ?? null,
@@ -227,6 +230,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
                 routeServerId: exactTurnBinding.sourceServerId,
                 activeServerId: getActiveServerSnapshot().serverId,
                 automationsEnabled: exactTurnSupportRef.current,
+                accountSettings: storage.getState().settings,
             }),
         })
         : null, [
@@ -318,14 +322,17 @@ export function AutomationEditorHostScreen(props: Readonly<{
     }, [editorLifetimeIdentity, exactTurnAuthority, props.automationId, reloadGeneration]);
 
     const sessionOptions = React.useMemo(() => sessions
-        .filter((session) => session.serverId === activeServer.serverId)
+        .filter((session) => (
+            session.serverId === activeServer.serverId
+            && isAutomationSessionCandidate(session, settings)
+        ))
         .map((session) => ({
         sessionId: session.id,
         label: getSessionName(session),
         currentParentTurnId: readExactActiveParentTurn(session)?.sourceTurnId ?? null,
         selectable: draft?.executionRecipe.target.kind !== 'existingSession'
             || draft.executionRecipe.target.sessionId !== session.id,
-    })), [activeServer.serverId, draft?.executionRecipe.target, sessions]);
+    })), [activeServer.serverId, draft?.executionRecipe.target, sessions, settings]);
     const eventAuthoringMachineId = React.useMemo(() => (
         draft?.assignments.find((assignment) => assignment.enabled)?.machineId
         ?? draft?.assignments[0]?.machineId
@@ -361,6 +368,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
                     routeServerId: sourceSession?.serverId ?? null,
                     activeServerId: getActiveServerSnapshot().serverId,
                     automationsEnabled: exactTurnSupportRef.current,
+                    accountSettings: storage.getState().settings,
                     accountLifetime,
                     readCurrent: () => ({
                         session: storage.getState().sessions[definition.scope.sourceSessionId] ?? null,
@@ -368,6 +376,7 @@ export function AutomationEditorHostScreen(props: Readonly<{
                         routeServerId: sourceSession?.serverId ?? null,
                         activeServerId: getActiveServerSnapshot().serverId,
                         automationsEnabled: exactTurnSupportRef.current,
+                        accountSettings: storage.getState().settings,
                     }),
                 });
                 return authority ? [{ authority, definition }] : [];
@@ -529,7 +538,9 @@ export function AutomationEditorHostScreen(props: Readonly<{
                         onChange={setDraft}
                         sessionOptions={sessionOptions}
                         resolveCurrentSessionTurn={(sessionId) => {
-                            const current = readExactActiveParentTurn(storage.getState().sessions[sessionId]);
+                            const candidate = storage.getState().sessions[sessionId];
+                            if (!candidate || !isAutomationSessionCandidate(candidate, storage.getState().settings)) return null;
+                            const current = readExactActiveParentTurn(candidate);
                             return current ? {
                                 sourceSessionId: current.sourceSessionId,
                                 sourceTurnId: current.sourceTurnId,

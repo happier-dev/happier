@@ -6,6 +6,7 @@ import {
 import {
   CodexPassiveRealtimeSetupResultV1Schema,
   ConnectedServiceBindingsV1Schema,
+  readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type CodexPassiveRealtimeSetupResultV1,
   type CapabilityId,
   type ConnectedServiceBindingsV1,
@@ -169,9 +170,10 @@ export function readVoiceProviderConnectedServicesBinding(
     input.providerConfig[bindingDeclaration.id],
   );
   if (!parsedBindings.success) return null;
-  if (bindingDeclaration.serviceIds.some((serviceId) => (
-    parsedBindings.data.bindingsByServiceId[serviceId] === undefined
-  ))) return null;
+  if (bindingDeclaration.serviceIds.some((serviceId) => {
+    const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+    return !serviceKey || parsedBindings.data.bindingsByServiceId[serviceKey] === undefined;
+  })) return null;
   return parsedBindings.data;
 }
 
@@ -203,9 +205,11 @@ export function projectVoiceProviderConnectedServicesCredentialFact(
   });
 
   for (const serviceId of bindingDeclaration.serviceIds) {
+    const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+    if (!serviceKey) return 'missing';
     const resolution = resolveConnectedServiceSessionSelection({
       serviceId,
-      binding: bindings.bindingsByServiceId[serviceId],
+      binding: bindings.bindingsByServiceId[serviceKey],
       availability: {
         kind: 'known',
         profileOptions: profileOptionsByServiceId[serviceId] ?? [],

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { VOICE_RUNTIME_WARM_DEFAULTS } from '@happier-dev/protocol';
 
 const ensureVoiceConversationSessionForVoiceHomeMock = vi.hoisted(() => vi.fn());
 const resolveVoiceHomeDaemonMachineIdMock = vi.hoisted(() => vi.fn());
@@ -85,6 +86,7 @@ describe('warmDaemonVoiceInferenceOnVoiceHomeAttach', () => {
             payload: {
                 packIds: ['sherpa-onnx-streaming-zipformer-en-20M-2023-02-17'],
             },
+            timeoutMs: VOICE_RUNTIME_WARM_DEFAULTS.warmRequestTimeoutMs,
         });
     });
 

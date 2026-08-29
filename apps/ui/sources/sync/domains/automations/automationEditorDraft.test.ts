@@ -37,7 +37,6 @@ function detail(): AutomationDefinitionDetail {
         createdAt: timestamp,
         updatedAt: timestamp,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: timestamp }],
-        retiredTriggers: [],
         executionRecipe: recipe,
         triggers: [
             {

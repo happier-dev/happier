@@ -71,7 +71,10 @@ export async function authGetToken(
     const serverFeaturesSnapshot =
         await getServerFeaturesSnapshot({
             timeoutMs: 800,
-            force: Boolean(options),
+            // The assertion scheme is selected from this response. A ready cached v1
+            // snapshot must not keep ordinary login on replayable v1 after a server
+            // has upgraded to v2. Errors still fail closed in the feature owner.
+            force: true,
         });
     if (options) {
         assertCurrentAccountStoredContentServerCompatibility(

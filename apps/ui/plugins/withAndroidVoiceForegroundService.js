@@ -1,6 +1,8 @@
 const { withAndroidManifest } = require('expo/config-plugins');
 
 const VOICE_FOREGROUND_SERVICE = 'dev.happier.audio.HappierVoiceAudioForegroundService';
+const AUDIO_API_FOREGROUND_SERVICE =
+  'com.swmansion.audioapi.system.MediaNotificationManager$AudioForegroundService';
 const VOICE_FOREGROUND_SERVICE_PERMISSIONS = [
   'android.permission.FOREGROUND_SERVICE',
   'android.permission.FOREGROUND_SERVICE_MICROPHONE',
@@ -26,8 +28,20 @@ function withAndroidVoiceForegroundService(config) {
     if (applications.length === 0) applications.push({ $: {} });
     const application = applications[0];
     const services = application.service ?? [];
-    application.service = services;
-    const service = services.find((entry) => entry.$?.['android:name'] === VOICE_FOREGROUND_SERVICE);
+    // react-native-audio-api appends its service on every prebuild when a
+    // generated manifest already exists. This plugin is the final Android
+    // Voice manifest invariant, so collapse that upstream duplicate here
+    // instead of hand-editing generated native output.
+    let retainedAudioApiService = false;
+    application.service = services.filter((entry) => {
+      if (entry.$?.['android:name'] !== AUDIO_API_FOREGROUND_SERVICE) return true;
+      if (retainedAudioApiService) return false;
+      retainedAudioApiService = true;
+      return true;
+    });
+    const service = application.service.find(
+      (entry) => entry.$?.['android:name'] === VOICE_FOREGROUND_SERVICE,
+    );
     const attributes = {
       'android:name': VOICE_FOREGROUND_SERVICE,
       'android:exported': 'false',
@@ -36,7 +50,7 @@ function withAndroidVoiceForegroundService(config) {
     if (service) {
       service.$ = { ...service.$, ...attributes };
     } else {
-      services.push({ $: attributes });
+      application.service.push({ $: attributes });
     }
 
     return manifestConfig;

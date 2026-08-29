@@ -148,7 +148,7 @@ function fixture(
 
 /**
  * The real persistent byte custody seam: one retained verified record plus the
- * cache owner's exact-entry deletion. Tests assert against this adapter rather
+ * Artifact custody owner's exact-entry deletion. Tests assert against this adapter rather
  * than a hand-rolled source so a deletion decision cannot hide behind a fake.
  */
 function persistentCustody(record: ReturnType<typeof fixture>) {

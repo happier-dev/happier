@@ -542,14 +542,17 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         conversationSessionId: string;
         projector: ReturnType<typeof createCanonicalVoiceTranscriptProjector>;
         sourceKey: string;
+        source: RealtimeConversationTurnSource | null;
     }>;
     const admittedCanonicalPersistenceEvents = new WeakMap<
         AdmittedCanonicalVoiceTranscriptPersistenceEvent,
         AdmittedCanonicalPersistenceEvent
     >();
-    // An admission stores its source against the exact durable row identity so
-    // the synchronous low-level persistence callback cannot accidentally read
-    // the newer generation's mutable conversation source.
+    // Commit temporarily projects the admission's exact captured source onto
+    // its durable row identity so the synchronous low-level persistence
+    // callback cannot accidentally read a newer generation's mutable source.
+    // Keeping this scoped to commit also lets a pending final and correction
+    // share one row without overwriting each other's custody.
     const admittedCanonicalPersistenceEventSourceByKey = new Map<
         string,
         RealtimeConversationTurnSource | null
@@ -721,12 +724,12 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 },
             );
             const admission = Object.freeze({}) as AdmittedCanonicalVoiceTranscriptPersistenceEvent;
-            admittedCanonicalPersistenceEventSourceByKey.set(sourceKey, params.source ?? null);
             admittedCanonicalPersistenceEvents.set(admission, Object.freeze({
                 canonicalAdmission,
                 conversationSessionId: params.conversationSessionId,
                 projector,
                 sourceKey,
+                source: params.source ?? null,
             }));
             return admission;
         },
@@ -735,6 +738,9 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
         ): string | null => {
             const admitted = admittedCanonicalPersistenceEvents.get(admission);
             if (!admitted) return null;
+            const hadPreviousSource = admittedCanonicalPersistenceEventSourceByKey.has(admitted.sourceKey);
+            const previousSource = admittedCanonicalPersistenceEventSourceByKey.get(admitted.sourceKey);
+            admittedCanonicalPersistenceEventSourceByKey.set(admitted.sourceKey, admitted.source);
             try {
                 const committed = admitted.projector.commitAdmittedPersistenceEvent(
                     admitted.canonicalAdmission,
@@ -757,7 +763,14 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                 });
             } finally {
                 admittedCanonicalPersistenceEvents.delete(admission);
-                admittedCanonicalPersistenceEventSourceByKey.delete(admitted.sourceKey);
+                if (hadPreviousSource) {
+                    admittedCanonicalPersistenceEventSourceByKey.set(
+                        admitted.sourceKey,
+                        previousSource ?? null,
+                    );
+                } else {
+                    admittedCanonicalPersistenceEventSourceByKey.delete(admitted.sourceKey);
+                }
             }
         },
         releaseAdmittedCanonicalPersistenceEvent: (
@@ -766,7 +779,6 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             const admitted = admittedCanonicalPersistenceEvents.get(admission);
             if (!admitted) return false;
             admittedCanonicalPersistenceEvents.delete(admission);
-            admittedCanonicalPersistenceEventSourceByKey.delete(admitted.sourceKey);
             return admitted.projector.releaseAdmittedPersistenceEvent(admitted.canonicalAdmission);
         },
         beginCanonicalAttempt: (conversationSessionId: string): CanonicalVoiceTranscriptAttempt => {

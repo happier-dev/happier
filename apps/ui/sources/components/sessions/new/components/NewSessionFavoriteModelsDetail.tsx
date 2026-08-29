@@ -55,6 +55,8 @@ import { t } from '@/text';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
+import type { DaemonProviderModelProjectionRefreshFailureV1 } from '@happier-dev/protocol/rpc';
 
 type FavoriteModelTogglePayload = Readonly<{
     modelId: string;
@@ -85,6 +87,8 @@ type FavoriteModelSnapshot = Readonly<{
     selectedValue: string;
     selectedLabel?: string;
     probe: OptionPickerProbeState | null;
+    refreshFailures: readonly DaemonProviderModelProjectionRefreshFailureV1[];
+    retryProjection: () => Promise<void>;
 }>;
 
 export type NewSessionFavoriteModelsDetailProps = Readonly<{
@@ -146,6 +150,7 @@ function areFavoriteModelSnapshotsEqual(a: FavoriteModelSnapshot, b: FavoriteMod
     if (a.selectedValue !== b.selectedValue) return false;
     if (a.selectedLabel !== b.selectedLabel) return false;
     if (a.probe?.phase !== b.probe?.phase) return false;
+    if (JSON.stringify(a.refreshFailures) !== JSON.stringify(b.refreshFailures)) return false;
     if (!areStringArraysEqual(a.favoriteValues, b.favoriteValues)) return false;
     if (!areStringArraysEqual(a.availableValues, b.availableValues)) return false;
     if (!areFavoriteModelMapsEqual(a.modelByValue, b.modelByValue)) return false;
@@ -213,7 +218,9 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     const capabilityProbeContext = React.useMemo(() => resolveNewSessionCapabilityProbeContext({
         backendTarget: props.entry.backendTarget,
         settings: props.settings,
-    }), [props.entry.backendTarget, props.settings]);
+        runtimeCarrierAgentId: props.entry.agentId,
+        machineId: props.selectedMachineId,
+    }), [props.entry.agentId, props.entry.backendTarget, props.selectedMachineId, props.settings]);
 
     const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
         backendTarget: props.entry.backendTarget,
@@ -538,6 +545,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             selectedValue,
             ...(selectedOption?.label ? { selectedLabel: selectedOption.label } : {}),
             probe: unifiedProbe ?? null,
+            refreshFailures: providerProjection.refreshFailures,
+            retryProjection: providerProjection.refresh,
         });
     }, [
         availableValues,
@@ -551,6 +560,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         selectedValue,
         staleFavoriteByValue,
         unifiedProbe,
+        providerProjection.refreshFailures,
+        providerProjection.refresh,
     ]);
 
     return null;
@@ -603,6 +614,9 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
     const availableValues = React.useMemo(() => new Set(orderedSnapshots.flatMap((snapshot) => snapshot.availableValues)), [orderedSnapshots]);
     const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.selectedValue.length > 0) ?? null;
     const selectedValue = selectedSnapshot?.selectedValue ?? '';
+    const projectionFailures = orderedSnapshots.flatMap((snapshot) => (
+        snapshot.refreshFailures.map((failure) => ({ snapshot, failure }))
+    ));
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
         props.refreshProbe ?? null,
         ...orderedSnapshots.map((snapshot) => snapshot.probe),
@@ -659,12 +673,23 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                     onSnapshot={handleSnapshot}
                 />
             ))}
-            {options.length > 0 || unifiedProbe?.phase !== 'idle' ? (
+            {options.length > 0 || projectionFailures.length > 0 || unifiedProbe?.phase !== 'idle' ? (
                 <OptionPickerOverlay
                     fillAvailableSpace
                     title={t('profiles.groups.favorites')}
                     effectiveLabel={selectedSnapshot?.selectedLabel}
                     notes={[]}
+                    summary={projectionFailures.length > 0 ? (
+                        <>
+                            {projectionFailures.map(({ snapshot, failure }) => (
+                                <ProviderErrorItems
+                                    key={`${snapshot.entry.backendTargetKey}:${failure.connectionId}`}
+                                    error={failure.error}
+                                    retry={snapshot.retryProjection}
+                                />
+                            ))}
+                        </>
+                    ) : undefined}
                     options={options}
                     selectedValue={selectedValue}
                     emptyText={t('agentInput.model.configureInCli')}

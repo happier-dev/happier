@@ -22,6 +22,18 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 import { normalizeVoiceRuntimeFailureCode } from '../voiceRuntimeFailureCode';
 
+const cleanupByBoundService = new WeakMap<
+  PluginVoiceAgentSessionRealtimeService,
+  () => Promise<void>
+>();
+
+/** Host-only retirement barrier; never projected through the Plugin SDK facade. */
+export function cleanupBoundAgentSessionRealtimeService(
+  service: PluginVoiceAgentSessionRealtimeService,
+): Promise<void> {
+  return cleanupByBoundService.get(service)?.() ?? Promise.resolve();
+}
+
 type SessionRpc = (input: Readonly<{
   sessionId: string;
   method: string;
@@ -145,8 +157,10 @@ export function createAgentSessionRealtimeService(input: Readonly<{
   let retainedCleanupResult: AgentSessionRealtimeStopResult | null = null;
   let ambiguousStopObserved = false;
   let disposePromise: Promise<void> | null = null;
+  let cleanupPromise: Promise<void> | null = null;
   let abortCleanupScheduled = false;
   let lateStartCompensationPromise: Promise<void> | null = null;
+  let startSettlementPromise: Promise<void> | null = null;
   const cleanupSignal = new AbortController().signal;
   const watchers = new Set<Readonly<{
     listener(event: AgentSessionRealtimeLifecycleEvent): void;
@@ -311,7 +325,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
   const scheduleAbortCleanup = (): void => {
     if (abortCleanupScheduled) return;
     abortCleanupScheduled = true;
-    void ensureDisposalCleanup();
+    void ensureCleanup();
   };
 
   const ensureDisposalCleanup = (): Promise<void> => {
@@ -351,6 +365,17 @@ export function createAgentSessionRealtimeService(input: Readonly<{
     return lateStartCompensationPromise;
   };
 
+  const ensureCleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      await ensureDisposalCleanup();
+      // A START RPC may ignore its caller abort and admit upstream after the
+      // first STOP. Its settlement owns the existing bounded compensation;
+      // the host barrier must include that exact tail before replacement.
+      await startSettlementPromise;
+    })();
+    return cleanupPromise;
+  };
+
   const handle: AgentSessionRealtimeHandle = Object.freeze({
     stop,
     watch(listener: (event: AgentSessionRealtimeLifecycleEvent) => void) {
@@ -364,7 +389,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
       });
     },
     dispose() {
-      return ensureDisposalCleanup();
+      return ensureCleanup();
     },
   });
 
@@ -437,7 +462,7 @@ export function createAgentSessionRealtimeService(input: Readonly<{
   if (input.signal.aborted) onAbort();
   else input.signal.addEventListener('abort', onAbort, { once: true });
 
-  return Object.freeze({
+  const service: PluginVoiceAgentSessionRealtimeService = Object.freeze({
     async inspect(options: Readonly<{ signal?: AbortSignal }> = {}) {
       if (input.signal.aborted || options.signal?.aborted) {
         return unavailableAvailability(
@@ -537,6 +562,10 @@ export function createAgentSessionRealtimeService(input: Readonly<{
           }
           return parsed;
         });
+        startSettlementPromise = startRequest.then(
+          () => undefined,
+          () => undefined,
+        );
         const parsed = await waitForOperationOrAbort(startRequest, signal);
         if (parsed === OPERATION_ABORTED || signal.aborted) {
           emitTerminal({ kind: 'terminal', reason: 'aborted' });
@@ -590,4 +619,6 @@ export function createAgentSessionRealtimeService(input: Readonly<{
       }
     },
   });
+  cleanupByBoundService.set(service, ensureCleanup);
+  return service;
 }

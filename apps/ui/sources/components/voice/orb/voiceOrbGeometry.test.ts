@@ -246,8 +246,9 @@ describe('voice orb sheet layout', () => {
 
         expect(layout.height).toBe(260);
         expect(layout.scrolls).toBe(true);
-        // The bar and its padding survive the clamp intact: the caption absorbs all of it.
-        expect(layout.captionMaxHeight).toBe(260 - VOICE_ORB_DOCK_HEADROOM - 60 - 46);
+        // Decorative dock clearance gives way before readable content. The bar
+        // and its padding remain pinned, and only then does the caption shrink.
+        expect(layout.captionMaxHeight).toBe(260 - 60 - 46);
         expect(layout.captionMaxHeight).toBeLessThan(168);
     });
 
@@ -259,6 +260,8 @@ describe('voice orb sheet layout', () => {
 
         expect(layout.captionMaxHeight).toBe(0);
         expect(layout.scrolls).toBe(true);
+        expect(layout.height).toBe(80);
+        expect(layout.height).toBeLessThanOrEqual(80);
     });
 
     it('falls back to the desired height before the host has measured itself', () => {
@@ -268,5 +271,9 @@ describe('voice orb sheet layout', () => {
         });
 
         expect(layout.height).toBe(VOICE_ORB_SHEET_HEIGHT);
+        // The natural caption cannot report its height if the first frame gives
+        // its ScrollView a zero-height ceiling.
+        expect(layout.captionMaxHeight).toBeGreaterThan(0);
+        expect(layout.scrolls).toBe(false);
     });
 });

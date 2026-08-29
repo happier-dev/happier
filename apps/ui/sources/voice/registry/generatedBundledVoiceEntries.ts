@@ -27,14 +27,6 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
     "agents": [
       {
         "capabilities": {
-          "executionRuns": {
-            "checkpoint": true,
-            "open": [
-              "create",
-              "resume"
-            ],
-            "stop": true
-          },
           "sessions": {
             "cancel": true,
             "catalog": {
@@ -660,6 +652,14 @@ const CODEX_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
             "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
             "settingsVoice.mode.codexRealtime": "Codex Realtime (Experimental)",
             "settingsVoice.mode.codexRealtimeSubtitle": "Speak directly with the active Codex agent session."
+          }
+        },
+        {
+          "locale": "de",
+          "messages": {
+            "agentInput.connectedServiceLabel.codex": "OpenAI Codex",
+            "settingsVoice.mode.codexRealtime": "Codex Realtime (experimentell)",
+            "settingsVoice.mode.codexRealtimeSubtitle": "Sprich direkt mit der aktiven Codex-Agentensitzung."
           }
         },
         {

@@ -1,4 +1,5 @@
 import type { Session } from '../../domains/state/storageTypes';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 function arePlainObjectValuesEqual(
     previous: Record<string, unknown>,
@@ -92,7 +93,8 @@ export function areStoredSessionsEqual(
         && (previous.latestReadyEventSeq ?? null) === (next.latestReadyEventSeq ?? null)
         && (previous.latestReadyEventAt ?? null) === (next.latestReadyEventAt ?? null)
         && areSessionValueEqual(previous.lastRuntimeIssue ?? null, next.lastRuntimeIssue ?? null)
-        && (previous.metadataLayoutVersion ?? 0) === (next.metadataLayoutVersion ?? 0)
+        && readSessionMetadataLayoutVersion(previous.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(next.metadataLayoutVersion)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion
         && previous.thinking === next.thinking

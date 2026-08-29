@@ -362,6 +362,7 @@ export function createVoiceQaController(
                       ? { commitUserTranscript: deps.commitLocalUserTranscript }
                       : {}),
                     sendTurn: deps.sendLocalTurn,
+                    stop: deps.stopLocal,
                   },
                   onUserTranscriptAccepted: onAccepted,
                   onAssistantTurn: async ({ assistantText }) => {
@@ -383,6 +384,7 @@ export function createVoiceQaController(
                 if (followUp) appendedAssistantTurn = true;
                 interruptedFollowUpText = followUp;
                 result = {
+                  disposition: 'completed',
                   assistantTurns: followUp ? [followUp] : [],
                   toolResultBatches: [],
                   totalActions: 0,
@@ -409,6 +411,9 @@ export function createVoiceQaController(
                 ? 'voice_turn_dispatch_ambiguous'
                 : 'voice_turn_pending',
             );
+          }
+          if (result.disposition === 'tool_round_limit_reached') {
+            deps.qaStore.getState().appendSystem('Local voice agent stopped at the tool round limit before its requested actions could run.');
           }
           if (appendedAssistantTurn && shouldWatchAsyncTargetFollowUp) {
             void appendFollowUpAssistantTurn(15_000);

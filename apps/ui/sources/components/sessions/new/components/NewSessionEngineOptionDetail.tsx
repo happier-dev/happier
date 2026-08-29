@@ -414,6 +414,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             providerGroups={providerGroups}
             providerProjectionAuthoritative={providerProjection.status === 'success'}
             projectionError={providersFeatureEnabled ? providerProjection.error : null}
+                projectionFailures={providersFeatureEnabled ? providerProjection.refreshFailures : []}
             retryProjection={providersFeatureEnabled ? providerProjection.refresh : null}
             currentSelectionRecovery={providersFeatureEnabled
                 ? providerProjection.data?.currentSelectionRecovery ?? null

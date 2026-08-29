@@ -1,6 +1,7 @@
 import {
     PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1,
     PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
     PLUGIN_COLLECTION_LIMITS_V1,
     PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
     PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
@@ -9,11 +10,14 @@ import {
     PluginCollectionContractReadResultV1Schema,
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
+    PluginCollectionForgetRequestV1Schema,
+    PluginCollectionForgetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
     PluginCollectionMutationResultV1Schema,
     PluginCollectionQueryRequestV1Schema,
     PluginCollectionQueryResultV1Schema,
     PluginCollectionReadErrorV1Schema,
+    PluginCollectionRowIdV1Schema,
     compilePluginJsonSchema,
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
     createAccountScopedCryptoMaterialSnapshotV1,
@@ -127,7 +131,12 @@ export type ActivePluginCollectionLogicalRowV1<
 export type ActivePluginCollectionGetOutcomeV1<
     TValue extends PluginAccountCollectionValue<PluginAccountCollectionDefinition> = PluginAccountCollectionValue<PluginAccountCollectionDefinition>,
 > =
-    | Readonly<{ status: 'ready'; row: ActivePluginCollectionLogicalRowV1<TValue> | null }>
+    | Readonly<{
+        status: 'ready';
+        row: ActivePluginCollectionLogicalRowV1<TValue> | null;
+        /** Collection-owned absence currentness from the exact server snapshot. */
+        absenceEpoch: number;
+    }>
     | ActivePluginCollectionUnavailableV1
     | ActivePluginCollectionRejectedV1;
 
@@ -153,6 +162,12 @@ export type ActivePluginCollectionMutationOutcomeV1 =
         status: 'conflict';
         conflicts: readonly PluginCollectionMutationConflictV1[];
     }>
+    | ActivePluginCollectionUnavailableV1
+    | ActivePluginCollectionRejectedV1;
+
+export type ActivePluginCollectionForgetOutcomeV1 =
+    | Readonly<{ status: 'forgotten' }>
+    | Readonly<{ status: 'conflict' }>
     | ActivePluginCollectionUnavailableV1
     | ActivePluginCollectionRejectedV1;
 
@@ -243,6 +258,11 @@ export type ActivePluginCollectionClientV1<
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionMutationOutcomeV1>;
+    forget(
+        rowId: string,
+        expectedRevision: number,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionForgetOutcomeV1>;
     /**
      * The limits in force for this bound collection: the connected deployment's
      * published policy narrowed by the collection's admitted quota. Reading them
@@ -733,7 +753,7 @@ export function createActivePluginCollectionClient<
                 });
             return result.data.row !== null && !row
                 ? unavailable('account-content-mismatch')
-                : { status: 'ready', row };
+                : { status: 'ready', row, absenceEpoch: result.data.absenceEpoch };
         } finally {
             prepared.operation.release();
         }
@@ -798,6 +818,7 @@ export function createActivePluginCollectionClient<
     const prepareMutationRequest = (
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         operation: PreparedCollectionOperation,
+        absenceEpoch?: number,
     ) => preparePluginCollectionLogicalMutationRequestV1<TValue>({
         contract: params.contract,
         isValidLogicalValue: (value): value is TValue => isLogicalCollectionValue<TValue>(validate, value),
@@ -805,6 +826,7 @@ export function createActivePluginCollectionClient<
         encryptionMode: operation.encryptionMode,
         material: operation.material,
         randomBytes: getRandomBytes,
+        absenceEpoch,
     });
 
     const mutate = async (
@@ -820,7 +842,20 @@ export function createActivePluginCollectionClient<
         const prepared = await prepareCollectionOperation(options, params.accountLifetime);
         if (prepared.status === 'unavailable') return prepared;
         try {
-            const sealed = prepareMutationRequest(operations, prepared.operation);
+            const absentPut = operations.find((candidate) => (
+                candidate.kind === 'put' && candidate.expectedRevision === 'absent'
+            ));
+            let absenceEpoch: number | undefined;
+            if (absentPut) {
+                const rowId = PluginCollectionRowIdV1Schema.safeParse(
+                    absentPut.value[params.contract.rowIdField],
+                );
+                if (!rowId.success) return rejected('collection_mutation_invalid');
+                const current = await get(rowId.data, options);
+                if (current.status !== 'ready') return current;
+                absenceEpoch = current.absenceEpoch;
+            }
+            const sealed = prepareMutationRequest(operations, prepared.operation, absenceEpoch);
             if (sealed.status === 'failed') return rejected('collection_mutation_invalid');
             const response = await requestCollectionOperation({
                 operation: prepared.operation,
@@ -839,6 +874,44 @@ export function createActivePluginCollectionClient<
                     results: result.data.results,
                     changeCursor: result.data.changeCursor,
                 };
+        } finally {
+            prepared.operation.release();
+        }
+    };
+
+    const forget = async (
+        rowId: string,
+        expectedRevision: number,
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<ActivePluginCollectionForgetOutcomeV1> => {
+        const current = await get(rowId, options);
+        if (current.status !== 'ready') return current;
+        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+        if (prepared.status === 'unavailable') return prepared;
+        try {
+            const body = PluginCollectionForgetRequestV1Schema.safeParse({
+                pluginId: params.contract.pluginId,
+                collectionId: params.contract.collectionId,
+                writerContext: {
+                    schemaVersion: params.contract.schemaVersion,
+                    contractDigest: params.contract.contractDigest,
+                },
+                rowId,
+                expectedRevision,
+                expectedAbsenceEpoch: current.absenceEpoch,
+            });
+            if (!body.success) return rejected('collection_mutation_invalid');
+            const response = await requestCollectionOperation({
+                operation: prepared.operation,
+                path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
+                body: body.data,
+                options,
+            });
+            if (response.status === 'unavailable') return response;
+            if (!response.ok) return mapMutationError(response.body);
+            const result = PluginCollectionForgetResultV1Schema.safeParse(response.body);
+            if (!result.success) return unavailable('response-invalid');
+            return result.data;
         } finally {
             prepared.operation.release();
         }
@@ -951,6 +1024,7 @@ export function createActivePluginCollectionClient<
         get,
         query,
         mutate,
+        forget,
         limits,
         measureBatch,
         watch(onInvalidated): ActivePluginCollectionWatchOutcomeV1 {

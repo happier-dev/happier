@@ -20,8 +20,12 @@ let sessionsById: Record<string, {
 const writeExistingSessionDraftSpy = vi.fn();
 const flushSessionDraftSpy = vi.fn(async (_input: unknown) => ({ status: 'clean' as const }));
 const patchSessionMetadataWithRetrySpy = vi.fn();
+const materializeExistingSessionDraftSpy = vi.fn(async () => undefined);
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' | 'android' }));
 const activeServerAccountScope = Object.freeze({ serverId: 'server-test', accountId: 'account-test' });
+const activeScopeState = vi.hoisted(() => ({
+  value: null as Readonly<{ serverId: string; accountId: string }> | null,
+}));
 const sessionDraftListeners = new Set<() => void>();
 
 vi.mock('@react-navigation/native', () => ({
@@ -57,7 +61,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 vi.mock('@/sync/store/hooks', () => ({
-  useActiveServerAccountScope: () => activeServerAccountScope,
+  useActiveServerAccountScope: () => activeScopeState.value,
 }));
 
 vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
@@ -87,6 +91,7 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', () => ({
 vi.mock('@/sync/sync', () => ({
   sync: {
     patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
+    materializeExistingSessionDraft: (...args: any[]) => materializeExistingSessionDraftSpy(...args),
   },
 }));
 
@@ -262,7 +267,27 @@ describe('useDraft', () => {
     writeExistingSessionDraftSpy.mockReset();
     flushSessionDraftSpy.mockClear();
     patchSessionMetadataWithRetrySpy.mockReset();
+    materializeExistingSessionDraftSpy.mockClear();
     sessionDraftListeners.clear();
+    activeScopeState.value = activeServerAccountScope;
+  });
+
+  it('materializes the exact server draft when account scope becomes ready for an active composer', async () => {
+    activeScopeState.value = null;
+    const harness = await renderHarness({ initialSessionId: 's1', active: true });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(materializeExistingSessionDraftSpy).not.toHaveBeenCalled();
+
+    activeScopeState.value = activeServerAccountScope;
+    await act(async () => {
+      harness.getCurrent().rerender();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(materializeExistingSessionDraftSpy).toHaveBeenCalledTimes(1);
+    expect(materializeExistingSessionDraftSpy).toHaveBeenCalledWith('s1');
+    harness.unmount();
   });
 
   it('publishes a large web draft locally while debouncing its remote flush', async () => {

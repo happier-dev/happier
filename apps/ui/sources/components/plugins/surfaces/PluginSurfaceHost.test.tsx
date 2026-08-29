@@ -1050,6 +1050,15 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => surfaceEnvironment.reducedMotion,
 }));
 
+// The physical host resolves runtime form-factor admission through the
+// existing device-type hook. Keep a mutable holder so a test can move the
+// physical form factor without remounting anything.
+const pluginSurfaceDeviceTypeState = vi.hoisted(() => ({ value: 'tablet' as 'phone' | 'tablet' }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/responsive')>()),
+    useDeviceType: () => pluginSurfaceDeviceTypeState.value,
+}));
+
 vi.mock('@/hooks/ui/useScreenReaderEnabled', () => ({
     useScreenReaderEnabled: () => surfaceEnvironment.screenReaderEnabled,
 }));
@@ -2145,7 +2154,10 @@ function reactNativeSurfacePlacementFixture(
 function reactNativeInlineSurfacePlacementFixture(
     input: PluginUiInlineSurfaceBindingInputV1,
 ): PluginUiPhysicalSurfacePlacementProjection {
-    const binding = normalizePluginUiInlineSurfaceBindingV1(input);
+    const binding = normalizePluginUiInlineSurfaceBindingV1({
+        ...input,
+        availableRendererIds: [input.rendererId],
+    });
     if (!binding) {
         throw new Error(`fixture inline surface binding is not admitted: ${input.role}/${input.target.kind}`);
     }
@@ -2406,7 +2418,9 @@ describe('PluginSurfacePlacementHost', () => {
         const deleteActionStyle = screen.findByTestId('plugin-declarative-action:acme.forms/delete')?.props.style;
         // The shared pressable owns the disabled activation guard; the
         // declarative renderer still preserves focus/semantic identity.
-        expect(deleteActionStyle).toMatchObject({ minHeight: 48 });
+        expect(typeof deleteActionStyle).toBe('function');
+        expect(deleteActionStyle?.({ focused: false, pressed: false, disabled: true }))
+            .toMatchObject({ minHeight: 48, opacity: 0.5 });
         expect(screen.findByTestId('plugin-declarative-status')?.props.accessibilityLiveRegion).toBe('polite');
         expect(screen.findByTestId('plugin-declarative-stack')).toBeTruthy();
         expect(screen.findByTestId('plugin-declarative-markdown:root.children[4].children[1]')?.props.markdown).toBe('**Formatted**');
@@ -3096,6 +3110,14 @@ describe('PluginSurfacePlacementHost', () => {
             const color = flattenStyle(screen.findByTestId(testId)?.props.style).color;
             return typeof color === 'string' ? color : undefined;
         };
+        const actionStyle = (testId: string, state: Readonly<{
+            focused: boolean;
+            pressed: boolean;
+            disabled: boolean;
+        }>) => {
+            const style = screen.findByTestId(testId)?.props.style;
+            return flattenStyle(typeof style === 'function' ? style(state) : style);
+        };
         const textColor = (path: string) => styleColor(`plugin-declarative-text:${path}`);
         expect(textColor('root.children[0]')).toBe(colors.state.danger.foreground);
         expect(textColor('root.children[1]')).toBe(colors.text.tertiary);
@@ -3114,9 +3136,13 @@ describe('PluginSurfacePlacementHost', () => {
 
         const destructive = screen.findByTestId('plugin-declarative-action:acme.tone/wipe');
         const primary = screen.findByTestId('plugin-declarative-action:acme.tone/save');
-        expect(destructive?.props.style.backgroundColor).toBe(colors.state.danger.background);
-        expect(destructive?.props.style.backgroundColor).not.toBe(primary?.props.style.backgroundColor);
-        expect(primary?.props.style.backgroundColor).toBe(colors.button.primary.background);
+        const idleState = { focused: false, pressed: false, disabled: false } as const;
+        expect(actionStyle('plugin-declarative-action:acme.tone/wipe', idleState).backgroundColor)
+            .toBe(colors.state.danger.background);
+        expect(actionStyle('plugin-declarative-action:acme.tone/wipe', idleState).backgroundColor)
+            .not.toBe(actionStyle('plugin-declarative-action:acme.tone/save', idleState).backgroundColor);
+        expect(actionStyle('plugin-declarative-action:acme.tone/save', idleState).backgroundColor)
+            .toBe(colors.button.primary.background);
         expect(destructive?.props.accessibilityHint).toBe('common.destructiveActionHint');
         expect(primary?.props.accessibilityHint).toBeUndefined();
         expect(styleColor('plugin-declarative-action-label:acme.tone/wipe'))
@@ -3149,6 +3175,11 @@ describe('PluginSurfacePlacementHost', () => {
             qualifiedId: `acme.repos/${localId}`,
             generation: 'g1',
         });
+        const repositoryEntries = [
+            { kind: 'item' as const, path: 'root.c0.c0.c0', order: 3, title: 'happier', subtitle: 'Main repository', detail: '42', icon: 'file' as const, action: reference('open'), input: { id: 'happier' }, enabled: true },
+            { kind: 'item' as const, path: 'root.c0.c0.c1', order: 4, title: 'archived', tone: 'danger' as const, action: reference('archive'), enabled: false },
+            { kind: 'item' as const, path: 'root.c0.c0.c2', order: 5, title: 'unavailable', subtitle: 'Action unavailable', action: reference('missing') },
+        ];
         const placement = {
             id: 'surfacePlacement:acme.repos:list', pluginId: 'acme.repos', contributionKind: 'surfacePlacement',
             descriptorId: 'list', generatedV2: true,
@@ -3173,11 +3204,7 @@ describe('PluginSurfacePlacementHost', () => {
                 // of the list inside the free-form `stack`.
                 root: { kind: 'stack', path: 'root', order: 0, children: [
                     { kind: 'list', path: 'root.c0', order: 1, label: 'Repositories', children: [
-                        { kind: 'section', path: 'root.c0.c0', order: 2, title: 'Active', footer: 'Refreshed on reload', children: [
-                            { kind: 'item', path: 'root.c0.c0.c0', order: 3, title: 'happier', subtitle: 'Main repository', detail: '42', icon: 'file', action: reference('open'), input: { id: 'happier' }, enabled: true },
-                            { kind: 'item', path: 'root.c0.c0.c1', order: 4, title: 'archived', tone: 'danger', action: reference('archive'), enabled: false },
-                            { kind: 'item', path: 'root.c0.c0.c2', order: 5, title: 'unavailable', subtitle: 'Action unavailable', action: reference('missing') },
-                        ] },
+                        { kind: 'section', path: 'root.c0.c0', order: 2, title: 'Active', footer: 'Refreshed on reload', children: repositoryEntries },
                         { kind: 'state', path: 'root.c0.c1', order: 6, state: 'error', title: 'Sync failed', description: 'Retry from the panel.' },
                         { kind: 'state', path: 'root.c0.c2', order: 7, state: 'loading', title: 'Loading repositories' },
                         { kind: 'state', path: 'root.c0.c3', order: 8, state: 'empty', title: 'No archived repositories', icon: 'info' },
@@ -5434,9 +5461,16 @@ describe('PluginSurfacePlacementHost', () => {
             });
             await flushHookEffects({ cycles: 12 });
 
-            // Expiry is a real reissue boundary for the same current mount.
-            // The issuer receives the same exact Artifact coordinate, while
-            // the guest gets a fresh opaque capability and bridge nonce.
+            // Expiry retires the capability but does not renew in the
+            // background. The user must explicitly request a new grant.
+            expect(pluginDataTransport.request).toHaveBeenCalledTimes(2);
+            expect(screen.root.findAllByType('iframe')).toHaveLength(0);
+            expect(screen.findByTestId('plugin-hosted-web-unavailable-action')).toBeTruthy();
+            await act(async () => {
+                screen.pressByTestId('plugin-hosted-web-unavailable-action');
+                await Promise.resolve();
+            });
+            await flushHookEffects({ cycles: 6 });
             expect(pluginDataTransport.request).toHaveBeenCalledTimes(3);
             expect(screen.root.findAllByType('iframe')).toHaveLength(1);
             expect(JSON.parse(String(pluginDataTransport.request.mock.calls[2]?.[1]?.body))).toEqual({
@@ -7700,6 +7734,66 @@ describe('PluginSurfacePlacementHost', () => {
         expect(phone.findByTestId('plugin-surface-unavailable')).toBeTruthy();
         expect(phone.findByTestId('plugin-surface-unavailable-diagnostic-destination_platform_unavailable')).toBeTruthy();
         expect(phone.getTextContent()).not.toContain('destination_platform_unavailable');
+    });
+
+    it('re-admits a destination binding when the physical form factor changes at the mount', async () => {
+        // The physical host owns the reactive form-factor fact. With no
+        // explicit host prop, the same tablet-only destination must flip from
+        // rendered to unavailable when the existing device-type observation
+        // moves tablet → phone, without any remount.
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const tabletPlacement = surfacePlacementFixture({
+            binding: {
+                pluginId: 'acme.tablet',
+                destinationId: 'tablet-panel',
+                rendererId: 'tablet-renderer',
+                container: 'rightPane',
+                target: { kind: 'session', sessionIdPath: '/session/id' },
+            },
+            renderer: {
+                kind: 'declarative',
+                contributionId: 'tablet-renderer',
+                model: admittedDeclarativeModelFixture({
+                    identity: {
+                        pluginId: 'acme.tablet',
+                        localId: 'tablet-renderer',
+                        qualifiedId: 'acme.tablet/tablet-renderer',
+                        generation: 'tablet-generation',
+                    },
+                    visible: true,
+                    requiredHostMethods: [],
+                    nodes: [],
+                    root: { kind: 'text', path: 'root', order: 0, text: 'Tablet panel' },
+                }),
+            },
+            display: { label: 'Tablet panel' },
+        });
+        pluginSurfaceDeviceTypeState.value = 'tablet';
+        try {
+            const screen = await renderScreen(
+                <PluginSurfacePlacementHost
+                    placement={tabletPlacement}
+                    sessionId="session-1"
+                    pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION}
+                    platform="ios"
+                />,
+            );
+            expect(screen.getTextContent()).toContain('Tablet panel');
+
+            pluginSurfaceDeviceTypeState.value = 'phone';
+            await screen.update(
+                <PluginSurfacePlacementHost
+                    placement={tabletPlacement}
+                    sessionId="session-1"
+                    pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION}
+                    platform="ios"
+                />,
+            );
+            expect(screen.getTextContent()).not.toContain('Tablet panel');
+            expect(screen.findByTestId('plugin-surface-unavailable')).toBeTruthy();
+        } finally {
+            pluginSurfaceDeviceTypeState.value = 'tablet';
+        }
     });
 
     it('refuses a supported destination when its binding excludes the current platform', async () => {
@@ -10271,6 +10365,137 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         });
         expect(props.renderContext?.surface.mount).not.toHaveProperty('destination');
         expect(props.renderContext).not.toHaveProperty('subPath');
+        await screen.unmount();
+    });
+
+    it.each([
+        ['sessionSubagentLaunch', 'content'],
+        ['sessionSubagentDetails', 'fill'],
+        ['sessionInfoSection', 'content'],
+    ] as const)('withholds nested targeted children from the %s inline role', async (role, presentation) => {
+        reactNativeSurfaceProps.length = 0;
+        await primeGeneratedArtifact();
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const targetedFixture = primeExactTargetedContributions({
+            pluginId: 'acme.browser',
+            immutableGenerationId: `browser-inline-nested-${role}`,
+            projectionGeneration: 77,
+        });
+        const projection = withMountedTargetPackage(createGeneratedProjection(), targetedFixture, {
+            displayName: 'Browser Inspector',
+            version: '3.2.1',
+        });
+        const placement = reactNativeInlineSurfacePlacementFixture({
+            pluginId: 'acme.browser',
+            surfaceId: `session-info-inline-${role.toLowerCase()}`,
+            rendererId: 'native-panel',
+            role,
+            target: { kind: 'session', sessionIdPath: '/sessionId' },
+        });
+
+        const screen = await renderScreen(
+            <PluginSurfacePlacementHost
+                placement={placement}
+                inlineMount={{ role, presentation }}
+                sessionId="session-inline-nested"
+                machineId="machine_1"
+                serverId="server_1"
+                pluginUiProjection={projection}
+                platform="web"
+                reactNativeLoaderBackend={{
+                    backendId: 'reactNativeWebModule',
+                    available: true,
+                    loadInstalledBundle: vi.fn(async () => () => React.createElement('PluginNativeSurface')),
+                }}
+            />,
+        );
+
+        await vi.waitFor(() => expect(reactNativeSurfaceProps).not.toHaveLength(0));
+        const mounted = reactNativeSurfaceProps.at(-1) as {
+            privateHostBindings?: { presentationHost?: PluginUiPrivatePresentationHost };
+        };
+        expect(mounted.privateHostBindings?.presentationHost?.renderTargetedSurface).toBeUndefined();
+        expect(mounted.privateHostBindings?.presentationHost?.targetedSurfaceUnavailableReason)
+            .toBe('unsupported_nested_targeted_surface');
+        await screen.unmount();
+    });
+
+    it.each([
+        ['sessionSubagentLaunch', 'content'],
+        ['sessionSubagentDetails', 'fill'],
+        ['sessionInfoSection', 'content'],
+    ] as const)('renders the declarative fallback and reports unsupported nesting for the %s inline parent', async (role, presentation) => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const binding = normalizePluginUiInlineSurfaceBindingV1({
+            pluginId: 'acme.browser',
+            surfaceId: `session-info-inline-declarative-${role.toLowerCase()}`,
+            rendererId: 'declarative-panel',
+            role,
+            target: { kind: 'session', sessionIdPath: '/sessionId' },
+        });
+        if (!binding) throw new Error('fixture inline binding is not admitted');
+        const placement = Object.freeze({
+            id: `surfacePlacement:acme.browser:session-info-inline-declarative-${role.toLowerCase()}`,
+            pluginId: 'acme.browser',
+            contributionKind: 'surfacePlacement' as const,
+            descriptorId: `session-info-inline-declarative-${role.toLowerCase()}`,
+            binding,
+            target: binding.target,
+            renderer: {
+                kind: 'declarative' as const,
+                contributionId: 'declarative-panel',
+                model: admittedDeclarativeModelFixture({
+                    visible: true,
+                    identity: {
+                        pluginId: 'acme.browser',
+                        localId: 'declarative-panel',
+                        qualifiedId: 'acme.browser/declarative-panel',
+                        generation: '77',
+                    },
+                    requiredHostMethods: [],
+                    nodes: [],
+                    root: {
+                        kind: 'targetedSurface',
+                        path: 'root.target',
+                        order: 0,
+                        surface: {
+                            point: { pointId: 'child', protocol: { id: 'child', version: 1 } },
+                            contributor: {
+                                pluginId: 'acme.child',
+                                contributionId: 'detail',
+                                immutableGenerationId: 'child-generation',
+                            },
+                            role: 'detail',
+                            presentation: 'content',
+                        },
+                        input: {},
+                        instanceKey: `targeted-surface:v1:${'a'.repeat(64)}`,
+                        fallback: {
+                            kind: 'state',
+                            path: 'root.fallback',
+                            order: 1,
+                            state: 'empty',
+                            title: 'Nested detail unavailable',
+                        },
+                    },
+                }),
+            },
+            display: {},
+            availability: { state: 'available' as const, reason: 'available', diagnostics: [] },
+            headerActions: [],
+        });
+        const screen = await renderScreen(
+            <PluginSurfacePlacementHost
+                placement={placement}
+                inlineMount={{ role, presentation }}
+                sessionId="session-inline-declarative"
+                machineId="machine_1"
+                serverId="server_1"
+                pluginUiProjection={createGeneratedProjection()}
+                platform="web"
+            />,
+        );
+        expect(screen.findByTestId('plugin-declarative-state:root.fallback')).toBeTruthy();
         await screen.unmount();
     });
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol';
 
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
 
@@ -35,6 +36,25 @@ const resolveRuntimeFeatureDecision = vi.fn<(args: any) => Promise<any>>(async (
   evaluatedAt: 1,
   scope: { scopeKind: 'runtime' },
 }));
+
+function buildExecutionRunPublicState(
+  overrides: Partial<ExecutionRunPublicState> = {},
+): ExecutionRunPublicState {
+  return {
+    runId: 'run_1',
+    callId: 'call_1',
+    sidechainId: 'sidechain_1',
+    intent: 'voice_agent',
+    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    permissionMode: 'read_only',
+    retentionPolicy: 'resumable',
+    runClass: 'long_lived',
+    ioMode: 'streaming',
+    status: 'running',
+    startedAtMs: 1,
+    ...overrides,
+  };
+}
 
 vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
   DaemonVoiceAgentClient: class {
@@ -178,12 +198,14 @@ vi.mock('@/sync/ops/machines', () => ({
 
 // sessionExecutionRunGet is a protocol boundary; keep the mock flexible as the run schema evolves.
 const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({
-  run: {
-    runId: 'run_1',
-    backendId: 'claude',
+  run: buildExecutionRunPublicState({
     transcript: { persistenceMode: 'persistent', epoch: 1 },
-    resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
-  },
+    resumeHandle: {
+      kind: 'provider_session.v1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      providerSessionId: 'vs_1',
+    },
+  }),
 }));
 const sessionExecutionRunList = vi.fn(async (..._args: any[]): Promise<any> => ({
   runs: [],
@@ -257,10 +279,10 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 async function loadVoiceAgentPersistenceHarness() {
-  const [{ useVoiceTargetStore }, { VOICE_AGENT_GLOBAL_SESSION_ID }, { createVoiceAgentSessionController }, { voiceSessionBindingStore }] = await Promise.all([
+  const [{ useVoiceTargetStore }, { VOICE_AGENT_GLOBAL_SESSION_ID }, { createVoiceExecutionTransport }, { voiceSessionBindingStore }] = await Promise.all([
     import('@/voice/runtime/voiceTargetStore'),
     import('@/voice/agent/voiceAgentGlobalSessionId'),
-    import('./VoiceAgentSessionController'),
+    import('@/voice/runtime/execution/VoiceExecutionTransport'),
     import('@/voice/binding/voiceConversationBindingStore'),
   ]);
 
@@ -273,12 +295,12 @@ async function loadVoiceAgentPersistenceHarness() {
 
   return {
     VOICE_AGENT_GLOBAL_SESSION_ID,
-    createVoiceAgentSessionController,
+    createVoiceExecutionTransport,
     voiceSessionBindingStore,
   };
 }
 
-describe('VoiceAgentSessionController (persistence)', () => {
+describe('VoiceExecutionTransport (persistence)', () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.resetModules();
@@ -325,8 +347,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('persists runId and resumeHandle into carrier session metadata when transcript persistence is enabled', async () => {
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -341,7 +363,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('prefers an active hidden voice conversation session over a newer inactive one for the global daemon anchor', async () => {
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
     state.sessions.sys_voice.updatedAt = 20;
     state.sessions.sys_voice.active = false;
     state.sessions.sys_voice.presence = 'offline';
@@ -354,7 +376,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       metadata: { flavor: 'claude', systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
     };
 
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -373,8 +395,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       scope: { scopeKind: 'runtime' },
     });
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn('s1', 'hello')).rejects.toMatchObject({
       message: expect.stringContaining('Experimental Features > Voice Agent'),
@@ -393,8 +415,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
   it('persists run metadata even when transcript persistence is ephemeral so active runs can be reattached after reload', async () => {
     state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -419,26 +441,26 @@ describe('VoiceAgentSessionController (persistence)', () => {
     };
     sessionExecutionRunList.mockResolvedValueOnce({
       runs: [
-        {
+        buildExecutionRunPublicState({
           runId: 'run_legacy',
-          intent: 'voice_agent',
-          status: 'running',
-          backendId: 'claude',
           startedAtMs: 1,
-        },
+        }),
       ],
     });
     sessionExecutionRunGet.mockResolvedValueOnce({
-      run: {
+      run: buildExecutionRunPublicState({
         runId: 'run_legacy',
-        backendId: 'claude',
         transcript: { persistenceMode: 'ephemeral', epoch: 1 },
-        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_legacy' },
-      },
+        resumeHandle: {
+          kind: 'provider_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          providerSessionId: 'vs_legacy',
+        },
+      }),
     });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -452,9 +474,9 @@ describe('VoiceAgentSessionController (persistence)', () => {
   });
 
   it('persists session-scoped daemon run metadata so the run can be reattached after controller recreation', async () => {
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
 
-    const firstController = createVoiceAgentSessionController();
+    const firstController = createVoiceExecutionTransport();
     await firstController.sendTurn('s1', 'hello');
 
     expect(state.sessions.s1.metadata.voiceAgentRunV1).toMatchObject({
@@ -469,25 +491,24 @@ describe('VoiceAgentSessionController (persistence)', () => {
     sendTurn.mockClear();
     sessionExecutionRunList.mockResolvedValueOnce({
       runs: [
-        {
+        buildExecutionRunPublicState({
           runId: 'run_1',
-          intent: 'voice_agent',
-          status: 'running',
-          backendId: 'claude',
           startedAtMs: 10,
-        },
+        }),
       ],
     });
     sessionExecutionRunGet.mockResolvedValueOnce({
-      run: {
-        runId: 'run_1',
-        backendId: 'claude',
+      run: buildExecutionRunPublicState({
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
-      },
+        resumeHandle: {
+          kind: 'provider_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          providerSessionId: 'vs_1',
+        },
+      }),
     });
 
-    const secondController = createVoiceAgentSessionController();
+    const secondController = createVoiceExecutionTransport();
     await secondController.sendTurn('s1', 'hello again');
 
     expect(start).toHaveBeenCalledWith(
@@ -514,8 +535,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       updatedAtMs: 1,
     };
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.stop('s1');
 
@@ -533,32 +554,24 @@ describe('VoiceAgentSessionController (persistence)', () => {
     };
     sessionExecutionRunList.mockResolvedValueOnce({
       runs: [
-        {
+        buildExecutionRunPublicState({
           runId: 'run_prev',
-          intent: 'voice_agent',
-          status: 'running',
-          backendId: 'claude',
           startedAtMs: 20,
-        },
-        {
+        }),
+        buildExecutionRunPublicState({
           runId: 'run_stale',
-          intent: 'voice_agent',
-          status: 'running',
-          backendId: 'claude',
           startedAtMs: 10,
-        },
-        {
+        }),
+        buildExecutionRunPublicState({
           runId: 'run_other_backend',
-          intent: 'voice_agent',
-          status: 'running',
-          backendId: 'codex',
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
           startedAtMs: 30,
-        },
+        }),
       ],
     });
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.stop('s1');
 
@@ -571,52 +584,46 @@ describe('VoiceAgentSessionController (persistence)', () => {
   it('reconciles duplicate running session-scoped voice runs by reattaching the newest match and stopping the extras', async () => {
     sessionExecutionRunList.mockResolvedValueOnce({
       runs: [
-        {
+        buildExecutionRunPublicState({
           runId: 'run_old',
           callId: 'call_old',
           sidechainId: 'side_old',
-          intent: 'voice_agent',
-          backendId: 'claude',
-          permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',
-          runClass: 'long_lived',
-          ioMode: 'streaming',
-          status: 'running',
           startedAtMs: 10,
-        },
-        {
+        }),
+        buildExecutionRunPublicState({
           runId: 'run_new',
           callId: 'call_new',
           sidechainId: 'side_new',
-          intent: 'voice_agent',
-          backendId: 'claude',
-          permissionMode: 'read_only',
           retentionPolicy: 'ephemeral',
-          runClass: 'long_lived',
-          ioMode: 'streaming',
-          status: 'running',
           startedAtMs: 20,
-        },
+        }),
       ],
     });
     sessionExecutionRunGet
       .mockResolvedValueOnce({
-        run: {
+        run: buildExecutionRunPublicState({
           runId: 'run_new',
-          backendId: 'claude',
-          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_new' },
-        },
+          resumeHandle: {
+            kind: 'provider_session.v1',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            providerSessionId: 'vs_new',
+          },
+        }),
       })
       .mockResolvedValueOnce({
-        run: {
+        run: buildExecutionRunPublicState({
           runId: 'run_new',
-          backendId: 'claude',
-          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_new' },
-        },
+          resumeHandle: {
+            kind: 'provider_session.v1',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            providerSessionId: 'vs_new',
+          },
+        }),
       });
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn('s1', 'hello');
 
@@ -637,9 +644,9 @@ describe('VoiceAgentSessionController (persistence)', () => {
   it('reuses persisted runId for ephemeral global voice sessions after controller recreation', async () => {
     state.settings.voice.providers.local_conversation.config.agent.transcript = { persistenceMode: 'ephemeral', epoch: 1 };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
 
-    const firstController = createVoiceAgentSessionController();
+    const firstController = createVoiceExecutionTransport();
     await firstController.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
@@ -651,7 +658,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     start.mockClear();
     sendTurn.mockClear();
 
-    const secondController = createVoiceAgentSessionController();
+    const secondController = createVoiceExecutionTransport();
     await secondController.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello again');
 
     expect(start).toHaveBeenCalledWith(
@@ -669,8 +676,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ voiceAgentId: 'run_2' });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'ok',
@@ -696,8 +703,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ voiceAgentId: 'run_2' });
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn('s1', 'hello')).resolves.toMatchObject({
       assistantText: 'ok',
@@ -733,24 +740,30 @@ describe('VoiceAgentSessionController (persistence)', () => {
     start.mockResolvedValueOnce({ voiceAgentId: 'run_2' });
     sessionExecutionRunGet
       .mockResolvedValueOnce({
-        run: {
+        run: buildExecutionRunPublicState({
           runId: 'run_prev',
-          backendId: 'claude',
           transcript: { persistenceMode: 'persistent', epoch: 1 },
-          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
-        },
+          resumeHandle: {
+            kind: 'provider_session.v1',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            providerSessionId: 'vs_prev',
+          },
+        }),
       })
       .mockResolvedValueOnce({
-        run: {
+        run: buildExecutionRunPublicState({
           runId: 'run_2',
-          backendId: 'claude',
           transcript: { persistenceMode: 'persistent', epoch: 1 },
-          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_2' },
-        },
+          resumeHandle: {
+            kind: 'provider_session.v1',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            providerSessionId: 'vs_2',
+          },
+        }),
       });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -782,16 +795,19 @@ describe('VoiceAgentSessionController (persistence)', () => {
 
     start.mockResolvedValueOnce({ voiceAgentId: 'run_2' });
     sessionExecutionRunGet.mockResolvedValueOnce({
-      run: {
+      run: buildExecutionRunPublicState({
         runId: 'run_2',
-        backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_2' },
-      },
+        resumeHandle: {
+          kind: 'provider_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          providerSessionId: 'vs_2',
+        },
+      }),
     });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -823,8 +839,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
     start.mockRejectedValueOnce(Object.assign(new Error('Not found'), { rpcErrorCode: 'execution_run_not_found' }));
     start.mockResolvedValueOnce({ voiceAgentId: 'run_3' });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -858,8 +874,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
     start.mockRejectedValueOnce(Object.assign(new Error('Not found'), { rpcErrorCode: 'execution_run_not_found' }));
     start.mockResolvedValueOnce({ voiceAgentId: 'run_fresh' });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
     expect(start).toHaveBeenNthCalledWith(
@@ -895,8 +911,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       transcriptContractVersion: 2,
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
 
@@ -916,8 +932,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       .mockRejectedValueOnce(new Error('Voice agent not found'))
       .mockResolvedValueOnce({ assistantText: 'recovered', actions: [] });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'recovered',
@@ -937,8 +953,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
     welcome.mockRejectedValueOnce(new Error('Voice agent not found'));
     sendTurn.mockResolvedValueOnce({ assistantText: 'recovered', actions: [] });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBeNull();
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
@@ -959,9 +975,9 @@ describe('VoiceAgentSessionController (persistence)', () => {
     };
     welcome.mockResolvedValue({ assistantText: 'Welcome!' });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
 
-    const firstController = createVoiceAgentSessionController();
+    const firstController = createVoiceExecutionTransport();
     await expect(firstController.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBe('Welcome!');
 
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
@@ -970,7 +986,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     });
     expect(welcome).toHaveBeenCalledTimes(1);
 
-    const secondController = createVoiceAgentSessionController();
+    const secondController = createVoiceExecutionTransport();
     await expect(secondController.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBeNull();
 
     expect(welcome).toHaveBeenCalledTimes(1);
@@ -994,16 +1010,19 @@ describe('VoiceAgentSessionController (persistence)', () => {
     start.mockRejectedValueOnce(Object.assign(new Error('Not resumable'), { rpcErrorCode: 'execution_run_not_allowed' }));
     start.mockResolvedValueOnce({ voiceAgentId: 'run_4' });
     sessionExecutionRunGet.mockResolvedValueOnce({
-      run: {
+      run: buildExecutionRunPublicState({
         runId: 'run_4',
-        backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_4' },
-      },
+        resumeHandle: {
+          kind: 'provider_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          providerSessionId: 'vs_4',
+        },
+      }),
     });
 
-    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.ensureRunning('sys_voice');
 
@@ -1033,25 +1052,25 @@ describe('VoiceAgentSessionController (persistence)', () => {
   it('persists an updated resumeHandle into carrier metadata after commit (e.g. commit session ids)', async () => {
     sessionExecutionRunGet.mockImplementation(async () => ({
       run: commit.mock.calls.length === 0
-        ? {
-            runId: 'run_1',
-            backendId: 'claude',
-            resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
-          }
-        : {
-            runId: 'run_1',
-            backendId: 'claude',
+        ? buildExecutionRunPublicState({
+            resumeHandle: {
+              kind: 'provider_session.v1',
+              backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+              providerSessionId: 'vs_1',
+            },
+          })
+        : buildExecutionRunPublicState({
             resumeHandle: {
               kind: 'voice_agent_sessions.v1',
-              backendId: 'claude',
+              backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
               chatProviderSessionId: 'vs_1',
               commitProviderSessionId: 'vs_commit',
             },
-          },
+          }),
     }));
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1?.resumeHandle?.kind).toBe('provider_session.v1');
@@ -1078,8 +1097,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ assistantText: 'recovered', actions: [] });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'recovered',
@@ -1102,16 +1121,19 @@ describe('VoiceAgentSessionController (persistence)', () => {
       .mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }))
       .mockResolvedValueOnce({ assistantText: 'recovered', actions: [] });
     sessionExecutionRunGet.mockImplementation(async (_sessionId: string, params: { runId: string }) => ({
-      run: {
+      run: buildExecutionRunPublicState({
         runId: params.runId,
-        backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: `vs_${params.runId}` },
-      },
+        resumeHandle: {
+          kind: 'provider_session.v1',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          providerSessionId: `vs_${params.runId}`,
+        },
+      }),
     }));
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'recovered',
@@ -1135,7 +1157,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       metadata: { flavor: 'claude' },
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport, voiceSessionBindingStore } =
       await loadVoiceAgentPersistenceHarness();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
@@ -1145,7 +1167,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       targetSessionId: 's_inactive',
       updatedAt: 1,
     });
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       message: 'Target session is inactive. Resume it before starting local voice.',
@@ -1165,7 +1187,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       metadata: { flavor: 'claude' },
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport, voiceSessionBindingStore } =
       await loadVoiceAgentPersistenceHarness();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
@@ -1175,7 +1197,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       targetSessionId: 's_offline',
       updatedAt: 1,
     });
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       message: 'Target session is offline. Reconnect it before starting local voice.',
@@ -1208,7 +1230,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       daemonStateVersion: 0,
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport, voiceSessionBindingStore } =
       await loadVoiceAgentPersistenceHarness();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
@@ -1218,7 +1240,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       targetSessionId: 's_machine_offline',
       updatedAt: 1,
     });
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       message: 'Target machine daemon is offline. Start or reconnect the daemon before starting local voice.',
@@ -1238,7 +1260,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       metadata: { flavor: 'kimi' },
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport, voiceSessionBindingStore } =
       await loadVoiceAgentPersistenceHarness();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
@@ -1248,7 +1270,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       targetSessionId: 's_kimi',
       updatedAt: 1,
     });
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).rejects.toMatchObject({
       message: 'Target session provider does not support local voice control.',
@@ -1305,7 +1327,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       daemonStateVersion: 0,
     };
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController, voiceSessionBindingStore } =
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport, voiceSessionBindingStore } =
       await loadVoiceAgentPersistenceHarness();
     voiceSessionBindingStore.getState().bind({
       adapterId: 'local_conversation',
@@ -1315,7 +1337,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       targetSessionId: 's_cached_target',
       updatedAt: 1,
     });
-    const controller = createVoiceAgentSessionController();
+    const controller = createVoiceExecutionTransport();
 
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'ok',
@@ -1440,8 +1462,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       };
     });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello after switch');
 
@@ -1600,8 +1622,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
       };
     });
 
-    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
-    const controller = createVoiceAgentSessionController();
+    const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceExecutionTransport } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceExecutionTransport();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello after refresh');
 

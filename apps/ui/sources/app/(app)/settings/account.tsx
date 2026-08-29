@@ -96,6 +96,7 @@ import {
 import { runAccountEncryptionModeMigration } from '@/sync/ops/account/runAccountEncryptionModeMigration';
 import { deleteCurrentAccount } from '@/sync/api/account/deleteCurrentAccount';
 import { AccountDeletedLocalCleanupError, completeAccountDeletion } from '@/components/settings/account/accountDeletionLifecycle';
+import { SettingsHistorySection } from '@/components/settings/account/SettingsHistorySection';
 
 type AccountEncryptionModePresentation = Readonly<{
     scope: string | null;
@@ -485,6 +486,12 @@ export default React.memo(() => {
                         />
                     </ItemGroup>
                 ) : null}
+
+                {/* Account Settings history/restore (client-side classification-aware restore owner) */}
+                <SettingsHistorySection
+                    credentials={auth.credentials}
+                    encryption={sync.encryption}
+                />
 
                 {/* Secret Key Display */}
                 {formattedSecret && showSecret && (

@@ -36,11 +36,11 @@ use std::{
 use webkit2gtk::WebInspectorExt;
 use webkit2gtk::{
   AutoplayPolicy, CookieManagerExt, InputMethodContextExt, LoadEvent, NavigationPolicyDecision,
-  NavigationPolicyDecisionExt, NetworkProxyMode, NetworkProxySettings, PolicyDecisionType,
-  PrintOperationExt, SettingsExt, URIRequest, URIRequestExt, UserContentInjectedFrames,
-  UserContentManager, UserContentManagerExt, UserScript, UserScriptInjectionTime,
-  WebContextExt as Webkit2gtkWeContextExt, WebView, WebViewExt, WebsiteDataManagerExt,
-  WebsiteDataManagerExtManual, WebsitePolicies,
+  NavigationPolicyDecisionExt, NetworkProxyMode, NetworkProxySettings, PermissionRequestExt,
+  PolicyDecisionType, PrintOperationExt, SettingsExt, URIRequest, URIRequestExt,
+  UserContentInjectedFrames, UserContentManager, UserContentManagerExt, UserMediaPermissionRequest,
+  UserScript, UserScriptInjectionTime, WebContextExt as Webkit2gtkWeContextExt, WebView,
+  WebViewExt, WebsiteDataManagerExt, WebsiteDataManagerExtManual, WebsitePolicies,
 };
 use webkit2gtk_sys::{
   webkit_get_major_version, webkit_get_micro_version, webkit_get_minor_version,
@@ -467,6 +467,23 @@ impl InnerWebView {
 
     // Synthetic mouse events
     synthetic_mouse_events::setup(webview);
+
+    // WebKitGTK's default permission handler is independent of the process
+    // microphone grant. Consume the same per-view media policy as WKWebView
+    // and WebView2, while leaving unrelated permission types to WebKit.
+    if !attributes.media_capture_enabled {
+      webview.connect_permission_request(|_, request| {
+        if request
+          .downcast_ref::<UserMediaPermissionRequest>()
+          .is_some()
+        {
+          request.deny();
+          true
+        } else {
+          false
+        }
+      });
+    }
 
     // Document title changed handler
     if let Some(document_title_changed_handler) = attributes.document_title_changed_handler.take() {

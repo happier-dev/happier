@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -10,7 +10,11 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance';
 import { Typography } from '@/constants/Typography';
-import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
+import {
+    restoreFocusToBestTarget,
+    useFocusReturnFallbackRef,
+    type FocusReturnTarget,
+} from '@/keyboard/focusReturn';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
@@ -207,8 +211,15 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
      * at whatever was measured when there is nothing down there to protect. A
      * collapsed idle vessel must not reserve a row it is not drawing.
      */
+    const unmeasuredRecoveryHeight = attemptControl.recoveryAvailable
+        ? MINIMUM_TARGET_SIZE + 8
+        : 0;
     const actionsBlockHeight = showActions
-        ? Math.max(VOICE_HORIZON_ACTIONS_BLOCK_HEIGHT, measuredActionsHeight)
+        ? Math.max(
+            VOICE_HORIZON_ACTIONS_BLOCK_HEIGHT,
+            unmeasuredRecoveryHeight,
+            measuredActionsHeight,
+        )
         : measuredActionsHeight;
 
     const { desiredHeight, availableHeight } = resolveVoiceHorizonHeights({
@@ -248,12 +259,11 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
 
     const inner = Math.max(1, width - 24);
 
-    const recoveryActionRef = React.useRef<FocusReturnTarget>(null);
-    const onPrimaryActionWithRecoveryFocus = useRecoveryFocusLatch({
+    const recoveryFocus = useRecoveryFocusLatch({
         canRecover: attemptControl.recoveryAvailable,
         canStop: attemptControl.canStop,
+        recoveryIdentity: attemptControl.recoveryLabel,
         onToggle: attemptControl.onPrimaryAction,
-        recoveryActionRef,
     });
 
     const contextualControls = React.useMemo<readonly VoiceControlAction[]>(() => {
@@ -463,7 +473,23 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
                     <Grain radius={18} />
                 </Animated.View>
 
-                <View style={{ paddingHorizontal: 13, paddingTop: PAD, paddingBottom: PAD, flex: 1 }}>
+                <View
+                    testID={`voice-surface-content:${model.variant}`}
+                    {...(isWeb ? { 'data-testid': `voice-surface-content:${model.variant}` } : {})}
+                    style={{
+                        position: 'relative',
+                        paddingHorizontal: 13,
+                        paddingTop: PAD,
+                        /*
+                         * The measured actions are pinned below. Reserving their
+                         * exact height gives the status/transcript region what is
+                         * left, so short regions sacrifice information before the
+                         * way out. No second scroll owner is introduced.
+                         */
+                        paddingBottom: PAD + (showActions ? actionsBlockHeight : 0),
+                        flex: 1,
+                    }}
+                >
                     {/*
                       * Status and transport share the top line — that is what
                       * removed ~36pt from the sidebar budget. When a feed exists,
@@ -526,8 +552,9 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
                              * untruthful thing on a surface whose job is to report state.
                              */
                             capturing={model.isMicCaptureActive}
-                            onStart={onPrimaryActionWithRecoveryFocus}
-                            onEnd={onPrimaryActionWithRecoveryFocus}
+                            onEnd={recoveryFocus.onPrimaryAction}
+                            onStart={recoveryFocus.onPrimaryAction}
+                            primaryActionRef={recoveryFocus.primaryActionRef}
                             onToggleMute={attemptControl.onToggleMute}
                             onAction={onAction}
                             /*
@@ -564,6 +591,16 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
                         collapsable={false}
                         {...(isWeb ? { 'data-testid': `voice-surface-actions:${model.variant}` } : {})}
                         onLayout={onActionsBlockLayout}
+                        style={{
+                            position: 'absolute',
+                            left: 13,
+                            right: 13,
+                            bottom: PAD,
+                            // In a physically tiny region the status may occupy
+                            // the same pixels; the escape action owns the top
+                            // hit/paint layer as well as the reserved layout.
+                            zIndex: 1,
+                        }}
                     >
                         {/*
                           * §12.2 — recovery is an ADDITION. The transport above is
@@ -579,28 +616,27 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
                                 <View style={{ flex: 1 }} />
                             )}
                             {attemptControl.recoveryAvailable ? (
-                                /*
-                                 * A plain `Pressable`, not `QuietAction`: the focus
-                                 * latch has to hold a ref to this exact node, and
-                                 * the shared control primitives are `React.memo`
-                                 * without `forwardRef`. The visual treatment is
-                                 * `QuietAction`'s primary tone, unchanged.
-                                 */
-                                <Pressable
-                                    ref={recoveryActionRef as any}
+                                <TactilePressable
+                                    focusTargetRef={(target) => {
+                                        recoveryFocus.recoveryActionRef.current = target;
+                                    }}
                                     testID={`voice-surface-recovery:${model.variant}`}
-                                    accessibilityRole="button"
                                     accessibilityLabel={attemptControl.recoveryLabel ?? ''}
                                     onPress={attemptControl.onRecover}
-                                    style={({ pressed }) => ({
+                                    onFocus={recoveryFocus.onRecoveryFocus}
+                                    onBlur={recoveryFocus.onRecoveryBlur}
+                                    containerStyle={{
                                         minWidth: MINIMUM_TARGET_SIZE,
                                         minHeight: MINIMUM_TARGET_SIZE,
                                         justifyContent: 'center',
+                                    }}
+                                    style={{
+                                        minHeight: 28,
+                                        justifyContent: 'center',
                                         paddingHorizontal: 12,
                                         borderRadius: 8,
-                                        opacity: pressed ? 0.72 : 1,
                                         backgroundColor: tokens.dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
-                                    })}
+                                    }}
                                 >
                                     <Text
                                         style={{
@@ -611,7 +647,7 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
                                     >
                                         {attemptControl.recoveryLabel}
                                     </Text>
-                                </Pressable>
+                                </TactilePressable>
                             ) : null}
                             {/*
                               * Expanded, the contextual actions live here; with
@@ -639,20 +675,67 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
 function useRecoveryFocusLatch(params: Readonly<{
     canRecover: boolean;
     canStop: boolean;
+    recoveryIdentity: string | null;
     onToggle: () => void;
-    recoveryActionRef: React.RefObject<FocusReturnTarget>;
-}>): () => void {
-    const { canRecover, canStop, onToggle, recoveryActionRef } = params;
+}>): Readonly<{
+    onPrimaryAction: () => void;
+    primaryActionRef: React.RefCallback<FocusReturnTarget>;
+    recoveryActionRef: React.MutableRefObject<FocusReturnTarget>;
+    onRecoveryFocus: () => void;
+    onRecoveryBlur: () => void;
+}> {
+    const { canRecover, canStop, recoveryIdentity, onToggle } = params;
+    const fallbackRef = useFocusReturnFallbackRef<FocusReturnTarget>();
+    const primaryActionTargetRef = React.useRef<FocusReturnTarget>(null);
+    const recoveryActionRef = React.useRef<FocusReturnTarget>(null);
     const focusRecoveryAfterStartRef = React.useRef(false);
+    const recoveryOwnsFocusRef = React.useRef(false);
     const wasRecoverableRef = React.useRef(canRecover);
+    const previousRecoveryIdentityRef = React.useRef(recoveryIdentity);
+
+    const restoreOwnedRecoveryFocus = React.useCallback(() => {
+        if (!recoveryOwnsFocusRef.current) return;
+        if (Platform.OS === 'web' && typeof document !== 'undefined') {
+            const active = document.activeElement;
+            const recoveryTarget = recoveryActionRef.current;
+            const focusStayedWithRecovery = active === document.body
+                || active === document.documentElement
+                || active === recoveryTarget
+                || (
+                    typeof HTMLElement !== 'undefined'
+                    && recoveryTarget instanceof HTMLElement
+                    && recoveryTarget.contains(active)
+                );
+            if (!focusStayedWithRecovery) {
+                recoveryOwnsFocusRef.current = false;
+                return;
+            }
+        }
+        recoveryOwnsFocusRef.current = false;
+        restoreFocusToBestTarget(primaryActionTargetRef, fallbackRef);
+    }, [fallbackRef]);
 
     React.useLayoutEffect(() => {
         const becameRecoverable = !wasRecoverableRef.current && canRecover;
+        const retiredRecovery = wasRecoverableRef.current && !canRecover;
+        const replacedRecovery = wasRecoverableRef.current
+            && canRecover
+            && previousRecoveryIdentityRef.current !== recoveryIdentity;
         wasRecoverableRef.current = canRecover;
+        previousRecoveryIdentityRef.current = recoveryIdentity;
+        if (retiredRecovery || replacedRecovery) {
+            focusRecoveryAfterStartRef.current = false;
+            restoreOwnedRecoveryFocus();
+            return;
+        }
         if (!becameRecoverable || !focusRecoveryAfterStartRef.current) return;
         focusRecoveryAfterStartRef.current = false;
-        restoreFocusToBestTarget(recoveryActionRef);
-    }, [canRecover, recoveryActionRef]);
+        recoveryOwnsFocusRef.current = restoreFocusToBestTarget(recoveryActionRef);
+    }, [canRecover, recoveryIdentity, restoreOwnedRecoveryFocus]);
+
+    React.useLayoutEffect(() => () => {
+        restoreOwnedRecoveryFocus();
+    }, [restoreOwnedRecoveryFocus]);
 
     React.useEffect(() => {
         if (canStop) {
@@ -660,10 +743,28 @@ function useRecoveryFocusLatch(params: Readonly<{
         }
     }, [canStop]);
 
-    return React.useCallback(() => {
+    const onPrimaryAction = React.useCallback(() => {
         if (!canStop) {
             focusRecoveryAfterStartRef.current = true;
         }
         onToggle();
     }, [canStop, onToggle]);
+
+    return React.useMemo(() => ({
+        onPrimaryAction,
+        primaryActionRef: (target: FocusReturnTarget) => {
+            primaryActionTargetRef.current = target;
+        },
+        recoveryActionRef,
+        onRecoveryFocus: () => {
+            recoveryOwnsFocusRef.current = true;
+        },
+        onRecoveryBlur: () => {
+            // On web, removing a focused node fires blur before the layout
+            // effect can return it. The active-element check above distinguishes
+            // that retirement from a deliberate Tab away. Native has no such
+            // synchronous document signal, so blur releases ownership there.
+            if (Platform.OS !== 'web') recoveryOwnsFocusRef.current = false;
+        },
+    }), [onPrimaryAction]);
 }

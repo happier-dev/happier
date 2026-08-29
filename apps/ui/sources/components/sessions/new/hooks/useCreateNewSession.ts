@@ -28,6 +28,10 @@ import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/c
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildLastUsedBackendTargetSettings } from '@/agents/backendCatalog/buildLastUsedBackendTargetSettings';
 import { buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues } from '@/agents/catalog/catalog';
+import type {
+    AgentPluginSettingsReadiness,
+    AgentPluginSettingsSnapshot,
+} from '@/agents/registry/registryUiBehavior';
 import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modules/newSessionBehaviorAgent';
 import { transformProfileToEnvironmentVars } from '@/components/sessions/new/modules/profileHelpers';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
@@ -307,6 +311,10 @@ export function useCreateNewSession(params: Readonly<{
      * envelope is built from the declaration the user actually saw.
      */
     runtimeCarrierAgentId?: string | null;
+    /** Exact scoped Settings values for the selected operational Agent. */
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
+    /** Readiness of that exact scoped Settings record; defaults are not launch-safe. */
+    pluginSettingsReadiness?: AgentPluginSettingsReadiness | null;
     backendTarget?: PersistedBackendTargetRefV2;
     spawnBackendTarget?: BackendTargetRefV2Input;
     transcriptStorage?: 'persisted' | 'direct';
@@ -533,6 +541,7 @@ export function useCreateNewSession(params: Readonly<{
                         routeServerId: resolvedTargetServerId,
                         activeServerId: getActiveServerSnapshot().serverId,
                         automationsEnabled: current.automationsEnabled === true,
+                        accountSettings: storage.getState().settings,
                         accountLifetime,
                         readCurrent: () => ({
                             session: storage.getState().sessions[sourceSessionId] ?? null,
@@ -540,6 +549,7 @@ export function useCreateNewSession(params: Readonly<{
                             routeServerId: resolvedTargetServerId,
                             activeServerId: getActiveServerSnapshot().serverId,
                             automationsEnabled: latestParamsRef.current.automationsEnabled === true,
+                            accountSettings: storage.getState().settings,
                         }),
                     });
                     return authority ? [{ authority, sourceSessionId, sourceTurnId: definition.scope.sourceTurnId }] : [];
@@ -717,6 +727,7 @@ export function useCreateNewSession(params: Readonly<{
                 environmentVariables = buildSpawnEnvironmentVariablesFromUiState({
                     agentId: spawnBehaviorAgentId,
                     settings: current.settings,
+                    pluginSettings: current.pluginSettings,
                     machineId: selectedMachineId,
                     environmentVariables,
                     newSessionOptions: {
@@ -734,13 +745,15 @@ export function useCreateNewSession(params: Readonly<{
 
             const machineCapsSnapshot = getMachineCapabilitiesSnapshot(selectedMachineId, resolvedTargetServerId);
             const machineCapsResults = machineCapsSnapshot?.response.results as any;
-            const preflightIssues = staticAgentId
+            const preflightIssues = spawnBehaviorAgentId
                 ? getNewSessionPreflightIssues({
-                    agentId: staticAgentId,
-                    experiments: getAgentResumeExperimentsFromSettings(staticAgentId, current.settings, selectedMachineId),
+                    agentId: spawnBehaviorAgentId,
+                    experiments: getAgentResumeExperimentsFromSettings(spawnBehaviorAgentId, current.settings, selectedMachineId, current.pluginSettings),
                     resumeSessionId: current.resumeSessionId,
                     results: machineCapsResults,
                     machineId: selectedMachineId,
+                    pluginSettings: current.pluginSettings,
+                    pluginSettingsReadiness: current.pluginSettingsReadiness,
                 })
                 : [];
             const blockingIssue = preflightIssues[0] ?? null;
@@ -810,6 +823,7 @@ export function useCreateNewSession(params: Readonly<{
                 ? buildSpawnSessionExtrasFromUiState({
                     agentId: spawnBehaviorAgentId,
                     settings: current.settings,
+                    pluginSettings: current.pluginSettings,
                     machineId: selectedMachineId,
                     resumeSessionId: current.resumeSessionId,
                     newSessionOptions: current.agentNewSessionOptions,

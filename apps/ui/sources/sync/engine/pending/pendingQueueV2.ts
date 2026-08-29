@@ -49,6 +49,7 @@ import {
     PendingMessageMutationFingerprintV1Schema,
     RawIngressStructuredInputV1Schema,
     SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+    SessionMediaMessageMetaV1Schema,
     readIngressComposerAttachmentSelectionV1,
     SessionStoredMessageContentSchema,
     type ComposerContentHandleV1,
@@ -59,6 +60,7 @@ import {
     type PendingDeliveryStatusV1,
     type PendingRequestedActionV1,
     type SessionStoredMessageContent,
+    type SessionMediaMessageMetaV1,
 } from '@happier-dev/protocol';
 import {
     admitMentionRefsV1ForText,
@@ -2485,6 +2487,10 @@ export async function updatePendingMessageV2(params: {
     /** Opaque daemon-produced staged-media handles; the canonical writer returns them only after PATCH acceptance. */
     preparedComposerAdmission?: Readonly<{
         stagedMediaHandles: readonly ComposerContentHandleV1[];
+        sessionMediaMetadata?: Readonly<{
+            key: 'happier' | 'happierMedia';
+            envelope: SessionMediaMessageMetaV1;
+        }>;
     }>;
     encryption: Encryption | null;
     fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
@@ -2520,8 +2526,15 @@ export async function updatePendingMessageV2(params: {
     if (params.preparedComposerAdmission && params.structuredInput === undefined) {
         throw new Error('Pending Composer admission requires a canonical structured input');
     }
+    if (
+        params.preparedComposerAdmission
+        && params.preparedComposerAdmission.stagedMediaHandles.length > 0
+        && !params.preparedComposerAdmission.sessionMediaMetadata
+    ) {
+        throw new Error('Pending Composer media admission requires canonical SessionMedia metadata');
+    }
 
-    const rawRecord: RawRecord = replacePendingEditStructuredInput((() => {
+    let rawRecord: RawRecord = replacePendingEditStructuredInput((() => {
         if (existing.rawRecord) {
             const parsed = RawRecordSchema.safeParse(existing.rawRecord);
             if (parsed.success && parsed.data.role === 'user' && parsed.data.content.type === 'text') {
@@ -2557,6 +2570,50 @@ export async function updatePendingMessageV2(params: {
         });
     })(), params.structuredInput, text);
 
+    let acceptedSessionMediaMetadata: Readonly<{
+        key: 'happier' | 'happierMedia';
+        envelope: SessionMediaMessageMetaV1;
+    }> | undefined;
+    if (params.preparedComposerAdmission) {
+        const currentMeta = isPlainObject(rawRecord.meta) ? { ...rawRecord.meta } : {};
+        // The mounted Pending editor deliberately does not admit already-durable
+        // SessionMedia attachments. If such a row reaches this lower boundary,
+        // guessing whether its old envelope should be retained or removed would
+        // decouple metadata custody from the final structured input. Refuse it
+        // before PATCH instead; the canonical non-editable row remains intact.
+        for (const key of ['happier', 'happierMedia'] as const) {
+            if (SessionMediaMessageMetaV1Schema.safeParse(currentMeta[key]).success) {
+                throw new Error('Pending Composer admission cannot replace existing SessionMedia metadata');
+            }
+        }
+
+        const preparedMetadata = params.preparedComposerAdmission.sessionMediaMetadata;
+        if (preparedMetadata) {
+            const envelope = SessionMediaMessageMetaV1Schema.parse(preparedMetadata.envelope);
+            let key = preparedMetadata.key;
+            // `meta.happier` is an incumbent general envelope slot. The daemon
+            // prepares media without seeing that unrelated value, so the
+            // canonical Pending writer chooses the reserved secondary slot
+            // instead of overwriting it.
+            if (key === 'happier' && Object.prototype.hasOwnProperty.call(currentMeta, 'happier')) {
+                key = 'happierMedia';
+            }
+            if (Object.prototype.hasOwnProperty.call(currentMeta, key)) {
+                throw new Error('Pending Composer SessionMedia metadata slot is occupied');
+            }
+            acceptedSessionMediaMetadata = { key, envelope };
+        }
+        rawRecord = {
+            ...rawRecord,
+            meta: {
+                ...currentMeta,
+                ...(acceptedSessionMediaMetadata
+                    ? { [acceptedSessionMediaMetadata.key]: acceptedSessionMediaMetadata.envelope }
+                    : {}),
+            },
+        };
+    }
+
     const acceptedComposerAdmissionTemplate = params.preparedComposerAdmission
         ? (() => {
             const admitted = readAdmittedHappierStructuredInputV1FromMeta(rawRecord.meta);
@@ -2574,6 +2631,9 @@ export async function updatePendingMessageV2(params: {
                 localId: params.replacementLocalId ?? localId,
                 structuredInput,
                 stagedMediaHandles: params.preparedComposerAdmission.stagedMediaHandles,
+                ...(acceptedSessionMediaMetadata
+                    ? { sessionMediaMetadata: acceptedSessionMediaMetadata }
+                    : {}),
             });
         })()
         : undefined;

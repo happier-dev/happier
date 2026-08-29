@@ -19,6 +19,72 @@ function finalEvent(overrides: Record<string, unknown> = {}) {
 }
 
 describe('canonical voice transcript persistence admission', () => {
+  it('admits and commits a corrected final behind its still-pending final in arrival order', () => {
+    const persistFinal = vi.fn();
+    const projector = createCanonicalVoiceTranscriptProjector({
+      persistFinal,
+      createAttemptIdentity: () => 'attempt-chain',
+    });
+    const attempt = projector.beginAttempt();
+    const admittedFinal = projector.admitPersistenceEvent(finalEvent({
+      epoch: attempt.epoch,
+      eventId: 'pending-final',
+      text: 'first accepted text',
+    }));
+    const admittedCorrection = projector.admitPersistenceEvent(finalEvent({
+      type: 'voice.transcript.corrected',
+      epoch: attempt.epoch,
+      sequence: 2,
+      revision: 2,
+      eventId: 'pending-correction',
+      text: 'corrected before acceptance',
+    }));
+
+    expect(admittedFinal).not.toBeNull();
+    expect(admittedCorrection).not.toBeNull();
+    expect(projector.snapshot()).toEqual([]);
+    expect(projector.commitAdmittedPersistenceEvent(admittedFinal!)).toMatchObject({
+      appliedToCurrentSnapshot: true,
+      item: { text: 'first accepted text', revision: 1, corrected: false },
+    });
+    expect(projector.commitAdmittedPersistenceEvent(admittedCorrection!)).toMatchObject({
+      appliedToCurrentSnapshot: true,
+      item: { text: 'corrected before acceptance', revision: 2, corrected: true },
+    });
+    expect(persistFinal.mock.calls.map(([item]) => item.text)).toEqual([
+      'first accepted text',
+      'corrected before acceptance',
+    ]);
+    expect(projector.snapshot()).toEqual([
+      expect.objectContaining({
+        text: 'corrected before acceptance',
+        revision: 2,
+        corrected: true,
+      }),
+    ]);
+  });
+
+  it('releases corrections whose pending final authority is cancelled', () => {
+    const projector = createCanonicalVoiceTranscriptProjector();
+    const attempt = projector.beginAttempt();
+    const admittedFinal = projector.admitPersistenceEvent(finalEvent({ epoch: attempt.epoch }));
+    const admittedCorrection = projector.admitPersistenceEvent(finalEvent({
+      type: 'voice.transcript.corrected',
+      epoch: attempt.epoch,
+      sequence: 2,
+      revision: 2,
+      eventId: 'dependent-correction',
+      text: 'must be released with predecessor',
+    }));
+
+    expect(admittedFinal).not.toBeNull();
+    expect(admittedCorrection).not.toBeNull();
+    expect(projector.releaseAdmittedPersistenceEvent(admittedFinal!)).toBe(true);
+    expect(projector.commitAdmittedPersistenceEvent(admittedFinal!)).toBeNull();
+    expect(projector.commitAdmittedPersistenceEvent(admittedCorrection!)).toBeNull();
+    expect(projector.snapshot()).toEqual([]);
+  });
+
   it('reserves one valid A final synchronously and commits it without replacing B currentness', () => {
     const persistFinal = vi.fn();
     let nextAttemptIdentity = 0;

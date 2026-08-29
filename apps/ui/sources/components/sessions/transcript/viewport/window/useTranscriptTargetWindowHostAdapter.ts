@@ -309,7 +309,7 @@ export function resolveTranscriptRouteJumpSeqPlan(params: Readonly<{
     inFlightJumpSeq: number | null;
     isLoaded: boolean;
     jumpToSeq: number | null | undefined;
-    lastJumpSeq: number | null;
+    consumedJumpSeq: number | null;
     listContentHeight: number;
     listLayoutHeight: number;
     platformOS: string;
@@ -322,7 +322,7 @@ export function resolveTranscriptRouteJumpSeqPlan(params: Readonly<{
         return null;
     }
     const normalizedTarget = Math.trunc(target);
-    if (params.lastJumpSeq === normalizedTarget || params.inFlightJumpSeq === normalizedTarget) return null;
+    if (params.consumedJumpSeq === normalizedTarget || params.inFlightJumpSeq === normalizedTarget) return null;
     if (!params.sessionId) return null;
     return normalizedTarget;
 }

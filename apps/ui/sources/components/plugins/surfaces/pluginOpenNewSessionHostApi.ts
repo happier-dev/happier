@@ -143,11 +143,11 @@ export function createPluginOpenNewSessionHostApiHandler(input: Readonly<{
                     || selected.data.kind !== 'submitted'
                     || !pluginUiSelectedActionInputMatchesOperation(selected.data, operation)
                     || target === undefined
-                    || (parsed.data.placement?.serverId !== undefined
-                        && parsed.data.placement.serverId !== target.serverId)
-                    || (parsed.data.placement?.machineId !== undefined
-                        && parsed.data.placement.machineId !== target.machineId)
-                    || parsed.data.placement?.directory !== undefined
+                    || (parsed.data.placement !== undefined
+                        && (parsed.data.placement.kind !== 'exactTarget'
+                            || parsed.data.placement.serverId !== target.serverId
+                            || parsed.data.placement.machineId !== target.machineId
+                            || parsed.data.placement.directory !== undefined))
                 ) {
                     return errorPayload('invalid_payload', 'prepared_review_workspace_selection_invalid');
                 }
@@ -183,6 +183,7 @@ export function createPluginOpenNewSessionHostApiHandler(input: Readonly<{
                     // the exact selected operation materializes a repository,
                     // retaining them would let New Session replace that fact.
                     placement: {
+                        kind: 'exactTarget',
                         serverId: target.serverId,
                         machineId: target.machineId,
                         directory: repositoryPath,

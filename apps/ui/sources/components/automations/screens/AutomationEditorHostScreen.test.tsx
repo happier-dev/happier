@@ -223,7 +223,6 @@ function definitionDetailValue() {
         updatedAt: timestamp,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: timestamp }],
         triggers: [triggers.schedule, triggers.lifecycle],
-        retiredTriggers: [],
         executionRecipe: recipe,
     };
 }
@@ -252,6 +251,11 @@ function sessionFixture(input: {
         latestTurnId: input.latestTurnId,
         latestTurnStatus: input.latestTurnStatus,
         name: input.id,
+        metadata: {
+            flavor: 'claude',
+            claudeSessionId: `claude-${input.id}`,
+            claudeTranscriptPath: `/tmp/${input.id}.jsonl`,
+        },
     };
 }
 
@@ -279,6 +283,21 @@ function seedStorageSessions() {
                 latestTurnId: 'turn-old',
                 latestTurnStatus: 'completed',
             }),
+            'hidden-history': {
+                ...sessionFixture({
+                    id: 'hidden-history',
+                    latestTurnId: 'turn-hidden',
+                    latestTurnStatus: 'in_progress',
+                }),
+                metadata: {
+                    ...sessionFixture({
+                        id: 'hidden-history',
+                        latestTurnId: 'turn-hidden',
+                        latestTurnStatus: 'in_progress',
+                    }).metadata,
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
         },
     };
 }
@@ -481,6 +500,7 @@ describe('AutomationEditorHostScreen', () => {
         expect(selectableById.get('session-target')).toBe(false);
         expect(selectableById.get('session-other')).toBe(true);
         expect(selectableById.get('source-session')).toBe(true);
+        expect(selectableById.has('hidden-history')).toBe(false);
     });
 
     it('rebinds the exact-turn authority under the new Account after a same-server Account change', async () => {

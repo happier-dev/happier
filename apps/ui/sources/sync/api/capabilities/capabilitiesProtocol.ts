@@ -9,6 +9,7 @@ import type {
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
 } from '@happier-dev/protocol/capabilities';
+import { parseCapabilityId as parseCanonicalCapabilityId } from '@happier-dev/protocol';
 import type { ChecklistId as ProtocolChecklistId } from '@happier-dev/protocol/checklists';
 
 export type {
@@ -75,13 +76,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function parseCapabilityId(raw: unknown): CapabilityId | null {
-    if (typeof raw !== 'string') return null;
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    if (/^(cli|tool|dep)\.[A-Za-z0-9][A-Za-z0-9._-]*$/.test(trimmed)) {
-        return trimmed as CapabilityId;
-    }
-    return null;
+    return parseCanonicalCapabilityId(raw);
 }
 
 function parseDescriptor(raw: unknown): CapabilityDescriptor | null {

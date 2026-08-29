@@ -24,7 +24,7 @@ export type PluginUiHostSubscriptionAuditEvent =
         type: 'subscriptionEventSuppressed';
         subscriptionId: string;
         surface: PluginUiSurfaceContextV1;
-        reason: 'disposed' | 'unknown' | 'invalid_event';
+        reason: 'unknown' | 'invalid_event';
     }>;
 
 function createSurfaceKey(surface: PluginUiSurfaceContextV1): string {
@@ -50,7 +50,6 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
     audit?: (event: PluginUiHostSubscriptionAuditEvent) => void;
 }> = {}) {
     const activeSubscriptionKeys = new Map<string, PluginUiSurfaceContextV1>();
-    const disposedSubscriptionKeys = new Set<string>();
 
     function createSubscriptionKey(
         surface: PluginUiSurfaceContextV1,
@@ -65,7 +64,6 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
     }>): void {
         const key = createSubscriptionKey(input.surface, input.subscriptionId);
         activeSubscriptionKeys.set(key, input.surface);
-        disposedSubscriptionKeys.delete(key);
         options.audit?.({
             type: 'subscriptionRegistered',
             subscriptionId: input.subscriptionId,
@@ -79,7 +77,6 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
     }>): boolean {
         const key = createSubscriptionKey(input.surface, input.subscriptionId);
         const hadActiveSubscription = activeSubscriptionKeys.delete(key);
-        disposedSubscriptionKeys.add(key);
         options.audit?.({
             type: 'subscriptionDisposed',
             subscriptionId: input.subscriptionId,
@@ -99,7 +96,7 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
                 type: 'subscriptionEventSuppressed',
                 subscriptionId,
                 surface,
-                reason: disposedSubscriptionKeys.has(key) ? 'disposed' : 'unknown',
+                reason: 'unknown',
             });
             return false;
         }
@@ -136,7 +133,6 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         if (subscriptionEvent.kind === 'complete' || subscriptionEvent.kind === 'error') {
             const key = createSubscriptionKey(surface, subscriptionEvent.subscriptionId);
             activeSubscriptionKeys.delete(key);
-            disposedSubscriptionKeys.add(key);
         }
         return true;
     }
@@ -163,7 +159,6 @@ export function createPluginUiHostSubscriptionRegistry(options: Readonly<{
         for (const key of [...activeSubscriptionKeys.keys()]) {
             if (key.startsWith(`${surfaceKey}\u001f`)) {
                 activeSubscriptionKeys.delete(key);
-                disposedSubscriptionKeys.add(key);
             }
         }
     }

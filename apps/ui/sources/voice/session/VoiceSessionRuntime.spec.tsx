@@ -1,6 +1,7 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
@@ -19,6 +20,7 @@ const EXTERNAL_PROVIDER_ID = 'acme.voice.demo/realtime-demo';
 const EXTERNAL_REGISTRATION_TOKEN = Object.freeze({});
 const ELEVENLABS_PROVIDER_ID = 'happier.voice.elevenlabs/realtime-elevenlabs';
 const OPENAI_PROVIDER_ID = 'happier.voice.openai/realtime-openai';
+const CODEX_CONNECTED_SERVICE_KEY = readBuiltInLegacyConnectedAccountServiceKeyIngress('openai-codex')!;
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -653,6 +655,7 @@ describe('VoiceSessionRuntime', () => {
   });
 
   it('classifies ordinary OpenAI credential changes as next-start-only while every Account scope change fences the live attempt', async () => {
+    platformOsMock.value = 'web';
     let selectedProviderId = 'happier.voice.openai/realtime-openai';
     let accountScope = { serverId: 'server-a', accountId: 'account-a' };
     activeServerAccountScopeFixture.profileScope = accountScope;
@@ -833,7 +836,7 @@ describe('VoiceSessionRuntime', () => {
         globalConnectedServices: {
           v: 1,
           bindingsByServiceId: {
-            'openai-codex': {
+            [CODEX_CONNECTED_SERVICE_KEY]: {
               source: 'connected',
               selection: 'profile',
               profileId: 'codex-account-a',
@@ -855,10 +858,11 @@ describe('VoiceSessionRuntime', () => {
     providerEnvelope = {
       ...providerEnvelope,
       config: {
+        ...(providerEnvelope.config as Readonly<Record<string, unknown>>),
         globalConnectedServices: {
           v: 1,
           bindingsByServiceId: {
-            'openai-codex': {
+            [CODEX_CONNECTED_SERVICE_KEY]: {
               source: 'connected',
               selection: 'profile',
               profileId: 'codex-account-b',
@@ -1003,7 +1007,7 @@ describe('VoiceSessionRuntime', () => {
             globalConnectedServices: {
               v: 1,
               bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_CONNECTED_SERVICE_KEY]: {
                   source: 'connected',
                   selection: 'group',
                   groupId: 'voice-pool',
@@ -1124,7 +1128,7 @@ describe('VoiceSessionRuntime', () => {
               globalConnectedServices: {
                 v: 1,
                 bindingsByServiceId: {
-                  'openai-codex': {
+                  [CODEX_CONNECTED_SERVICE_KEY]: {
                     source: 'connected',
                     selection: 'profile',
                     profileId: 'work',
@@ -1211,7 +1215,7 @@ describe('VoiceSessionRuntime', () => {
             globalConnectedServices: {
               v: 1,
               bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_CONNECTED_SERVICE_KEY]: {
                   source: 'connected',
                   selection: 'profile',
                   profileId: 'work',
@@ -1309,7 +1313,7 @@ describe('VoiceSessionRuntime', () => {
             globalConnectedServices: {
               v: 1,
               bindingsByServiceId: {
-                'openai-codex': {
+                [CODEX_CONNECTED_SERVICE_KEY]: {
                   source: 'connected',
                   selection: 'group',
                   groupId: 'voice-pool',

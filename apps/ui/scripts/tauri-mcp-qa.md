@@ -190,10 +190,11 @@ child. The generated checklist therefore requires a complete native-window
 capture and direct VoiceOver inspection alongside the remaining child
 bridge/history/Back/update/offline checks.
 
-An `desktop_hosted_artifact_platform_frame_unproved` result is an expected hard
-blocker today, not a pass and not permission to bypass the capability owner.
-Complete the generated native-child checks on controlled macOS before changing
-the source proof bit. The harness intentionally has no override, proof registry,
+The capability result is the executable desktop adapter fact. A Wayland or
+no-display unavailable result is a real platform limitation, not permission to
+bypass the capability owner. Loaded native-child checks on controlled desktop
+platforms remain required publication/support evidence; they do not become a
+runtime proof bit. The harness intentionally has no override, proof registry,
 packaged-candidate identity, or alternate hosted runtime.
 
 ## Window / crash checks

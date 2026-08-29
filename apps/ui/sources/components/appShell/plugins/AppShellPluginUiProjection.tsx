@@ -79,6 +79,8 @@ import {
     reconcileAppShellProjectedClientExecutables,
     unloadAppShellProjectedClientExecutables,
 } from './appShellClientExecutableActivation';
+import type { PluginUiClientExecutableReconciliationAttempt } from '@/components/plugins/reactNative/clientExecutableActivation';
+import type { PluginUiExecutableModuleActivationResult } from '@/components/plugins/reactNative/executableModuleHost';
 import {
     getBundledConversationRuntimeGenerationRevision,
     subscribeBundledConversationRuntimeGeneration,
@@ -105,7 +107,57 @@ export type AppShellPluginUiProjectionValue = Readonly<{
     platform: LocalServicePreviewPlatform;
     connectedAccountProjectionRevision?: number;
     connectedAccountProjectionState?: ConnectedAccountDescriptorProjectionState;
+    clientExecutableActivation: AppShellClientExecutableActivationState;
+    reloadClientExecutables(): void;
 }>;
+
+export type AppShellClientExecutableActivationFailure = Readonly<{
+    pluginId: string | null;
+    target: PluginUiClientExecutableReconciliationAttempt['activation']['target'] | null;
+    executionOrigin: PluginUiClientExecutableReconciliationAttempt['activation']['executionOrigin'] | null;
+    projectionGeneration: number | null;
+    code: Extract<PluginUiExecutableModuleActivationResult, Readonly<{ ok: false }>>['code'];
+}>;
+
+export type AppShellClientExecutableActivationState =
+    | Readonly<{ status: 'establishing' }>
+    | Readonly<{ status: 'ready' }>
+    | Readonly<{
+        status: 'unavailable';
+        failures: readonly AppShellClientExecutableActivationFailure[];
+    }>;
+
+/**
+ * The complete-set settlement is diagnostic state, not a global interaction
+ * gate. Exact failures narrow only the plugin whose target failed; an
+ * un-attributed owner failure remains conservatively unavailable to all.
+ */
+export function isAppShellPluginClientExecutableAvailable(
+    state: AppShellClientExecutableActivationState | null | undefined,
+    pluginId: string,
+): boolean {
+    if (!state) return true;
+    if (state.status !== 'unavailable') return state.status === 'ready';
+    return state.failures.length > 0
+        && state.failures.every((failure) => failure.pluginId !== null && failure.pluginId !== pluginId);
+}
+
+type AppShellPluginRuntimeUpdateSettlement =
+    | Readonly<{ status: 'cancelled' }>
+    | AppShellClientExecutableActivationState;
+
+const ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION = Object.freeze({
+    status: 'establishing' as const,
+});
+
+const READY_CLIENT_EXECUTABLE_ACTIVATION = Object.freeze({
+    status: 'ready' as const,
+});
+
+const UNAVAILABLE_CLIENT_EXECUTABLE_ACTIVATION = Object.freeze({
+    status: 'unavailable' as const,
+    failures: Object.freeze([]),
+});
 
 const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_VALUE: AppShellPluginUiProjectionValue = Object.freeze({
     pluginUiProjection: null,
@@ -117,6 +169,8 @@ const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_VALUE: AppShellPluginUiProjectionValu
     platform: 'web',
     connectedAccountProjectionRevision: 0,
     connectedAccountProjectionState: createConnectedAccountDescriptorProjectionLoadingState('unmounted'),
+    clientExecutableActivation: ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION,
+    reloadClientExecutables: () => {},
 });
 
 const AppShellPluginUiProjectionContext = React.createContext<AppShellPluginUiProjectionValue>(
@@ -250,15 +304,35 @@ async function applyAppShellProjectionInvalidation(previous: PluginUiProjectionM
 
 export async function settleAppShellPluginRuntimeUpdate(input: Readonly<{
     invalidate: () => Promise<void>;
-    activate: () => Promise<void>;
+    activate: () => Promise<readonly PluginUiClientExecutableReconciliationAttempt[] | void>;
     isCancelled: () => boolean;
-}>): Promise<void> {
+}>): Promise<AppShellPluginRuntimeUpdateSettlement> {
     try {
-        if (input.isCancelled()) return;
+        if (input.isCancelled()) return { status: 'cancelled' };
         await input.invalidate();
-        if (!input.isCancelled()) await input.activate();
+        if (input.isCancelled()) return { status: 'cancelled' };
+        const attempts = await input.activate();
+        if (input.isCancelled()) return { status: 'cancelled' };
+        const failures = attempts
+            ? attempts.flatMap((attempt): readonly AppShellClientExecutableActivationFailure[] => (
+                attempt.result.ok
+                    ? []
+                    : [Object.freeze({
+                        pluginId: attempt.activation.pluginId,
+                        target: attempt.activation.target,
+                        executionOrigin: attempt.activation.executionOrigin,
+                        projectionGeneration: attempt.activation.projectionGeneration,
+                        code: attempt.result.code,
+                    })]
+            ))
+            : [];
+        return failures.length > 0
+            ? Object.freeze({ status: 'unavailable', failures: Object.freeze(failures) })
+            : READY_CLIENT_EXECUTABLE_ACTIVATION;
     } catch {
-        // Projection/activation failures fail closed and must not escape a React effect.
+        // Fail closed through the AppShell's incumbent availability seam while
+        // still containing the failure at the React-effect boundary.
+        return UNAVAILABLE_CLIENT_EXECUTABLE_ACTIVATION;
     }
 }
 
@@ -433,6 +507,10 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         getBundledConversationRuntimeGenerationRevision,
         getBundledConversationRuntimeGenerationRevision,
     );
+    const [clientExecutableReloadRevision, setClientExecutableReloadRevision] = React.useState(0);
+    const reloadClientExecutables = React.useCallback(() => {
+        setClientExecutableReloadRevision((revision) => revision + 1);
+    }, []);
     const [connectedAccountProjectionRevision, setConnectedAccountProjectionRevision] = React.useState(0);
     const [connectedAccountProjectionState, setConnectedAccountProjectionState] = React.useState<ConnectedAccountDescriptorProjectionState>(
         () => createConnectedAccountDescriptorProjectionLoadingState(connectedAccountScopeKey),
@@ -570,6 +648,38 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     }, [accountLifetime, activeServer.serverId, commitConnectedAccountProjection, hasMachines, onlineMachineIdsKey]);
     const appliedProjectionRef = React.useRef<PluginUiProjectionModel>(EMPTY_PLUGIN_UI_PROJECTION);
     const pluginRuntimeUpdateTailRef = React.useRef<Promise<void>>(Promise.resolve());
+    const clientExecutableActivationBasis = React.useMemo(() => Object.freeze({
+        projection: pluginUiProjection,
+        platform: clientExecutablePlatform,
+        voiceInteractionEnabled,
+        voiceMachineId,
+        voicePluginUiProjection,
+        voiceRuntimeGenerationRevision,
+        voiceServerId,
+        availabilityReader,
+        accountLifetime,
+    }), [
+        accountLifetime,
+        availabilityReader,
+        clientExecutablePlatform,
+        pluginUiProjection,
+        voiceInteractionEnabled,
+        voiceMachineId,
+        voicePluginUiProjection,
+        voiceRuntimeGenerationRevision,
+        voiceServerId,
+    ]);
+    const clientExecutableActivationRequest = React.useMemo(() => Object.freeze({
+        basis: clientExecutableActivationBasis,
+        reloadRevision: clientExecutableReloadRevision,
+    }), [clientExecutableActivationBasis, clientExecutableReloadRevision]);
+    const [settledClientExecutableActivation, setSettledClientExecutableActivation] = React.useState<Readonly<{
+        request: typeof clientExecutableActivationRequest;
+        state: AppShellClientExecutableActivationState;
+    }> | null>(null);
+    const clientExecutableActivation = settledClientExecutableActivation?.request.basis === clientExecutableActivationBasis
+        ? settledClientExecutableActivation.state
+        : ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION;
     const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         placements: pluginUiProjection
             ? selectPluginDestinationSurfacePlacements(pluginUiProjection)
@@ -585,14 +695,16 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
     const readAppNavigationBinding = React.useCallback(() => appNavigationBindingRef.current, []);
 
     React.useEffect(() => {
-        const next = pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
+        const request = clientExecutableActivationRequest;
+        const basis = request.basis;
+        const next = basis.projection ?? EMPTY_PLUGIN_UI_PROJECTION;
         let cancelled = false;
         // This is the one production serial caller. It always reconciles the
         // complete app Action set, and layers the optional Voice family into
         // that same transaction rather than allowing Voice currentness to gate
         // unrelated Action activation.
         const update = pluginRuntimeUpdateTailRef.current.then(async () => {
-            await settleAppShellPluginRuntimeUpdate({
+            const settlement = await settleAppShellPluginRuntimeUpdate({
                 invalidate: async () => {
                     const applied = appliedProjectionRef.current;
                     if (applied === next) return;
@@ -601,43 +713,35 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                 },
                 isCancelled: () => cancelled,
                 activate: async () => {
-                    await reconcileAppShellProjectedClientExecutables({
+                    return await reconcileAppShellProjectedClientExecutables({
                         projection: next,
-                        platform: clientExecutablePlatform,
+                        platform: basis.platform,
                         // Catalog authority is independent from executable
                         // interaction readiness. Keeping it here prevents a
                         // disabled/offline projected provider from reappearing
                         // through generated fallback metadata.
-                        voiceProviderProjection: voicePluginUiProjection,
-                        voice: voiceInteractionEnabled && voiceMachineId && voicePluginUiProjection
+                        voiceProviderProjection: basis.voicePluginUiProjection,
+                        voice: basis.voiceInteractionEnabled && basis.voiceMachineId && basis.voicePluginUiProjection
                             ? Object.freeze({
-                                projection: voicePluginUiProjection,
-                                machineId: voiceMachineId,
-                                serverId: voiceServerId,
+                                projection: basis.voicePluginUiProjection,
+                                machineId: basis.voiceMachineId,
+                                serverId: basis.voiceServerId,
                             })
                             : null,
-                        reader: availabilityReader,
-                        accountLifetime,
+                        reader: basis.availabilityReader,
+                        accountLifetime: basis.accountLifetime,
                         readNavigationBinding: readAppNavigationBinding,
                         isCurrent: () => !cancelled,
                     });
                 },
             });
+            if (!cancelled && settlement.status !== 'cancelled') {
+                setSettledClientExecutableActivation({ request, state: settlement });
+            }
         });
         pluginRuntimeUpdateTailRef.current = update;
         return () => { cancelled = true; };
-    }, [
-        pluginUiProjection,
-        clientExecutablePlatform,
-        voiceInteractionEnabled,
-        voiceMachineId,
-        voicePluginUiProjection,
-        voiceRuntimeGenerationRevision,
-        voiceServerId,
-        availabilityReader,
-        accountLifetime,
-        readAppNavigationBinding,
-    ]);
+    }, [clientExecutableActivationRequest, readAppNavigationBinding]);
 
     React.useEffect(() => () => {
         const previous = appliedProjectionRef.current;
@@ -663,7 +767,9 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         platform,
         connectedAccountProjectionRevision,
         connectedAccountProjectionState,
-    }), [connectedAccountProjectionRevision, connectedAccountProjectionState, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId]);
+        clientExecutableActivation,
+        reloadClientExecutables,
+    }), [clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables]);
     return (
         <AppShellPluginUiProjectionValueProvider value={value}>
             {projectionTargets.map((projectionTarget) => (

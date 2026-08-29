@@ -1,6 +1,7 @@
 import * as React from 'react';
 import {
     areProviderContributionKeysEqualV1,
+    parseProviderContributionIdentityV1,
     type MachineAdministrationTargetV1,
     type ProviderErrorV1,
     type QualifiedConnectedAccountPurposeBindingTargetV1,
@@ -61,6 +62,8 @@ import {
     resolveConnectedAccountPurposeTargetDisplay,
 } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
+import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import {
     ProviderCompatibilitySection,
     ProviderEndpointOverridesSection,
@@ -100,6 +103,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const settings = useSettings();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const localizePluginText = useProjectedPluginLocalizedTextResolver();
+    const connectedAccountUiNegotiation = resolveConnectedAccountUiNegotiation(
+        useServerFeaturesRuntimeSnapshot({ enabled: true }),
+    );
     const { enabled, presentation: availabilityPresentation } = useProviderFeatureAvailability();
     const providerTarget = useProviderSettingsTarget();
     const {
@@ -182,6 +188,14 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         && candidate.connection.status === 'matched'
         && candidate.connection.connectionId === props.connectionId) ?? null;
     const connectionContributionKey = connection?.contributionKey;
+    // Localized managed-purpose descriptors are authored by the Provider
+    // contribution plugin, not by the Connected Account service they target.
+    // Opaque forward-compatible keys intentionally miss the plugin registry and
+    // therefore resolve their descriptor fallback instead of borrowing another
+    // plugin's translations.
+    const contributionAuthorPluginId = connectionContributionKey
+        ? parseProviderContributionIdentityV1(connectionContributionKey)?.identity.pluginId ?? connectionContributionKey
+        : '';
     const localInstallation = connectionContributionKey
         ? query.data?.localInstallations.find((installation) =>
             installation.machineId === machineId
@@ -448,6 +462,16 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                 purposeBindingDefaults[declaration.purpose] = target;
             }
         }
+        if (
+            managedLocalOption.connectedAccountPurposeBindingPolicy?.minimumBound === 1
+            && Object.keys(purposeBindingDefaults).length === 0
+        ) {
+            await Modal.alert(
+                t('settingsProviders.local.invalidPurposeTargetTitle'),
+                t('settingsProviders.local.invalidPurposeTargetDescription'),
+            );
+            return false;
+        }
         invalidateProbe();
         const result = await mutation.run(
             {
@@ -654,7 +678,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                     key={`${purpose.service.pluginId}/${purpose.service.localId}/${purpose.purpose}`}
                                     testID={`provider-connection-managed-purpose:${purpose.purpose}`}
                                     mode="info"
-                                    title={purpose.title ?? resolveQualifiedConnectedServiceRegistryDisplayName(
+                                    title={(purpose.title
+                                        ? localizePluginText(contributionAuthorPluginId, purpose.title)
+                                        : '') || resolveQualifiedConnectedServiceRegistryDisplayName(
                                         connectedServicesRegistry, purpose.service, t, localizePluginText,
                                     )}
                                     subtitle={connectedAccountScopeMatchesTarget
@@ -669,6 +695,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                                 t,
                                                 localizePluginText,
                                             ),
+                                            sourceNegotiation: connectedAccountUiNegotiation,
                                         })
                                         // The binding belongs to another server's Account; this
                                         // Account's labels would name a different connected account.
@@ -714,6 +741,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 <ConnectedAccountPurposeTargetChooser
                                     key={`${declaration.service.pluginId}/${declaration.service.localId}/${declaration.purpose}`}
                                     testID={`provider-connection-managed-purpose-chooser:${declaration.purpose}`}
+                                    localizedTextPluginId={contributionAuthorPluginId}
                                     declaration={declaration}
                                     value={managedPurposeDraft.targets[declaration.purpose] ?? null}
                                     onChange={(target) => updateManagedPurposeDraftTarget(declaration.purpose, target)}

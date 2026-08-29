@@ -2,6 +2,12 @@ import type {
     PluginUiChannelV1,
     PluginUiPlatformV1,
 } from '@happier-dev/protocol/plugins/ui';
+import {
+    evaluatePluginPolicyExpressionV2,
+    type PluginPolicyExpressionV2,
+    type PluginPolicyFactValueV2,
+    type PluginPolicyFactsV2,
+} from '@happier-dev/protocol';
 
 /**
  * Phase 1.1 — the single canonical plugin-UI policy evaluator.
@@ -244,66 +250,71 @@ function evaluateCompatibility(
     return true;
 }
 
-function evaluateContributionPolicyExpression(
+function collectPolicyFactNames(expression: unknown, names: Set<string>): void {
+    const record = asRecord(expression);
+    if (!record) return;
+    if (Array.isArray(record.all)) record.all.forEach((child) => collectPolicyFactNames(child, names));
+    if (Array.isArray(record.any)) record.any.forEach((child) => collectPolicyFactNames(child, names));
+    if (record.not !== undefined) collectPolicyFactNames(record.not, names);
+    if (typeof record.fact === 'string') names.add(record.fact);
+}
+
+function toPolicyFactValue(value: unknown): PluginPolicyFactValueV2 {
+    if (typeof value === 'boolean' || typeof value === 'string') return value;
+    if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) return value;
+    return undefined;
+}
+
+/** Adapt realm-specific resolvers to Protocol's pure fact evaluator. */
+function resolveContributionPolicyFacts(
     expression: unknown,
     ctx: PluginUiPolicyEvaluationContext,
-): boolean | null {
-    const record = asRecord(expression);
-    if (!record) {
-        return null;
-    }
-    if (Array.isArray(record.all)) {
-        let unknown = false;
-        for (const child of record.all) {
-            const result = evaluateContributionPolicyExpression(child, ctx);
-            if (result === false) return false;
-            if (result === null) unknown = true;
+): PluginPolicyFactsV2 {
+    const names = new Set<string>();
+    collectPolicyFactNames(expression, names);
+    const facts: Record<string, PluginPolicyFactValueV2> = {};
+    for (const fact of names) {
+        if (fact === 'host.platform') {
+            facts[fact] = ctx.platform ?? undefined;
+            continue;
         }
-        return unknown ? null : true;
-    }
-    if (Array.isArray(record.any)) {
-        let unknown = false;
-        for (const child of record.any) {
-            const result = evaluateContributionPolicyExpression(child, ctx);
-            if (result === true) return true;
-            if (result === null) unknown = true;
+        if (fact === 'host.feature') {
+            // Feature ids are expression values, not fact names. Populate the
+            // array from the leaves so Protocol can own `enabled` semantics.
+            const featureIds: string[] = [];
+            const visit = (value: unknown): void => {
+                const record = asRecord(value);
+                if (!record) return;
+                if (Array.isArray(record.all)) record.all.forEach(visit);
+                if (Array.isArray(record.any)) record.any.forEach(visit);
+                if (record.not !== undefined) visit(record.not);
+                if (record.fact === fact && typeof record.value === 'string' && ctx.isFeatureEnabled?.(record.value)) {
+                    featureIds.push(record.value);
+                }
+            };
+            visit(expression);
+            facts[fact] = ctx.isFeatureEnabled ? featureIds : undefined;
+            continue;
         }
-        return unknown ? null : false;
+        if (fact === 'session.capability') {
+            const capabilityIds: string[] = [];
+            const visit = (value: unknown): void => {
+                const record = asRecord(value);
+                if (!record) return;
+                if (Array.isArray(record.all)) record.all.forEach(visit);
+                if (Array.isArray(record.any)) record.any.forEach(visit);
+                if (record.not !== undefined) visit(record.not);
+                if (record.fact === fact && typeof record.value === 'string' && ctx.isCapabilityEnabled?.(record.value)) {
+                    capabilityIds.push(record.value);
+                }
+            };
+            visit(expression);
+            facts[fact] = ctx.isCapabilityEnabled ? capabilityIds : undefined;
+            continue;
+        }
+        facts[fact] = toPolicyFactValue(fact === 'host.platform' ? ctx.platform : readPath(ctx.data, fact));
     }
-    if (record.not !== undefined) {
-        const result = evaluateContributionPolicyExpression(record.not, ctx);
-        return result === null ? null : !result;
-    }
-
-    const fact = typeof record.fact === 'string' ? record.fact : '';
-    const operator = typeof record.operator === 'string' ? record.operator : '';
-    if (!fact || !operator || !('value' in record)) {
-        return null;
-    }
-    if (fact === 'host.feature') {
-        return operator === 'enabled' && typeof record.value === 'string' && ctx.isFeatureEnabled
-            ? ctx.isFeatureEnabled(record.value)
-            : null;
-    }
-    if (fact === 'session.capability') {
-        return operator === 'contains' && typeof record.value === 'string' && ctx.isCapabilityEnabled
-            ? ctx.isCapabilityEnabled(record.value)
-            : null;
-    }
-
-    const factValue = fact === 'host.platform'
-        ? ctx.platform
-        : readPath(ctx.data, fact);
-    if (factValue === undefined || factValue === null) {
-        return null;
-    }
-    if (operator === 'equals') {
-        return factValue === record.value;
-    }
-    if (operator === 'notEquals') {
-        return factValue !== record.value;
-    }
-    return null;
+    return facts;
 }
 
 function evaluateContributionAvailability(
@@ -316,7 +327,10 @@ function evaluateContributionAvailability(
         return { visible: true, enabled: true };
     }
     if (record.when !== undefined) {
-        const result = evaluateContributionPolicyExpression(record.when, ctx);
+        const result = evaluatePluginPolicyExpressionV2(
+            record.when as PluginPolicyExpressionV2,
+            resolveContributionPolicyFacts(record.when, ctx),
+        );
         if (result !== true) {
             diagnostics.push(result === null
                 ? 'availability_fact_unavailable'
@@ -325,7 +339,10 @@ function evaluateContributionAvailability(
         }
     }
     if (record.disabledWhen !== undefined) {
-        const result = evaluateContributionPolicyExpression(record.disabledWhen, ctx);
+        const result = evaluatePluginPolicyExpressionV2(
+            record.disabledWhen as PluginPolicyExpressionV2,
+            resolveContributionPolicyFacts(record.disabledWhen, ctx),
+        );
         if (result === null) {
             diagnostics.push('availability_disabled_fact_unavailable');
             return { visible: true, enabled: false };

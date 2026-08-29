@@ -931,6 +931,31 @@ describe('sessionDraftRepository', () => {
         });
     });
 
+    it.each(['', '   '] as const)('converges when this device clears text to %j and the synced replica tombstones the draft', async (clearedText) => {
+        const cipher = plainCipher();
+        const remote = createRemote({
+            revision: 1,
+            content: await cipher.seal(sessionAddress, createSessionDocument('clear me', uuid(63))),
+            createdAt: 1,
+            updatedAt: 1,
+        });
+        const repository = createSessionDraftRepository({
+            storage: createMemoryStorage(),
+            transport: remote.transport,
+            syncEnabled: true,
+            cipher,
+            randomUUID: () => uuid(64),
+            now: () => 2,
+        });
+        await repository.materializeExact(scope, sessionAddress);
+        repository.writeExistingSessionDraft({ scope, sessionId: 'session-a', patch: { text: clearedText } });
+        remote.replaceCurrent({ revision: 2, content: null, createdAt: 1, updatedAt: 2 });
+
+        await repository.flushSessionDraft({ scope, address: sessionAddress });
+
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)).toBeNull();
+    });
+
     it('adopts a newer remote edit when the local replica has no pending mutations', async () => {
         const cipher = plainCipher();
         const remote = createRemote({

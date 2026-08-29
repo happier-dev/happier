@@ -25,6 +25,16 @@ describe('parsePlainSessionMetadata metadata privacy layout', () => {
         }), 1)).toBeNull();
     });
 
+    it('distinguishes absent legacy layout from present invalid null', () => {
+        const legacy = JSON.stringify({
+            path: '/legacy-owner-path',
+            machineId: 'legacy-machine',
+        });
+        expect(parsePlainSessionMetadata(legacy, undefined)).not.toBeNull();
+        expect(parsePlainSessionMetadata(legacy, 0)).not.toBeNull();
+        expect(parsePlainSessionMetadata(legacy, null)).toBeNull();
+    });
+
     it('keeps the released legacy parser only when the layout is absent', () => {
         expect(parsePlainSessionMetadata(JSON.stringify({
             path: '/legacy-owner-path',

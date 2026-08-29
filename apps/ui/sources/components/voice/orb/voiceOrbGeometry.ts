@@ -150,21 +150,33 @@ export function resolveVoiceOrbSheetLayout(input: Readonly<{
     const captionHeight = nonNegative(input.content.captionHeight);
     const barHeight = nonNegative(input.content.barHeight);
     const bottomPadding = nonNegative(input.content.bottomPadding);
-    const reserved = VOICE_ORB_DOCK_HEADROOM + barHeight + bottomPadding;
-    const desiredHeight = Math.max(VOICE_ORB_SHEET_HEIGHT, reserved + captionHeight);
+    const pinnedHeight = barHeight + bottomPadding;
+    const desiredHeight = Math.max(
+        VOICE_ORB_SHEET_HEIGHT,
+        VOICE_ORB_DOCK_HEADROOM + pinnedHeight + captionHeight,
+    );
     const availableHeight = nonNegative(input.availableHeight);
     // An unmeasured host reports `0`; falling back to the desired height keeps the sheet usable for
     // the frame before layout lands instead of collapsing it to nothing.
     const height = availableHeight > 0 ? Math.min(desiredHeight, availableHeight) : desiredHeight;
-    // Asked against the two heights rather than against the caption ceiling: they come from the
-    // same `min`, so "it did not fit" cannot disagree with itself over a sub-pixel remainder.
-    const scrolls = height < desiredHeight;
-    const room = Math.max(0, height - reserved);
+    /*
+     * The dock clearance is atmosphere, not content. On a short sheet it gives
+     * way before the caption is squeezed; the pinned transport remains below the
+     * single scroll owner. This avoids spending scarce keyboard-height pixels on
+     * empty decorative headroom while still restoring the full composition when
+     * room returns.
+     */
+    const shortage = Math.max(0, desiredHeight - height);
+    const dockHeadroom = Math.max(0, VOICE_ORB_DOCK_HEADROOM - shortage);
+    const room = Math.max(0, height - dockHeadroom - pinnedHeight);
+    // Zero means "not measured yet", not "there is no caption". Give the first
+    // frame the available room so `onContentSizeChange` can establish the natural
+    // height instead of creating a zero-height measurement lock.
+    const captionMaxHeight = captionHeight > 0 ? Math.min(captionHeight, room) : room;
+    const scrolls = captionHeight > 0 && captionMaxHeight < captionHeight;
     return {
         height,
-        // When the sheet grew to fit, the ceiling is the content itself: the same sub-pixel
-        // remainder must not clip the last line the growth was for.
-        captionMaxHeight: scrolls ? room : Math.max(room, captionHeight),
+        captionMaxHeight,
         scrolls,
     };
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
 import { loadPendingOutboxForSession, savePendingOutboxMessage } from '@/sync/domains/state/pendingOutboxPersistence';
@@ -1379,6 +1379,20 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             sizeBytes: 42,
             sha256: 'a'.repeat(64),
         };
+        const sessionMediaMetadata = {
+            key: 'happier' as const,
+            envelope: {
+                kind: 'session_media.v1' as const,
+                payload: {
+                    media: [{
+                        id: 'media-42', role: 'input' as const, category: 'attachment' as const,
+                        mediaKind: 'image' as const, mimeType: 'image/png' as const, name: 'issue.png',
+                        path: '.happier/uploads/issue.png', sizeBytes: 42, sha256: 'a'.repeat(64),
+                        origin: { source: 'user-upload' as const },
+                    }],
+                },
+            },
+        };
         storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
         storage.getState().upsertPendingMessage(sessionId, {
             id: 'p1',
@@ -1403,14 +1417,21 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
         });
 
+        let patchBody: Record<string, unknown> | null = null;
         const result = await updatePendingMessageV2({
             sessionId,
             pendingId: 'p1',
             text: 'edited text',
             structuredInput: { v: 1, composerAttachments: [attachment] },
-            preparedComposerAdmission: { stagedMediaHandles: [stagedMediaHandle] },
+            preparedComposerAdmission: {
+                stagedMediaHandles: [stagedMediaHandle],
+                sessionMediaMetadata,
+            },
             encryption: null,
-            request: async () => new Response(null, { status: 204 }),
+            request: async (_path, init) => {
+                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                return new Response(null, { status: 204 });
+            },
         });
 
         expect(result).toEqual({
@@ -1425,7 +1446,117 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
                 composerAttachments: [attachment],
             },
             stagedMediaHandles: [stagedMediaHandle],
+            sessionMediaMetadata,
         });
+        // The finalizer's canonical metadata must travel with the accepted fact and
+        // be written to the Pending row atomically with its durable media references.
+        expect(patchBody?.content).toMatchObject({
+            t: 'plain',
+            v: {
+                meta: {
+                    happier: {
+                        kind: 'session_media.v1',
+                    },
+                },
+            },
+        });
+    });
+
+    it('preserves an incumbent non-media happier envelope and records the actual secondary media slot', async () => {
+        const sessionId = 's_test_pending_composer_media_slot_collision';
+        const envelope = {
+            kind: 'session_media.v1' as const,
+            payload: {
+                media: [{
+                    id: 'media-42', role: 'input' as const, category: 'attachment' as const,
+                    mediaKind: 'image' as const, mimeType: 'image/png' as const, name: 'issue.png',
+                    path: '.happier/uploads/issue.png', sizeBytes: 42, sha256: 'a'.repeat(64),
+                    origin: { source: 'user-upload' as const },
+                }],
+            },
+        };
+        const attachment = {
+            v: 1 as const,
+            instanceId: 'issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            content: { kind: 'sessionMedia' as const, mediaId: 'media-42' },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text',
+            rawRecord: {
+                role: 'user', content: { type: 'text', text: 'old text' },
+                meta: { happier: { kind: 'other.v1', payload: { keep: true } } },
+            },
+        });
+
+        let patchBody: Record<string, unknown> | null = null;
+        const accepted = await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1, composerAttachments: [attachment] },
+            preparedComposerAdmission: {
+                stagedMediaHandles: [],
+                sessionMediaMetadata: { key: 'happier', envelope },
+            },
+            encryption: null,
+            request: async (_path, init) => {
+                patchBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+                return new Response(null, { status: 204 });
+            },
+        });
+
+        expect(accepted?.sessionMediaMetadata).toEqual({ key: 'happierMedia', envelope });
+        expect(patchBody?.content).toMatchObject({
+            t: 'plain',
+            v: {
+                meta: {
+                    happier: { kind: 'other.v1', payload: { keep: true } },
+                    happierMedia: { kind: 'session_media.v1' },
+                },
+            },
+        });
+    });
+
+    it('refuses to guess replacement or removal custody for an existing SessionMedia envelope', async () => {
+        const sessionId = 's_test_pending_existing_session_media_refused';
+        const existingEnvelope = {
+            kind: 'session_media.v1' as const,
+            payload: {
+                media: [{
+                    id: 'media-old', role: 'input' as const, category: 'attachment' as const,
+                    mediaKind: 'image' as const, mimeType: 'image/png' as const, name: 'old.png',
+                    path: '.happier/uploads/old.png', sizeBytes: 12, sha256: 'b'.repeat(64),
+                    origin: { source: 'user-upload' as const },
+                }],
+            },
+        };
+        storage.getState().applySessions([buildSession({ sessionId, overrides: { encryptionMode: 'plain' } })]);
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1', localId: 'p1', createdAt: 1, updatedAt: 1,
+            source: 'server_pending', deliveryStatus: 'accepted', text: 'old text',
+            rawRecord: {
+                role: 'user', content: { type: 'text', text: 'old text' },
+                meta: { happierMedia: existingEnvelope },
+            },
+        });
+        const request = vi.fn(async () => new Response(null, { status: 204 }));
+
+        await expect(updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'edited text',
+            structuredInput: { v: 1 },
+            preparedComposerAdmission: { stagedMediaHandles: [] },
+            encryption: null,
+            request,
+        })).rejects.toThrow('cannot replace existing SessionMedia metadata');
+        expect(request).not.toHaveBeenCalled();
     });
 
     it('does not leave an action-ack projection delivering when zero-count pruning precedes exact transcript commit', async () => {

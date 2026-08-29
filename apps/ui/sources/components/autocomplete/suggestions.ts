@@ -18,6 +18,7 @@ import {
     type ComposerSuggestionKindDefinition,
     type ComposerSuggestionKindId,
 } from './composerSuggestionKinds';
+import { COMPOSER_SUGGESTION_KIND_DEADLINE_MS as SHARED_COMPOSER_SUGGESTION_KIND_DEADLINE_MS } from './composerSuggestionDeadlines';
 import type { PluginContributedActionDescriptor } from '@/components/plugins/actions/pluginContributedActionController';
 import {
     COMPOSER_SUGGESTION_KIND_IDS,
@@ -51,7 +52,7 @@ export type { ComposerSuggestionCatalogs } from './composerSuggestionCatalogs';
  * a hypothetical one. Past this bound the kind contributes no rows, the other
  * sections still render, and the user has typed on anyway.
  */
-export const COMPOSER_SUGGESTION_KIND_DEADLINE_MS = 2_500;
+export const COMPOSER_SUGGESTION_KIND_DEADLINE_MS = SHARED_COMPOSER_SUGGESTION_KIND_DEADLINE_MS;
 
 /**
  * How much longer a COLD query may wait once the deadline has passed and every

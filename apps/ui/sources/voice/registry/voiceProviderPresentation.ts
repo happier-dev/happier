@@ -1,5 +1,3 @@
-import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol';
-
 export type VoiceProviderSelectionPresentation = Readonly<{
   id: string;
   modeId: string;
@@ -7,31 +5,6 @@ export type VoiceProviderSelectionPresentation = Readonly<{
   titleKey: string;
   subtitleKey: string;
   configPatch?: Readonly<Record<string, unknown>>;
-}>;
-
-export type VoiceProviderLegacySettingsMigration = Readonly<{
-  defaultLegacyConfig: VoiceProviderSettingsJsonValueV1;
-  legacyDefaultSelection?: boolean;
-  readLegacySecret?(value: unknown): unknown | null;
-  preserveLegacyEnvelope?(value: unknown): Readonly<{
-    schemaVersion: number;
-    config: unknown;
-  }> | null;
-  migrateLegacy?(value: unknown): Readonly<{
-    config: VoiceProviderSettingsJsonValueV1;
-    root?: unknown;
-  }> | null;
-  projectLegacy?(
-    value: unknown,
-    context: Readonly<{
-      root: unknown;
-      resolveCredential(providerId: string, credentialSlotId: string): unknown | null;
-    }>,
-  ): VoiceProviderSettingsJsonValueV1 | null;
-  mergeLegacy?(
-    currentValue: unknown,
-    migratedValue: unknown,
-  ): VoiceProviderSettingsJsonValueV1 | null;
 }>;
 
 export type VoiceSpeechSettingsPresentation = Readonly<{
@@ -65,7 +38,5 @@ export type VoiceProviderPresentation = Readonly<{
   providerId: string;
   settingsSectionId: string;
   selectionOptions?: readonly VoiceProviderSelectionPresentation[];
-  legacySettingsMigration?: VoiceProviderLegacySettingsMigration;
-  createSettingsSection?(): unknown;
   createSettingsSpec?(): VoiceSpeechSettingsPresentation | null;
 }>;

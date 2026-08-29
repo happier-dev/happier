@@ -5,20 +5,28 @@ import type {
     PluginUiJsonValueV1,
     PluginUiTargetedContributionSurfaceV1,
 } from '@happier-dev/protocol/plugins/ui';
-import type { HappierImageSize } from '@happier-dev/plugin-ui/presentation';
 import {
     AccessibilityInfo,
     findNodeHandle,
     Platform,
     View,
+    useWindowDimensions,
 } from 'react-native';
 
 import {
     normalizeHappierCodeLanguage,
+    resolveHappierDiffViewerRequest,
+    type HappierDiffViewerRequest,
+    type HappierImageSize,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
+import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
+import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
+import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
+import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Popover } from '@/components/ui/popover/Popover';
 import { MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS } from '@/components/ui/popover/modalAwareFloatingPopoverPortalOptions';
@@ -28,6 +36,7 @@ import {
     type PluginUiIconDirection,
 } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
+import { useSetting } from '@/sync/domains/state/storage';
 import {
     useInstalledPluginBrandPresentation,
     type InstalledPluginBrandPresentation,
@@ -179,6 +188,42 @@ function PluginUiPrivateTargetBrandMark(props: PluginUiPrivateTargetBrandMarkInp
     });
 }
 
+/**
+ * Thin plugin-surface adapter over the incumbent app DiffViewer. It deliberately
+ * owns no parser, cache, or review state: current user settings and the existing
+ * inline virtualization policy remain the only decisions.
+ */
+function PluginUiPrivateDiffViewer(props: HappierDiffViewerRequest): React.ReactElement {
+    const configuredWrapLines = useSetting('wrapLinesInDiffs');
+    const configuredLineNumbers = useSetting('showLineNumbers');
+    const thresholds = useInlineDiffVirtualizationThresholds();
+    const { height: windowHeight } = useWindowDimensions();
+    const virtualized = resolveInlineDiffVirtualization({
+        unifiedDiff: props.unifiedDiff,
+        oldText: null,
+        newText: null,
+        lineThreshold: thresholds.lineThreshold,
+        byteThreshold: thresholds.byteThreshold,
+    });
+
+    return (
+        <View style={virtualized
+            ? resolveInlineDiffVirtualizedViewportStyle(resolveInlineDiffVirtualizedMaxHeight(windowHeight))
+            : undefined}
+        >
+            <DiffViewer
+                mode="unified"
+                unifiedDiff={props.unifiedDiff}
+                filePath={props.filePath}
+                wrapLines={configuredWrapLines !== false}
+                showLineNumbers={configuredLineNumbers !== false}
+                virtualized={virtualized}
+                testID={props.testID}
+            />
+        </View>
+    );
+}
+
 function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDirection) {
     return Object.freeze({
     renderMarkdown(input: Readonly<{ value: string; selectable: boolean; testID?: string }>) {
@@ -194,6 +239,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
                 scrollTestID={input.testID}
             />
         );
+    },
+    renderDiffViewer(input: HappierDiffViewerRequest) {
+        return <PluginUiPrivateDiffViewer {...resolveHappierDiffViewerRequest(input)} />;
     },
     renderPopover(input: Readonly<{
         open: boolean;

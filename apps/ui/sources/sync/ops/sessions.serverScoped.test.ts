@@ -10,6 +10,11 @@ const sessionRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnIfNeededMock = vi.hoisted(() => vi.fn(async () => ({})));
 const apiRequestMock = vi.hoisted(() => vi.fn());
+const readAgentScopedPluginSettingsSnapshotMock = vi.hoisted(() => vi.fn(async () => null));
+
+vi.mock('@/agents/registry/agentScopedPluginSettings', () => ({
+    readAgentScopedPluginSettingsSnapshot: readAgentScopedPluginSettingsSnapshotMock,
+}));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
@@ -92,6 +97,8 @@ describe('sessions ops server-scoped routing', () => {
         prepareAccountSettingsForDaemonSpawnIfNeededMock.mockResolvedValue({});
         readMachineTargetForSessionMock.mockReturnValue(null);
         apiRequestMock.mockReset();
+        readAgentScopedPluginSettingsSnapshotMock.mockReset();
+        readAgentScopedPluginSettingsSnapshotMock.mockResolvedValue(null);
     });
 
     it('restores an archived session before issuing its resume spawn', async () => {
@@ -1168,6 +1175,11 @@ describe('sessions ops server-scoped routing', () => {
             }),
         }));
         expect(sessionRpcWithServerScopeMock).toHaveBeenCalledTimes(3);
+        expect(readAgentScopedPluginSettingsSnapshotMock).toHaveBeenCalledWith(expect.objectContaining({
+            agentId: expect.any(String),
+            machineId: 'machine-1',
+            serverId: 'server-b',
+        }));
         expect(sessionRpcWithServerScopeMock).toHaveBeenLastCalledWith(expect.objectContaining({
             sessionId: 'sess-inactive-grok',
             serverId: 'server-b',

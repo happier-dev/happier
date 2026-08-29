@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import type {
+    NewSessionComposerAttachmentSeedV1,
+    NewSessionDraft,
+} from '@/sync/domains/state/persistence';
 import {
     getSessionDraftSnapshot,
     resetSessionDraftRepositoryForTests,
@@ -10,6 +13,7 @@ import {
 
 import {
     readNewSessionDraftFromRepository,
+    clearNewSessionComposerAttachmentSeedsFromRepository,
     writeNewSessionAuthoringDraftToRepository,
     writeNewSessionDraftToRepository,
 } from './newSessionDraftRepositoryAdapter';
@@ -152,5 +156,27 @@ describe('newSessionDraftRepositoryAdapter', () => {
             .not.toMatchObject({
                 authoring: { windowsRemoteSessionLaunchMode: expect.anything() },
             });
+    });
+
+    it('round-trips draft-local attachment requests and clears only admitted identities', () => {
+        const draftId = 'seed-custody-draft';
+        const seed: NewSessionComposerAttachmentSeedV1 = {
+            instanceId: 'seed-a',
+            pluginId: 'example.plugin',
+            attachmentLocalId: 'ticket',
+            value: { key: 'ticket-a', value: { id: 42 }, presentation: { label: 'Issue 42' } },
+        };
+        const otherSeed = { ...seed, instanceId: 'seed-b', value: { ...seed.value, key: 'ticket-b' } };
+        writeNewSessionDraftToRepository({
+            scope,
+            draftId,
+            draft: authoringDraft({ composerAttachmentSeeds: [seed, otherSeed] }),
+        });
+
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.composerAttachmentSeeds)
+            .toEqual([seed, otherSeed]);
+        clearNewSessionComposerAttachmentSeedsFromRepository({ scope, draftId, seeds: [seed] });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.composerAttachmentSeeds)
+            .toEqual([otherSeed]);
     });
 });

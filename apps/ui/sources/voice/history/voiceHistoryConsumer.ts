@@ -33,10 +33,11 @@ export type VoiceHistoryExportArtifact = Readonly<{
    * The serialized JSON document, produced lazily in order.
    *
    * Export is "all of it": there is no page, row or byte ceiling, so the whole
-   * document can be larger than anything worth holding twice. Platform targets
-   * stream these chunks straight into their sink (a `Blob` part list on web, an
-   * appending file write on native) instead of concatenating one giant string
-   * and then copying it again.
+   * document can be larger than anything worth holding twice. Native targets
+   * stream these chunks into an appending file. The standard web download API
+   * still requires one concrete parts sequence and one whole `Blob`; that
+   * unavoidable materialization remains isolated at the web platform target
+   * rather than adding a cap or a joined whole-document string here.
    */
   chunks: () => Iterable<string>;
   rowCount: number;

@@ -46,9 +46,16 @@ function retainCurrentDefinitionDetail(params: Readonly<{
 
 export type AutomationsDomain = {
     automations: Record<string, AutomationDefinition>;
+    automationDefinitionNextCursor: string | null;
+    automationDefinitionWindowExtended: boolean;
     automationRunsByAutomationId: Record<string, AutomationDefinitionRun[]>;
     automationRunNextCursorByAutomationId: Record<string, string | null>;
-    applyAutomations: (automations: AutomationDefinition[]) => void;
+    applyAutomations: (automations: AutomationDefinition[], nextCursor?: string | null) => void;
+    appendAutomations: (
+        expectedCursor: string,
+        automations: AutomationDefinition[],
+        nextCursor: string | null,
+    ) => void;
     upsertAutomation: (automation: AutomationDefinition) => void;
     removeAutomation: (automationId: string) => void;
     setAutomationRuns: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;
@@ -137,11 +144,47 @@ export function createAutomationsDomain<S extends AutomationsDomain>({
 }): AutomationsDomain {
     return {
         automations: {},
+        automationDefinitionNextCursor: null,
+        automationDefinitionWindowExtended: false,
         automationRunsByAutomationId: {},
         automationRunNextCursorByAutomationId: {},
-        applyAutomations: (automations) =>
+        applyAutomations: (automations, nextCursor) =>
             set((state) => {
                 const next: Record<string, AutomationDefinition> = {};
+                for (const automation of automations) {
+                    next[automation.id] = retainCurrentDefinitionDetail({
+                        previous: state.automations[automation.id],
+                        incoming: automation,
+                    });
+                }
+                // Preserve an explicitly traversed tail during a first-page
+                // refresh, but restart continuation from the fresh first
+                // page. Keeping the predecessor tail cursor would skip rows
+                // inserted ahead of that cursor while this client was
+                // offline (including more than one new page). Replaying
+                // already-retained pages is harmless because this store is
+                // identity-keyed; skipping new definitions is not. A null
+                // fresh cursor proves the first page is the complete current
+                // catalog, so the ordinary replacement branch can also drop
+                // stale predecessor tail rows.
+                if (state.automationDefinitionWindowExtended && nextCursor !== null) {
+                    return {
+                        ...state,
+                        automations: { ...state.automations, ...next },
+                        automationDefinitionNextCursor: nextCursor,
+                    };
+                }
+                return {
+                    ...state,
+                    automations: next,
+                    automationDefinitionNextCursor: nextCursor ?? null,
+                    automationDefinitionWindowExtended: false,
+                };
+            }),
+        appendAutomations: (expectedCursor, automations, nextCursor) =>
+            set((state) => {
+                if (state.automationDefinitionNextCursor !== expectedCursor) return state;
+                const next = { ...state.automations };
                 for (const automation of automations) {
                     next[automation.id] = retainCurrentDefinitionDetail({
                         previous: state.automations[automation.id],
@@ -151,6 +194,8 @@ export function createAutomationsDomain<S extends AutomationsDomain>({
                 return {
                     ...state,
                     automations: next,
+                    automationDefinitionNextCursor: nextCursor,
+                    automationDefinitionWindowExtended: true,
                 };
             }),
         upsertAutomation: (automation) =>

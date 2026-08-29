@@ -14,7 +14,7 @@ const NOW = Date.parse('2026-08-22T12:00:00.000Z');
 const TOKEN_A = {
     tokenId: '11111111-1111-4111-8111-111111111111',
     label: 'CI on build-server',
-    displayPrefix: 'hap_11111111',
+    displayPrefix: 'hap_v1_11111111',
     createdAt: '2026-08-20T12:00:00.000Z',
     lastUsedAt: null,
     expiresAt: null,
@@ -23,7 +23,7 @@ const TOKEN_A = {
 const TOKEN_B = {
     tokenId: '22222222-2222-4222-8222-222222222222',
     label: 'Release automation',
-    displayPrefix: 'hap_22222222',
+    displayPrefix: 'hap_v1_22222222',
     createdAt: '2026-08-21T12:00:00.000Z',
     lastUsedAt: '2026-08-22T11:00:00.000Z',
     expiresAt: '2026-08-29T12:00:00.000Z',

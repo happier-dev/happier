@@ -1,10 +1,5 @@
 import * as React from 'react';
 import { getSharedVoiceAudioSessionCoordinator } from '@happier-dev/audio-stream-native';
-import {
-  ConnectedServiceBindingsV1Schema,
-  isConnectedServiceCredentialHealthStatusUsable,
-  normalizeConnectedServiceCredentialHealthStatus,
-} from '@happier-dev/protocol';
 
 import { storage, useActiveServerAccountScope, useProfile, useSetting } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -12,7 +7,8 @@ import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePriva
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { createConnectedServiceBindingAuthorityFingerprint } from '@/sync/domains/connectedServices/connectedServiceBindingAuthority';
+import { readVoiceProviderConnectedServicesBinding } from '@/voice/settings/passiveSetup';
 
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import {
@@ -38,82 +34,6 @@ import { useCurrentUiContextVoiceToolPort } from '@/components/appShell/currentU
 import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useForegroundVoiceTextTurnQaBridge';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-function readAgentConnectedServiceBindingAuthority(
-  providerEnvelope: unknown,
-  connectedServices: unknown,
-): string {
-  const envelope = readRecord(providerEnvelope);
-  const config = readRecord(envelope?.config);
-  const bindings = config
-    ? Object.values(config)
-        .map((value) => ConnectedServiceBindingsV1Schema.safeParse(value))
-        .find((result) => result.success)?.data ?? null
-    : null;
-  if (!bindings) return 'unbound';
-
-  const services = Array.isArray(connectedServices) ? connectedServices : [];
-  const authority = Object.entries(bindings.bindingsByServiceId)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([serviceId, binding]) => {
-      if (binding.source === 'native') {
-        return { serviceId, source: 'native' as const };
-      }
-
-      const service = services
-        .map(readRecord)
-        .find((candidate) => candidate?.serviceId === serviceId) ?? null;
-      const profiles = Array.isArray(service?.profiles) ? service.profiles : [];
-      const readProfileAuthority = (profileId: string | null) => {
-        const profile = profileId
-          ? profiles.map(readRecord).find((candidate) => candidate?.profileId === profileId) ?? null
-          : null;
-        return {
-          profileId,
-          usable: profile !== null
-            && isConnectedServiceCredentialHealthStatusUsable(
-              normalizeConnectedServiceCredentialHealthStatus(profile.status),
-            ),
-        };
-      };
-
-      if (binding.selection !== 'group') {
-        return {
-          serviceId,
-          source: 'connected' as const,
-          selection: 'profile' as const,
-          ...readProfileAuthority(binding.profileId),
-        };
-      }
-
-      const groups = Array.isArray(service?.groups) ? service.groups : [];
-      const group = groups
-        .map(readRecord)
-        .find((candidate) => candidate?.groupId === binding.groupId) ?? null;
-      const activeProfileId = typeof group?.activeProfileId === 'string'
-        ? group.activeProfileId
-        : null;
-      return {
-        serviceId,
-        source: 'connected' as const,
-        selection: 'group' as const,
-        groupId: binding.groupId,
-        boundProfileId: binding.profileId ?? null,
-        generation: typeof group?.generation === 'number' && Number.isInteger(group.generation)
-          ? group.generation
-          : null,
-        ...readProfileAuthority(activeProfileId),
-      };
-    });
-
-  return stableJsonStringify(authority);
-}
 
 export function VoiceSessionRuntime(): React.ReactElement | null {
   const currentUiContext = useCurrentUiContextVoiceToolPort();
@@ -265,13 +185,23 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   }, [currentUiContextToolSetEnabled]);
 
   React.useEffect(() => {
+    const providerSettings = selectedProviderEntry?.providerSettings ?? null;
+    const providerEnvelope = voiceCredentialAuthority.providerEnvelope;
+    const agentConnectedServicesBinding = providerSettings
+      && providerEnvelope
+      && providerSettings.schemaVersion === providerEnvelope.schemaVersion
+      ? readVoiceProviderConnectedServicesBinding({
+          providerSettings,
+          providerConfig: providerEnvelope.config,
+        })
+      : null;
     const nextAuthority = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope,
       agentConnectedServiceBindingAuthority:
-        readAgentConnectedServiceBindingAuthority(
-          voiceCredentialAuthority.providerEnvelope,
-          connectedServices,
-        ),
+        createConnectedServiceBindingAuthorityFingerprint({
+          bindings: agentConnectedServicesBinding,
+          connectedServices: connectedServices ?? [],
+        }),
       connectedServiceCredentialRevisions,
       connectedServices,
       credentialBinding: voiceCredentialAuthority.credentialBinding,
@@ -303,6 +233,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     connectedServiceCredentialRevisions,
     connectedServices,
     exactSessionCredentialAuthority,
+    selectedProviderEntry,
     voiceCredentialAuthority.credentialBinding,
     voiceCredentialAuthority.providerEnvelope,
     secrets,

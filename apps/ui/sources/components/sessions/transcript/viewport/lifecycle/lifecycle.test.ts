@@ -10,6 +10,25 @@ function effectTypes(effects: readonly TranscriptViewportLifecycleEffect[]): str
 }
 
 describe('transcript viewport lifecycle', () => {
+    it('preempts both entry restore and explicit jump for web user takeover', () => {
+        const lifecycle = createTranscriptViewportLifecycle();
+        lifecycle.dispatch({
+            sessionId: 'session-a',
+            shouldFollowLiveTail: true,
+            type: 'session-entry',
+        });
+
+        const transition = lifecycle.dispatch({
+            sessionId: 'session-a',
+            type: 'web-user-scroll-takeover',
+        });
+
+        expect(effectTypes(transition.effects)).toEqual([
+            'web-user-scroll-preempt-entry-restore',
+            'web-user-scroll-preempt-explicit-jump',
+        ]);
+    });
+
     it('initializes a following session entry at the live tail and emits entry reset effects', () => {
         const lifecycle = createTranscriptViewportLifecycle();
 

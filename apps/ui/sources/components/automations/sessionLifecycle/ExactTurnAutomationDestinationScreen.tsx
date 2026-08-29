@@ -14,6 +14,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
+import { useAutomationDefinitionPagination } from '@/components/automations/list/useAutomationDefinitionPagination';
 
 import {
     areExactTurnAutomationPrefillsEqual,
@@ -48,6 +49,7 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
     const supportRef = React.useRef(support.enabled);
     supportRef.current = support.enabled;
     const automations = useAutomations();
+    const pagination = useAutomationDefinitionPagination();
     const [loading, setLoading] = React.useState(false);
     const [refreshFailed, setRefreshFailed] = React.useState(false);
     const [refreshGeneration, setRefreshGeneration] = React.useState(0);
@@ -66,6 +68,7 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
         routeServerId: props.observed.sourceServerId,
         activeServerId: activeServer.serverId,
         automationsEnabled: support.enabled,
+        accountSettings: storage.getState().settings,
         accountLifetime: captureActiveServerAccountScopeLifetime(),
         readCurrent: () => ({
             session: storage.getState().sessions[props.observed.sourceSessionId] ?? null,
@@ -73,6 +76,7 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
             routeServerId: props.observed.sourceServerId,
             activeServerId: getActiveServerSnapshot().serverId,
             automationsEnabled: supportRef.current,
+            accountSettings: storage.getState().settings,
         }),
     }), [
         accountScopeKey,
@@ -209,6 +213,17 @@ export function ExactTurnAutomationDestinationScreen(props: Readonly<{
             onRequestClose={() => router.back()}
             keyboardHintsEnabled
             autoFocusInputOnWeb
+            pagination={{
+                hasMore: pagination.hasMore,
+                loadingMore: pagination.loadingMore,
+                requestKey: pagination.nextCursor,
+                error: pagination.loadMoreFailed ? t('common.requestFailed') : null,
+                onEndReached: pagination.requestPage,
+                onRetry: pagination.requestPage,
+                loadingLabel: t('common.loading'),
+                retryLabel: t('common.retry'),
+                endReachedLabel: t('common.done'),
+            }}
             testID="exact-turn-automation-destination"
         />
     );

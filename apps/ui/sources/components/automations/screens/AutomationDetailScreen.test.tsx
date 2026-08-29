@@ -141,6 +141,7 @@ const automationRunCursorState = vi.hoisted(() => ({
 const automationRunsState = vi.hoisted(() => ({
     list: [] as any[],
 }));
+const activeAccountLifetimeState = vi.hoisted(() => ({ current: true }));
 
 installAutomationScreensCommonModuleMocks({
     router: async () => {
@@ -249,6 +250,7 @@ installAutomationScreensCommonModuleMocks({
         const { createLiveStorageStoreMock, createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             storage: createLiveStorageStoreMock(() => ({
+                automations: { [automationState.automation.id]: automationState.automation },
                 automationRunsByAutomationId: { a1: automationRunsState.list },
                 profileScope: { serverId: 'server-1', accountId: 'account-1' },
             })),
@@ -318,7 +320,7 @@ vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
 vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
     captureActiveServerAccountScopeLifetime: () => ({
         scope: { serverId: 'server-1', accountId: 'account-1' },
-        isCurrent: () => true,
+        isCurrent: () => activeAccountLifetimeState.current,
         onRetire: () => ({ dispose: () => undefined }),
     }),
 }));
@@ -393,6 +395,7 @@ vi.mock('@/sync/sync', () => ({
 
 describe('AutomationDetailScreen', () => {
     beforeEach(() => {
+        activeAccountLifetimeState.current = true;
         eventRuntimeProjectionState.immutableGenerationId = 'github-generation-1';
         runHistoryListMock.state.reset();
         routeParamsState.id = 'a1';
@@ -408,7 +411,6 @@ describe('AutomationDetailScreen', () => {
                 schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null },
                 nextRunAt: null,
             }],
-            retiredTriggers: [],
             targetType: 'newSession',
             existingSessionId: null,
             templateVersion: 1,
@@ -534,7 +536,6 @@ describe('AutomationDetailScreen', () => {
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-            retiredTriggers: [],
             executionRecipe: {
                 v: 1,
                 templateVersion: 3,
@@ -545,25 +546,6 @@ describe('AutomationDetailScreen', () => {
         });
         return createAutomationDefinitionFromDetail(detail);
     }
-
-    it('renders retired trigger tombstones as read-only history outside the live editor set', async () => {
-        automationState.automation = {
-            ...automationState.automation,
-            retiredTriggers: [{
-                id: AutomationTriggerIdSchema.parse('retired-event-1'),
-                kind: 'pluginEvent',
-                revision: 4,
-                retiredAt: 9,
-            }],
-        };
-        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
-        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
-
-        const retired = screen.findByProps({ testID: 'automation-retired-trigger-retired-event-1' });
-        expect(retired.props.title).toBe('Event');
-        expect(retired.props.subtitle).toContain('retired-event-1 · revision 4');
-        expect(retired.props.onPress).toBeUndefined();
-    });
 
     it('blurs the active element before navigating to edit automation', async () => {
         // The retained editor is available only for a direct V2-compatible schedule detail.
@@ -1142,7 +1124,6 @@ describe('AutomationDetailScreen', () => {
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-            retiredTriggers: [],
         });
         automationState.automation = createAutomationDefinitionFromDetail(strictScheduleDetail);
         const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
@@ -1184,6 +1165,163 @@ describe('AutomationDetailScreen', () => {
             { machineId: 'm1', enabled: true, priority: 0 },
         ]);
         expect(syncSpies.refreshAutomations).toHaveBeenCalledTimes(refreshCallsBeforeToggle);
+    });
+
+    it('serializes rapid assignment replacements and derives each request from the latest canonical Sync projection', async () => {
+        machinesState.list = [
+            {
+                id: 'm1',
+                metadata: { displayName: 'First machine', host: 'first.local', platform: 'macOS' },
+            },
+            {
+                id: 'm2',
+                metadata: { displayName: 'Second machine', host: 'second.local', platform: 'Linux' },
+            },
+        ];
+        const firstReplacement = createDeferred();
+        syncSpies.replaceAutomationAssignments
+            .mockImplementationOnce(async (_automationId, assignments) => {
+                await firstReplacement.promise;
+                automationState.automation = {
+                    ...automationState.automation,
+                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 2 })),
+                };
+            })
+            .mockImplementationOnce(async (_automationId, assignments) => {
+                automationState.automation = {
+                    ...automationState.automation,
+                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 3 })),
+                };
+            });
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const assignmentToggles = screen.findAllByType('Switch');
+
+        await act(async () => {
+            assignmentToggles[0].props.onValueChange(true);
+            assignmentToggles[1].props.onValueChange(true);
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(1);
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenNthCalledWith(1, 'a1', [
+            { machineId: 'm1', enabled: true, priority: 0 },
+        ]);
+
+        await act(async () => {
+            firstReplacement.resolve();
+            await firstReplacement.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(2);
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenNthCalledWith(2, 'a1', [
+            { machineId: 'm1', enabled: true, priority: 0 },
+            { machineId: 'm2', enabled: true, priority: 0 },
+        ]);
+    });
+
+    it('drops a queued assignment intent when its Account lifetime retires', async () => {
+        machinesState.list = [
+            { id: 'm1', metadata: { displayName: 'First machine' } },
+            { id: 'm2', metadata: { displayName: 'Second machine' } },
+        ];
+        const firstReplacement = createDeferred();
+        syncSpies.replaceAutomationAssignments.mockImplementationOnce(() => firstReplacement.promise);
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const assignmentToggles = screen.findAllByType('Switch');
+        await act(async () => {
+            assignmentToggles[0].props.onValueChange(true);
+            assignmentToggles[1].props.onValueChange(true);
+            await Promise.resolve();
+        });
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(1);
+
+        activeAccountLifetimeState.current = false;
+        await act(async () => {
+            firstReplacement.resolve();
+            await firstReplacement.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let an unresolved earlier route assignment block the current route', async () => {
+        machinesState.list = [
+            { id: 'm1', metadata: { displayName: 'First machine' } },
+            { id: 'm2', metadata: { displayName: 'Second machine' } },
+        ];
+        const firstReplacement = createDeferred();
+        syncSpies.replaceAutomationAssignments
+            .mockImplementationOnce(() => firstReplacement.promise)
+            .mockResolvedValueOnce(undefined);
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            screen.findAllByType('Switch')[0].props.onValueChange(true);
+            await Promise.resolve();
+        });
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(1);
+
+        routeParamsState.id = 'a2';
+        automationState.automation = {
+            ...automationState.automation,
+            id: 'a2',
+            name: 'Second automation',
+            assignments: [],
+        };
+        await screen.update(React.createElement(AutomationDetailScreen));
+        await act(async () => {
+            screen.findAllByType('Switch')[1].props.onValueChange(true);
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(2);
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenNthCalledWith(2, 'a2', [
+            { machineId: 'm2', enabled: true, priority: 0 },
+        ]);
+
+        firstReplacement.resolve();
+        await firstReplacement.promise;
+    });
+
+    it('continues a later assignment intent from canonical state after an earlier replacement fails', async () => {
+        machinesState.list = [
+            { id: 'm1', metadata: { displayName: 'First machine' } },
+            { id: 'm2', metadata: { displayName: 'Second machine' } },
+        ];
+        const secondReplacementStarted = createDeferred();
+        syncSpies.replaceAutomationAssignments
+            .mockRejectedValueOnce(new Error('first replacement failed'))
+            .mockImplementationOnce(async (_automationId, assignments) => {
+                automationState.automation = {
+                    ...automationState.automation,
+                    assignments: assignments.map((assignment) => ({ ...assignment, updatedAt: 4 })),
+                };
+                secondReplacementStarted.resolve();
+            });
+
+        const { AutomationDetailScreen } = await import('./AutomationDetailScreen');
+        const screen = await renderScreen(React.createElement(AutomationDetailScreen));
+        const assignmentToggles = screen.findAllByType('Switch');
+        await act(async () => {
+            assignmentToggles[0].props.onValueChange(true);
+            assignmentToggles[1].props.onValueChange(true);
+            await secondReplacementStarted.promise;
+        });
+
+        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'first replacement failed');
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenCalledTimes(2);
+        expect(syncSpies.replaceAutomationAssignments).toHaveBeenNthCalledWith(2, 'a1', [
+            { machineId: 'm2', enabled: true, priority: 0 },
+        ]);
     });
 
     it('queues a run-now action without immediately refetching automation runs', async () => {

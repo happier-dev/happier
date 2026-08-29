@@ -72,11 +72,12 @@ export function shouldValidateAutomationEditorLifecycleTrigger(
         && (trigger.persisted === null || trigger.isDirty === true);
 }
 
-export type AutomationEditorDraft = Readonly<{
-    automationId: string | null;
-    /** Client-stable identity used only by a not-yet-persisted definition. */
-    pendingAutomationId: string | null;
-    expectedTemplateVersion: number | null;
+/**
+ * Recipe-independent value owned by the shared metadata/trigger editor.
+ * Embedded Session authoring uses this directly instead of fabricating a
+ * recipe that its save owner would immediately discard.
+ */
+export type AutomationTriggerEditorValue = Readonly<{
     /**
      * Exact CAS witnesses for persisted rows intentionally removed in this
      * editor lifetime. Keeping them outside the visible collection prevents a
@@ -90,11 +91,18 @@ export type AutomationEditorDraft = Readonly<{
     name: string;
     description: string | null;
     enabled: boolean;
+    triggers: ReadonlyArray<AutomationEditorTriggerDraft>;
+}>;
+
+export type AutomationEditorDraft = AutomationTriggerEditorValue & Readonly<{
+    automationId: string | null;
+    /** Client-stable identity used only by a not-yet-persisted definition. */
+    pendingAutomationId: string | null;
+    expectedTemplateVersion: number | null;
     /** True only after the canonical recipe composer reseals a next-version recipe. */
     recipeDirty?: boolean;
     executionRecipe: AutomationStoredDefinitionExecutionRecipeV1;
     assignments: ReadonlyArray<AutomationAssignmentInput>;
-    triggers: ReadonlyArray<AutomationEditorTriggerDraft>;
 }>;
 
 /** One durable-or-pending identity for editor-owned plugin setup and writes. */

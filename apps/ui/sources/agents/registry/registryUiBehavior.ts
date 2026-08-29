@@ -10,6 +10,7 @@ import {
     type ExternalSessionsAgentId,
     type AcpConfigOptionOverridesV1,
     type PendingDeliveryDetailV1,
+    type AgentUiSettingReferenceV1,
     ExternalSessionLinkEnsureRequest,
     ExternalSessionsSource,
     RuntimeDescriptorV1,
@@ -51,6 +52,12 @@ import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCo
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
+import {
+    attachAgentPluginSettings,
+    readAgentUiSetting,
+    type AgentPluginSettingsScope,
+    type AgentPluginSettingsSnapshot,
+} from './agentUiSettingLookup';
 
 type CapabilityResults = Partial<Record<CapabilityId, CapabilityDetectResult>>;
 
@@ -76,9 +83,33 @@ export type AgentSpawnSessionExtras = Readonly<{
 
 export type AgentExperimentSwitchDef = Readonly<{
     id: string;
-    settingKey?: keyof Settings;
+    settingKey?: AgentUiSettingReferenceV1;
     getValue?: (settings: Settings) => boolean;
 }>;
+
+/** Scoped values from the owning Agent Settings record. */
+export type { AgentPluginSettingsScope, AgentPluginSettingsSnapshot } from './agentUiSettingLookup';
+
+/**
+ * Readiness of the one scoped Settings record that owns an Agent's behavior.
+ * A declaration is not safe to consume while its exact target is still
+ * loading, unavailable, or failed: the neutral/default snapshot is not an
+ * equivalent to the user's configured value.
+ */
+export type AgentPluginSettingsReadiness = Readonly<{
+    ready: boolean;
+    settled: boolean;
+    loading: boolean;
+    error: 'unavailable' | 'failed' | 'outcomeUnknown' | null;
+}>;
+
+function mergeAgentBehaviorSettings(
+    settings: Settings,
+    pluginSettings?: AgentPluginSettingsSnapshot | null,
+): Settings {
+    if (!pluginSettings) return settings;
+    return attachAgentPluginSettings(settings, pluginSettings);
+}
 
 export type AgentTranscriptStorageMode = 'persisted' | 'direct';
 export type AgentPermissionFooterStopHandling = 'denyOnly' | 'denyAndAbortRun';
@@ -92,7 +123,7 @@ export type AgentPermissionFooterBehavior = Readonly<{
 export type AgentAskUserQuestionDialogBehavior = Readonly<{
     dialogId: string;
     settingMutation?: Readonly<{
-        settingId: string;
+        settingId: AgentUiSettingReferenceV1;
         allowedValues: readonly string[];
     }>;
     terminalNotice?: Readonly<{
@@ -183,7 +214,6 @@ export type AgentSessionSubagentLaunchSurface = Readonly<{
     pluginId: string;
     surfaceId: string;
     sessionId: string;
-    machineId: string | null;
     agentId: string;
     launchInput?: PluginUiJsonValueV1;
 }>;
@@ -278,6 +308,7 @@ export type AgentUiBehavior = Readonly<{
         resolveConfiguredRuntimeKind?: (ctx: {
             agentId: AgentLookupId;
             settings: Settings;
+            pluginSettings?: AgentPluginSettingsSnapshot | null;
         }) => string | null;
         buildNewSessionOptions?: (ctx: {
             agentId: AgentLookupId;
@@ -349,12 +380,14 @@ export type AgentUiBehavior = Readonly<{
         buildSpawnEnvironmentVariables?: (opts: {
             agentId: AgentLookupId;
             settings: Settings;
+            pluginSettings?: AgentPluginSettingsSnapshot | null;
             environmentVariables: Record<string, string> | undefined;
             newSessionOptions?: Record<string, unknown> | null;
         }) => Record<string, string> | undefined;
         buildSpawnSessionExtras?: (opts: {
             agentId: AgentLookupId;
             settings: Settings;
+            pluginSettings?: AgentPluginSettingsSnapshot | null;
             experiments: AgentResumeExperiments;
             resumeSessionId: string;
             newSessionOptions?: Record<string, unknown> | null;
@@ -365,6 +398,7 @@ export type AgentUiBehavior = Readonly<{
             agentId: AgentLookupId;
             experiments: AgentResumeExperiments;
             settings: Settings;
+            pluginSettings?: AgentPluginSettingsSnapshot | null;
             session?: Session | null;
         }) => Record<string, unknown>;
         buildWakeResumeExtras?: (opts: {
@@ -396,6 +430,8 @@ export type NewSessionPreflightContext = Readonly<{
     results: CapabilityResults | undefined;
     /** The machine whose installed Agent declaration owns this read. */
     machineId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
+    pluginSettingsReadiness?: AgentPluginSettingsReadiness | null;
 }>;
 
 export type NewSessionCliSelectabilityContext = Readonly<{
@@ -404,6 +440,7 @@ export type NewSessionCliSelectabilityContext = Readonly<{
     agentOptionState?: Record<string, unknown> | null;
     /** The machine whose installed Agent declaration owns this decision. */
     machineId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
 }>;
 
 export type NewSessionRelevantInstallableDepsContext = Readonly<{
@@ -417,6 +454,7 @@ export type NewSessionRelevantInstallableDepsContext = Readonly<{
      * answer is about one selected machine's Agent.
      */
     machineId?: string | null;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
 }>;
 
 export type NewSessionPreflightIssue = Readonly<{
@@ -426,6 +464,26 @@ export type NewSessionPreflightIssue = Readonly<{
     confirmTextKey: TranslationKey;
     action: 'openMachine';
 }>;
+
+export function resolveAgentPluginSettingsPreflightIssue(
+    readiness: AgentPluginSettingsReadiness | null | undefined,
+): NewSessionPreflightIssue | null {
+    if (!readiness || readiness.ready) return null;
+    const messageKey = readiness.error === 'unavailable'
+        ? 'settingsPlugins.genericSettingsUnavailable'
+        : readiness.error === 'failed' || readiness.error === 'outcomeUnknown'
+            ? 'settingsPlugins.genericSettingsLoadError'
+            : readiness.loading || !readiness.settled
+                ? 'settingsPlugins.genericSettingsLoading'
+                : 'settingsPlugins.genericSettingsUnavailable';
+    return {
+        id: `agent-plugin-settings-${readiness.error ?? (readiness.loading ? 'loading' : 'unavailable')}`,
+        titleKey: 'settingsPlugins.genericSettingsTitle',
+        messageKey,
+        confirmTextKey: 'common.openMachine',
+        action: 'openMachine',
+    };
+}
 
 function mergeMessageBehavior(
     a: AgentUiBehavior['message'] | undefined,
@@ -666,13 +724,15 @@ export function resolveAgentUiBehavior(
 export function resolveConfiguredAgentRuntimeKindFromUiBehavior(params: Readonly<{
     agentId: string;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     machineId?: string | null;
 }>): string | null {
     return resolveAgentUiBehavior(params.agentId, params.machineId)
         .newSession
         ?.resolveConfiguredRuntimeKind?.({
             agentId: params.agentId,
-            settings: params.settings,
+            settings: mergeAgentBehaviorSettings(params.settings, params.pluginSettings),
+            pluginSettings: params.pluginSettings,
         }) ?? null;
 }
 
@@ -822,34 +882,41 @@ export function getAgentResumeExperimentsFromSettings(
     agentId: AgentLookupId,
     settings: Settings,
     machineId?: string | null,
+    pluginSettings?: AgentPluginSettingsSnapshot | null,
 ): AgentResumeExperiments {
     const enabled = true;
     const defs = resolveAgentUiBehavior(agentId, machineId).resume?.experimentSwitches ?? [];
     if (defs.length === 0) return { enabled, switches: {} };
+    // Normalize the scoped record exactly once at this legacy Settings
+    // boundary. Every declaration callback below observes the same effective
+    // snapshot, so a mixed global/scoped read cannot drift between switches.
+    const effectiveSettings = mergeAgentBehaviorSettings(settings, pluginSettings);
     const switches: Record<string, boolean> = {};
     for (const def of defs) {
         if (typeof def.getValue === 'function') {
-            switches[def.id] = def.getValue(settings);
+            switches[def.id] = def.getValue(effectiveSettings);
             continue;
         }
-        const settingKey = def.settingKey as Extract<keyof Settings, string> | undefined;
-        switches[def.id] = settingKey ? settings[settingKey] === true : false;
+        switches[def.id] = readAgentUiSetting(effectiveSettings, def.settingKey) === true;
     }
     return { enabled, switches };
 }
 
 export function buildResumeCapabilityOptionsFromUiState(opts: {
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     results: CapabilityResults | undefined;
 }): ResumeCapabilityOptions {
     return {
-        accountSettings: opts.settings,
+        accountSettings: mergeAgentBehaviorSettings(opts.settings, opts.pluginSettings),
     };
 }
 
 export function getNewSessionPreflightIssues(ctx: NewSessionPreflightContext): readonly NewSessionPreflightIssue[] {
+    const pluginSettingsIssue = resolveAgentPluginSettingsPreflightIssue(ctx.pluginSettingsReadiness);
+    if (pluginSettingsIssue) return [pluginSettingsIssue];
     const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.getPreflightIssues;
-    return fn ? fn(ctx) : [];
+    return fn ? fn({ ...ctx, settings: mergeAgentBehaviorSettings(ctx.settings, ctx.pluginSettings) }) : [];
 }
 
 export function buildNewSessionOptionsFromUiState(opts: {
@@ -864,7 +931,7 @@ export function buildNewSessionOptionsFromUiState(opts: {
 
 export function canSelectAgentWithoutDetectedCli(ctx: NewSessionCliSelectabilityContext): boolean {
     const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.canSelectWithoutDetectedCli;
-    return fn ? fn(ctx) : false;
+    return fn ? fn({ ...ctx, settings: mergeAgentBehaviorSettings(ctx.settings, ctx.pluginSettings) }) : false;
 }
 
 export function getNewSessionAgentInputExtraActionChips(opts: {
@@ -882,12 +949,13 @@ export function getNewSessionRelevantInstallableDepKeys(
     ctx: NewSessionRelevantInstallableDepsContext,
 ): readonly string[] {
     const fn = resolveAgentUiBehavior(ctx.agentId, ctx.machineId).newSession?.getRelevantInstallableDepKeys;
-    return fn ? fn(ctx) : [];
+    return fn ? fn({ ...ctx, settings: mergeAgentBehaviorSettings(ctx.settings, ctx.pluginSettings) }) : [];
 }
 
 export function buildSpawnSessionExtrasFromUiState(opts: {
     agentId: AgentLookupId;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     resumeSessionId: string;
     /**
      * The machine the composer is about to spawn on. An installed Agent's
@@ -901,10 +969,16 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
 }): AgentSpawnSessionExtras {
     const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).payload?.buildSpawnSessionExtras;
     if (!fn) return {};
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, opts.machineId);
+    const experiments = getAgentResumeExperimentsFromSettings(
+        opts.agentId,
+        opts.settings,
+        opts.machineId,
+        opts.pluginSettings,
+    );
     return fn({
         agentId: opts.agentId,
-        settings: opts.settings,
+        settings: mergeAgentBehaviorSettings(opts.settings, opts.pluginSettings),
+        pluginSettings: opts.pluginSettings,
         experiments,
         resumeSessionId: opts.resumeSessionId,
         newSessionOptions: opts.newSessionOptions ?? null,
@@ -916,25 +990,38 @@ export function buildSpawnSessionExtrasFromUiState(opts: {
 export function buildSpawnEnvironmentVariablesFromUiState(opts: {
     agentId: AgentLookupId;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     environmentVariables: Record<string, string> | undefined;
     /** The machine the composer is about to spawn on; see `buildSpawnSessionExtrasFromUiState`. */
     machineId?: string | null;
     newSessionOptions?: Record<string, unknown> | null;
 }): Record<string, string> | undefined {
     const fn = resolveAgentUiBehavior(opts.agentId, opts.machineId).payload?.buildSpawnEnvironmentVariables;
-    return fn ? fn(opts) : opts.environmentVariables;
+    return fn ? fn({ ...opts, settings: mergeAgentBehaviorSettings(opts.settings, opts.pluginSettings) }) : opts.environmentVariables;
 }
 
 export function buildResumeSessionExtrasFromUiState(opts: {
     agentId: AgentLookupId;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     session?: Session | null;
 }): Record<string, unknown> {
     const owningMachineId = resolveOwningMachineIdForSession(opts.session);
     const fn = resolveAgentUiBehavior(opts.agentId, owningMachineId).payload?.buildResumeSessionExtras;
     if (!fn) return {};
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, owningMachineId);
-    return fn({ agentId: opts.agentId, experiments, settings: opts.settings, session: opts.session });
+    const experiments = getAgentResumeExperimentsFromSettings(
+        opts.agentId,
+        opts.settings,
+        owningMachineId,
+        opts.pluginSettings,
+    );
+    return fn({
+        agentId: opts.agentId,
+        experiments,
+        settings: mergeAgentBehaviorSettings(opts.settings, opts.pluginSettings),
+        pluginSettings: opts.pluginSettings,
+        session: opts.session,
+    });
 }
 
 export function buildWakeResumeExtras(opts: {

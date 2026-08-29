@@ -95,9 +95,18 @@ export function createNativeAudioSessionLifecycleBridge(input: Readonly<{
 
   const stopActive = async (): Promise<void> => {
     suspensionReasons.clear();
+    const leases = [...suspensionLeases.values()];
     suspensionLeases.clear();
     const sessionId = activeSessionId();
-    if (sessionId) await input.controller.stop(sessionId).catch(() => undefined);
+    try {
+      if (sessionId) await input.controller.stop(sessionId);
+    } catch {
+      // The terminal lifecycle fact remains authoritative even when an adapter
+      // fails its own stop. Releasing bridge-owned suspension leases is an
+      // independent teardown obligation and must not be vetoed by that failure.
+    } finally {
+      await Promise.allSettled(leases.map(async (lease) => await lease.release()));
+    }
   };
 
   const handle = async (event: VoiceAudioSessionPlatformEvent): Promise<void> => {

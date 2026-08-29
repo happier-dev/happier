@@ -26,6 +26,10 @@ import {
 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginReference } from '@happier-dev/plugin-sdk';
+import {
+    readPluginActionInputParser,
+    readPluginActionResultParser,
+} from '@happier-dev/plugin-sdk/host/registration';
 import type {
     PluginActionInvocationSurfaceV2,
     PluginClientActionHandler,
@@ -541,6 +545,12 @@ async function executeClientContributedAction(
         ...(projectedAction.outputSchema === undefined
             ? {}
             : { resultSchema: projectedAction.outputSchema }),
+        ...(readPluginActionInputParser(initial.registration.registration.value) === undefined
+            ? {}
+            : { inputParser: readPluginActionInputParser(initial.registration.registration.value) }),
+        ...(readPluginActionResultParser(initial.registration.registration.value) === undefined
+            ? {}
+            : { resultParser: readPluginActionResultParser(initial.registration.registration.value) }),
         generationSignal: initial.registration.lifecycle.signal,
         isCurrent: initial.isCurrent,
     });

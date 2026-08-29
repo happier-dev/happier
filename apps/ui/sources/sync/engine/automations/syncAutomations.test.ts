@@ -61,7 +61,6 @@ const eventSummary = AutomationDefinitionListItemSchema.parse({
     createdAt: 1,
     updatedAt: 1,
     assignments: [],
-    retiredTriggers: [],
 });
 
 const eventRun = AutomationV3RunListItemSchema.parse({
@@ -112,7 +111,7 @@ describe('fetchAndApplyAutomations', () => {
         getActiveServerSnapshotMock.mockClear();
 
         isRuntimeFeatureEnabledMock.mockResolvedValue(true);
-        listAutomationDefinitionsMock.mockResolvedValue([eventSummary]);
+        listAutomationDefinitionsMock.mockResolvedValue({ automations: [eventSummary], nextCursor: null });
         listAutomationDefinitionRunsMock.mockResolvedValue({
             runs: [eventRun],
             nextCursor: null,
@@ -137,7 +136,7 @@ describe('fetchAndApplyAutomations', () => {
             // The bounded list carries the owner-projected association, so a
             // session-scoped consumer never reads private detail to find it.
             linkedExistingSessionId: 'session-1',
-        })]);
+        })], null);
         const appliedSummary = applyAutomations.mock.calls[0]?.[0]?.[0];
         expect(appliedSummary).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(appliedSummary).not.toHaveProperty('templateCiphertext');
@@ -168,10 +167,10 @@ describe('fetchAndApplyAutomations', () => {
         const applyAutomations = vi.fn();
         const refreshAutomationRunsWindow = vi.fn();
         const loadedAutomationRunIds = Array.from({ length: 20 }, (_unused, index) => `event-${index + 1}`);
-        listAutomationDefinitionsMock.mockResolvedValue(loadedAutomationRunIds.map((id) => ({
-            ...eventSummary,
-            id,
-        })));
+        listAutomationDefinitionsMock.mockResolvedValue({
+            automations: loadedAutomationRunIds.map((id) => ({ ...eventSummary, id })),
+            nextCursor: null,
+        });
         let inFlight = 0;
         let peakInFlight = 0;
         listAutomationDefinitionRunsMock.mockImplementation(async () => {
@@ -189,8 +188,9 @@ describe('fetchAndApplyAutomations', () => {
             refreshAutomationRunsWindow,
         });
 
-        // The Account ceiling allows thousands of definitions, so one socket
-        // invalidation must never open one request per cached run list at once.
+        // Accounts may contain high-cardinality definition catalogs without an
+        // invented aggregate ceiling, so one socket invalidation must never
+        // open one request per cached run list at once.
         expect(listAutomationDefinitionRunsMock).toHaveBeenCalledTimes(20);
         expect(peakInFlight).toBeLessThanOrEqual(
             loadSyncTuning().automationDefinitionDetailHydrationConcurrencyLimit,
@@ -212,6 +212,34 @@ describe('fetchAndApplyAutomations', () => {
         expect(applyAutomations).not.toHaveBeenCalled();
         expect(listAutomationDefinitionRunsMock).not.toHaveBeenCalled();
         expect(refreshAutomationRunsWindow).not.toHaveBeenCalled();
+    });
+
+    it('appends an exact continuation page without replacing the current definition window', async () => {
+        listAutomationDefinitionsMock.mockResolvedValue({
+            automations: [{ ...eventSummary, id: 'event-2' }],
+            nextCursor: 'cursor-2',
+        });
+        const applyAutomations = vi.fn();
+        const appendAutomations = vi.fn();
+
+        await fetchAndApplyAutomations({
+            credentials: { accessToken: 'token' } as any,
+            cursor: 'cursor-1',
+            applyAutomations,
+            appendAutomations,
+        });
+
+        expect(listAutomationDefinitionsMock).toHaveBeenCalledWith(
+            { accessToken: 'token' },
+            { cursor: 'cursor-1' },
+        );
+        expect(applyAutomations).not.toHaveBeenCalled();
+        expect(appendAutomations).toHaveBeenCalledWith(
+            'cursor-1',
+            [expect.objectContaining({ id: 'event-2' })],
+            'cursor-2',
+        );
+        expect(listAutomationDefinitionRunsMock).not.toHaveBeenCalled();
     });
 });
 

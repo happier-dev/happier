@@ -241,7 +241,7 @@ describe('ApiTokensSettingsScreen', () => {
                 tokens: [{
                     tokenId: '11111111-1111-4111-8111-111111111111',
                     label: 'CI',
-                    displayPrefix: 'hap_11111111',
+                    displayPrefix: 'hap_v1_11111111',
                     createdAt: '2026-08-22T12:00:00.000Z',
                     lastUsedAt: null,
                     expiresAt: null,
@@ -269,14 +269,14 @@ describe('ApiTokensSettingsScreen', () => {
         const tokens = [{
             tokenId: '11111111-1111-4111-8111-111111111111',
             label: 'CI',
-            displayPrefix: 'hap_11111111',
+            displayPrefix: 'hap_v1_11111111',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,
         }, {
             tokenId: '22222222-2222-4222-8222-222222222222',
             label: 'Release',
-            displayPrefix: 'hap_22222222',
+            displayPrefix: 'hap_v1_22222222',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,
@@ -314,7 +314,7 @@ describe('ApiTokensSettingsScreen', () => {
                 tokens: [{
                     tokenId: '11111111-1111-4111-8111-111111111111',
                     label: 'CI',
-                    displayPrefix: 'hap_11111111',
+                    displayPrefix: 'hap_v1_11111111',
                     createdAt: '2026-08-22T12:00:00.000Z',
                     lastUsedAt: null,
                     expiresAt: null,
@@ -363,7 +363,7 @@ describe('ApiTokensSettingsScreen', () => {
             tokens: [{
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-22T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: null,
@@ -548,7 +548,7 @@ describe('ApiTokensSettingsScreen', () => {
             tokens: [{
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: new Date(now - 30_000).toISOString(),
                 lastUsedAt: null,
                 expiresAt: new Date(now + 7 * 24 * 60 * 60 * 1000 + 30_000).toISOString(),
@@ -594,7 +594,7 @@ describe('ApiTokensSettingsScreen', () => {
         const tokenA = {
             tokenId: '11111111-1111-4111-8111-111111111111',
             label: 'CI',
-            displayPrefix: 'hap_11111111',
+            displayPrefix: 'hap_v1_11111111',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,
@@ -602,7 +602,7 @@ describe('ApiTokensSettingsScreen', () => {
         const tokenB = {
             tokenId: '22222222-2222-4222-8222-222222222222',
             label: 'Release',
-            displayPrefix: 'hap_22222222',
+            displayPrefix: 'hap_v1_22222222',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,
@@ -648,7 +648,7 @@ describe('ApiTokensSettingsScreen', () => {
         const token = {
             tokenId: '11111111-1111-4111-8111-111111111111',
             label: 'CI',
-            displayPrefix: 'hap_11111111',
+            displayPrefix: 'hap_v1_11111111',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,
@@ -656,7 +656,7 @@ describe('ApiTokensSettingsScreen', () => {
         const otherToken = {
             tokenId: '22222222-2222-4222-8222-222222222222',
             label: 'Release',
-            displayPrefix: 'hap_22222222',
+            displayPrefix: 'hap_v1_22222222',
             createdAt: '2026-08-22T12:00:00.000Z',
             lastUsedAt: null,
             expiresAt: null,

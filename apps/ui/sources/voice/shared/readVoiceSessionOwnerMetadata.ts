@@ -12,7 +12,10 @@ export function readVoiceSessionOwnerMetadataFromState(
   const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
   if (!normalizedSessionId) return null;
   const directSession = state?.sessions?.[normalizedSessionId] ?? null;
-  if (directSession && (directSession.metadataLayoutVersion ?? 0) !== 0) {
+  if (directSession && (
+    directSession.metadataLayoutVersion !== undefined
+    && directSession.metadataLayoutVersion !== 0
+  )) {
     return readSessionOwnerMetadataView(directSession);
   }
 

@@ -7,26 +7,13 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { t } from '@/text';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
-import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voices/kokoroSherpaVoiceMapping';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { SelectedDaemonModelPackRow } from '@/voice/settings/panels/modelCatalog/DaemonModelPackRow';
 import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
-
-type KokoroVoiceSummary = Readonly<{
-    id: string;
-    title: string;
-    subtitle?: string;
-}>;
-
-function getWebKokoroVoiceCatalog(): KokoroVoiceSummary[] {
-    return (getKokoroSherpaVoiceCatalogForSpeakerCount(53) ?? []).map((voice) => ({
-        id: voice.id,
-        title: voice.title,
-        subtitle: voice.subtitle,
-    }));
-}
+import { useDaemonVoiceModelCatalogController } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
+import { resolveDaemonTtsVoiceSelection } from './resolveDaemonTtsVoiceSelection';
 
 export function LocalNeuralTtsSettings(props: {
     cfgKokoro: VoiceLocalTtsSettings['localNeural'];
@@ -43,13 +30,19 @@ export function LocalNeuralTtsSettings(props: {
         platformOs: 'web',
     }), [props.cfgKokoro.execution]);
     const execution = executionPolicy.selectableExecution as 'auto' | 'daemon';
-    const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
     const effectiveSpeed = props.cfgKokoro.speed ?? 1;
     const daemonPackId = React.useMemo(
         () => resolveKokoroDaemonTtsPackId(props.cfgKokoro.assetId),
         [props.cfgKokoro.assetId],
     );
-    const voices = React.useMemo(() => getWebKokoroVoiceCatalog(), []);
+    const daemonCatalog = useDaemonVoiceModelCatalogController();
+    const voiceSelection = React.useMemo(() => resolveDaemonTtsVoiceSelection({
+        packId: daemonPackId,
+        configuredVoiceId: props.cfgKokoro.voiceId,
+        statuses: daemonCatalog?.state.statuses ?? [],
+    }), [daemonCatalog?.state.statuses, daemonPackId, props.cfgKokoro.voiceId]);
+    const voices = voiceSelection.voices;
+    const effectiveVoiceId = voiceSelection.selectedVoiceId;
     const selectedVoice = React.useMemo(
         () => voices.find((voice) => voice.id === effectiveVoiceId) ?? null,
         [effectiveVoiceId, voices],
@@ -87,7 +80,7 @@ export function LocalNeuralTtsSettings(props: {
                 variant="selectable"
                 search={true}
                 searchPlaceholder={t('settingsVoice.local.kokoro.voice.searchPlaceholder')}
-                selectedId={effectiveVoiceId}
+                selectedId={effectiveVoiceId ?? ''}
                 showCategoryTitles={false}
                 matchTriggerWidth={true}
                 connectToTrigger={true}
@@ -97,11 +90,9 @@ export function LocalNeuralTtsSettings(props: {
                     title: t('settingsVoice.local.kokoro.voice.titleWeb'),
                     subtitle: t('settingsVoice.local.kokoro.voice.subtitleWeb'),
                     showSelectedSubtitle: false,
-                    detailFormatter: () => selectedVoice?.title ?? effectiveVoiceId,
+                    detailFormatter: () => selectedVoice?.title ?? t('common.unavailable'),
                 }}
-                items={(voices.length > 0
-                    ? voices
-                    : [{ id: effectiveVoiceId, title: effectiveVoiceId, subtitle: undefined }]).map((voice) => ({
+                items={voices.map((voice) => ({
                     id: voice.id,
                     title: voice.title,
                     subtitle: voice.subtitle,

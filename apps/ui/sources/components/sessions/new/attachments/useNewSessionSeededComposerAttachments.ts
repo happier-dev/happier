@@ -11,11 +11,20 @@ import {
 import type { ComposerAttachmentAvailabilityCatalog } from '@/components/sessions/composer/composerScopeAdapters';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    clearAppliedNewSessionComposerAttachmentSeeds,
-    readNewSessionComposerAttachmentSeeds,
-    type NewSessionComposerAttachmentSeedV1,
-} from './newSessionComposerAttachmentSeedStore';
+import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
+
+export function isNewSessionComposerAttachmentSeedAdmitted(
+    seed: NewSessionComposerAttachmentSeedV1,
+    attachment: Readonly<{
+        instanceId: string;
+        attachment: Readonly<{ pluginId: string; localId: string }>;
+        key: string;
+    }>,
+): boolean {
+    return attachment.attachment.pluginId === seed.pluginId
+        && attachment.attachment.localId === seed.attachmentLocalId
+        && attachment.key === seed.value.key;
+}
 
 /**
  * Places the attachments a plugin seeded this New Session draft with, once its
@@ -49,6 +58,12 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
     /** The projection-bound resolver used by ordinary mounted attachment admission. */
     localize: PluginLocalizedTextResolver;
     isCurrent: () => boolean;
+    /** The draft repository clears only requests admitted by this transaction. */
+    onSeedsApplied?: (seeds: readonly NewSessionComposerAttachmentSeedV1[]) => void;
+    /** Exact draft-local requests; this is the sole pending attachment owner. */
+    seeds: readonly NewSessionComposerAttachmentSeedV1[];
+    /** Reads only the canonical document, never its pending presentation rows. */
+    isSeedAdmitted: (seed: NewSessionComposerAttachmentSeedV1) => boolean;
 }>): void {
     const { ref, entriesById } = params;
     const isCurrentRef = React.useRef(params.isCurrent);
@@ -56,8 +71,7 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
 
     React.useEffect(() => {
         if (!isCurrentRef.current()) return;
-        const address = { scope: params.scope, draftId: params.draftId } as const;
-        const pending = readNewSessionComposerAttachmentSeeds(address);
+        const pending = params.seeds;
         if (pending.length === 0) return;
         const catalog = entriesById ?? {};
         const applier = createComposerPresentationTransactionApplier({
@@ -74,8 +88,19 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
             // Not admitted here yet. The applier would refuse it anyway; asking
             // it would only turn "wait for the projection" into "refused".
             if (!entry) continue;
+            if (params.isSeedAdmitted(seed)) {
+                applied.push(seed);
+                continue;
+            }
             const snapshot = readComposerPresentationSnapshot(ref);
             if (!snapshot) break;
+            // The canonical attachment identity is (qualified contribution,
+            // author key). React may replay this effect before the durable seed
+            // clear has propagated back through the draft projection. Treat an
+            // already-published exact identity as this seed's settled outcome
+            // instead of applying the same request a second time. This also
+            // closes the remount window after publication but before seed-clear
+            // acknowledgement without introducing another custody store.
             const result = applier.apply({
                 ref,
                 admittedContributor: {
@@ -97,12 +122,15 @@ export function useNewSessionSeededComposerAttachments(params: Readonly<{
             if (result.status === 'applied') applied.push(seed);
         }
         if (applied.length > 0) {
-            clearAppliedNewSessionComposerAttachmentSeeds(address, applied);
+            params.onSeedsApplied?.(applied);
         }
     }, [
         entriesById,
         params.draftId,
+        params.isSeedAdmitted,
         params.localize,
+        params.onSeedsApplied,
+        params.seeds,
         params.scope?.accountId,
         params.scope?.serverId,
         ref,

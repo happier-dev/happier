@@ -54,6 +54,7 @@ function resolveVoiceToolResultPrivacyPrefs(): VoiceToolResultPrivacyPrefs {
 
 type VoiceAgentSessionsLike = Readonly<{
   commitUserTranscript?: (sessionId: string, userText: string, localId: string) => Promise<void>;
+  stop?: (sessionId: string) => Promise<void>;
   sendTurn: (
     sessionId: string,
     userText: string,
@@ -62,6 +63,8 @@ type VoiceAgentSessionsLike = Readonly<{
 }>;
 
 export type { LocalVoiceAgentToolResultEntry } from '@/voice/tools/localVoiceEffectOutcomeCustody';
+
+export type LocalVoiceAgentTurnDisposition = 'completed' | 'tool_round_limit_reached';
 
 const FOLLOW_UP_RESULT_MAX_ITEMS = 8;
 const FOLLOW_UP_RESULT_MAX_STRING_LENGTH = 160;
@@ -366,6 +369,23 @@ function isSuccessfulToolShortcutResult(value: unknown): value is Readonly<Recor
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && (value as { ok?: unknown }).ok === true;
 }
 
+function isDeferredApprovalShortcutResult(value: unknown): value is Readonly<Record<string, unknown>> {
+  return isSuccessfulToolShortcutResult(value)
+    && (value as { kind?: unknown }).kind === 'approval_request_created';
+}
+
+export function resolveDirectUserActionShortcutAssistantText(
+  decision: 'allow' | 'deny',
+  result: unknown,
+): string {
+  if (isDeferredApprovalShortcutResult(result)) {
+    return 'Created a confirmation request. The pending request has not been approved yet.';
+  }
+  return decision === 'allow'
+    ? 'Approved the pending request.'
+    : 'Denied the pending request.';
+}
+
 function getToolShortcutErrorCode(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const errorCode = (value as { errorCode?: unknown }).errorCode;
@@ -509,6 +529,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   maxToolRounds?: number;
 }>): Promise<
   Readonly<{
+    disposition: LocalVoiceAgentTurnDisposition;
     assistantTurns: ReadonlyArray<string>;
     toolResultBatches: ReadonlyArray<ReadonlyArray<LocalVoiceAgentToolResultEntry>>;
     totalActions: number;
@@ -565,10 +586,10 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           result: userActionShortcutResult,
         },
       ] satisfies LocalVoiceAgentToolResultEntry[];
-      const assistantText =
-        directPermissionDecision === 'allow'
-          ? 'Approved the pending request.'
-          : 'Denied the pending request.';
+      const assistantText = resolveDirectUserActionShortcutAssistantText(
+        directPermissionDecision,
+        userActionShortcutResult,
+      );
 
       await params.onAssistantTurn?.({
         assistantText,
@@ -581,6 +602,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       });
 
       return {
+        disposition: 'completed',
         assistantTurns: [assistantText],
         toolResultBatches: [toolResults],
         totalActions: 1,
@@ -597,6 +619,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
         turnIndex: 0,
       });
       return {
+        disposition: 'completed',
         assistantTurns: [directPermissionDisambiguation],
         toolResultBatches: [],
         totalActions: 0,
@@ -733,7 +756,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.sessionId,
       nextPrompt,
       {
-        ...(params.onOutputEvent ? { onOutputEvent: params.onOutputEvent } : {}),
+        ...(params.onOutputEvent && turnIndex < maxToolRounds ? { onOutputEvent: params.onOutputEvent } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
         ...(turnIndex === 0
           ? { onUserTranscriptAccepted: noteUserTranscriptAccepted }
@@ -746,8 +769,21 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
     throwIfAborted(params.signal);
 
-    const assistantText = normalizeAssistantTextForActions(response.assistantText ?? '', Array.isArray(response.actions) ? response.actions : [], turnIndex);
     const actions = Array.isArray(response.actions) ? response.actions : [];
+    if (actions.length > 0 && turnIndex === maxToolRounds) {
+      if (!params.voiceAgentSessions.stop) {
+        throw new Error('voice_agent_session_retirement_required');
+      }
+      await params.voiceAgentSessions.stop(params.sessionId);
+      return {
+        disposition: 'tool_round_limit_reached',
+        assistantTurns,
+        toolResultBatches,
+        totalActions,
+      };
+    }
+
+    const assistantText = normalizeAssistantTextForActions(response.assistantText ?? '', actions, turnIndex);
     assistantTurns.push(assistantText);
     totalActions += actions.length;
 
@@ -757,8 +793,9 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       turnIndex,
     });
 
-    if (actions.length === 0 || turnIndex === maxToolRounds) {
+    if (actions.length === 0) {
       return {
+        disposition: 'completed',
         assistantTurns,
         toolResultBatches,
         totalActions,
@@ -775,6 +812,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
     if (actionRun.interruptedAfterRetainedOutcome) {
       return {
+        disposition: 'completed',
         assistantTurns,
         toolResultBatches,
         totalActions,
@@ -783,6 +821,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
 
     if (toolResults.length === 0) {
       return {
+        disposition: 'completed',
         assistantTurns,
         toolResultBatches,
         totalActions,
@@ -793,6 +832,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   }
 
   return {
+    disposition: 'completed',
     assistantTurns,
     toolResultBatches,
     totalActions,

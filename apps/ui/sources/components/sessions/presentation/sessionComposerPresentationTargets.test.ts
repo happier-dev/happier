@@ -16,7 +16,7 @@ import {
     getSessionDraftSnapshot,
     writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import type { releaseComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime';
+import type { releaseComposerContent, claimComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 
 const persistentValues = vi.hoisted(() => new Map<string, string>());
@@ -25,6 +25,9 @@ const activeScopeState = vi.hoisted(() => ({
 }));
 const releaseComposerContentSpy = vi.hoisted(() => (
     vi.fn<typeof releaseComposerContent>(async () => ({ success: true } as const))
+));
+const claimComposerContentSpy = vi.hoisted(() => (
+    vi.fn<typeof claimComposerContent>(async () => ({ status: 'claimed', newlyAcquired: true } as const))
 ));
 
 vi.mock('react-native-mmkv', () => {
@@ -51,6 +54,7 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
 
 vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     releaseComposerContent: releaseComposerContentSpy,
+    claimComposerContent: claimComposerContentSpy,
 }));
 
 import {
@@ -192,7 +196,98 @@ describe('composer presentation targets', () => {
 
     afterEach(() => {
         while (cleanups.length > 0) cleanups.pop()?.();
-        releaseComposerContentSpy.mockClear();
+        releaseComposerContentSpy
+            .mockReset()
+            .mockImplementation(async () => ({ success: true } as const));
+        claimComposerContentSpy
+            .mockReset()
+            .mockImplementation(async () => ({ status: 'claimed', newlyAcquired: true } as const));
+    });
+
+    it('refuses a new staged attachment through the synchronous owner instead of publishing unclaimed', () => {
+        // Custody is admitted only by the attachment-capable Host API path.
+        // The synchronous owner refuses typed rather than silently publishing
+        // a handle no transfer-store claim protects.
+        const stagedMedia = createStagedMediaContent();
+        const target = createDocumentTarget(createSnapshot());
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+        const applier = createAttachmentTransactionApplier(createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+        }));
+        expect(applier.apply({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            executionTarget: stagedMedia.handle.executionTarget,
+            transaction: {
+                expectedRevision: 1,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: stagedMedia,
+                }],
+            },
+        })).toEqual({
+            status: 'invalidOperation',
+            operationIndex: 0,
+            reason: 'staged_media_custody_required',
+        });
+        expect(target.readCurrent().attachments).toEqual([]);
+        expect(claimComposerContentSpy).not.toHaveBeenCalled();
+    });
+
+    it('releases a newly claimed stage introduced and removed inside one committed transaction', async () => {
+        const stagedMedia = createStagedMediaContent();
+        const target = createDocumentTarget(createSnapshot(), () => 'host-created-issue-42');
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+        const applier = createAttachmentTransactionApplier(createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+        }));
+
+        await expect(applier.applyWithAttachmentCustody({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            executionTarget: stagedMedia.handle.executionTarget,
+            transaction: {
+                expectedRevision: 1,
+                operations: [
+                    {
+                        kind: 'attachment.add',
+                        attachmentLocalId: 'issue',
+                        value: {
+                            key: '42',
+                            value: { issueId: 42 },
+                            presentation: { label: 'Issue #42' },
+                        },
+                        content: stagedMedia,
+                    },
+                    { kind: 'attachment.remove', instanceId: 'host-created-issue-42' },
+                ],
+            },
+        })).resolves.toMatchObject({ status: 'applied' });
+
+        expect(target.readCurrent().attachments).toEqual([]);
+        await Promise.resolve();
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(stagedMedia.handle, {
+            claimant: {
+                composer: { kind: 'session', sessionId: 'session-1' },
+                attachmentInstanceId: 'host-created-issue-42',
+            },
+        });
     });
 
     it('keeps distinct live composer scope arms from colliding in the one target registry', () => {
@@ -349,7 +444,7 @@ describe('composer presentation targets', () => {
             });
     });
 
-    it('preserves an opaque staged-media claim through the canonical attachment add and draft snapshot', () => {
+    it('preserves an opaque staged-media claim through the async custody applier and draft snapshot', async () => {
         const target = createDocumentTarget(createSnapshot());
         cleanups.push(registerComposerPresentationTarget(
             { kind: 'session', sessionId: 'session-1' },
@@ -362,7 +457,7 @@ describe('composer presentation targets', () => {
             typeLabel: 'Issue',
         }));
 
-        expect(applier.apply({
+        await expect(applier.applyWithAttachmentCustody({
             ref: { kind: 'session', sessionId: 'session-1' },
             admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
             executionTarget: stagedMedia.handle.executionTarget,
@@ -379,16 +474,99 @@ describe('composer presentation targets', () => {
                     content: stagedMedia,
                 }],
             },
-        })).toEqual({
+        })).resolves.toEqual({
             status: 'applied',
             revision: 2,
             attachmentInstanceIds: ['host-created-issue-42'],
         });
 
+        expect(claimComposerContentSpy).toHaveBeenCalledWith(stagedMedia.handle, {
+            composer: { kind: 'session', sessionId: 'session-1' },
+            attachmentInstanceId: 'host-created-issue-42',
+        });
         expect(target.readCurrent().attachments).toMatchObject([{
             instanceId: 'host-created-issue-42',
             content: stagedMedia,
         }]);
+    });
+
+    it('does not release a newly claimed stage when currentness loses and snapshot adjudication throws', async () => {
+        const stagedMedia = createStagedMediaContent();
+        const exactPublishedAttachment = {
+            v: 1 as const,
+            instanceId: 'host-created-issue-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+            availability: { status: 'ready' as const },
+            content: stagedMedia,
+        };
+        const baseTarget = createDocumentTarget(createSnapshot());
+        let snapshotReads = 0;
+        const target = {
+            ...baseTarget,
+            readSnapshot: () => {
+                snapshotReads += 1;
+                if (snapshotReads === 1) return baseTarget.readCurrent();
+                baseTarget.commitDocument({
+                    expectedRevision: 1,
+                    mutation: {
+                        text: '',
+                        references: [],
+                        attachments: [exactPublishedAttachment],
+                    },
+                });
+                throw new Error('snapshot read unavailable');
+            },
+            commitDocument: vi.fn((): ComposerTransactionResultV1 => {
+                throw new Error('currentness loss should stop before commit');
+            }),
+        };
+        cleanups.push(registerComposerPresentationTarget(
+            { kind: 'session', sessionId: 'session-1' },
+            target,
+        ));
+        const applier = createAttachmentTransactionApplier(createAttachmentProjectionEntry({
+            pluginId: 'acme.issues',
+            localId: 'issue',
+            typeLabel: 'Issue',
+        }));
+        let currentnessChecks = 0;
+
+        await expect(applier.applyWithAttachmentCustody({
+            ref: { kind: 'session', sessionId: 'session-1' },
+            admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
+            executionTarget: stagedMedia.handle.executionTarget,
+            isCurrent: () => {
+                currentnessChecks += 1;
+                return currentnessChecks === 1;
+            },
+            transaction: {
+                expectedRevision: 1,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: stagedMedia,
+                }],
+            },
+        })).resolves.toEqual({ status: 'composerUnavailable' });
+
+        expect(claimComposerContentSpy).toHaveBeenCalledWith(stagedMedia.handle, {
+            composer: { kind: 'session', sessionId: 'session-1' },
+            attachmentInstanceId: 'host-created-issue-42',
+        });
+        expect(target.commitDocument).not.toHaveBeenCalled();
+        expect(baseTarget.readCurrent().attachments).toMatchObject([{
+            instanceId: 'host-created-issue-42',
+            content: stagedMedia,
+        }]);
+        expect(releaseComposerContentSpy).not.toHaveBeenCalled();
     });
 
     it('rejects an attachment value before allocating an instance id or mutating the document', () => {
@@ -622,7 +800,7 @@ describe('composer presentation targets', () => {
             typeLabel: 'Issue',
         }));
 
-        expect(applier.apply({
+        expect(await applier.applyWithAttachmentCustody({
             ref: { kind: 'session', sessionId: 'session-1' },
             admittedContributor: admittedContributor({ pluginId: 'acme.issues' }),
             executionTarget: replacement.handle.executionTarget,
@@ -645,6 +823,10 @@ describe('composer presentation targets', () => {
             attachmentInstanceIds: ['host-created-issue-42'],
         });
 
+        expect(claimComposerContentSpy).toHaveBeenCalledWith(replacement.handle, {
+            composer: { kind: 'session', sessionId: 'session-1' },
+            attachmentInstanceId: 'host-created-issue-42',
+        });
         await Promise.resolve();
         expect(target.readCurrent().attachments).toMatchObject([{ content: replacement }]);
         expect(releaseComposerContentSpy).toHaveBeenCalledWith(stagedMedia.handle, {

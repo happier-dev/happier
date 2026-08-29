@@ -14,14 +14,12 @@ import {
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
-import {
-    clearAllNewSessionComposerAttachmentSeeds,
-    readNewSessionComposerAttachmentSeeds,
-    writeNewSessionComposerAttachmentSeeds,
-    type NewSessionComposerAttachmentSeedV1,
-} from './newSessionComposerAttachmentSeedStore';
+import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
 
-import { useNewSessionSeededComposerAttachments } from './useNewSessionSeededComposerAttachments';
+import {
+    isNewSessionComposerAttachmentSeedAdmitted,
+    useNewSessionSeededComposerAttachments,
+} from './useNewSessionSeededComposerAttachments';
 
 const ref = {
     kind: 'newSession',
@@ -54,6 +52,7 @@ const otherScope = Object.freeze({
 const draftId = 'draft-seeded-attachments';
 
 const seeds: readonly NewSessionComposerAttachmentSeedV1[] = [{
+    instanceId: 'seed-42',
     pluginId: 'happier.triage',
     attachmentLocalId: 'entry',
     value: {
@@ -62,6 +61,7 @@ const seeds: readonly NewSessionComposerAttachmentSeedV1[] = [{
         presentation: { label: 'PR #42' },
     },
 }, {
+    instanceId: 'seed-43',
     pluginId: 'happier.triage',
     attachmentLocalId: 'entry',
     value: {
@@ -129,23 +129,34 @@ function createTarget(): ComposerPresentationTarget {
     };
 }
 
+function isSeedAdmitted(seed: NewSessionComposerAttachmentSeedV1): boolean {
+    return readComposerPresentationSnapshot(ref)?.attachments.some(
+        (attachment) => isNewSessionComposerAttachmentSeedAdmitted(seed, attachment),
+    ) === true;
+}
+
 describe('useNewSessionSeededComposerAttachments', () => {
     const cleanups: Array<() => void> = [];
 
     afterEach(() => {
         while (cleanups.length > 0) cleanups.pop()?.();
-        clearAllNewSessionComposerAttachmentSeeds();
         standardCleanup();
     });
 
     it('admits a host seed only through the mounted Composer transaction and does not repeat it', async () => {
-        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, seeds);
         cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
+        let remaining = seeds;
         const hook = await renderHook(() => useNewSessionSeededComposerAttachments({
             scope,
             draftId,
             ref,
             entriesById: { [entry.id]: entry },
+            seeds: remaining,
+            isSeedAdmitted,
+            onSeedsApplied: (applied) => {
+                const ids = new Set(applied.map((seed) => seed.instanceId));
+                remaining = remaining.filter((seed) => !ids.has(seed.instanceId));
+            },
             isCurrent: () => true,
             localize: (pluginId, value) => (
                 pluginId === 'happier.triage'
@@ -177,27 +188,29 @@ describe('useNewSessionSeededComposerAttachments', () => {
         await hook.rerender();
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
-        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual([]);
+        expect(remaining).toEqual([]);
     });
 
     it('keeps a seed pending across unmount until the current Composer catalog admits it', async () => {
-        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, seeds);
-        writeNewSessionComposerAttachmentSeeds({ scope: otherScope, draftId }, [{
+        let remaining = seeds;
+        const otherSeeds = [{
             ...seeds[0]!,
             value: { ...seeds[0]!.value, key: 'other-account' },
-        }]);
+        }];
         cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
         const firstMount = await renderHook(() => useNewSessionSeededComposerAttachments({
             scope,
             draftId,
             ref,
             entriesById: {},
+            seeds: remaining,
+            isSeedAdmitted,
             isCurrent: () => true,
             localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
         }));
 
         expect(readComposerPresentationSnapshot(ref)?.attachments).toEqual([]);
-        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual(seeds);
+        expect(remaining).toEqual(seeds);
         await firstMount.unmount();
 
         await renderHook(() => useNewSessionSeededComposerAttachments({
@@ -205,17 +218,23 @@ describe('useNewSessionSeededComposerAttachments', () => {
             draftId,
             ref,
             entriesById: { [entry.id]: entry },
+            seeds: remaining,
+            isSeedAdmitted,
+            onSeedsApplied: (applied) => {
+                const ids = new Set(applied.map((seed) => seed.instanceId));
+                remaining = remaining.filter((seed) => !ids.has(seed.instanceId));
+            },
             isCurrent: () => true,
             localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
         }));
         expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(2);
-        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId })).toEqual([]);
-        expect(readNewSessionComposerAttachmentSeeds({ scope: otherScope, draftId }))
-            .toHaveLength(1);
+        expect(remaining).toEqual([]);
+        expect(otherSeeds).toHaveLength(1);
     });
 
     it('clears only the exact seeds whose canonical Composer transactions applied', async () => {
         const unavailableSeed: NewSessionComposerAttachmentSeedV1 = {
+            instanceId: 'seed-unavailable',
             pluginId: 'acme.unavailable',
             attachmentLocalId: 'entry',
             value: {
@@ -224,7 +243,7 @@ describe('useNewSessionSeededComposerAttachments', () => {
                 presentation: { label: 'Unavailable entry' },
             },
         };
-        writeNewSessionComposerAttachmentSeeds({ scope, draftId }, [seeds[0]!, unavailableSeed]);
+        let remaining: readonly NewSessionComposerAttachmentSeedV1[] = [seeds[0]!, unavailableSeed];
         cleanups.push(registerComposerPresentationTarget(ref, createTarget()));
 
         await renderHook(() => useNewSessionSeededComposerAttachments({
@@ -232,12 +251,17 @@ describe('useNewSessionSeededComposerAttachments', () => {
             draftId,
             ref,
             entriesById: { [entry.id]: entry },
+            seeds: remaining,
+            isSeedAdmitted,
+            onSeedsApplied: (applied) => {
+                const ids = new Set(applied.map((seed) => seed.instanceId));
+                remaining = remaining.filter((seed) => !ids.has(seed.instanceId));
+            },
             isCurrent: () => true,
             localize: (_pluginId, value) => typeof value === 'string' ? value : 'Entry',
         }));
 
         expect(readComposerPresentationSnapshot(ref)?.attachments).toHaveLength(1);
-        expect(readNewSessionComposerAttachmentSeeds({ scope, draftId }))
-            .toEqual([unavailableSeed]);
+        expect(remaining).toEqual([unavailableSeed]);
     });
 });

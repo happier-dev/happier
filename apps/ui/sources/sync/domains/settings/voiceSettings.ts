@@ -20,7 +20,6 @@ import {
 import { VoiceWelcomeSchema } from '@/voice/settings/welcome';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
 } from '@/voice/registry/generatedBundledVoiceEntries';
 import {
   createVoiceProviderSettingsCatalog,
@@ -40,6 +39,7 @@ import {
 } from '@/voice/adapters/localConversation/settings';
 import {
   VoiceDictationSettingsSchema,
+  voiceDictationSettingsParse,
   type VoiceDictationSettings,
 } from '@/voice/dictation/voiceDictationSettings';
 import {
@@ -148,7 +148,6 @@ export {
 
 const providerSettingsCatalog = createVoiceProviderSettingsCatalog({
   bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-  bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
 });
 
 export function getCanonicalVoiceProviderSettingsOwner(providerId: string) {
@@ -654,8 +653,7 @@ export function voiceSettingsParse(
   const canonicalAssistantLanguage = z.string().nullable().safeParse(raw.assistantLanguage);
   if (canonicalAssistantLanguage.success) base.assistantLanguage = canonicalAssistantLanguage.data;
 
-  const canonicalDictation = VoiceDictationSettingsSchema.safeParse(raw.dictation);
-  if (canonicalDictation.success) base.dictation = canonicalDictation.data;
+  base.dictation = voiceDictationSettingsParse(raw.dictation);
 
   const canonicalWelcome = VoiceWelcomeSchema.safeParse(raw.welcome);
   if (canonicalWelcome.success) base.welcome = canonicalWelcome.data;

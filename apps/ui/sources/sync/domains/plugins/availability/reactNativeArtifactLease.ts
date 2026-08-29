@@ -1,6 +1,6 @@
 import {
-    createCanonicalJsonSigningInput,
     DaemonPluginReactNativeBundleCacheIdentityV1Schema,
+    isSameDaemonPluginReactNativeBundleCacheIdentityV1,
     isSameDaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginReactNativeCrashBindingTokenV1,
     type DaemonPluginUiArtifactBytesReadResponse,
@@ -166,11 +166,7 @@ function cacheIdentityMatches(
     left: PluginReactNativeBundleCacheIdentity,
     right: PluginReactNativeBundleCacheIdentity,
 ): boolean {
-    const parsedLeft = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(left);
-    const parsedRight = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(right);
-    if (!parsedLeft.success || !parsedRight.success) return false;
-    return createCanonicalJsonSigningInput(parsedLeft.data)
-        === createCanonicalJsonSigningInput(parsedRight.data);
+    return isSameDaemonPluginReactNativeBundleCacheIdentityV1(left, right);
 }
 
 function artifactMatchesCacheIdentity(input: Readonly<{

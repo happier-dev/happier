@@ -93,6 +93,9 @@ export function PluginSurfaceInteractionBoundary(
         onFocusCapture: handleFocusCapture,
         onBlurCapture: handleBlurCapture,
     };
+    const loadedRuntimeMarkerId = props.loadedRuntimeIdentity === undefined
+        ? null
+        : buildLoadedRuntimeMarkerTestId(props.surfaceId, props.loadedRuntimeIdentity);
 
     return (
         <View
@@ -109,6 +112,16 @@ export function PluginSurfaceInteractionBoundary(
             >
                 {props.children}
             </View>
+            {loadedRuntimeMarkerId ? (
+                <View
+                    testID={loadedRuntimeMarkerId}
+                    accessible={false}
+                    pointerEvents="none"
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={styles.loadedRuntimeMarker}
+                />
+            ) : null}
             {!props.enabled ? (
                 <View
                     testID={`plugin-surface-offline-summary:${props.surfaceId}`}
@@ -125,6 +138,22 @@ export function PluginSurfaceInteractionBoundary(
     );
 }
 
+function buildLoadedRuntimeMarkerTestId(
+    surfaceId: string,
+    identity: NonNullable<PluginSurfaceInteractionBoundaryProps['loadedRuntimeIdentity']>,
+): string {
+    return [
+        'plugin-surface-interaction-boundary',
+        'surface-native-loaded-runtime',
+        surfaceId,
+        identity.pluginId,
+        identity.generation,
+        identity.artifactDigest,
+        identity.machineId ?? 'no-machine',
+        identity.serverId ?? 'no-server',
+    ].map((part) => encodeURIComponent(part)).join(':');
+}
+
 const styles = StyleSheet.create({
     root: {
         flex: 1,
@@ -135,6 +164,12 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         minHeight: 0,
+    },
+    loadedRuntimeMarker: {
+        position: 'absolute',
+        width: 0,
+        height: 0,
+        opacity: 0,
     },
     accessibilitySummary: {
         position: 'absolute',

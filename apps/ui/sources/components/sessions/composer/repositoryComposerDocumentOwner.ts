@@ -8,13 +8,14 @@ import {
 
 import {
     readComposerDraftDocumentChanges,
-    type ComposerDocumentOwner,
+    type MutableComposerDocumentOwner,
     type ComposerDraftDocument,
     type ComposerDraftFieldCurrentness,
     sameComposerDocumentRef,
 } from '@/components/sessions/composer/composerDocumentOwner';
 import {
     composerAttachmentViewToDraft,
+    composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import {
@@ -22,12 +23,12 @@ import {
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
-    areSessionDraftCurrentnessCapturesEqual,
     captureSessionDraftCurrentness,
-    clearSessionDraftCurrentness,
+    clearSessionDraftCurrentnessLocal,
     deleteSessionDraft,
     getSessionDraftSnapshot,
     subscribeSessionDraft,
+    flushSessionDraft,
     writeExistingSessionDraft,
     writeNewSessionDraft,
     type SessionDraftCurrentness,
@@ -103,7 +104,7 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
     scope: ServerAccountScope;
     ref: Extract<ComposerRefV1, { kind: 'session' | 'newSession' }>;
     isCurrent?: () => boolean;
-}>): ComposerDocumentOwner {
+}>): MutableComposerDocumentOwner {
     const address = input.ref.kind === 'session'
         ? { kind: 'session' as const, sessionId: input.ref.sessionId }
         : { kind: 'newSession' as const, draftId: input.ref.instanceId };
@@ -130,7 +131,7 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
         return { document: observed.document, revision: observed.revision };
     };
 
-    const owner: ComposerDocumentOwner = {
+    const owner: MutableComposerDocumentOwner = {
         ref: input.ref,
         capabilities: CAPABILITIES,
         read: refresh,
@@ -187,9 +188,17 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
             return currentness;
         },
         clearAccepted: (currentness) => {
-            if (!sameComposerDocumentRef(input.ref, currentness.ref)) return false;
+            const noChange = () => ({
+                changed: false,
+                changes: {
+                    text: false,
+                    structuredInputMentions: false,
+                    composerAttachments: false,
+                },
+            } as const);
+            if (!sameComposerDocumentRef(input.ref, currentness.ref)) return noChange();
             const repositoryCurrentness = repositoryCurrentnessByCapture.get(currentness);
-            if (!repositoryCurrentness) return false;
+            if (!repositoryCurrentness) return noChange();
             const fieldIds = ['composer.text', 'composer.mentions', 'composer.attachments'] as const;
             // References are text-bound, matching the ephemeral document owner:
             // mentions clear exactly when the accepted text clears, and a text
@@ -201,28 +210,47 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
                 fieldIds: [...fieldIds],
             });
             const capturedTextMutationId = repositoryCurrentness.mutationIds['composer.text'];
-            const textWillClear = capturedTextMutationId !== undefined
+            const capturedMentionsMutationId = repositoryCurrentness.mutationIds['composer.mentions'];
+            const textCurrent = capturedTextMutationId !== undefined
                 && current.mutationIds['composer.text'] === capturedTextMutationId;
-            const beforeClear = captureSessionDraftCurrentness({
-                scope: input.scope,
-                address,
-                fieldIds: [...fieldIds],
-            });
-            void clearSessionDraftCurrentness({
+            const mentionsCurrent = capturedMentionsMutationId !== undefined
+                && current.mutationIds['composer.mentions'] === capturedMentionsMutationId;
+            const textAndMentionsWillClear = textCurrent && mentionsCurrent;
+            const beforeClear = refresh().document;
+            const changed = clearSessionDraftCurrentnessLocal({
                 scope: input.scope,
                 address,
                 currentness: repositoryCurrentness,
-                fieldIds: textWillClear ? [...fieldIds] : ['composer.attachments'],
+                fieldIds: textAndMentionsWillClear
+                    ? [...fieldIds]
+                    : ['composer.attachments'],
             });
-            const afterClear = captureSessionDraftCurrentness({
-                scope: input.scope,
-                address,
-                fieldIds: ['composer.text', 'composer.mentions', 'composer.attachments'],
-            });
-            return !areSessionDraftCurrentnessCapturesEqual(beforeClear, afterClear);
+            if (changed) void flushSessionDraft({ scope: input.scope, address });
+            const changes = changed
+                ? readComposerDraftDocumentChanges(beforeClear, refresh().document)
+                : noChange().changes;
+            return {
+                changed: changes.text || changes.structuredInputMentions || changes.composerAttachments,
+                changes,
+            };
         },
         clear: () => {
             void deleteSessionDraft({ scope: input.scope, address });
+        },
+        replaceDocument: (document) => {
+            const current = refresh();
+            const result = owner.apply(current.revision, {
+                text: document.text,
+                references: composerReferencesFromStructuredMentions({
+                    text: document.text,
+                    mentions: document.structuredInputMentions,
+                }),
+                attachments: document.composerAttachments.map((attachment) => ({
+                    ...attachment,
+                    availability: { status: 'ready' as const },
+                })),
+            });
+            return result.status === 'applied' ? result.revision : current.revision;
         },
     };
     return Object.freeze(owner);

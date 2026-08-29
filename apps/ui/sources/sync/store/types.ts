@@ -241,9 +241,16 @@ export interface ArtifactsDomainSlice {
 
 export interface AutomationsDomainSlice {
     automations: Record<string, AutomationDefinition>;
+    automationDefinitionNextCursor: string | null;
+    automationDefinitionWindowExtended: boolean;
     automationRunsByAutomationId: Record<string, AutomationDefinitionRun[]>;
     automationRunNextCursorByAutomationId: Record<string, string | null>;
-    applyAutomations: (automations: AutomationDefinition[]) => void;
+    applyAutomations: (automations: AutomationDefinition[], nextCursor?: string | null) => void;
+    appendAutomations: (
+        expectedCursor: string,
+        automations: AutomationDefinition[],
+        nextCursor: string | null,
+    ) => void;
     upsertAutomation: (automation: AutomationDefinition) => void;
     removeAutomation: (automationId: string) => void;
     setAutomationRuns: (automationId: string, runs: AutomationDefinitionRun[], nextCursor: string | null) => void;

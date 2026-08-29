@@ -7,11 +7,18 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
-import { readPluginEventAutomationEditSeed, readPluginEventAutomationPrivateDetail } from './pluginEventAutomationEditSeed';
+import {
+    pluginEventAutomationEditSeedFromDraftInput,
+    readPluginEventAutomationEditSeed,
+    readPluginEventAutomationPrivateDetail,
+} from './pluginEventAutomationEditSeed';
 
 const triggerId = AutomationTriggerIdSchema.parse('trigger-event-1');
 
-function eventDefinition(revision = 4) {
+function eventDefinition(
+    revision = 4,
+    observationKind: 'checkpointedPull' | 'socket' = 'checkpointedPull',
+) {
     const eventRef = { pluginId: 'acme.github', localId: 'issue-opened' };
     const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse('11111111-1111-4111-8111-111111111111');
     const triggerDefinitionEnvelope = JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
@@ -39,12 +46,11 @@ function eventDefinition(revision = 4) {
         targetType: 'newSession', existingSessionId: null, templateVersion: 7,
         lastRunAt: null, createdAt: 1, updatedAt: 2,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 100, updatedAt: null }],
-        retiredTriggers: [],
         triggers: [{
             id: triggerId, revision, enabled: false, createdAt: 1, updatedAt: 2, kind: 'pluginEvent',
             eventRef, sourceSelectorId, sourceContractVersion: 3,
             observation: {
-                kind: 'checkpointedPull',
+                kind: observationKind,
                 watcher: {
                     machineId: 'machine-1', machineInstallationId: 'installation-1',
                     pluginId: 'acme.github', materializationId: 'github-1',
@@ -96,5 +102,56 @@ describe('pluginEventAutomationEditSeed', () => {
             triggers: definition.triggers.map((trigger) => ({ ...trigger, revision: trigger.revision + 1 })),
         };
         expect(readPluginEventAutomationPrivateDetail(stale, triggerId, { mode: 'plain' })).toBeNull();
+    });
+
+    it('rehydrates a socket trigger as a watcher arm without inventing webhook fields', () => {
+        const seed = readPluginEventAutomationEditSeed(
+            eventDefinition(4, 'socket'),
+            triggerId,
+            { mode: 'plain' },
+        );
+
+        expect(seed?.observation).toEqual({
+            kind: 'socket',
+            watcherMaterializationRef: {
+                machineId: 'machine-1',
+                machineInstallationId: 'installation-1',
+                pluginId: 'acme.github',
+                materializationId: 'github-1',
+            },
+        });
+        expect(seed?.observation).not.toHaveProperty('webhookEndpointId');
+
+        const draft = pluginEventAutomationEditSeedFromDraftInput({
+            automationId: 'automation-draft',
+            triggerId: 'trigger-draft',
+            value: {
+                kind: 'pluginEvent',
+                enabled: true,
+                eventRef: { pluginId: 'acme.github', localId: 'issue-opened' },
+                sourceInstanceId: 'repository:42',
+                sourceContractVersion: 3,
+                sourceConfig: { repository: 'acme/widgets' },
+                displayLabel: 'acme/widgets',
+                observationTransport: {
+                    kind: 'socket',
+                    watcherMaterializationRef: {
+                        machineId: 'machine-1',
+                        pluginId: 'acme.github',
+                        materializationId: 'github-1',
+                    },
+                },
+                filter: null,
+                maximumObservationAgeMs: null,
+            },
+        });
+        expect(draft.observation).toEqual({
+            kind: 'socket',
+            watcherMaterializationRef: {
+                machineId: 'machine-1',
+                pluginId: 'acme.github',
+                materializationId: 'github-1',
+            },
+        });
     });
 });

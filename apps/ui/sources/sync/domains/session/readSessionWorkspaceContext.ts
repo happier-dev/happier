@@ -1,5 +1,6 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionOwnerMetadataView } from './readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 type SessionWorkspaceContextState = Readonly<{
     sessions?: Record<string, {
@@ -36,7 +37,8 @@ export function readSessionWorkspaceContext(
     const project = typeof state.getProjectForSession === 'function' ? state.getProjectForSession(sessionId) : null;
     const projectPath = normalizeNonEmptyString(project?.key?.rootPath);
     const projectMachineId = normalizeNonEmptyString(project?.key?.machineId);
-    const ownerViewUnavailable = session?.metadataLayoutVersion === 1 && metadata == null;
+    const metadataLayoutVersion = readSessionMetadataLayoutVersion(session?.metadataLayoutVersion);
+    const ownerViewUnavailable = metadataLayoutVersion !== 0 && metadata == null;
     return {
         workspacePath: ownerViewUnavailable ? null : sessionPath ?? projectPath,
         projectPath,

@@ -5,16 +5,8 @@ import {
 
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-    writeNewSessionComposerAttachmentSeeds,
-    type NewSessionComposerAttachmentSeedV1,
-} from './attachments/newSessionComposerAttachmentSeedStore';
-
-import {
-    getTempData,
-    storeTempData,
-    type NewSessionData,
-} from '@/utils/sessions/tempDataStore';
+import { seedNewSessionDraftV1 } from './newSessionDraftSeed';
+import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
 
 /**
  * The Session-owned settlement behind the semantic `openNewSession` method.
@@ -28,7 +20,7 @@ import {
  * It creates no Session, dispatches nothing, and holds no Action handle.
  */
 export type SessionNewSessionSeedOutcome =
-    | Readonly<{ kind: 'opened'; dataId: string }>
+    | Readonly<{ kind: 'opened'; dataId: string | null }>
     | Readonly<{
         kind: 'invalid';
         reason: 'seed_invalid' | 'seed_empty' | 'seed_attachments_uncredited';
@@ -116,9 +108,7 @@ export function seedAndOpenNewSession(params: Readonly<{
         directory?: string;
     }>) => void;
     createDraftId?: () => string;
-    storeTempData?: typeof storeTempData;
-    retireTempData?: typeof getTempData;
-    writeAttachmentSeeds?: typeof writeNewSessionComposerAttachmentSeeds;
+    seedDraft?: typeof seedNewSessionDraftV1;
 }>): SessionNewSessionSeedOutcome {
     const seed = readPluginNewSessionSeedV1(params.seed);
     if (!seed) return { kind: 'invalid', reason: 'seed_invalid' };
@@ -153,51 +143,40 @@ export function seedAndOpenNewSession(params: Readonly<{
     // they never enter destructively consumed route data.
     const attachmentSeeds: readonly NewSessionComposerAttachmentSeedV1[] = (seed.attachments ?? [])
         .map((attachment) => ({
+            instanceId: randomUUID(),
             pluginId: pluginId ?? '',
             attachmentLocalId: attachment.attachmentLocalId,
             value: attachment.value,
         }));
-    const placementCandidates = seed.candidates ?? [];
-    // Ordinary fields and unresolved placement candidates remain a one-shot
-    // route handoff. Nothing becomes a canonical draft until the incumbent
-    // mounted New Session owner accepts this navigation.
-    const dataId = (params.storeTempData ?? storeTempData)({
-        ...(seed.prompt === undefined ? {} : { prompt: seed.prompt }),
-        ...(seed.profileId === undefined ? {} : { selectedProfileId: seed.profileId }),
-        ...(seed.placement?.machineId === undefined ? {} : { machineId: seed.placement.machineId }),
-        ...(seed.placement?.directory === undefined ? {} : { directory: seed.placement.directory }),
-        ...(placementCandidates.length === 0
-            ? {}
-            : { pluginNewSessionSeed: { placementCandidates } }),
-    } satisfies NewSessionData);
-    const attachmentSeedAddress = { scope: params.scope, draftId } as const;
-    if (attachmentSeeds.length > 0) {
-        (params.writeAttachmentSeeds ?? writeNewSessionComposerAttachmentSeeds)(
-            attachmentSeedAddress,
-            attachmentSeeds,
-        );
+    const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
+        seed: {
+            ...(seed.prompt === undefined ? {} : { prompt: { text: seed.prompt, mode: 'replace' as const } }),
+            ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
+            ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
+            ...(seed.placement === undefined ? {} : { placement: seed.placement }),
+            ...(seed.candidates === undefined ? {} : { candidates: seed.candidates }),
+            // The public seed retains author-shaped attachment requests in the
+            // draft's local supplement. The Composer owner admits them later;
+            // they must not be projected as canonical records here.
+        },
+        scope: params.scope,
+        createDraftId: () => draftId,
+        attachmentSeeds,
+    });
+    if (seededDraftId === null) {
+        return { kind: 'invalid', reason: 'seed_empty' };
     }
-
     try {
         params.navigateToNewSession({
-            dataId,
+            dataId: null,
             draftId,
             ...(checkoutSettlement.worktree === undefined ? {} : { worktree: checkoutSettlement.worktree }),
-            ...(seed.placement?.serverId === undefined ? {} : { spawnServerId: seed.placement.serverId }),
-            ...(seed.placement?.machineId === undefined ? {} : { machineId: seed.placement.machineId }),
-            ...(seed.placement?.directory === undefined ? {} : { directory: seed.placement.directory }),
         });
     } catch {
-        // Navigation was refused synchronously. Retire the exact one-shot
-        // handoff and leave no durable draft for a retry to duplicate.
-        (params.retireTempData ?? getTempData)(dataId);
-        if (attachmentSeeds.length > 0) {
-            (params.writeAttachmentSeeds ?? writeNewSessionComposerAttachmentSeeds)(
-                attachmentSeedAddress,
-                [],
-            );
-        }
+        // The durable draft remains owned by its identity. A later retry or a
+        // remount can still recover the exact seed without a destructive
+        // render-time handoff.
         return { kind: 'unavailable', reason: 'navigation_unavailable' };
     }
-    return { kind: 'opened', dataId };
+    return { kind: 'opened', dataId: null };
 }

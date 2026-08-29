@@ -1,13 +1,13 @@
 import {
-    PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+    PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PLUGIN_UI_HOST_SUBSCRIPTION_METHODS_V1,
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
     ComposerSnapshotV1Schema,
-    PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema,
+    PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema,
     PluginHostedWebBridgeHostMessageEnvelopeV1Schema,
     PluginHostedWebBridgeResponseEnvelopeV1Schema,
-    PluginHostedWebCollectionUiQueryBridgeRequestV1Schema,
+    PluginHostedWebAccountDataBridgeRequestV1Schema,
     PluginUiHostApiRequestEnvelopeV1Schema,
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiSelectActionInputRequestV1Schema,
@@ -19,9 +19,9 @@ import {
     isPluginUiHostApiVersionCompatibleV1,
     type PluginHostedWebBridgeEnvelopeV1,
     type PluginHostedWebBridgeHostMessageEnvelopeV1,
-    type PluginHostedWebCollectionUiQueryBridgeChangeV1,
-    type PluginHostedWebCollectionUiQueryBridgeOperationV1,
-    type PluginHostedWebCollectionUiQueryBridgeResponseV1,
+    type PluginHostedWebAccountDataBridgeChangeV1,
+    type PluginHostedWebAccountDataBridgeOperationV1,
+    type PluginHostedWebAccountDataBridgeResponseV1,
     type PluginUiLaunchInputV1,
     type PluginUiSubPathV1,
     type ComposerRefV1,
@@ -63,19 +63,19 @@ export type PluginHostedWebHostApiRequestHandler = (
  * Data owns query semantics; this mounted transport owns only the one framed
  * request/cancel/currentness/disposal lifecycle around that owner.
  */
-export type PluginHostedWebCollectionUiQueryBridge = Readonly<{
+export type PluginHostedWebAccountDataBridge = Readonly<{
     handle(
-        operation: PluginHostedWebCollectionUiQueryBridgeOperationV1,
+        operation: PluginHostedWebAccountDataBridgeOperationV1,
         options?: Readonly<{ signal?: AbortSignal }>,
-    ): Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>;
+    ): Promise<PluginHostedWebAccountDataBridgeResponseV1>;
     dispose(): void;
 }>;
 
-export type PluginHostedWebCollectionUiQueryBridgeFactory = (
+export type PluginHostedWebAccountDataBridgeFactory = (
     input: Readonly<{
-        publish(change: PluginHostedWebCollectionUiQueryBridgeChangeV1): void;
+        publish(change: PluginHostedWebAccountDataBridgeChangeV1): void;
     }>,
-) => PluginHostedWebCollectionUiQueryBridge;
+) => PluginHostedWebAccountDataBridge;
 
 export type PluginHostedWebCanonicalHostApiBinding = Readonly<{
     identity: PluginUiHostApiWireIdentityV1;
@@ -225,7 +225,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
      * The mounted host supplies this only when its canonical Account-lifetime
      * Data client and the descriptor's declared bridge arm are both present.
      */
-    createCollectionUiQueryBridge?: PluginHostedWebCollectionUiQueryBridgeFactory;
+    createAccountDataBridge?: PluginHostedWebAccountDataBridgeFactory;
     canonicalHostApi?: PluginHostedWebCanonicalHostApiBinding;
     /**
      * The mounted owner may change the factual installed-method set without
@@ -313,7 +313,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
      * Outer bridge request sequences are transport-owned correlation. Keeping
      * cancellation here avoids inventing a second Data request identity.
      */
-    const collectionUiQueryPending = new Map<number, AbortController>();
+    const accountDataPending = new Map<number, AbortController>();
     /**
      * Established `watchContext` subscriptions, by the guest's own subscription
      * id. The id is the guest's, so a retirement it sends and an event the host
@@ -396,13 +396,13 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
     }
 
     /** The Data wakeup uses the exact same mounted host->frame sink and nonce. */
-    function pushCollectionUiQueryChange(
-        change: PluginHostedWebCollectionUiQueryBridgeChangeV1,
+    function pushAccountDataChange(
+        change: PluginHostedWebAccountDataBridgeChangeV1,
     ): void {
         const sink = params.postToFrame;
         if (disposed || !sink || !isCurrent()) return;
         pushSequence += 1;
-        const envelope = PluginHostedWebBridgeCollectionUiQueryMessageEnvelopeV1Schema.safeParse({
+        const envelope = PluginHostedWebBridgeAccountDataMessageEnvelopeV1Schema.safeParse({
             version: 1,
             direction: 'hostToFrame',
             pluginId: params.surface.pluginId,
@@ -411,7 +411,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             ...(params.surface.sessionId === undefined ? {} : { sessionId: params.surface.sessionId }),
             nonce: params.bridgeNonce,
             sequence: pushSequence,
-            kind: PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+            kind: PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
             payload: change,
         });
         if (envelope.success) sink(envelope.data);
@@ -448,8 +448,8 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
 
     // The Data adapter is created once for this mounted transport, over the
     // existing Account-lifetime client. It has no independent lifecycle.
-    const collectionUiQueryBridge = params.createCollectionUiQueryBridge?.({
-        publish: pushCollectionUiQueryChange,
+    const accountDataBridge = params.createAccountDataBridge?.({
+        publish: pushAccountDataChange,
     });
 
     /**
@@ -838,25 +838,25 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
         }
     }
 
-    async function handleCollectionUiQueryBridgeEnvelope(
+    async function handleAccountDataBridgeEnvelope(
         envelope: PluginHostedWebBridgeEnvelopeV1,
     ): Promise<PluginHostedWebBridgeResponseEnvelopeV1> {
-        const bridge = collectionUiQueryBridge;
+        const bridge = accountDataBridge;
         if (!bridge) return createBridgeError(envelope, 'unsupported_method');
-        const parsed = PluginHostedWebCollectionUiQueryBridgeRequestV1Schema.safeParse(envelope.payload);
+        const parsed = PluginHostedWebAccountDataBridgeRequestV1Schema.safeParse(envelope.payload);
         if (!parsed.success) return createBridgeError(envelope, 'invalid_payload');
         if (parsed.data.kind === 'cancel') {
-            collectionUiQueryPending.get(parsed.data.requestSequence)?.abort();
+            accountDataPending.get(parsed.data.requestSequence)?.abort();
             return canonicalBridgeAck(envelope);
         }
-        if (collectionUiQueryPending.has(envelope.sequence)) {
+        if (accountDataPending.has(envelope.sequence)) {
             return createBridgeError(envelope, 'invalid_payload', [
                 'hosted_web_duplicate_request_sequence',
             ]);
         }
 
         const cancellation = new AbortController();
-        collectionUiQueryPending.set(envelope.sequence, cancellation);
+        accountDataPending.set(envelope.sequence, cancellation);
         try {
             const response = await bridge.handle(parsed.data.operation, {
                 signal: cancellation.signal,
@@ -871,8 +871,8 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                 'hosted_web_collection_ui_query_failed',
             ]);
         } finally {
-            if (collectionUiQueryPending.get(envelope.sequence) === cancellation) {
-                collectionUiQueryPending.delete(envelope.sequence);
+            if (accountDataPending.get(envelope.sequence) === cancellation) {
+                accountDataPending.delete(envelope.sequence);
             }
         }
     }
@@ -904,7 +904,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             }
             return handleCanonicalWireEnvelope(envelope);
         }
-        if (envelope.kind === PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1) {
+        if (envelope.kind === PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1) {
             if (!disposed && readyState.read().state !== 'ready') {
                 return createBridgeError(envelope, 'unavailable', [
                     'hosted_web_bootstrap_required',
@@ -913,7 +913,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             if (disposed) {
                 return createBridgeError(envelope, 'unavailable', ['host_api_handler_disposed']);
             }
-            return handleCollectionUiQueryBridgeEnvelope(envelope);
+            return handleAccountDataBridgeEnvelope(envelope);
         }
         if (disposed) {
             return createBridgeError(envelope, 'unavailable', ['host_api_handler_disposed']);
@@ -944,7 +944,7 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
                     surface: params.surface,
                     readyState: recorded.result,
                     capabilities: {
-                        collectionUiQuery: collectionUiQueryBridge !== undefined,
+                        accountData: accountDataBridge !== undefined,
                     },
                 },
             });
@@ -1065,9 +1065,9 @@ export function createPluginHostedWebHostApiBridgeHandler(params: Readonly<{
             for (const cancellation of canonicalPending.values()) cancellation.abort();
             canonicalPending.clear();
             selectedTargetedOperations.clear();
-            for (const cancellation of collectionUiQueryPending.values()) cancellation.abort();
-            collectionUiQueryPending.clear();
-            collectionUiQueryBridge?.dispose();
+            for (const cancellation of accountDataPending.values()) cancellation.abort();
+            accountDataPending.clear();
+            accountDataBridge?.dispose();
             readyState.reset();
         },
     });

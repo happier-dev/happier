@@ -6,25 +6,20 @@ import {
     AutomationDeleteResponseSchema,
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListResponseSchema,
+    AutomationDefinitionListRequestSchema,
     AutomationDefinitionCreateRequestSchema,
     AutomationDefinitionPatchRequestSchema,
     AutomationDefinitionReconcileRequestSchema,
-    AutomationTriggerCreateRequestSchema,
-    AutomationTriggerPatchRequestSchema,
-    AutomationTriggerDeleteRequestSchema,
     AutomationV3RunDetailSchema,
     AutomationV3RunMutationResponseSchema,
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
     type AutomationV3ClearRunHistoryResponse,
     type AutomationDefinitionDetail,
-    type AutomationDefinitionListItem,
+    type AutomationDefinitionListResponse,
     type AutomationDefinitionCreateRequest,
     type AutomationDefinitionPatchRequest,
     type AutomationDefinitionReconcileRequest,
-    type AutomationTriggerCreateRequest,
-    type AutomationTriggerPatchRequest,
-    type AutomationTriggerDeleteRequest,
     type AutomationV3RunDetail,
     type AutomationV3RunListItem,
     type AutomationV3Settings,
@@ -50,12 +45,16 @@ export type AutomationAssignmentInput = Readonly<{
  */
 export async function listAutomationDefinitions(
     credentials: AuthCredentials,
-): Promise<AutomationDefinitionListItem[]> {
-    const response = await serverFetch('/v3/automations', {
+    params: Readonly<{ limit?: number; cursor?: string }> = {},
+): Promise<AutomationDefinitionListResponse> {
+    const query = AutomationDefinitionListRequestSchema.parse(params);
+    const search = new URLSearchParams({ limit: String(query.limit) });
+    if (query.cursor) search.set('cursor', query.cursor);
+    const response = await serverFetch(`/v3/automations?${search.toString()}`, {
         headers: getAutomationAuthHeaders(credentials),
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
-    return AutomationDefinitionListResponseSchema.parse(raw).automations;
+    return AutomationDefinitionListResponseSchema.parse(raw);
 }
 
 /** Account-scoped settings are read through their strict owner, never inferred from definitions or runs. */
@@ -139,60 +138,6 @@ export async function reconcileAutomationDefinition(
     }, { includeAuth: false });
     const raw = await readAutomationJsonOrThrow(response);
     return AutomationDefinitionDetailSchema.parse(raw);
-}
-
-async function mutateAutomationTrigger(
-    credentials: AuthCredentials,
-    automationId: string,
-    method: 'POST' | 'PATCH' | 'DELETE',
-    body: AutomationTriggerCreateRequest | AutomationTriggerPatchRequest | AutomationTriggerDeleteRequest,
-): Promise<AutomationDefinitionDetail> {
-    const response = await serverFetch(`/v3/automations/${encodeURIComponent(automationId)}/triggers`, {
-        method,
-        headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
-        body: JSON.stringify(body),
-    }, { includeAuth: false });
-    const raw = await readAutomationJsonOrThrow(response);
-    return AutomationDefinitionDetailSchema.parse(raw);
-}
-
-export async function createAutomationTrigger(
-    credentials: AuthCredentials,
-    automationId: string,
-    input: AutomationTriggerCreateRequest,
-): Promise<AutomationDefinitionDetail> {
-    return mutateAutomationTrigger(
-        credentials,
-        automationId,
-        'POST',
-        AutomationTriggerCreateRequestSchema.parse(input),
-    );
-}
-
-export async function updateAutomationTrigger(
-    credentials: AuthCredentials,
-    automationId: string,
-    input: AutomationTriggerPatchRequest,
-): Promise<AutomationDefinitionDetail> {
-    return mutateAutomationTrigger(
-        credentials,
-        automationId,
-        'PATCH',
-        AutomationTriggerPatchRequestSchema.parse(input),
-    );
-}
-
-export async function deleteAutomationTrigger(
-    credentials: AuthCredentials,
-    automationId: string,
-    input: AutomationTriggerDeleteRequest,
-): Promise<AutomationDefinitionDetail> {
-    return mutateAutomationTrigger(
-        credentials,
-        automationId,
-        'DELETE',
-        AutomationTriggerDeleteRequestSchema.parse(input),
-    );
 }
 
 /** Lifecycle mutations remain on the definition owner for Event Automations. */

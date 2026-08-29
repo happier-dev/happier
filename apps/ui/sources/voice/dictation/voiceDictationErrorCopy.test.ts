@@ -15,7 +15,10 @@ const EXPECTED_FAILURE_KEYS = {
     capture_duration_exceeded: 'voiceAssistant.dictationErrors.captureDurationExceeded',
     transcription_deadline_exceeded: 'voiceAssistant.dictationErrors.transcriptionDeadlineExceeded',
     transcript_character_limit_exceeded: 'voiceAssistant.dictationErrors.transcriptLimitExceeded',
-    transcript_utf8_limit_exceeded: 'voiceAssistant.dictationErrors.transcriptLimitExceeded',
+    transcription_credentials_required: 'voiceAssistant.dictationErrors.transcriptionCredentialsRequired',
+    transcription_machine_unavailable: 'voiceAssistant.dictationErrors.transcriptionMachineUnavailable',
+    transcription_transfer_failed: 'voiceAssistant.dictationErrors.transcriptionTransferFailed',
+    transcription_failed: 'voiceAssistant.dictationErrors.transcriptionFailed',
     recorded_audio_size_unavailable: 'voiceAssistant.dictationErrors.recordedAudioSizeUnavailable',
     recorded_audio_limit_exceeded: 'voiceAssistant.dictationErrors.recordedAudioLimitExceeded',
 } as const satisfies Readonly<Record<VoiceDictationFailureReason, string>>;

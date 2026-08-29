@@ -12,12 +12,14 @@ export function createLocalDirectVoiceAdapter(): VoiceAdapterController {
       const envelope = parsedVoice.providers.local_direct;
       if (parsedVoice.providerId !== 'local_direct'
         || envelope?.schemaVersion !== 1
-        || !VoiceLocalDirectSchema.safeParse(envelope.config).success) return null;
+      ) return null;
+      const config = VoiceLocalDirectSchema.safeParse(envelope.config);
+      if (!config.success) return null;
       return {
         allowsGlobalStart: false,
         controlSessionScope: 'surface',
         requiresVoiceAgentFeature: false,
-        bargeInEnabled: false,
+        bargeInEnabled: config.data.tts.bargeInEnabled,
         cancelResponse: 'immediate',
       };
     },

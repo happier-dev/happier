@@ -1,4 +1,4 @@
-import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, type WorkspaceStatFileRequestV1 } from '@happier-dev/protocol/rpc';
 
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
 
@@ -24,7 +24,7 @@ type TransferFileDestination = Readonly<{
     cleanup?: (() => Promise<void>) | null;
 }>;
 
-type WorkspaceStatFileRequest = Readonly<{ path: string }>;
+type WorkspaceStatFileRequest = WorkspaceStatFileRequestV1;
 
 type WorkspaceStatFileResponse =
     | Readonly<{
@@ -33,8 +33,10 @@ type WorkspaceStatFileResponse =
         kind?: 'file' | 'directory' | 'other';
         sizeBytes?: number;
         modifiedMs?: number;
-        /** Status-change time; the byte-sensitive half of a file revision. */
+        /** Status-change time retained for metadata consumers. */
         changedMs?: number;
+        /** SHA-256 of the file bytes when the daemon can provide an exact revision. */
+        contentHash?: string;
       }>
     | WorkspaceRpcFailure;
 
@@ -117,6 +119,7 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
     request: Readonly<{ path: string }>;
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
+    includeContentHash?: boolean;
 }>): Promise<WorkspaceStatFileResponse> {
     const transferClient = createWorkspaceFileTransferRpcCaller({
         machineId: params.machineId,
@@ -126,6 +129,7 @@ export async function callDaemonWorkspaceStatFileRpc(params: Readonly<{
     return await transferClient.call<WorkspaceStatFileResponse, WorkspaceStatFileRequest>({
         request: {
             path: resolveAbsoluteWorkspacePath({ rootPath: params.rootPath, agentRootPath: params.agentRootPath, requestPath: params.request.path }),
+            ...(params.includeContentHash ? { includeContentHash: true } : {}),
         },
         machineMethod: RPC_METHODS.STAT_FILE,
         timeoutMs: params.timeoutMs ?? null,

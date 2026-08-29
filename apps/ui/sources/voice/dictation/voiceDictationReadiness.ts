@@ -143,6 +143,9 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
   localAvailability: VoiceProviderLocalAvailability;
   /** Passive installed-pack fact for the exact native Local Neural STT selection. */
   nativeLocalNeuralModel?: VoiceReadinessFact;
+  rawCredentialAuthorization?: NonNullable<Parameters<
+    typeof projectVoiceSpeechCredentialReadiness
+  >[0]['rawAuthorization']>;
 }>): VoiceRoleReadiness {
   const projection = projectVoiceDictationProvider(input);
   const { providerId, providerEnvelope, settingsProjection } = projection;
@@ -196,9 +199,11 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
         settings: {
           voiceSettingsV1: input.settings.voiceSettingsV1,
           secrets: Array.isArray(input.settings?.secrets) ? input.settings.secrets : [],
+          connectedAccountPurposeBindingsV1: input.settings.connectedAccountPurposeBindingsV1,
         },
         executionMachineId: input.executionMachineId,
         providerEnvelope,
+        rawAuthorization: input.rawCredentialAuthorization ?? null,
       }),
     },
   });

@@ -16,6 +16,11 @@ function stateWithCurrentUiContextMode(currentUiContextMode: 'off' | 'on_demand'
   return {
     settings: {
       ...settingsDefaults,
+      experiments: true,
+      featureToggles: {
+        ...settingsDefaults.featureToggles,
+        voice: true,
+      },
       voice: {
         ...settingsDefaults.voice,
         privacy: {
@@ -55,4 +60,16 @@ describe('voice Action catalog current-UI privacy', () => {
       expect(disabledIds).not.toEqual(expect.arrayContaining([...CURRENT_UI_ACTION_IDS]));
     },
   );
+
+  it('withholds every retained Voice Action when the Voice feature is disabled', () => {
+    const state = stateWithCurrentUiContextMode('automatic');
+    state.settings = {
+      ...state.settings,
+      experiments: true,
+      featureToggles: { ...state.settings.featureToggles, voice: false },
+    };
+
+    expect(enabledVoiceActionIds(state)).toEqual([]);
+    expect(resolveDisabledVoiceActionIdsFromState(state)).toContain('action.spec.search');
+  });
 });

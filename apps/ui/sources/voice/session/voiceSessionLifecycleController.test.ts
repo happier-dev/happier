@@ -768,6 +768,75 @@ describe('createVoiceSessionLifecycleController', () => {
         expect(replacement.stop).not.toHaveBeenCalled();
     });
 
+    it('does not stop a later same-adapter attempt after delayed unsupported output focus', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const captureAdmission = createVoiceCaptureAdmissionController();
+        const focusApplication = createDeferred<'unsupported'>();
+        const sessionId = 'session-1';
+        let fixture!: ReturnType<typeof createAdapter>;
+        fixture = createAdapter({
+            id: 'active',
+            snapshot: {
+                adapterId: 'active',
+                sessionId: null,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            },
+            start: async () => {
+                fixture.setSnapshot({
+                    adapterId: 'active',
+                    sessionId,
+                    status: 'connected',
+                    mode: 'listening',
+                    canStop: true,
+                });
+            },
+            stop: async () => {
+                fixture.setSnapshot({
+                    adapterId: 'active',
+                    sessionId: null,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+            },
+        });
+        const adapter: VoiceAdapterController = {
+            ...fixture.controller,
+            setOutputFocusState: vi.fn(() => focusApplication.promise),
+        };
+        const controller = createVoiceSessionLifecycleController({
+            captureAdmission,
+            getRegistry: () => ({
+                get: (id: string) => id === adapter.id ? adapter : null,
+                list: () => [adapter],
+            }),
+        });
+        controller.setConfiguredProviderId(adapter.id);
+
+        await controller.toggle(sessionId);
+        const applyOutputFocusState = controller.setOutputFocusState;
+        if (!applyOutputFocusState) throw new Error('voice_output_focus_owner_missing');
+        const staleApplication = applyOutputFocusState(sessionId, 'suspended');
+        expect(adapter.setOutputFocusState).toHaveBeenCalledOnce();
+
+        await controller.stop(sessionId);
+        await controller.toggle(sessionId);
+        expect(fixture.start).toHaveBeenCalledTimes(2);
+        expect(fixture.stop).toHaveBeenCalledOnce();
+
+        focusApplication.resolve('unsupported');
+        await expect(staleApplication).resolves.toBe('unsupported');
+        expect(fixture.stop).toHaveBeenCalledOnce();
+        expect(controller.getSnapshot()).toMatchObject({
+            adapterId: adapter.id,
+            sessionId,
+            status: 'connected',
+            canStop: true,
+        });
+    });
+
     it('still stops the same owned attempt after an ordinary snapshot update', async () => {
         const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
         const active = createAdapter({
@@ -1784,6 +1853,11 @@ describe('createVoiceSessionLifecycleController', () => {
                 ...state,
                 settings: {
                     ...state.settings,
+                    experiments: true,
+                    featureToggles: {
+                        ...state.settings.featureToggles,
+                        voice: true,
+                    },
                     voice: {
                         ...state.settings.voice,
                         privacy: {
@@ -1956,6 +2030,11 @@ describe('createVoiceSessionLifecycleController', () => {
                 ...state,
                 settings: {
                     ...state.settings,
+                    experiments: true,
+                    featureToggles: {
+                        ...state.settings.featureToggles,
+                        voice: true,
+                    },
                     voice: {
                         ...state.settings.voice,
                         privacy: {
@@ -2067,6 +2146,11 @@ describe('createVoiceSessionLifecycleController', () => {
                 ...state,
                 settings: {
                     ...state.settings,
+                    experiments: true,
+                    featureToggles: {
+                        ...state.settings.featureToggles,
+                        voice: true,
+                    },
                     voice: {
                         ...state.settings.voice,
                         privacy: {

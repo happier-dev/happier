@@ -112,6 +112,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     providerModelGroups?: NewSessionWizardAgentProps['providerModelGroups'];
     providerModelProjectionAuthoritative?: NewSessionWizardAgentProps['providerModelProjectionAuthoritative'];
     providerModelProjectionError?: NewSessionWizardAgentProps['providerModelProjectionError'];
+    providerModelProjectionFailures?: NewSessionWizardAgentProps['providerModelProjectionFailures'];
     retryProviderModelProjection?: NewSessionWizardAgentProps['retryProviderModelProjection'];
     providerCurrentSelectionRecovery?: NewSessionWizardAgentProps['providerCurrentSelectionRecovery'];
     hiddenNativeModelKeys?: NewSessionWizardAgentProps['hiddenNativeModelKeys'];
@@ -386,6 +387,7 @@ export function useNewSessionWizardProps(params: Readonly<{
             providerModelGroups: params.providerModelGroups,
             providerModelProjectionAuthoritative: params.providerModelProjectionAuthoritative,
             providerModelProjectionError: params.providerModelProjectionError,
+            providerModelProjectionFailures: params.providerModelProjectionFailures,
             retryProviderModelProjection: params.retryProviderModelProjection,
             providerCurrentSelectionRecovery: params.providerCurrentSelectionRecovery,
             hiddenNativeModelKeys: params.hiddenNativeModelKeys,
@@ -414,6 +416,7 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.providerModelGroups,
         params.providerModelProjectionAuthoritative,
         params.providerModelProjectionError,
+        params.providerModelProjectionFailures,
         params.retryProviderModelProjection,
         params.providerCurrentSelectionRecovery,
         params.hiddenNativeModelKeys,

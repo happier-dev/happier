@@ -161,7 +161,11 @@ export async function updateSessionMetadataWithRetry<M, A = unknown>(
         }
     }
     const metadataLayoutVersion =
-        initial.metadataLayoutVersion ?? params.metadataLayoutVersion ?? 0;
+        initial.metadataLayoutVersion !== undefined
+            ? initial.metadataLayoutVersion
+            : params.metadataLayoutVersion !== undefined
+                ? params.metadataLayoutVersion
+                : 0;
     if (
         metadataLayoutVersion !== 0
         && metadataLayoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1

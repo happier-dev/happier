@@ -264,38 +264,6 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.termuxProps).toBeNull();
     });
 
-    it('falls back to xterm WebView when Android Termux legal approval is absent', async () => {
-        platformState.os = 'android';
-        resetSurfaceState();
-
-        await renderScreen(
-            <EmbeddedTerminalPane
-                title="Terminal"
-                controller={makeController()}
-                terminalRef={{ current: null }}
-                nativeRenderer={{
-                    featureEnabled: true,
-                    platform: 'android',
-                    legalAccepted: false,
-                    packageProofAccepted: true,
-                    accessibilityAccepted: true,
-                    crashFallbackAvailable: true,
-                    availability: {
-                        available: true,
-                        platform: 'android',
-                        renderer: 'android-termux',
-                        moduleVersion: '0.0.0',
-                        accessibility: 'native',
-                    },
-                }}
-            />,
-        );
-
-        expect(surfaceState.xtermProps).not.toBeNull();
-        expect(surfaceState.ghosttyProps).toBeNull();
-        expect(surfaceState.termuxProps).toBeNull();
-    });
-
     it('routes xterm WebView paste envelopes through the terminal controller policy', async () => {
         platformState.os = 'android';
         resetSurfaceState();
@@ -1111,6 +1079,42 @@ describe('EmbeddedTerminalPane native renderer selection', () => {
         expect(surfaceState.xtermProps).not.toBeNull();
         expect(surfaceState.ghosttyProps).toBeNull();
         expect(surfaceState.xtermProps).toMatchObject({ onInput: controller.onInput });
+
+        screenReaderState.enabled = false;
+        await act(async () => {
+            screenReaderState.notify?.(false);
+        });
+        expect(surfaceState.ghosttyProps).not.toBeNull();
+        expect(surfaceState.xtermProps).toBeNull();
+    });
+
+    it('applies live screen-reader policy to QA-injected hard-gate options', async () => {
+        platformState.os = 'ios';
+        resetSurfaceState();
+        screenReaderState.enabled = true;
+        const screen = await renderScreen(
+            <EmbeddedTerminalPane
+                title="Terminal"
+                controller={makeController()}
+                terminalRef={{ current: null }}
+                nativeRenderer={{
+                    featureEnabled: true,
+                    platform: 'ios',
+                    packageProofAccepted: true,
+                    crashFallbackAvailable: true,
+                    availability: {
+                        available: true,
+                        platform: 'ios',
+                        renderer: 'ios-ghosttykit',
+                        moduleVersion: 'qa',
+                        accessibility: 'fallback-required',
+                    },
+                }}
+            />,
+        );
+
+        expect(surfaceState.xtermProps).not.toBeNull();
+        expect(surfaceState.ghosttyProps).toBeNull();
 
         screenReaderState.enabled = false;
         await act(async () => {

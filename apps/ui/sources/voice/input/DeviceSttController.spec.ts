@@ -615,6 +615,20 @@ describe('createDeviceSttController', () => {
     },
   );
 
+  it('presents the canonical recovery once when native speech recognition denies its secondary permission', async () => {
+    requestMicrophonePermission.mockResolvedValueOnce({ granted: true, canAskAgain: true });
+    requestPermissionsAsync.mockResolvedValueOnce({ granted: false, canAskAgain: false });
+    showMicrophonePermissionDeniedAlert.mockClear();
+
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+
+    await expect(controller.start({ micSession: createMicSession(), sink: createSink() }))
+      .rejects.toThrow('mic_permission_denied');
+    expect(showMicrophonePermissionDeniedAlert).toHaveBeenCalledTimes(1);
+    expect(showMicrophonePermissionDeniedAlert).toHaveBeenCalledWith(false);
+  });
+
   it('surfaces device STT startup failures through a typed sink error and rethrows', async () => {
     start.mockImplementationOnce(() => {
       throw new Error('speech_start_failed');

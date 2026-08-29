@@ -26,6 +26,14 @@ describe('resolvePluginEventEditorProjectionMachineId', () => {
 
         expect(resolvePluginEventEditorProjectionMachineId({
             observation: {
+                kind: 'socket',
+                watcherMaterializationRef: { machineId: 'socket-watcher-machine' },
+            },
+            authoringMachineId: 'execution-assignment-machine',
+        })).toBe('socket-watcher-machine');
+
+        expect(resolvePluginEventEditorProjectionMachineId({
+            observation: {
                 kind: 'durablePush',
                 endpointMaterializationRef: { machineId: 'endpoint-machine' },
             },

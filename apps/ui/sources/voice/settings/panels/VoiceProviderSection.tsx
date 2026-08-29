@@ -14,6 +14,7 @@ import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
   resolveRequiredRecipientContractApprovalDigestV1,
+  type VoiceCredentialSourceSelection,
 } from '@happier-dev/protocol';
 import type {
   PluginProjectionEditableSettingField,
@@ -39,6 +40,7 @@ import { t, tLoose } from '@/text';
 import {
   resolveAccountVoiceCredentialSourceSelection,
   resolveAccountVoiceCredentialStatus,
+  resolveSelectedVoiceCredentialRawGrants,
   shouldUseVoiceCredentialSourceMutationForSavedSecret,
 } from '@/voice/credentials/accountVoiceCredential';
 import {
@@ -46,12 +48,15 @@ import {
   type VoiceConnectedAccountTargetEligibility,
 } from '@/voice/credentials/sourceEligibility';
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import {
-  VoiceCredentialItem,
-  voiceCredentialDeclarationHasRawGrants,
-} from '@/voice/credentials/CredentialItem';
+import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
+import {
+  parseLocalVoiceSttSettings,
+  parseLocalVoiceTtsSettings,
+  resolveLocalVoiceAdapterSettings,
+} from '@/voice/local/localVoiceSettings';
+import { inspectRawCredentialAuthorizationReadiness } from '@/voice/credentials/rawCredentialAuthorizationClient';
 import {
   isVoiceProviderSettingsProjectionCurrent,
   projectVoiceProviderCredentialReadiness,
@@ -109,7 +114,22 @@ type CheckedVoiceProviderReadinessState = Readonly<{
   accountScopeLifetime: ActiveServerAccountScopeLifetime | null;
   status: 'checking' | 'terminal';
   passiveRealtimeSetupResult: unknown | null;
+  rawCredentialAuthorizationByContribution: Readonly<Record<string, {
+    contribution: Readonly<{ pluginId: string; localId: string }>;
+    machineId: string | null;
+    realm: 'daemon';
+    phase: 'speech';
+    status: 'ready' | 'approval_required' | 'unknown';
+  }>>;
 }>;
+
+function aggregateRawCredentialAuthorizationReadiness(
+  statuses: readonly ('ready' | 'approval_required' | 'unknown')[],
+): 'ready' | 'approval_required' | 'unknown' {
+  if (statuses.some((status) => status === 'unknown')) return 'unknown';
+  if (statuses.some((status) => status === 'approval_required')) return 'approval_required';
+  return 'ready';
+}
 
 function serializeDeclarativeSettingDraft(control: string, value: unknown): string {
   if (control === 'json') {
@@ -200,6 +220,7 @@ function createVoiceProviderReadinessCheckKey(input: Readonly<{
   daemonStateVersion: number;
   connectedServices: unknown;
   accountScope: unknown;
+  credentialAuthority: unknown;
 }>): string | null {
   if (!input.providerId) return null;
   return stableJsonStringify({
@@ -209,6 +230,7 @@ function createVoiceProviderReadinessCheckKey(input: Readonly<{
     daemonStateVersion: input.daemonStateVersion,
     connectedServices: input.connectedServices,
     accountScope: input.accountScope,
+    credentialAuthority: input.credentialAuthority,
   });
 }
 
@@ -305,17 +327,52 @@ export function VoiceProviderSection(props: {
   const executionMachineSelectedId = props.executionMachineSelectedId
     ?? props.executionMachineId
     ?? null;
+  const localAdapterSettings = resolveLocalVoiceAdapterSettings({ voice });
+  const selectedSpeechProviderIds = [
+    parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
+    parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,
+  ];
+  const selectedRawSpeechTargets = [...new Set(selectedSpeechProviderIds)].flatMap((providerId) => {
+    const entry = registry.get(providerId);
+    if (entry?.kind !== 'voice.speech-engine.v1'
+      || entry.declaration?.kind !== 'speech'
+      || !entry.declaration.credentials) return [];
+    const contribution = { pluginId: entry.pluginId, localId: entry.declaration.id };
+    try {
+      const source = resolveAccountVoiceCredentialSourceSelection({
+        settings: accountSettings,
+        contribution,
+        credentialSlotId: entry.declaration.credentials.slot.id,
+        purpose: {
+          consumer: contribution,
+          purpose: entry.declaration.credentials.slot.purpose,
+        },
+        machineId: props.executionMachineId,
+      });
+      const rawGrants = resolveSelectedVoiceCredentialRawGrants({
+        declaration: entry.declaration,
+        contribution,
+        selection: source.selection,
+      }).filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech');
+      return rawGrants.length > 0 ? [{ providerId, contribution, rawGrants }] : [];
+    } catch {
+      return [];
+    }
+  });
   const localConversationReadinessFacts = projectLocalConversationReadinessFacts({
     registry,
     voice,
     voiceSettingsV1: accountSettings.voiceSettingsV1,
     secrets: accountSettings.secrets,
+    connectedAccountPurposeBindingsV1: accountSettings.connectedAccountPurposeBindingsV1,
     platform,
     local: availability.local,
     localInput: props.localAvailability,
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
     voiceAgentEnabled,
+    rawCredentialAuthorizationByContribution:
+      checkedReadiness?.rawCredentialAuthorizationByContribution,
   });
   const rows = projectVoiceProviderSelectionRows(voice, registry).map((row) => {
     const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
@@ -348,10 +405,17 @@ export function VoiceProviderSection(props: {
       && row.entry.declaration?.kind === 'conversation'
       ? row.entry.declaration.credentials ?? null
       : null;
-    let sourceSelection: Readonly<{
-      kind: 'none' | 'savedSecret' | 'connectedAccount';
-      connectedAccountEligibility: VoiceConnectedAccountTargetEligibility;
-    }> | null = null;
+    let sourceSelection: (
+      | Readonly<{
+          kind: 'none' | 'savedSecret';
+          connectedAccountEligibility: VoiceConnectedAccountTargetEligibility;
+        }>
+      | Readonly<{
+          kind: 'connectedAccount';
+          target: Extract<VoiceCredentialSourceSelection, Readonly<{ kind: 'connectedAccount' }>>['target'];
+          connectedAccountEligibility: VoiceConnectedAccountTargetEligibility;
+        }>
+    ) | null = null;
     if (contribution && credentialDeclaration) {
       try {
         const resolvedSource = resolveAccountVoiceCredentialSourceSelection({
@@ -366,6 +430,9 @@ export function VoiceProviderSection(props: {
         });
         sourceSelection = Object.freeze({
           kind: resolvedSource.selection.kind,
+          ...(resolvedSource.selection.kind === 'connectedAccount'
+            ? { target: resolvedSource.selection.target }
+            : {}),
           connectedAccountEligibility: resolvedSource.selection.kind === 'connectedAccount'
             ? resolveVoiceConnectedAccountTargetEligibility({
               target: resolvedSource.selection.target,
@@ -480,7 +547,7 @@ export function VoiceProviderSection(props: {
     // declares could never be configured.
     const credentialConfigurationAvailable = row.entry.kind === 'voice.conversation-provider.v1'
       && (
-        typeof row.entry.presentation?.createSettingsSection === 'function'
+        row.entry.providerSettings?.presentation !== null
         || credentialDeclaration?.sources.some((source) => (
           source.kind === 'savedSecret' || source.kind === 'connectedAccount'
         )) === true
@@ -571,6 +638,10 @@ export function VoiceProviderSection(props: {
     daemonStateVersion: executionMachineTarget.daemonStateVersion,
     connectedServices: selectedPassiveConnectedServicesBinding,
     accountScope: activeAccountScopeLifetime?.scope ?? null,
+    credentialAuthority: {
+      voiceCredentialBindings: accountSettings.voiceSettingsV1.credentialBindings,
+      connectedAccountPurposeBindingsV1: accountSettings.connectedAccountPurposeBindingsV1,
+    },
   });
   currentReadinessCheckKeyRef.current = selectedReadinessCheckKey;
   const checkedReadinessIsCurrent = checkedReadiness !== null
@@ -680,7 +751,7 @@ export function VoiceProviderSection(props: {
   const selectedExternalRow = rows.find((row) => (
     row.providerId === voice.providerId
     && row.entry.kind === 'voice.conversation-provider.v1'
-    && typeof row.entry.presentation?.createSettingsSection !== 'function'
+    && !row.entry.providerSettings?.presentation
     && projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null)?.status === 'ready'
   ));
   const selectedExternalDeclaration = selectedExternalRow?.entry.kind === 'voice.conversation-provider.v1'
@@ -700,15 +771,27 @@ export function VoiceProviderSection(props: {
   const selectedExternalHasConnectedAccount = selectedExternalCredentials?.sources.some(
     (source) => source.kind === 'connectedAccount',
   ) === true;
-  const selectedExternalCredentialAccessIsRaw = voiceCredentialDeclarationHasRawGrants(
-    selectedExternalDeclaration ?? undefined,
-  );
+  const selectedExternalRawReviewGrants = (
+    (platform === 'web' || platform === 'ios' || platform === 'android')
+    && selectedExternalDeclaration
+    && selectedExternalContribution
+    && selectedExternalRow?.sourceSelection
+  ) ? resolveSelectedVoiceCredentialRawGrants({
+      declaration: selectedExternalDeclaration,
+      contribution: selectedExternalContribution,
+      selection: selectedExternalRow.sourceSelection,
+    }).filter((grant) => (
+      grant.realm === platform && (grant.phase === 'prepare' || grant.phase === 'connection')
+    )).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))) : [];
+  const selectedExternalCredentialAccessIsRaw = selectedExternalRawReviewGrants.length > 0;
+  const selectedExternalConnectedRawReviewEligible = selectedExternalRow?.sourceSelection?.kind === 'connectedAccount'
+    && selectedExternalRawReviewGrants.length > 0;
   const selectedExternalCredentialSlot = selectedExternalRow?.entry.accountCredentialSlot;
   const selectedDeclarativeSettingsRow = rows.find((row) => (
     row.providerId === voice.providerId
     && row.entry.kind === 'voice.conversation-provider.v1'
     && row.entry.providerSettings
-    && typeof row.entry.presentation?.createSettingsSection !== 'function'
+    && !row.entry.providerSettings.presentation
     && row.entry.source.kind !== 'built_in'
     && isVoiceProviderSettingsProjectionCurrent(
       projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null),
@@ -758,12 +841,17 @@ export function VoiceProviderSection(props: {
       && machineId
       && executionMachineTarget.isOnline,
     );
+    const canInspectRawSpeech = voice.providerId === 'local_conversation'
+      && machineId !== null
+      && executionMachineTarget.isOnline
+      && selectedRawSpeechTargets.length > 0;
     setCheckedReadiness({
       providerId: voice.providerId,
       checkKey: selectedReadinessCheckKey,
       accountScopeLifetime,
-      status: canInspectPassiveSetup ? 'checking' : 'terminal',
+      status: canInspectPassiveSetup || canInspectRawSpeech ? 'checking' : 'terminal',
       passiveRealtimeSetupResult: null,
+      rawCredentialAuthorizationByContribution: {},
     });
 
     if (selectedPassiveSetup && executionMachineTarget.isOnline) {
@@ -772,14 +860,31 @@ export function VoiceProviderSection(props: {
         bypassCache: true,
       });
     }
-    if (
-      !selectedPassiveSetup
-      || !selectedPassiveConnectedServicesBinding
-      || !machineId
-      || !executionMachineTarget.isOnline
-    ) return;
-
-    const settle = (result: unknown | null): void => {
+    if (!canInspectPassiveSetup && !canInspectRawSpeech) return;
+    const passiveResult = canInspectPassiveSetup && selectedPassiveSetup && selectedPassiveConnectedServicesBinding && machineId
+      ? machineCapabilitiesInvoke(machineId, {
+          id: selectedPassiveSetup.capabilityId,
+          method: 'probePassiveRealtimeSetup',
+          params: { connectedServices: selectedPassiveConnectedServicesBinding },
+        }, { timeoutMs: 30_000 }).then((outcome) => (
+          outcome.supported && outcome.response.ok
+            ? readVoiceProviderPassiveRealtimeSetupResult(outcome.response.result)
+            : null
+        ), () => null)
+      : Promise.resolve(null);
+    const rawResult = canInspectRawSpeech
+      ? Promise.all(selectedRawSpeechTargets.map(async ({ providerId, contribution, rawGrants }) => ({
+          providerId,
+          contribution,
+          status: aggregateRawCredentialAuthorizationReadiness(await Promise.all(
+            rawGrants.map((rawGrant) => inspectRawCredentialAuthorizationReadiness(contribution, rawGrant)),
+          )),
+        })))
+      : Promise.resolve([]);
+    const settle = (result: Readonly<{
+      passive: unknown | null;
+      raw: readonly Readonly<{ providerId: string; contribution: Readonly<{ pluginId: string; localId: string }>; status: 'ready' | 'approval_required' | 'unknown' }>[];
+    }>): void => {
       if (
         checkedReadinessRevision.current !== revision
         || currentReadinessCheckKeyRef.current !== selectedReadinessCheckKey
@@ -792,24 +897,23 @@ export function VoiceProviderSection(props: {
           ? {
               ...current,
               status: 'terminal',
-              passiveRealtimeSetupResult: result,
+              passiveRealtimeSetupResult: result.passive,
+              rawCredentialAuthorizationByContribution: Object.fromEntries(result.raw.map((row) => [
+                row.providerId,
+                {
+                  contribution: row.contribution,
+                  machineId,
+                  realm: 'daemon' as const,
+                  phase: 'speech' as const,
+                  status: row.status,
+                },
+              ])),
             }
           : current
       ));
     };
 
-    void machineCapabilitiesInvoke(machineId, {
-      id: selectedPassiveSetup.capabilityId,
-      method: 'probePassiveRealtimeSetup',
-      params: { connectedServices: selectedPassiveConnectedServicesBinding },
-    }, { timeoutMs: 30_000 }).then(
-      (outcome) => settle(
-        outcome.supported && outcome.response.ok
-          ? readVoiceProviderPassiveRealtimeSetupResult(outcome.response.result)
-          : null,
-      ),
-      () => settle(null),
-    );
+    void Promise.all([passiveResult, rawResult]).then(([passive, raw]) => settle({ passive, raw }));
   };
 
   return (
@@ -948,6 +1052,9 @@ export function VoiceProviderSection(props: {
               ? selectedExternalCredentials.slot.purpose
               : undefined}
             credentialSourceDeclaration={selectedExternalDeclaration}
+            rawCredentialReviewGrants={selectedExternalRow.sourceSelection?.kind === 'savedSecret'
+              ? selectedExternalRawReviewGrants
+              : undefined}
             recipientContract={selectedExternalCredentialSlot?.id === selectedExternalCredentials.slot.id
               ? selectedExternalCredentialSlot.recipientContract
               : null}
@@ -956,12 +1063,14 @@ export function VoiceProviderSection(props: {
               : null}
             disclosePlainStorage={true}
           />}
-          {selectedExternalHasSavedSecret || !selectedExternalCredentialAccessIsRaw ? null : (
+          {selectedExternalHasSavedSecret || !selectedExternalConnectedRawReviewEligible ? null : selectedExternalRawReviewGrants.map((rawGrant, index) => (
             <VoiceRawCredentialAccessReview
+              key={JSON.stringify(rawGrant)}
               contribution={selectedExternalContribution}
-              testID={`settings.voice.externalCredential.${encodeURIComponent(selectedExternalRow.providerId)}.rawAccess`}
+              rawGrant={rawGrant}
+              testID={`settings.voice.externalCredential.${encodeURIComponent(selectedExternalRow.providerId)}.rawAccess${index === 0 ? '' : `.${index}`}`}
             />
-          )}
+          ))}
         </ItemGroup>
       )}
       {!selectedDeclarativeSettings

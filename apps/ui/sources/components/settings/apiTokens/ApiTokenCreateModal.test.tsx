@@ -160,6 +160,39 @@ describe('ApiTokenCreateModal', () => {
         expect(screen.findByTestId('settings-api-tokens-expiry-none')?.props['aria-checked']).toBe(false);
     });
 
+    it('uses the shared radio-group behavior for web roving focus and selection', async () => {
+        const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
+        const state = createState(null);
+        const setCreateDraft = vi.fn();
+        const controller: ApiTokenSettingsController = {
+            ...createController(state),
+            setCreateDraft,
+        };
+        const screen = await renderScreen(
+            <ApiTokenCreateModal controller={controller} onClose={vi.fn()} setChrome={vi.fn()} />,
+        );
+
+        const thirtyDays = screen.findByTestId('settings-api-tokens-expiry-30d');
+        const ninetyDays = screen.findByTestId('settings-api-tokens-expiry-90d');
+        expect(thirtyDays?.props.tabIndex).toBe(-1);
+        expect(ninetyDays?.props.tabIndex).toBe(0);
+
+        const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
+        await act(async () => {
+            ninetyDays?.props.onKeyDown?.({
+                key: 'ArrowLeft',
+                nativeEvent: { key: 'ArrowLeft' },
+                preventDefault,
+                stopPropagation,
+            });
+        });
+
+        expect(setCreateDraft).toHaveBeenCalledWith({ label: '', expiryPreset: '30d' });
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+    });
+
     it('holds mutable form controls in their busy state while the one-time token is being minted', async () => {
         const { ApiTokenCreateModal } = await import('./ApiTokenCreateModal');
         const state: ApiTokenSettingsState = {
@@ -193,7 +226,7 @@ describe('ApiTokenCreateModal', () => {
             apiToken: {
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-22T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: null,
@@ -225,7 +258,7 @@ describe('ApiTokenCreateModal', () => {
             apiToken: {
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-22T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: null,
@@ -266,7 +299,7 @@ describe('ApiTokenCreateModal', () => {
                     apiToken: {
                         tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'CI',
-                        displayPrefix: 'hap_11111111',
+                        displayPrefix: 'hap_v1_11111111',
                         createdAt: '2026-08-22T12:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -299,7 +332,7 @@ describe('ApiTokenCreateModal', () => {
                     apiToken: {
                         tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'CI',
-                        displayPrefix: 'hap_11111111',
+                        displayPrefix: 'hap_v1_11111111',
                         createdAt: '2026-08-22T12:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,
@@ -330,7 +363,7 @@ describe('ApiTokenCreateModal', () => {
             apiToken: {
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-22T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: null,
@@ -374,7 +407,7 @@ describe('ApiTokenCreateModal', () => {
             apiToken: {
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'CI',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-22T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: null,
@@ -445,7 +478,7 @@ describe('ApiTokenCreateModal', () => {
                     apiToken: {
                         tokenId: '11111111-1111-4111-8111-111111111111',
                         label: 'CI',
-                        displayPrefix: 'hap_11111111',
+                        displayPrefix: 'hap_v1_11111111',
                         createdAt: '2026-08-22T12:00:00.000Z',
                         lastUsedAt: null,
                         expiresAt: null,

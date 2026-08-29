@@ -1,5 +1,6 @@
 import {
     DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
+    isSameDaemonPluginHostedWebArtifactCacheIdentityV1,
     type DaemonPluginHostedWebArtifactCacheIdentityV1,
     type DaemonPluginUiArtifactBytesReadResponse,
     type DaemonReactNativeHostRuntimeIdentityV1,
@@ -91,11 +92,7 @@ function cacheIdentityMatches(
     left: DaemonPluginHostedWebArtifactCacheIdentityV1,
     right: DaemonPluginHostedWebArtifactCacheIdentityV1,
 ): boolean {
-    return left.pluginId === right.pluginId
-        && left.contributionId === right.contributionId
-        && left.artifactDigest === right.artifactDigest
-        && left.platform === right.platform
-        && left.projectionGeneration === right.projectionGeneration;
+    return isSameDaemonPluginHostedWebArtifactCacheIdentityV1(left, right);
 }
 
 function artifactMatchesCacheIdentity(input: Readonly<{

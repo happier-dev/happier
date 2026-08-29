@@ -387,6 +387,59 @@ describe('projected client executable complete-set reconciliation', () => {
         await composition.unload();
     });
 
+    it('reports a shared Action and Voice activation failure, then recovers both only on explicit reconciliation', async () => {
+        installedRuntime.cache = createPluginReactNativeBundleCache();
+        const source = projection({ generation: 12 });
+        installArtifact(source.actionIdentity);
+        artifactAvailabilitySpy.mockImplementation(async () => availableArtifact().handle);
+        const host = createPluginUiExecutableModuleHost();
+        let failActivation = true;
+        const activate = vi.fn((api: PluginClientApi) => {
+            if (failActivation) throw new Error('synthetic shared activation failure');
+            api.actions.register('open-shared', async () => null);
+            api.voiceProviders.register('conversation', {
+                kind: 'conversation',
+                protocol: {
+                    async prepare() { return { kind: 'prepared' as const, session: { config: {}, safeMetadata: null } }; },
+                    decodeControl: () => [], encodeTurnControl: () => null,
+                },
+                async createConnection() { throw new Error('not reached'); },
+                encodeToolResults: () => [], encodeToolContinuation: () => null,
+                encodeContextUpdate: () => [], encodeTextTurn: () => [],
+                microphoneMode: 'provider_managed' as const,
+                setInputMuted: () => {},
+            });
+        });
+        const loaderBackend = backend(activate);
+        const composition = getPluginUiClientExecutableComposition(host);
+
+        await expect(reconcileProjectedPluginUiClientExecutables(reconciliationInput({
+            model: source.model,
+            host,
+            loaderBackend,
+        }))).resolves.toMatchObject([{
+            result: { ok: false, code: 'activation_failed' },
+            reused: false,
+        }]);
+        expect(composition.read(address({ family: 'actions', localId: 'open-shared', generation: 12 }))).toBeNull();
+        expect(composition.read(address({ family: 'voiceProviders', localId: 'conversation', generation: 12 }))).toBeNull();
+        expect(activate).toHaveBeenCalledTimes(1);
+
+        failActivation = false;
+        await expect(reconcileProjectedPluginUiClientExecutables(reconciliationInput({
+            model: source.model,
+            host,
+            loaderBackend,
+        }))).resolves.toMatchObject([{
+            result: { ok: true },
+            reused: false,
+        }]);
+        expect(composition.read(address({ family: 'actions', localId: 'open-shared', generation: 12 }))).not.toBeNull();
+        expect(composition.read(address({ family: 'voiceProviders', localId: 'conversation', generation: 12 }))).not.toBeNull();
+        expect(activate).toHaveBeenCalledTimes(2);
+        await composition.unload();
+    });
+
     it('replaces the raw Voice target and synchronously withdraws the previous generic registration', async () => {
         installedRuntime.cache = createPluginReactNativeBundleCache();
         const first = projection({ generation: 12, action: false });

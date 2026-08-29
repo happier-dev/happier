@@ -15,10 +15,12 @@ import {
     HappierPressable,
     HappierStack,
     HappierStatus,
+    HappierSpinner,
     HAPPIER_TONE_COLOR_TOKEN,
     resolveHappierLayoutGap,
     type HappierTone,
 } from '@happier-dev/plugin-ui/presentation';
+import { Spinner } from '@happier-dev/plugin-ui/components';
 import type { HappierUiAccessibility, HappierUiTheme } from '@happier-dev/plugin-ui/environment';
 
 import type {
@@ -30,7 +32,6 @@ import type {
 
 import type { Theme } from '@/theme';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { Text } from '@/components/ui/text/Text';
@@ -229,6 +230,8 @@ export type DeclarativeNodeRenderContext = Readonly<{
     contrast?: HappierUiAccessibility['contrast'];
     /** Platform minimum interactive target, resolved by the consumer's mount. */
     minimumTouchTarget: number;
+    /** Live mounted surfaces use the component adapter so mount/tab activity pauses motion. */
+    useSharedSpinner?: boolean;
     resolveAction: (node: RecordValue) => DeclarativeActionAffordance | null;
     /**
      * Settings controls are the one leaf the two consumers genuinely disagree
@@ -265,7 +268,7 @@ function renderActionAffordance(
             disabled={affordance.disabled}
             busy={affordance.busy}
             onPress={affordance.onPress ?? (() => undefined)}
-            style={{
+            style={(state) => ({
                 minWidth: context.minimumTouchTarget,
                 minHeight: context.minimumTouchTarget,
                 justifyContent: 'center',
@@ -274,9 +277,9 @@ function renderActionAffordance(
                 borderRadius: 10,
                 borderWidth: 1,
                 backgroundColor: variantColors.background,
-                borderColor: variantColors.border,
-                opacity: affordance.disabled ? 0.5 : 1,
-            }}
+                borderColor: state.focused ? context.presentationTheme.colors.focus : variantColors.border,
+                opacity: state.disabled ? 0.5 : state.pressed ? 0.8 : 1,
+            })}
         >
             <Text
                 testID={`plugin-declarative-action-label:${affordance.key}`}
@@ -442,8 +445,12 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
             >
                 <HappierInfoTile
                     icon={presentation.busy
-                        ? <ActivitySpinner />
-                        : (iconToken ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.lg} color={color} /> : undefined)}
+                        ? context.useSharedSpinner
+                            ? <Spinner />
+                            : <HappierSpinner color={color} animationEnabled={false} />
+                        : (iconToken
+                            ? <Icon name={resolvePluginUiIconName(iconToken, context.direction)} size={ICON_SIZE.lg} color={color} />
+                            : undefined)}
                     title={<Text style={{ color }}>{context.localize(node.title)}</Text>}
                     description={description ? <Text>{description}</Text> : undefined}
                 />

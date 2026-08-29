@@ -222,8 +222,9 @@ function buildRowsForKind(
           ? actionError?.operation === 'install'
           : state === 'not_installed' || state === 'error'),
       canRemove: actionFailed
-        ? actionError?.operation === 'remove' && installedByDaemon
-        : installed || installedByDaemon,
+        ? actionError?.operation === 'install'
+          || (actionError?.operation === 'remove' && installedByDaemon)
+        : installed || installedByDaemon || state === 'error',
       licenseReview: status?.licenseReview ?? null,
       sourcePluginId: status?.pluginIdentity?.pluginId ?? null,
     };

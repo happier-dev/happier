@@ -3,9 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { PluginInstallReviewPrincipalDigestSchema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { RawCredentialAuthorizationClient } from './rawCredentialAuthorizationClient';
+import {
+  inspectRawCredentialAuthorizationReadiness,
+  RawCredentialAuthorizationClient,
+} from './rawCredentialAuthorizationClient';
 
 const contribution = Object.freeze({ pluginId: 'acme.voice', localId: 'browser' });
+const rawGrant = Object.freeze({
+  realm: 'daemon' as const,
+  phase: 'speech' as const,
+  request: Object.freeze({
+    kind: 'httpHeaders' as const,
+    origin: 'https://voice.example.test',
+    headerNames: Object.freeze(['authorization']),
+  }),
+});
 
 function authorization() {
   return {
@@ -54,7 +66,7 @@ function review() {
 }
 
 describe('raw credential authorization client', () => {
-  it('calls inspect and request with only the qualified contribution and parses the strict responses', async () => {
+  it('calls inspect and request with the qualified contribution and exact raw tuple', async () => {
     const machineRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
       if (method === RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT) {
         return { ok: true, authorization: authorization(), review: review() };
@@ -85,16 +97,16 @@ describe('raw credential authorization client', () => {
       machineRpc: machineRpc as never,
     });
 
-    await expect(client.inspect(contribution)).resolves.toMatchObject({ authorization: authorization() });
-    await expect(client.request(contribution)).resolves.toMatchObject({ pendingRequest: { id: 'request-1' } });
+    await expect(client.inspect(contribution, rawGrant)).resolves.toMatchObject({ authorization: authorization() });
+    await expect(client.request(contribution, rawGrant)).resolves.toMatchObject({ pendingRequest: { id: 'request-1' } });
     expect(machineRpc.mock.calls.map(([call]) => call)).toEqual([
       expect.objectContaining({
         method: RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_INSPECT,
-        payload: { contribution },
+        payload: { contribution, rawGrant },
       }),
       expect.objectContaining({
         method: RPC_METHODS.DAEMON_VOICE_CLIENT_RAW_CREDENTIAL_AUTHORIZATION_REQUEST,
-        payload: { contribution },
+        payload: { contribution, rawGrant },
       }),
     ]);
   });
@@ -104,6 +116,53 @@ describe('raw credential authorization client', () => {
       resolveMachineId: () => 'machine-1',
       machineRpc: vi.fn(async () => ({ ok: true, authorization: { grants: [] } })) as never,
     });
-    await expect(client.inspect(contribution)).rejects.toMatchObject({ code: 'invalid_response' });
+    await expect(client.inspect(contribution, rawGrant)).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
+  it('accepts an active grant for the exact daemon speech tuple', async () => {
+    const speechAuthorization = {
+      ...authorization(),
+      disclosures: [{
+        ...authorization().disclosures[0],
+        realm: 'daemon' as const,
+        phase: 'speech' as const,
+      }],
+    };
+    const inspect = vi.fn(async () => ({
+      ok: true as const,
+      authorization: speechAuthorization,
+      review: review(),
+    }));
+    const list = vi.fn(async () => ({
+      grants: [{
+        id: 'grant-1',
+        status: 'active',
+        authoritySource: speechAuthorization.authoritySource,
+      }],
+      pendingRequests: [],
+    } as never));
+
+    await expect(inspectRawCredentialAuthorizationReadiness(
+      contribution,
+      rawGrant,
+      undefined,
+      { client: { inspect }, list },
+    )).resolves.toBe('ready');
+  });
+
+  it('does not treat an authorization without an active exact grant as ready', async () => {
+    await expect(inspectRawCredentialAuthorizationReadiness(
+      contribution,
+      rawGrant,
+      undefined,
+      {
+        client: { inspect: vi.fn(async () => ({
+          ok: true as const,
+          authorization: authorization(),
+          review: review(),
+        })) },
+        list: vi.fn(async () => ({ grants: [], pendingRequests: [] })),
+      },
+    )).resolves.toBe('approval_required');
   });
 });

@@ -5,6 +5,7 @@ import type { VoiceControlAction, VoiceControlId }
 // canonical owner is the controls module; this is an alias, not a second source.
 export type { VoiceControlAction, VoiceControlId };
 import type { VoiceEnergyDirection } from '@/components/voice/light/useVoiceEnergy';
+import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 
 import type { VoiceLightStop } from '@/components/voice/light/voiceLightTokens';
 
@@ -54,8 +55,10 @@ export type VoiceLabStateId =
 export type VoiceLabStateSpec = Readonly<{
     id: VoiceLabStateId;
     basis: VoiceLabStateBasis;
-    /** The production `VoiceSurfaceState` this maps onto, when one exists. */
-    modelState: string | null;
+    /** The production `VoiceSurfaceState` this resolves to today, when one exists. */
+    modelState: VoiceSurfaceState | null;
+    /** Qualification displayed beside the current production projection. */
+    modelNote?: string;
     /** For `derivable`: the signal that already exists and is being discarded. */
     source?: string;
     /** Short label. Sentence case, no trailing punctuation. */
@@ -80,7 +83,8 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'unavailable',
         basis: 'model',
-        modelState: 'idle (controlsDisabled)',
+        modelState: 'idle',
+        modelNote: 'idle (controlsDisabled)',
         label: 'Unavailable',
         caption: 'Pick a session to talk about',
         stop: 'cool',
@@ -106,7 +110,7 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'preparing',
         basis: 'derivable',
-        modelState: null,
+        modelState: 'connecting',
         source: 'runtime state `acquiring_mic` — collapsed into `connecting` by deriveLocalVoiceSessionSnapshot',
         label: 'Preparing',
         caption: 'Warming up the microphone',
@@ -151,8 +155,8 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'user_speaking',
         basis: 'derivable',
-        modelState: null,
-        source: 'voiceRuntimeLevelStore input level + sourceActive — already a SharedValue, used only for bar height',
+        modelState: 'listening',
+        source: 'provider/local VAD events exist, but no provider-neutral semantic speaking fact reaches the surface yet',
         label: 'You’re speaking',
         caption: 'Hearing you',
         stop: 'violet',
@@ -164,9 +168,8 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     },
     {
         id: 'transcribing',
-        basis: 'derivable',
-        modelState: null,
-        source: 'mode `transcribing` — collapsed into `thinking`; t(voiceAssistant.transcribing) exists in en.ts and is unreachable',
+        basis: 'model',
+        modelState: 'transcribing',
         label: 'Transcribing',
         caption: 'Turning that into text',
         stop: 'violet',
@@ -270,7 +273,8 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'permission_revoked',
         basis: 'derivable',
-        modelState: 'error (loses the permission framing)',
+        modelState: 'error',
+        modelNote: 'error (loses the permission framing)',
         source: 'error kind `mic_permission_revoked` — presented as a generic error today',
         label: 'Microphone was turned off',
         caption: 'Access was revoked mid-conversation',
@@ -297,7 +301,8 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'degraded',
         basis: 'derivable',
-        modelState: 'idle (a recoverable notice renders as neutral idle today)',
+        modelState: 'idle',
+        modelNote: 'idle (a recoverable notice renders as neutral idle today)',
         source: 'errorPresentation `notice` — 7 kinds incl. mic_plateau, transport_disconnect, stt_timeout, tts_failed',
         label: 'Degraded',
         caption: 'Audio only — transcript unavailable',
@@ -324,7 +329,7 @@ export const VOICE_LAB_STATES: readonly VoiceLabStateSpec[] = [
     {
         id: 'ended',
         basis: 'derivable',
-        modelState: null,
+        modelState: 'connecting',
         source: 'runtime state `ending` — collapsed into `connecting`, so teardown looks identical to startup',
         label: 'Voice ended',
         caption: 'Voice ended — Codex is still working',

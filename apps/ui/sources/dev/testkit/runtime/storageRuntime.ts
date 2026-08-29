@@ -1,8 +1,9 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import type {
-    Settings,
-    WritableSettingsKey,
+import {
+    settingsParse,
+    type Settings,
+    type WritableSettingsKey,
 } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
@@ -145,6 +146,7 @@ export function createStorageModuleStub<TOverrides extends object>(
     overrides: TOverrides,
     options?: StorageRuntimeOptions,
 ): StorageModule {
+    const defaultSettings = settingsParse({});
     const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
     const machineDisplayById = {} as ReturnType<StorageModule['useMachineDisplayById']>;
     const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
@@ -197,7 +199,7 @@ export function createStorageModuleStub<TOverrides extends object>(
     const defaults = {
         storage: store,
         getStorage: () => store,
-        useSettings: () => ({} as Settings),
+        useSettings: () => defaultSettings,
         useSetting,
         useSettingMutable,
         useCurrentSecretBindingsByProfileIdMutable,

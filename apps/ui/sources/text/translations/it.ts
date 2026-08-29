@@ -1065,6 +1065,7 @@ export const it = {
       event: ({ eventId }: { eventId: string }) => `Evento: ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Al termine di un turno · ${sessionId}`,
       noAutomaticTriggers: 'Nessun trigger automatico',
+      moreTriggers: ({ count }: { count: number }) => `+${count} altri`,
       noNextRun: "Nessuna prossima esecuzione",
       nextRun: ({ time }: { time: string }) => `Prossima: ${time}`,
       nextRunPending: "Prossima esecuzione in attesa",
@@ -3303,6 +3304,10 @@ export const it = {
   connectedServices: {
     accountScopeMismatchTitle: 'Cambia account del server per continuare',
     accountScopeMismatchDescription: 'Questa macchina appartiene all’account di un altro server. Passa a quell’account del server per gestirne gli account collegati.',
+    purposeTargets: {
+      requiredPrompt: 'Scegli un account o un gruppo',
+      legacyUnavailable: 'Questo server non può ancora mostrare le destinazioni degli account connessi',
+    },
     fallbackName: "Servizio connesso",
     serviceNames: {
       claudeSubscription: "Abbonamento Claude",
@@ -6910,6 +6915,10 @@ export const it = {
       captureDurationExceeded: "La dettatura ha raggiunto il limite di ascolto di 60 secondi. Avviala di nuovo per continuare.",
       transcriptionDeadlineExceeded: "La trascrizione ha richiesto più di 30 secondi. Riprova con una dettatura più breve.",
       transcriptLimitExceeded: "Il testo dettato è troppo lungo per il composer. Prova una dettatura più breve.",
+      transcriptionCredentialsRequired: "La dettatura richiede le credenziali del provider vocale selezionato. Controlla la configurazione e riprova.",
+      transcriptionMachineUnavailable: "La macchina di dettatura o il modello vocale locale non è disponibile. Riconnettila o controlla il modello selezionato.",
+      transcriptionTransferFailed: "Happier non ha potuto inviare la registrazione alla macchina di dettatura. Controlla la connessione e riprova.",
+      transcriptionFailed: "Il provider vocale selezionato non ha potuto trascrivere la registrazione. Riprova o controlla la configurazione.",
       recordedAudioSizeUnavailable: "Happier non ha potuto verificare la dimensione della registrazione. Registra di nuovo.",
       recordedAudioLimitExceeded: "La registrazione supera il limite di 8 MB. Prova una dettatura più breve.",
       microphoneOwnedByVoice: "Termina Voice prima di avviare la dettatura.",
@@ -11570,6 +11579,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "Cronologia delle impostazioni",
+      footer: "Ripristina le preferenze dell'account da uno snapshot salvato. Dati dell'app, segreti e credenziali restano ai valori attuali.",
+      loading: "Caricamento cronologia…",
+      empty: "Nessuno snapshot salvato",
+      unavailable: "Cronologia non disponibile",
+      entryTitle: ({ version }: { version: string }) => `Ripristina versione ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `Salvato il ${recordedAt}`,
+      restoreConfirmTitle: "Ripristinare le impostazioni?",
+      restoreConfirmBody: "Le preferenze dell'account verranno sostituite con i valori dello snapshot selezionato.",
+      restoreConfirmAction: "Ripristina",
+      restoredTitle: "Impostazioni ripristinate",
+      restoredBody: "Le preferenze dell'account sono state ripristinate dallo snapshot selezionato.",
+      unchangedBody: "Le preferenze attuali dell'account corrispondono già allo snapshot selezionato.",
+      conflictTitle: "Impostazioni modificate",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `Le impostazioni sono cambiate durante il ripristino (versione attuale ${currentVersion}). Non è stato scritto nulla: controlla le impostazioni attuali e riprova.`,
+      outcomeUnknownBody: "Il ripristino potrebbe essere avvenuto o meno. Verifica le impostazioni attuali prima di riprovare.",
+      invalidBody: "Lo snapshot selezionato non può essere ripristinato in sicurezza. Non è stato scritto nulla.",
+      unavailableBody: "Impossibile ripristinare lo snapshot selezionato. Non è stato scritto nulla.",
+    },
     // Account settings screen
     accountInformation: "Informazioni account",
     status: "Stato",

@@ -1,3 +1,5 @@
+import { MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1 } from '@happier-dev/protocol';
+
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 
 type PluginTranscriptActivityTranscriptItem = Extract<
@@ -41,8 +43,6 @@ export type PluginTranscriptActivityLiveRow = Readonly<{
     actions: readonly Readonly<{ pluginId: string; localId: string; label: string | null }>[];
     freshness: 'current' | 'stale';
 }>;
-
-export const MAX_PLUGIN_TRANSCRIPT_ACTIVITY_ROWS_PER_SESSION = 16;
 
 /**
  * JSON preserves the six ownership fields without delimiter collisions. It is
@@ -102,6 +102,7 @@ function sameDerivedItem(
         || left.status !== right.status
         || left.dismissible !== right.dismissible
         || left.freshness !== right.freshness
+        || left.aggregateHiddenCount !== right.aggregateHiddenCount
         || left.progress?.completed !== right.progress?.completed
         || left.progress?.total !== right.progress?.total
         || left.checklist.length !== right.checklist.length
@@ -137,14 +138,16 @@ export function appendPluginTranscriptActivityTranscriptItems(
 ): ChatTranscriptListItem[] {
     const nextItemsByIdentity = new Map<string, PluginTranscriptActivityTranscriptItem>();
     const nextCurrentItemsByIdentity = new Map<string, PluginTranscriptActivityTranscriptItem>();
-    const rows = input.activities
+    const sortedActivities = input.activities
         .filter((activity) => (
             activity.sessionId === input.sessionId
             && !input.dismissedActivityIds.has(buildPluginTranscriptActivityIdentityKey(activity))
         ))
         .slice()
-        .sort(compareActivities)
-        .slice(0, MAX_PLUGIN_TRANSCRIPT_ACTIVITY_ROWS_PER_SESSION)
+        .sort(compareActivities);
+    const concreteActivities = sortedActivities.slice(0, MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1);
+    const hiddenCount = sortedActivities.length - concreteActivities.length;
+    const rows = concreteActivities
         .map((activity): PluginTranscriptActivityTranscriptItem => {
             const identityKey = buildPluginTranscriptActivityIdentityKey(activity);
             const next = {
@@ -166,6 +169,32 @@ export function appendPluginTranscriptActivityTranscriptItems(
             if (activity.freshness === 'current') nextCurrentItemsByIdentity.set(identityKey, item);
             return item;
         });
+    // Keep the aggregate bounded without silently pretending that rows beyond
+    // the Preview cap do not exist. The summary is a truthful, non-dismissable
+    // transcript item; it carries no fake Resource identity or actions.
+    if (hiddenCount > 0) {
+        rows.push({
+            kind: 'plugin-transcript-activity',
+            id: `plugin-transcript-activity:aggregate-overflow:${input.sessionId}`,
+            identityKey: `plugin-transcript-activity:aggregate-overflow:${input.sessionId}`,
+            pluginId: '',
+            contributionId: '',
+            generation: '',
+            sessionId: input.sessionId,
+            resourceId: '',
+            localActivityId: '',
+            phase: 'succeeded',
+            title: '',
+            status: null,
+            progress: null,
+            checklist: [],
+            dismissible: false,
+            actions: [],
+            freshness: 'current',
+            aggregateHiddenCount: hiddenCount,
+            createdAt: 0,
+        });
+    }
     if (input.cache) {
         input.cache.itemsByIdentity = nextItemsByIdentity;
         const staleSourceKeys = new Set(rows.flatMap((row) => (

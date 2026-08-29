@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import {
     captureActiveServerAccountScopeLifetime,
+    type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 
 /**
@@ -19,10 +20,13 @@ import {
  * Provider-owned epoch. `retire` must be stable across renders — the effect
  * re-registers whenever it changes.
  */
-export function useRetireProviderStateOnAccountChange(retire: () => void): void {
+export function useRetireProviderStateOnAccountChange(
+    retire: () => void,
+): ActiveServerAccountScopeLifetime | null {
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     React.useEffect(() => {
         const registration = accountLifetime?.onRetire(retire);
         return () => registration?.dispose();
     }, [accountLifetime, retire]);
+    return accountLifetime;
 }

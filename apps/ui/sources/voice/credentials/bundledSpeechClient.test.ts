@@ -139,7 +139,6 @@ describe('bundled speech selected-daemon client', () => {
       expect(request.payload).toEqual({
         target: { pluginId: 'acme.voice', localId: 'speech-v2' },
         actionId: 'refresh-model',
-        settings: { model: 'acme-speech-v1' },
         expectedSettingsVersion: 7,
       });
       return { ok: true, patch: { model: 'acme-speech-v2' } };
@@ -149,20 +148,28 @@ describe('bundled speech selected-daemon client', () => {
     await expect(client.executeSettingsAction({
       entry: createAcmeSpeechContribution(),
       actionId: 'refresh-model',
-      settings: { model: 'acme-speech-v1' },
       expectedSettingsVersion: 7,
     })).resolves.toEqual({ patch: { model: 'acme-speech-v2' } });
   });
 
   it('uses the same supplied contribution for transcribe and synthesize targets', async () => {
     const rpc = vi.fn(async (request: Readonly<{ method: string; payload: any }>) => {
-      expect(request.payload).toEqual(expect.objectContaining({
-        target: { pluginId: 'acme.voice', localId: 'speech-v2' },
-      }));
       if (request.method === 'daemon.voice.speech.transcribe') {
+        expect(request.payload).toEqual({
+          target: { pluginId: 'acme.voice', localId: 'speech-v2' },
+          requestId: expect.any(String),
+          uploadId: 'upload-1',
+          mimeType: 'audio/wav',
+        });
         return { ok: true, requestId: request.payload.requestId, text: 'acme transcript' };
       }
       if (request.method === 'daemon.voice.speech.synthesize') {
+        expect(request.payload).toEqual({
+          target: { pluginId: 'acme.voice', localId: 'speech-v2' },
+          requestId: expect.any(String),
+          input: 'hello',
+          recipientPublicKeyBase64: 'recipient-public-key',
+        });
         return {
           ok: true,
           requestId: request.payload.requestId,
@@ -182,18 +189,10 @@ describe('bundled speech selected-daemon client', () => {
       source: { kind: 'native', uri: 'file:///recording.wav' },
       mimeType: 'audio/wav',
       fileName: 'recording.wav',
-      model: 'acme-stt',
-      language: 'de',
     })).resolves.toBe('acme transcript');
     await expect(client.synthesize({
       entry: contribution,
       input: 'hello',
-      model: null,
-      voiceName: 'acme-voice',
-      languageCode: 'en',
-      format: 'wav',
-      speakingRate: null,
-      pitch: null,
     })).resolves.toEqual({
       bytes: new Uint8Array([7, 8, 9]),
       mimeType: 'audio/wav',
@@ -242,8 +241,6 @@ describe('bundled speech selected-daemon client', () => {
       source: { kind: 'native', uri: 'file:///recording.wav' },
       mimeType: 'audio/wav',
       fileName: 'recording.wav',
-      model: 'acme-stt',
-      language: 'de',
     })).resolves.toBe('bound transcript');
 
     expect(dispatched.map((entry) => entry.machineId)).toEqual([
@@ -277,8 +274,6 @@ describe('bundled speech selected-daemon client', () => {
       source: { kind: 'native', uri: 'file:///recording.wav' },
       mimeType: 'audio/wav',
       fileName: 'recording.wav',
-      model: 'acme-stt',
-      language: 'de',
       originMachineId: 'machine-attempt',
     })).resolves.toBe('attempt transcript');
 
@@ -326,12 +321,6 @@ describe('bundled speech selected-daemon client', () => {
     await expect(client.synthesize({
       entry: createAcmeSpeechContribution(),
       input: 'hello',
-      model: null,
-      voiceName: 'acme-voice',
-      languageCode: 'en',
-      format: 'wav',
-      speakingRate: null,
-      pitch: null,
     })).resolves.toEqual({ bytes: new Uint8Array([7, 8, 9]), mimeType: 'audio/wav' });
 
     expect(dispatched.map((entry) => entry.machineId)).toEqual([

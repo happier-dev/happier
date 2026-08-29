@@ -414,6 +414,53 @@ describe('SessionAutomationCreateScreen', () => {
         expect(latestComposerProps.value?.extraActionChips).toBeUndefined();
     });
 
+    it('omits hidden and non-resumable Sessions from exact-turn source options', async () => {
+        const ordinaryMetadata = {
+            flavor: 'claude',
+            claudeSessionId: 'claude-ordinary',
+            claudeTranscriptPath: '/tmp/claude-ordinary.jsonl',
+        };
+        storageState.value.sessions = {
+            ...(storageState.value.sessions as Record<string, unknown>),
+            ordinary: {
+                id: 'ordinary',
+                serverId: 'server-1',
+                latestTurnId: 'turn-ordinary',
+                latestTurnStatus: 'in_progress',
+                metadata: ordinaryMetadata,
+            },
+            hidden: {
+                id: 'hidden',
+                serverId: 'server-1',
+                latestTurnId: 'turn-hidden',
+                latestTurnStatus: 'in_progress',
+                metadata: {
+                    ...ordinaryMetadata,
+                    systemSessionV1: { v: 1, key: 'voice_transcript_history', hidden: true },
+                },
+            },
+            nonResumable: {
+                id: 'nonResumable',
+                serverId: 'server-1',
+                latestTurnId: 'turn-non-resumable',
+                latestTurnStatus: 'in_progress',
+                metadata: { flavor: 'claude' },
+            },
+        };
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+        const screen = await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+
+        const editor = screen.find((node) => (
+            node.props.variant === 'embedded'
+            && typeof node.props.value?.pendingAutomationId === 'string'
+        ));
+        expect(editor.props.value).not.toHaveProperty('executionRecipe');
+        expect(editor.props.value).not.toHaveProperty('assignments');
+        expect(editor.props.sessionOptions.map((option: { sessionId: string }) => option.sessionId))
+            .toEqual(['ordinary']);
+    });
+
     it('can create an existing-session automation in a paused state', async () => {
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
@@ -432,6 +479,35 @@ describe('SessionAutomationCreateScreen', () => {
         expect(syncSpies.saveAutomationEditorDraft.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
             enabled: false,
         }));
+    });
+
+    it('establishes the submit fence synchronously before recipe encryption', async () => {
+        let resolveEncryption!: (value: string) => void;
+        const encryption = new Promise<string>((resolve) => {
+            resolveEncryption = resolve;
+        });
+        syncSpies.encryption.encryptAutomationTemplateRaw.mockReturnValueOnce(encryption);
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+
+        await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+        await setComposerText('Do the thing');
+
+        await act(async () => {
+            getComposerProps().onSubmit();
+            getComposerProps().onSubmit();
+            await Promise.resolve();
+        });
+
+        expect(syncSpies.encryption.encryptAutomationTemplateRaw).toHaveBeenCalledTimes(1);
+        expect(syncSpies.saveAutomationEditorDraft).not.toHaveBeenCalled();
+
+        await act(async () => {
+            resolveEncryption('ciphertext-base64');
+            await encryption;
+            await Promise.resolve();
+        });
+        expect(syncSpies.saveAutomationEditorDraft).toHaveBeenCalledTimes(1);
     });
 
     it('seals existingSessionId in the existing-session automation template for the reachable machine target', async () => {
@@ -603,7 +679,14 @@ describe('SessionAutomationCreateScreen', () => {
             latestTurnId: 'turn-9',
             latestTurnStatus: 'in_progress',
             encryptionMode: 'e2ee',
-            metadata: { machineId: 'm1', path: '/tmp/project', homeDir: '/tmp' },
+            metadata: {
+                machineId: 'm1',
+                path: '/tmp/project',
+                homeDir: '/tmp',
+                flavor: 'claude',
+                claudeSessionId: 'claude-session-2',
+                claudeTranscriptPath: '/tmp/claude-session-2.jsonl',
+            },
         };
         storageState.value.sessions = {
             ...(storageState.value.sessions as Record<string, unknown>),
@@ -611,7 +694,7 @@ describe('SessionAutomationCreateScreen', () => {
         };
         const editorElement = screen.find((node) => (
             node.props.variant === 'embedded'
-            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+            && typeof node.props.value?.pendingAutomationId === 'string'
         ));
         const editorDraft = editorElement.props.value;
         await act(async () => {
@@ -683,7 +766,7 @@ describe('SessionAutomationCreateScreen', () => {
 
         const editorElement = screen.find((node) => (
             node.props.variant === 'embedded'
-            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+            && typeof node.props.value?.pendingAutomationId === 'string'
         ));
         const editorDraft = editorElement.props.value;
         await act(async () => {
@@ -857,7 +940,7 @@ describe('SessionAutomationCreateScreen', () => {
         });
         const editorValue = () => screen.find((node) => (
             node.props.variant === 'embedded'
-            && node.props.value?.executionRecipe?.target?.kind === 'existingSession'
+            && typeof node.props.value?.pendingAutomationId === 'string'
         )).props.value;
         expect(editorValue().triggers).toHaveLength(1);
 

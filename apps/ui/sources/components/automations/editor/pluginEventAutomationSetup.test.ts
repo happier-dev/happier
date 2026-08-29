@@ -941,7 +941,7 @@ describe('Plugin Event Automation setup orchestration', () => {
                 pluginId: PLUGIN_ID,
             },
             webhookRoutingSourceInstanceId: 'repository:42',
-            setup: { kind: 'githubAccountEndpointV1', credential: 'serverGenerated' },
+            setup: { kind: 'accountEndpointV1', credential: 'serverGenerated' },
         });
     });
 

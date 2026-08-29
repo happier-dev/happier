@@ -21,6 +21,11 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveNewSessionDraftRouteIdentity } from '@/components/sessions/new/navigation/newSessionDraftRouteIdentity';
 import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import {
+    buildAutomationListSegments,
+    type AutomationListSegment,
+} from '@/components/automations/list/automationListSegmentation';
+import { useAutomationDefinitionPagination } from '@/components/automations/list/useAutomationDefinitionPagination';
 
 /**
  * Accounts can contain high-cardinality Automation catalogs, so the screen
@@ -28,17 +33,10 @@ import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navi
  * instantiating every row. Chunking keeps one logical grouped surface via
  * `virtualizedSegment` rather than introducing a second list presentation.
  */
-const AUTOMATION_ROWS_PER_CHUNK = 8;
-
 type AutomationsScreenRow =
     | Readonly<{ kind: 'refreshError'; key: string }>
-    | Readonly<{
-        kind: 'automationChunk';
-        key: string;
-        automations: ReadonlyArray<ReturnType<typeof useAutomations>[number]>;
-        first: boolean;
-        last: boolean;
-    }>;
+    | (AutomationListSegment<ReturnType<typeof useAutomations>[number]>
+        & Readonly<{ kind: 'automationChunk' }>);
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -66,6 +64,7 @@ export function AutomationsScreen() {
     const [loading, setLoading] = React.useState(true);
     const [refreshFailed, setRefreshFailed] = React.useState(false);
     const runNow = useAutomationRunNowController();
+    const pagination = useAutomationDefinitionPagination();
     const mountedRef = React.useRef(true);
     React.useEffect(() => () => {
         mountedRef.current = false;
@@ -91,14 +90,10 @@ export function AutomationsScreen() {
     const rows = React.useMemo<readonly AutomationsScreenRow[]>(() => {
         const next: AutomationsScreenRow[] = [];
         if (refreshFailed) next.push({ kind: 'refreshError', key: 'refresh-error' });
-        for (let offset = 0; offset < automations.length; offset += AUTOMATION_ROWS_PER_CHUNK) {
-            const chunk = automations.slice(offset, offset + AUTOMATION_ROWS_PER_CHUNK);
+        for (const segment of buildAutomationListSegments(automations)) {
             next.push({
                 kind: 'automationChunk',
-                key: `automations:${chunk[0]!.id}`,
-                automations: chunk,
-                first: offset === 0,
-                last: offset + AUTOMATION_ROWS_PER_CHUNK >= automations.length,
+                ...segment,
             });
         }
         return next;
@@ -154,6 +149,25 @@ export function AutomationsScreen() {
             </View>
         );
     }, [isInvocationCurrent, loading, refresh, refreshFailed, runNow, styles.row, theme]);
+
+    const paginationFooter = pagination.loadingMore ? (
+        <View style={styles.row}>
+            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+        </View>
+    ) : pagination.loadMoreFailed ? (
+        <View style={styles.row}>
+            <ItemGroup>
+                <Item
+                    testID="automations-load-more-retry"
+                    title={t('common.retry')}
+                    icon={<Icon name="arrow-clockwise" size={20} color={theme.colors.accent.blue} />}
+                    onPress={pagination.requestPage}
+                    showChevron={false}
+                    accessibilityRole="button"
+                />
+            </ItemGroup>
+        </View>
+    ) : null;
 
 
     if (loading && automations.length === 0) {
@@ -212,6 +226,11 @@ export function AutomationsScreen() {
                     backendPreference="auto"
                     initialNumToRender={4}
                     ListHeaderComponent={<View style={styles.row}>{automationSettingsEntry}</View>}
+                    ListFooterComponent={paginationFooter}
+                    onEndReached={pagination.hasMore && !pagination.loadingMore && !pagination.loadMoreFailed
+                        ? pagination.requestPage
+                        : undefined}
+                    onEndReachedThreshold={0.35}
                 />
             )}
             {machines.length > 0 ? (

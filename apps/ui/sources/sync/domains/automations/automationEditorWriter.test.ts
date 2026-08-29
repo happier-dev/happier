@@ -119,7 +119,6 @@ function detail(triggers: AutomationDefinitionDetail['triggers']): AutomationDef
         updatedAt: timestamp,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: timestamp }],
         triggers,
-        retiredTriggers: [],
         executionRecipe: recipe,
     };
 }
@@ -201,10 +200,7 @@ describe('saveAutomationEditorDraft', () => {
     });
 
     it('keeps two stable trigger ids across one edit/disable/remove save and the reload that follows it', async () => {
-        const final = {
-            ...detail([scheduleTrigger('schedule-1', 3), lifecycleTrigger('turn-2', 1)]),
-            retiredTriggers: [{ id: triggerId('turn-1'), kind: 'sessionLifecycle' as const, revision: 5, retiredAt: timestamp }],
-        };
+        const final = detail([scheduleTrigger('schedule-1', 3), lifecycleTrigger('turn-2', 1)]);
         vi.mocked(reconcileAutomationDefinition).mockResolvedValue(final);
 
         // One plural-editor save: edit the interval, disable the schedule row,
@@ -252,10 +248,10 @@ describe('saveAutomationEditorDraft', () => {
             { clientId: 'turn-2', persisted: { id: triggerId('turn-2'), revision: 1 } },
         ]);
         expect(reloaded?.removedTriggers).toEqual([]);
-        // The removed row stays retired on the saved bytes and is never
-        // resurrected into the mutable trigger set by the reload.
+        // The removed row is absent from the saved mutable trigger set and is
+        // never resurrected into it by the reload; retired-trigger history
+        // stays Run-owned rather than projected on the definition.
         expect(saved.triggers.some((row) => row.id === 'turn-1')).toBe(false);
-        expect(saved.retiredTriggers.map((row) => row.id)).toEqual([triggerId('turn-1')]);
     });
 
     it('does not rewrite clean persisted triggers while saving Automation metadata', async () => {

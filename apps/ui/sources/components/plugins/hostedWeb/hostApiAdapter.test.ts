@@ -1,8 +1,8 @@
 import type {
     ComposerSnapshotV1,
-    PluginHostedWebCollectionUiQueryBridgeChangeV1,
-    PluginHostedWebCollectionUiQueryBridgeOperationV1,
-    PluginHostedWebCollectionUiQueryBridgeResponseV1,
+    PluginHostedWebAccountDataBridgeChangeV1,
+    PluginHostedWebAccountDataBridgeOperationV1,
+    PluginHostedWebAccountDataBridgeResponseV1,
     PluginHostedWebBridgeEnvelopeV1,
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
@@ -1869,14 +1869,14 @@ describe('hosted web plugin host API adapter', () => {
 
     it('routes Collection UI-query traffic through the ready, current, cancellation-bound hosted bridge', async () => {
         let observedSignal: AbortSignal | undefined;
-        let settleOperation: ((value: PluginHostedWebCollectionUiQueryBridgeResponseV1) => void) | undefined;
-        let publishChange: ((change: PluginHostedWebCollectionUiQueryBridgeChangeV1) => void) | undefined;
+        let settleOperation: ((value: PluginHostedWebAccountDataBridgeResponseV1) => void) | undefined;
+        let publishChange: ((change: PluginHostedWebAccountDataBridgeChangeV1) => void) | undefined;
         const handle = vi.fn((
-            _operation: PluginHostedWebCollectionUiQueryBridgeOperationV1,
+            _operation: PluginHostedWebAccountDataBridgeOperationV1,
             options?: Readonly<{ signal?: AbortSignal }>,
         ) => {
             observedSignal = options?.signal;
-            return new Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>((resolve) => {
+            return new Promise<PluginHostedWebAccountDataBridgeResponseV1>((resolve) => {
                 settleOperation = resolve;
             });
         });
@@ -1892,7 +1892,7 @@ describe('hosted web plugin host API adapter', () => {
                 methods: ['context'],
             },
             postToFrame,
-            createCollectionUiQueryBridge: ({ publish }) => {
+            createAccountDataBridge: ({ publish }) => {
                 publishChange = publish;
                 return { handle, dispose };
             },
@@ -1903,7 +1903,7 @@ describe('hosted web plugin host API adapter', () => {
             uiQueryId: 'open',
             parameters: { status: 'open' },
         };
-        const response: PluginHostedWebCollectionUiQueryBridgeResponseV1 = {
+        const response: PluginHostedWebAccountDataBridgeResponseV1 = {
             kind: 'snapshot',
             queryId: 'query_1',
             snapshot: { status: 'ready', rows: [], hasMore: false },
@@ -1912,7 +1912,7 @@ describe('hosted web plugin host API adapter', () => {
         // The query bridge is not a bootstrap bypass. It remains unavailable
         // until the same ready transition that establishes the canonical host
         // client has completed.
-        await expect(handler(createEnvelope('collectionUiQuery', {
+        await expect(handler(createEnvelope('accountData', {
             kind: 'request',
             operation,
         }))).resolves.toMatchObject({
@@ -1927,7 +1927,7 @@ describe('hosted web plugin host API adapter', () => {
         await handler({ ...createEnvelope('ready', { ready: true }), sequence: 8 });
 
         const cancelled = handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'request',
                 operation,
             }),
@@ -1937,7 +1937,7 @@ describe('hosted web plugin host API adapter', () => {
         expect(observedSignal?.aborted).toBe(false);
 
         await expect(handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'cancel',
                 requestSequence: 9,
             }),
@@ -1949,7 +1949,7 @@ describe('hosted web plugin host API adapter', () => {
         await expect(cancelled).resolves.toMatchObject({ kind: 'ack', requestSequence: 9 });
 
         const completed = handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'request',
                 operation,
             }),
@@ -1966,13 +1966,13 @@ describe('hosted web plugin host API adapter', () => {
         publishChange?.({ kind: 'change', queryId: 'query_1' });
         expect(postToFrame).toHaveBeenLastCalledWith(expect.objectContaining({
             direction: 'hostToFrame',
-            kind: 'collectionUiQuery',
+            kind: 'accountData',
             nonce: 'nonce-1',
             payload: { kind: 'change', queryId: 'query_1' },
         }));
 
         const disposed = handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'request',
                 operation,
             }),
@@ -2008,7 +2008,7 @@ describe('hosted web plugin host API adapter', () => {
                 methods: ['context'],
             },
             postToFrame: vi.fn(),
-            createCollectionUiQueryBridge: () => ({
+            createAccountDataBridge: () => ({
                 handle: async () => ({
                     kind: 'closed',
                     queryId: 'query_1',
@@ -2022,7 +2022,7 @@ describe('hosted web plugin host API adapter', () => {
                 kind: 'ack',
                 payload: {
                     accepted: true,
-                    capabilities: { collectionUiQuery: false },
+                    capabilities: { accountData: false },
                 },
             });
         await expect(withData({ ...createEnvelope('ready', { ready: true }), sequence: 8 }))
@@ -2030,7 +2030,7 @@ describe('hosted web plugin host API adapter', () => {
                 kind: 'ack',
                 payload: {
                     accepted: true,
-                    capabilities: { collectionUiQuery: true },
+                    capabilities: { accountData: true },
                 },
             });
     });
@@ -2038,8 +2038,8 @@ describe('hosted web plugin host API adapter', () => {
     it('delivers terminal disconnect after currentness closes while suppressing a late Collection result', async () => {
         let current = true;
         let observedSignal: AbortSignal | undefined;
-        let settleOperation: ((value: PluginHostedWebCollectionUiQueryBridgeResponseV1) => void) | undefined;
-        let publishChange: ((change: PluginHostedWebCollectionUiQueryBridgeChangeV1) => void) | undefined;
+        let settleOperation: ((value: PluginHostedWebAccountDataBridgeResponseV1) => void) | undefined;
+        let publishChange: ((change: PluginHostedWebAccountDataBridgeChangeV1) => void) | undefined;
         const postToFrame = vi.fn();
         const handler = createPluginHostedWebHostApiBridgeHandler({
             surface,
@@ -2052,10 +2052,10 @@ describe('hosted web plugin host API adapter', () => {
             },
             postToFrame,
             isCurrent: () => current,
-            createCollectionUiQueryBridge: ({ publish }) => {
+            createAccountDataBridge: ({ publish }) => {
                 publishChange = publish;
                 return {
-                    handle: (_operation, options) => new Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>((resolve) => {
+                    handle: (_operation, options) => new Promise<PluginHostedWebAccountDataBridgeResponseV1>((resolve) => {
                         observedSignal = options?.signal;
                         settleOperation = resolve;
                     }),
@@ -2063,13 +2063,13 @@ describe('hosted web plugin host API adapter', () => {
                 };
             },
         });
-        const operation: PluginHostedWebCollectionUiQueryBridgeOperationV1 = {
+        const operation: PluginHostedWebAccountDataBridgeOperationV1 = {
             kind: 'open',
             collectionId: 'tasks',
             uiQueryId: 'open',
             parameters: { status: 'open' },
         };
-        const response: PluginHostedWebCollectionUiQueryBridgeResponseV1 = {
+        const response: PluginHostedWebAccountDataBridgeResponseV1 = {
             kind: 'snapshot',
             queryId: 'query_1',
             snapshot: { status: 'ready', rows: [], hasMore: false },
@@ -2078,7 +2078,7 @@ describe('hosted web plugin host API adapter', () => {
         await handler({ ...createEnvelope('ready', { ready: true }), sequence: 8 });
         postToFrame.mockClear();
         const pending = handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'request',
                 operation,
             }),
@@ -2108,7 +2108,7 @@ describe('hosted web plugin host API adapter', () => {
 
     it('rejects a duplicate Collection outer sequence without replacing the first cancellation owner', async () => {
         let firstSignal: AbortSignal | undefined;
-        let settleFirst: ((value: PluginHostedWebCollectionUiQueryBridgeResponseV1) => void) | undefined;
+        let settleFirst: ((value: PluginHostedWebAccountDataBridgeResponseV1) => void) | undefined;
         let callCount = 0;
         const handler = createPluginHostedWebHostApiBridgeHandler({
             surface,
@@ -2120,12 +2120,12 @@ describe('hosted web plugin host API adapter', () => {
                 methods: ['context'],
             },
             postToFrame: vi.fn(),
-            createCollectionUiQueryBridge: () => ({
+            createAccountDataBridge: () => ({
                 handle: (_operation, options) => {
                     callCount += 1;
                     if (callCount === 1) {
                         firstSignal = options?.signal;
-                        return new Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>((resolve) => {
+                        return new Promise<PluginHostedWebAccountDataBridgeResponseV1>((resolve) => {
                             settleFirst = resolve;
                         });
                     }
@@ -2138,7 +2138,7 @@ describe('hosted web plugin host API adapter', () => {
                 dispose: () => {},
             }),
         });
-        const operation: PluginHostedWebCollectionUiQueryBridgeOperationV1 = {
+        const operation: PluginHostedWebAccountDataBridgeOperationV1 = {
             kind: 'open',
             collectionId: 'tasks',
             uiQueryId: 'open',
@@ -2147,13 +2147,13 @@ describe('hosted web plugin host API adapter', () => {
 
         await handler({ ...createEnvelope('ready', { ready: true }), sequence: 8 });
         const first = handler({
-            ...createEnvelope('collectionUiQuery', { kind: 'request', operation }),
+            ...createEnvelope('accountData', { kind: 'request', operation }),
             sequence: 9,
         });
         await vi.waitFor(() => expect(settleFirst).toBeTypeOf('function'));
 
         await expect(handler({
-            ...createEnvelope('collectionUiQuery', { kind: 'request', operation }),
+            ...createEnvelope('accountData', { kind: 'request', operation }),
             sequence: 9,
         })).resolves.toMatchObject({
             kind: 'error',
@@ -2166,7 +2166,7 @@ describe('hosted web plugin host API adapter', () => {
         expect(firstSignal?.aborted).toBe(false);
 
         await expect(handler({
-            ...createEnvelope('collectionUiQuery', {
+            ...createEnvelope('accountData', {
                 kind: 'cancel',
                 requestSequence: 9,
             }),

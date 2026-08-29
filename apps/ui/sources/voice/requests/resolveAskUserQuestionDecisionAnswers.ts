@@ -1,17 +1,8 @@
-import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+import { buildAgentRequestSemanticSummary } from '@happier-dev/protocol';
 
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 
 type DirectPermissionDecision = 'allow' | 'deny';
-
-type AskUserQuestionOptionLike = Readonly<{
-    label?: unknown;
-}>;
-
-type AskUserQuestionLike = Readonly<{
-    question?: unknown;
-    options?: unknown;
-}>;
 
 const ALLOW_OPTION_PATTERNS = [
     /\byes\b/i,
@@ -37,10 +28,6 @@ const DENY_OPTION_PATTERNS = [
     /\brequest changes\b/i,
 ];
 
-function normalizeText(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
-}
-
 function pickOptionLabel(options: readonly string[], decision: DirectPermissionDecision): string | null {
     const patterns = decision === 'allow' ? ALLOW_OPTION_PATTERNS : DENY_OPTION_PATTERNS;
     for (const option of options) {
@@ -60,21 +47,18 @@ export function resolveAskUserQuestionDecisionAnswers(
     request: PendingPermissionRequest | null | undefined,
     decision: DirectPermissionDecision,
 ): ReadonlyArray<Readonly<{ question: string; values: readonly string[] }>> | null {
-    if (!request || typeof request.tool !== 'string' || !isAskUserQuestionToolName(request.tool)) return null;
-
-    const questions = Array.isArray((request.arguments as { questions?: unknown })?.questions)
-        ? ((request.arguments as { questions: readonly AskUserQuestionLike[] }).questions ?? [])
-        : [];
+    if (!request || typeof request.tool !== 'string') return null;
+    const questions = buildAgentRequestSemanticSummary({
+        kind: 'user_action',
+        toolName: request.tool,
+        toolInput: request.arguments,
+    }).questions;
     if (questions.length === 0) return null;
 
     const answers: Array<Readonly<{ question: string; values: readonly string[] }>> = [];
-    for (const rawQuestion of questions) {
-        const question = normalizeText(rawQuestion?.question);
-        const options = Array.isArray(rawQuestion?.options)
-            ? (rawQuestion.options as readonly AskUserQuestionOptionLike[])
-                  .map((option) => normalizeText(option?.label))
-                  .filter((label) => label.length > 0)
-            : [];
+    for (const questionSummary of questions) {
+        const question = questionSummary.question;
+        const options = questionSummary.choices.map((choice) => choice.label);
         if (!question || options.length === 0) return null;
 
         const answer = pickOptionLabel(options, decision);

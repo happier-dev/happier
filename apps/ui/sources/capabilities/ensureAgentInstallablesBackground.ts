@@ -3,6 +3,7 @@ import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabili
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys } from '@/agents/catalog/catalog';
+import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveInstallablePolicy } from '@happier-dev/protocol/installablesPolicy';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -92,6 +93,7 @@ export async function ensureAgentInstallablesBackground(
         machineId: string;
         serverId?: string | null;
         settings: Settings;
+        pluginSettings?: AgentPluginSettingsSnapshot | null;
         resumeSessionId: string | null;
     }>,
     depsOverrides: Partial<Deps> = {},
@@ -103,10 +105,11 @@ export async function ensureAgentInstallablesBackground(
         loadDaemonMergedProjectionInputs: depsOverrides.loadDaemonMergedProjectionInputs ?? loadDaemonMergedProjectionInputs,
     };
 
-    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, opts.machineId);
+    const experiments = getAgentResumeExperimentsFromSettings(opts.agentId, opts.settings, opts.machineId, opts.pluginSettings);
     const relevantKeys = getNewSessionRelevantInstallableDepKeys({
         agentId: opts.agentId,
         settings: opts.settings,
+        pluginSettings: opts.pluginSettings,
         experiments,
         resumeSessionId: opts.resumeSessionId ?? '',
         // An installed Agent's descriptor is a per-machine fact, and this whole

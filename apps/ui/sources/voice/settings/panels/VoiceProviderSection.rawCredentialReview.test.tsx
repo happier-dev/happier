@@ -11,7 +11,17 @@ import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCred
 import { installVoiceSettingsPanelCommonModuleMocks } from './voiceSettingsPanelTestHelpers';
 import { VoiceCredentialSourceField } from './realtime/VoiceCredentialSourceField';
 
-installVoiceSettingsPanelCommonModuleMocks();
+const settingsBoundary = vi.hoisted(() => ({ settings: null as unknown }));
+
+installVoiceSettingsPanelCommonModuleMocks({
+  storage: async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    return createStorageModuleStub({
+      useSettings: () => settingsBoundary.settings ?? settingsParse({}),
+    });
+  },
+});
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
@@ -23,6 +33,10 @@ vi.mock('@/components/ui/lists/Item', () => ({
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
   DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
+}));
+
+vi.mock('@/voice/credentials/CredentialItem', () => ({
+  VoiceCredentialItem: (props: any) => React.createElement('VoiceCredentialItem', props),
 }));
 
 type RawCredentialSourceFixture =
@@ -196,48 +210,105 @@ describe('VoiceProviderSection raw credential review reachability', () => {
       label: 'raw-only SavedSecret',
       pluginId: 'acme.raw-secret-voice',
       sources: [{ kind: 'savedSecret' }] as const,
-      expectedSavedSecretEntries: 1,
+      selectedSource: 'savedSecret' as const,
+      expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 0,
-      expectedRawCredentialReviews: 1,
+      expectedDirectRawCredentialReviews: 0,
       expectedRawCopy: true,
     },
     {
       label: 'raw Connected Account-only',
       pluginId: 'acme.raw-account-voice',
       sources: [{ kind: 'connectedAccount' }] as const,
-      expectedSavedSecretEntries: 0,
+      selectedSource: 'connectedAccount' as const,
+      expectedSavedSecretRawReviewGrants: 0,
       expectedSourceSelectors: 1,
-      expectedRawCredentialReviews: 1,
+      expectedDirectRawCredentialReviews: 1,
       expectedRawCopy: true,
     },
     {
       label: 'multiple raw sources',
       pluginId: 'acme.raw-multiple-voice',
       sources: [{ kind: 'savedSecret' }, { kind: 'connectedAccount' }] as const,
-      expectedSavedSecretEntries: 1,
+      selectedSource: 'savedSecret' as const,
+      expectedSavedSecretRawReviewGrants: 1,
       expectedSourceSelectors: 1,
-      expectedRawCredentialReviews: 1,
+      expectedDirectRawCredentialReviews: 0,
       expectedRawCopy: true,
     },
     {
       label: 'host-mediated SavedSecret',
       pluginId: 'acme.mediated-secret-voice',
       sources: [{ kind: 'savedSecret', access: 'mediated' }] as const,
-      expectedSavedSecretEntries: 1,
+      selectedSource: 'savedSecret' as const,
+      expectedSavedSecretRawReviewGrants: 0,
       expectedSourceSelectors: 0,
-      expectedRawCredentialReviews: 0,
+      expectedDirectRawCredentialReviews: 0,
       expectedRawCopy: false,
     },
-  ])('keeps the generic review control reachable for a $label declaration without a mediated account slot', async ({
+    {
+      label: 'mediated SavedSecret selected beside a raw Connected Account',
+      pluginId: 'acme.mixed-access-voice',
+      sources: [
+        { kind: 'savedSecret', access: 'mediated' },
+        { kind: 'connectedAccount' },
+      ] as const,
+      selectedSource: 'savedSecret' as const,
+      expectedSavedSecretRawReviewGrants: 0,
+      expectedSourceSelectors: 1,
+      expectedDirectRawCredentialReviews: 0,
+      expectedRawCopy: false,
+    },
+  ])('only renders the generic review control for a selected $label source without a mediated account slot', async ({
     pluginId,
     sources,
-    expectedSavedSecretEntries,
+    selectedSource,
+    expectedSavedSecretRawReviewGrants,
     expectedSourceSelectors,
-    expectedRawCredentialReviews,
+    expectedDirectRawCredentialReviews,
     expectedRawCopy,
   }) => {
     const fixture = await activateRawCredentialOnlyProvider(pluginId, sources);
     onTestFinished(fixture.cleanup);
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const {
+      applyAccountVoiceCredentialSourceSelection,
+      saveAndUseAccountVoiceCredential,
+    } = await import('@/voice/credentials/accountVoiceCredential');
+    settingsBoundary.settings = selectedSource === 'savedSecret'
+      ? saveAndUseAccountVoiceCredential({
+          settings: settingsParse({}),
+          contribution: fixture.contribution,
+          credentialSlotId: fixture.declaration.credentials!.slot.id,
+          expectedSettingsVersion: 0,
+          currentDeclaration: fixture.declaration,
+          machineId: null,
+          value: 'fixture credential',
+          generateId: () => `${pluginId}-secret`,
+          now: 1,
+          expectedSecretId: null,
+          expectedSecretUpdatedAt: null,
+        }).settings
+      : applyAccountVoiceCredentialSourceSelection({
+          settings: settingsParse({}),
+          mutation: {
+            contribution: fixture.contribution,
+            credentialSlotId: fixture.declaration.credentials!.slot.id,
+            selection: {
+              kind: 'connectedAccount',
+              target: {
+                kind: 'account',
+                account: {
+                  service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                  accountId: 'account-a',
+                },
+              },
+            },
+            expectedSettingsVersion: 0,
+          },
+          currentDeclaration: fixture.declaration,
+        }).settings;
+    onTestFinished(() => { settingsBoundary.settings = null; });
 
     const entry = createDefaultVoiceProviderRegistry().get(fixture.providerId);
     if (entry?.kind !== 'voice.conversation-provider.v1') {
@@ -260,17 +331,20 @@ describe('VoiceProviderSection raw credential review reachability', () => {
     />);
 
     const reviews = tree.findAllByType(VoiceRawCredentialAccessReview);
-    expect(reviews).toHaveLength(expectedRawCredentialReviews);
-    if (expectedRawCredentialReviews > 0) {
+    expect(reviews).toHaveLength(expectedDirectRawCredentialReviews);
+    if (expectedDirectRawCredentialReviews > 0) {
       expect(reviews[0]?.props.contribution).toEqual(fixture.contribution);
     }
 
     const savedSecretTestId = `settings.voice.externalCredential.${encodeURIComponent(fixture.providerId)}.${fixture.declaration.credentials?.slot.id}`;
-    const savedSecretEntries = tree.findAllByType('Item' as any).filter(
+    const savedSecretEntries = tree.findAllByType('VoiceCredentialItem' as any).filter(
       (item) => item.props.testID === savedSecretTestId,
     );
     const sourceSelectors = tree.findAllByType(VoiceCredentialSourceField);
-    expect(savedSecretEntries).toHaveLength(expectedSavedSecretEntries);
+    expect(savedSecretEntries).toHaveLength(selectedSource === 'savedSecret' ? 1 : 0);
+    expect(savedSecretEntries[0]?.props.rawCredentialReviewGrants ?? []).toHaveLength(
+      expectedSavedSecretRawReviewGrants,
+    );
     expect(sourceSelectors).toHaveLength(expectedSourceSelectors);
     if (expectedSourceSelectors > 0) {
       expect(sourceSelectors[0]?.props.declaration).toStrictEqual(fixture.declaration);
@@ -285,13 +359,8 @@ describe('VoiceProviderSection raw credential review reachability', () => {
         ? 'settingsVoice.externalCredentials.rawFooter'
         : 'settingsVoice.externalCredentials.footer',
     );
-    const savedCredentialItems = tree.findAll((item) => (
-      item.props.testID === savedSecretTestId
-      && typeof item.props.promptDescription === 'string'
-    ));
-    expect(savedCredentialItems).toHaveLength(expectedSavedSecretEntries);
-    if (expectedSavedSecretEntries > 0) {
-      expect(savedCredentialItems[0]?.props.promptDescription).toBe(
+    if (selectedSource === 'savedSecret') {
+      expect(savedSecretEntries[0]?.props.promptDescription).toBe(
         expectedRawCopy
           ? 'settingsVoice.externalCredentials.rawPromptDescription'
           : 'settingsVoice.externalCredentials.promptDescription',

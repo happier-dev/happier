@@ -16,21 +16,18 @@ import {
 } from '@/sync/domains/settings/sessionAuthoringSelectionPersistence';
 import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionModelProjectionGroup } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
-import {
-    clearAllNewSessionComposerPlacementSeeds,
-    readNewSessionComposerPlacementSeeds,
-    writeNewSessionComposerPlacementSeeds,
-} from '../newSessionComposerPlacementSeedStore';
 import {
     findCheckoutChip as findSelectionListCheckoutChip,
     findCheckoutChipOptionFromChip,
     getCheckoutChipExistingWorktreeIds,
     getCheckoutChipQuickActionIds,
 } from './__tests__/checkoutChipSelectors';
+import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 // This screen-model graph never renders Markdown. Its AgentInput leaf imports
 // the patched third-party streaming utility, which can be absent before the UI
@@ -159,6 +156,7 @@ const persistedDraft = vi.hoisted(() => ({
     backendTarget?: { kind: 'builtInAgent'; agentId: string };
     resumeSessionId?: string | null;
     targetServerId?: string | null;
+    placementCandidates?: readonly PluginUiSessionPlacementCandidateV1[];
     windowsRemoteSessionLaunchModeOverride?: {
         machineId: string;
         mode: 'hidden' | 'windows_terminal' | 'console';
@@ -421,7 +419,9 @@ const activeServerAccountScopeState = vi.hoisted(() => ({
     value: { serverId: 'server-a', accountId: 'account-a' } as import('@/sync/domains/scope/serverAccountScope').ServerAccountScope | null,
 }));
 
-function getMockStorageState() {
+const mockEmptySessions: Record<string, never> = {};
+
+function buildMockStorageState() {
     return {
         settings: attachCurrentSessionAuthoringSelectionsRuntimeProjection({
             ...settingsDefaults,
@@ -429,11 +429,30 @@ function getMockStorageState() {
         }),
         profileScope: activeServerAccountScopeState.value,
         createSessionActionDraft: createSessionActionDraftMock,
-        sessions: {},
+        sessions: mockEmptySessions,
         workspaceLocations: workspaceGraphState.workspaceLocations,
         workspaceCheckouts: workspaceGraphState.workspaceCheckouts,
         machineListByServerId: machineListByServerIdState.value,
     };
+}
+
+// The mocked store must reproduce the real zustand contract: one snapshot identity per
+// generation, replaced only when a writer changes state. Rebuilding the snapshot inside
+// every `getSnapshot` call makes `useSyncExternalStore(storage.subscribe, ...)` treat
+// every commit as a store change and re-render forever instead of settling (the exact
+// fixture contract `createStableStorageReader` in `@/dev/testkit/runtime/storageRuntime`
+// documents). `setMockSettingValue`/`notifyMockStorageSubscribers` invalidate it.
+let mockStorageSnapshot: ReturnType<typeof buildMockStorageState> | null = null;
+
+function getMockStorageState() {
+    if (mockStorageSnapshot === null) {
+        mockStorageSnapshot = buildMockStorageState();
+    }
+    return mockStorageSnapshot;
+}
+
+function invalidateMockStorageSnapshot() {
+    mockStorageSnapshot = null;
 }
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -445,6 +464,7 @@ vi.mock('@/sync/store/hooks', async (importOriginal) => {
 });
 
 function notifyMockStorageSubscribers() {
+    invalidateMockStorageSnapshot();
     for (const listener of Array.from(storageSubscriptionState.listeners)) {
         listener();
     }
@@ -455,11 +475,36 @@ function setMockSettingValue(key: string, valueOrUpdater: unknown): void {
     (settingsState as Record<string, unknown>)[key] = typeof valueOrUpdater === 'function'
         ? (valueOrUpdater as (value: unknown) => unknown)(previous)
         : valueOrUpdater;
+    invalidateMockStorageSnapshot();
     notifyMockStorageSubscribers();
 }
 
-function materializeStorageMachine(input: { id: string; metadata: Record<string, unknown> }) {
-    return createMachineFixture({ id: input.id, metadata: input.metadata as any });
+// Machine fixtures are referentially heavy. Real storage hooks hand back the same
+// record for an unchanged input, so cache fixtures per input-array identity: a test
+// that replaces `activeMachinesState.value` gets fresh fixtures, while every render
+// against the same array reuses them instead of churning derived identity.
+const machineFixturesByInputArray = new WeakMap<object, Array<ReturnType<typeof createMachineFixture>>>();
+
+function materializeStorageMachines(inputs: ReadonlyArray<{ id: string; metadata: Record<string, unknown> }>): Array<ReturnType<typeof createMachineFixture>> {
+    const cached = machineFixturesByInputArray.get(inputs);
+    if (cached) return cached;
+    const fixtures = inputs.map((input) => createMachineFixture({ id: input.id, metadata: input.metadata as any }));
+    machineFixturesByInputArray.set(inputs, fixtures);
+    return fixtures;
+}
+
+const machineListByServerIdFixturesByState = new WeakMap<object, Record<string, unknown>>();
+
+function readMockMachineListByServerId(): Record<string, unknown> {
+    const state = machineListByServerIdState.value;
+    const cached = machineListByServerIdFixturesByState.get(state);
+    if (cached) return cached;
+    const next = Object.fromEntries(Object.entries(state).map(([serverId, machines]) => [
+        serverId,
+        Array.isArray(machines) ? materializeStorageMachines(machines) : machines,
+    ]));
+    machineListByServerIdFixturesByState.set(state, next);
+    return next;
 }
 
 const settingsState = {
@@ -603,14 +648,9 @@ function installNewSessionScreenModelStorageMock() {
     vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-            useAllMachines: () => activeMachinesState.value.map(materializeStorageMachine),
-            useLaunchSelectionMachines: () => activeMachinesState.value.map(materializeStorageMachine),
-            useMachineListByServerId: () => Object.fromEntries(
-                Object.entries(machineListByServerIdState.value).map(([serverId, machines]) => [
-                    serverId,
-                    Array.isArray(machines) ? machines.map(materializeStorageMachine) : machines,
-                ]),
-            ),
+            useAllMachines: () => materializeStorageMachines(activeMachinesState.value),
+            useLaunchSelectionMachines: () => materializeStorageMachines(activeMachinesState.value),
+            useMachineListByServerId: () => readMockMachineListByServerId(),
             useMachineListStatusByServerId: () => ({}),
             storage: Object.assign((selector: (state: ReturnType<typeof getMockStorageState>) => unknown) => React.useSyncExternalStore(
                 (listener: () => void) => {
@@ -666,13 +706,17 @@ function installNewSessionScreenModelStorageMock() {
     });
 }
 
-vi.mock('@/sync/domains/state/persistence', async (importOriginal) => {
+// The screen model now owns persisted New Session reads/writes through the
+// synchronized draft repository adapter. Keep this large screen-model fixture at
+// that boundary: repository merge/currentness behavior has its own owner tests,
+// while every assertion below continues to inspect the exact draft projected by
+// the real authoring model.
+vi.mock('@/components/sessions/composer/newSessionDraftRepositoryAdapter', async (importOriginal) => {
     const actual = await importOriginal<any>();
     return {
         ...actual,
-        loadNewSessionDraft: () => loadNewSessionDraftMock(),
-        saveNewSessionDraft: (draft: unknown) => saveNewSessionDraftMock(draft),
-        clearNewSessionDraft: () => clearNewSessionDraftMock(),
+        readNewSessionDraftFromRepository: () => loadNewSessionDraftMock(),
+        writeNewSessionAuthoringDraftToRepository: ({ draft }: { draft: unknown }) => saveNewSessionDraftMock(draft),
     };
 });
 
@@ -1079,12 +1123,11 @@ async function runFocusEffects(): Promise<Array<void | (() => void)>> {
 
 describe('useNewSessionScreenModel (draft hydration)', () => {
     afterEach(() => {
-        clearAllNewSessionComposerPlacementSeeds();
         standardCleanup();
+        resetSessionDraftRepositoryForTests();
     });
 
     beforeEach(() => {
-        clearAllNewSessionComposerPlacementSeeds();
         clearDaemonMergedProjectionCacheForTests();
         machineContributionRegistryProjectionDescribeMock.mockReset();
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
@@ -1102,6 +1145,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         interactionQueueState.callbacks = [];
         focusEffectRef.current = [];
         activeServerAccountScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
+        delete persistedDraft.placementCandidates;
         builtInProfileMockState.defaultProfiles.splice(0);
         builtInProfileMockState.profilesById.clear();
         routerPushMock.mockClear();
@@ -1286,6 +1330,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 pendingRemoved: 0,
             },
         } as any;
+        invalidateMockStorageSnapshot();
         storageSubscriptionState.listeners.clear();
         createSessionActionDraftMock.mockClear();
     });
@@ -2068,7 +2113,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             reachable: true,
             worktrees: [],
         }] as const;
-        writeNewSessionComposerPlacementSeeds(draftId, { candidates });
+        persistedDraft.placementCandidates = candidates;
 
         let model: any = null;
         const hook = await renderNewSessionScreenModel((nextModel) => {
@@ -2096,7 +2141,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             machineId: 'machine-web',
             directory: '/worktrees/web',
         });
-        expect(readNewSessionComposerPlacementSeeds(draftId)).toBeNull();
+        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            placementCandidates: [],
+            targetServerId: 'server-web',
+            selectedMachineId: 'machine-web',
+            selectedPath: '/worktrees/web',
+            executionTarget: { serverId: 'server-web', machineId: 'machine-web' },
+        }));
         await settleNewSessionScreenModel();
         expect(model?.simpleProps?.agentInputExtraActionChips?.find(
             (entry: any) => entry?.key === 'new-session-seeded-placement',

@@ -39,6 +39,7 @@ import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 
@@ -130,7 +131,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [sessionId, sessionRecord, sessionRenderable, sessions]);
     const currentSessionMetadata = React.useMemo(() => {
         if (sessionRecord) return readSessionOwnerMetadataView(sessionRecord);
-        if ((sessionRenderable?.metadataLayoutVersion ?? 0) !== 0) return null;
+        if (readSessionMetadataLayoutVersion(sessionRenderable?.metadataLayoutVersion) !== 0) return null;
         return sessionRenderable?.metadata ?? null;
     }, [sessionRecord, sessionRenderable]);
     const resolvedSourceMachineId = React.useMemo(

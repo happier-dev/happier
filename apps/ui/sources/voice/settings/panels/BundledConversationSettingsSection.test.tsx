@@ -56,6 +56,7 @@ installVoiceSettingsPanelCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         const snapshot = () => ({
+            settingsVersion: canonicalAccountSettings.version,
             settings: {
                 voice: canonicalAccountSettings.voice,
             },
@@ -108,9 +109,8 @@ vi.mock('@/voice/credentials/bundledConversationClient', () => ({
       || providerId === 'acme.multi/multi-conversation'
     ) return {
       settingsDescriptor: {
-        kind: 'voice.internal.realtime-settings.v1',
-        providerId,
-        mode: 'byo',
+        kind: 'voice.provider-settings.v1',
+        modes: ['byo'],
         credential: {
           kind: 'api_key',
           catalog: null,
@@ -133,8 +133,7 @@ vi.mock('@/voice/credentials/bundledConversationClient', () => ({
     if (providerId !== 'happier.voice.elevenlabs/realtime-elevenlabs') return null;
     const contribution = {
     settingsDescriptor: {
-      kind: 'voice.internal.conversation-settings.v1',
-      providerId: 'happier.voice.elevenlabs/realtime-elevenlabs',
+      kind: 'voice.provider-settings.v1',
       modes: ['happier', 'byo'],
       titleKey: 'settingsVoice.byo.title',
       footerKey: 'settingsVoice.byo.provisioningGroupFooter',
@@ -339,18 +338,6 @@ describe('BundledConversationSettingsSection', () => {
           subtitleKey: 'Connected conversation subtitle',
           configPatch: {},
         }],
-        createSettingsSection: () => ({
-          kind: 'voice.internal.realtime-settings.v1',
-          providerId,
-          mode: 'byo',
-          credential: {
-            kind: 'api_key',
-            catalog: null,
-            credentialPurpose: 'voice.client-auth',
-          },
-          links: {},
-          fields: [],
-        }),
       }],
     }).get(providerId);
     if (!descriptor) throw new Error('expected connected conversation descriptor');
@@ -414,18 +401,6 @@ describe('BundledConversationSettingsSection', () => {
           subtitleKey: 'Multi-source conversation subtitle',
           configPatch: {},
         }],
-        createSettingsSection: () => ({
-          kind: 'voice.internal.realtime-settings.v1',
-          providerId,
-          mode: 'byo',
-          credential: {
-            kind: 'api_key',
-            catalog: null,
-            credentialPurpose: 'voice.client-auth',
-          },
-          links: {},
-          fields: [],
-        }),
       }],
     }).get(providerId);
     if (!descriptor) throw new Error('expected multi-source conversation descriptor');

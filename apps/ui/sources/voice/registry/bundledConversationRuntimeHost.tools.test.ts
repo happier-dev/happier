@@ -1,8 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   getActionSpec,
   isVoiceSdkSafeActionSpec,
+  listVoiceToolActionSpecs,
 } from '@happier-dev/protocol';
 
 import { storage } from '@/sync/domains/state/storage';
@@ -11,6 +12,35 @@ import { resolveEnabledVoiceToolActionSpecsFromState } from '@/voice/tools/resol
 import { createBundledConversationRuntimeHostLease } from './bundledConversationRuntimeHost';
 
 describe('bundled Conversation runtime host tool projection', () => {
+  let previousSettings: ReturnType<typeof storage.getState>['settings'];
+
+  beforeEach(() => {
+    previousSettings = storage.getState().settings;
+    storage.setState((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        experiments: true,
+        featureToggles: {
+          ...current.settings.featureToggles,
+          voice: true,
+        },
+        voice: {
+          ...current.settings.voice,
+          privacy: {
+            ...current.settings.voice.privacy,
+            currentUiContextMode: 'on_demand',
+            shareDeviceInventory: true,
+          },
+        },
+      },
+    }));
+  });
+
+  afterEach(() => {
+    storage.setState((current) => ({ ...current, settings: previousSettings }));
+  });
+
   it('projects current UI read and effect capabilities only from the local AppShell port and only with stable effect custody', () => {
     const withoutPort = createBundledConversationRuntimeHostLease();
     const withPort = createBundledConversationRuntimeHostLease({
@@ -173,6 +203,72 @@ describe('bundled Conversation runtime host tool projection', () => {
     lease.revoke();
     await expect(tool.execute({})).rejects.toThrow('voice_runtime_generation_revoked');
     expect(readCurrentUiContext).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks Voice inventory privacy before executing a captured direct read', async () => {
+    const previousSettings = storage.getState().settings;
+    const lease = createBundledConversationRuntimeHostLease();
+    const tool = lease.host.getRealtimeClientToolDefinitions({
+      effectCalls: 'none',
+      exposure: 'voice_assistant',
+    }).find((candidate) => candidate.name === 'listMachines');
+    if (!tool) throw new Error('Expected listMachines direct read');
+
+    try {
+      storage.setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          voice: {
+            ...current.settings.voice,
+            privacy: {
+              ...current.settings.voice.privacy,
+              shareDeviceInventory: false,
+            },
+          },
+        },
+      }) as never);
+
+      await expect(tool.execute({})).rejects.toThrow('voice_action_unavailable');
+    } finally {
+      lease.revoke();
+      storage.setState((current) => ({ ...current, settings: previousSettings }) as never);
+    }
+  });
+
+  it('rechecks Action surface enablement before executing a captured direct read', async () => {
+    const previousSettings = storage.getState().settings;
+    const spec = listVoiceToolActionSpecs().find(
+      (candidate) => String(candidate.bindings?.voiceClientToolName ?? '').trim() === 'listMachines',
+    );
+    if (!spec) throw new Error('Expected listMachines ActionSpec');
+    const lease = createBundledConversationRuntimeHostLease();
+    const tool = lease.host.getRealtimeClientToolDefinitions({
+      effectCalls: 'none',
+      exposure: 'voice_assistant',
+    }).find((candidate) => candidate.name === 'listMachines');
+    if (!tool) throw new Error('Expected listMachines direct read');
+
+    try {
+      storage.setState((current) => ({
+        ...current,
+        settings: {
+          ...current.settings,
+          actionsSettingsV1: {
+            v: 1,
+            actions: {
+              ...(current.settings.actionsSettingsV1?.actions ?? {}),
+              [spec.id]: { disabledSurfaces: ['voice'] },
+            },
+          },
+        },
+      }) as never);
+
+      await expect(tool.execute({})).rejects.toThrow('voice_action_unavailable');
+    } finally {
+      lease.revoke();
+      storage.setState((current) => ({ ...current, settings: previousSettings }) as never);
+    }
   });
   it('narrows the canonical Action projection to the current-UI tools for a current-UI-only exposure', () => {
     const lease = createBundledConversationRuntimeHostLease({

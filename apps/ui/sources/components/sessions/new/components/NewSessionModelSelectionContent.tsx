@@ -2,7 +2,10 @@ import * as React from 'react';
 import { View, type View as RNView } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProviderErrorV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
-import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
+import type {
+    DaemonProviderCurrentSelectionRecoveryV1,
+    DaemonProviderModelProjectionRefreshFailureV1,
+} from '@happier-dev/protocol/rpc';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -61,6 +64,7 @@ export type NewSessionModelSelectionContentProps = Readonly<{
     providerGroups?: readonly SessionModelProjectionGroup[];
     providerProjectionAuthoritative: boolean;
     providerProjectionError?: ProviderErrorV1 | null;
+    providerProjectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProviderProjection?: (() => Promise<void> | void) | null;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
@@ -215,6 +219,7 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
             providerGroups={providerGroups}
             providerProjectionAuthoritative={props.providerProjectionAuthoritative}
             projectionError={props.providerProjectionError}
+            projectionFailures={props.providerProjectionFailures}
             retryProjection={props.retryProviderProjection}
             currentSelectionRecovery={props.currentSelectionRecovery}
             hiddenNativeModelKeys={props.hiddenNativeModelKeys}

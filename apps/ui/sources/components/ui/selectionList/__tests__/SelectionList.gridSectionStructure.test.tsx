@@ -176,6 +176,12 @@ function ancestorRoles(node: Node, stopAtTestId: string): ReadonlyArray<string> 
     return found;
 }
 
+function directRoleChildren(node: Node): ReadonlyArray<string> {
+    return node.children
+        .filter((child): child is Node => typeof child !== 'string' && isRoleHost(child))
+        .map((child) => child.props.role as string);
+}
+
 function expectHeaderIsAnExposedGridRow(
     screen: Screen,
     sectionId: string,
@@ -191,6 +197,9 @@ function expectHeaderIsAnExposedGridRow(
     expect(header?.props['aria-colspan']).toBe(
         declaredColumnCount > 1 ? declaredColumnCount : undefined,
     );
+    const headerRow = header!.parent as Node;
+    expect(headerRow.props.role).toBe('row');
+    expect(directRoleChildren(headerRow)).toEqual(['columnheader']);
     expect(ancestorRoles(header!, 'sl:body')).toEqual(['row']);
 }
 
@@ -213,7 +222,7 @@ describe('SelectionList — a columned grid owns nothing but rows', () => {
     it('exposes each section header as a full-width header row of the grid', async () => {
         const { SelectionList } = await import('../SelectionList');
         const screen = await renderScreen(
-            <SelectionList {...defaultProps({ columns: { max: 2, minColumnWidthPx: 250 } })} />,
+            <SelectionList {...defaultProps({ columns: { max: 2, minColumnWidthPx: 250 }, selectedOptionId: 'fav-0' })} />,
         );
         await measureContainer(screen, TWO_COLUMN_WIDTH_PX);
 
@@ -224,7 +233,10 @@ describe('SelectionList — a columned grid owns nothing but rows', () => {
         expectHeaderIsAnExposedGridRow(screen, 'favorites', 2);
         expectHeaderIsAnExposedGridRow(screen, 'models', 2);
         // Two sections of two options at two columns: header, row, header, row.
-        expect(rows(screen)).toHaveLength(4);
+        const gridRows = rows(screen);
+        expect(gridRows).toHaveLength(4);
+        expect(directRoleChildren(gridRows[1]!)).toEqual(['gridcell', 'gridcell']);
+        expect(gridRows[1]!.findAll((node) => node.props.role === 'gridcell').map((node) => node.props['aria-selected'])).toEqual([true, false]);
         expectContiguousRowNumbering(screen);
     });
 

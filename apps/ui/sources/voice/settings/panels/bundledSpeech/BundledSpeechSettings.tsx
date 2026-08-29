@@ -16,6 +16,7 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
+import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 import { shouldUseVoiceCredentialSourceMutationForSavedSecret } from '@/voice/credentials/accountVoiceCredential';
@@ -218,6 +219,29 @@ function BundledSpeechSettings(props: Readonly<{
   const credentialHasSavedSecret = credentialDeclaration?.sources.some(
     (source) => source.kind === 'savedSecret',
   ) === true;
+  const selectedConnectedService = credentialSourceStatus?.selection.kind === 'connectedAccount'
+    ? credentialSourceStatus.selection.target.kind === 'account'
+      ? credentialSourceStatus.selection.target.account.service
+      : credentialSourceStatus.selection.target.service
+    : null;
+  const selectedRawSpeechGrants = credentialDeclaration?.sources.flatMap((source) => {
+      if (credentialSourceStatus?.selection.kind === 'savedSecret') {
+        return source.kind === 'savedSecret'
+          ? source.rawGrants?.filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech') ?? []
+          : [];
+      }
+      if (source.kind !== 'connectedAccount' || selectedConnectedService === null) return [];
+      const service = typeof source.service === 'string'
+        ? { pluginId: props.descriptor.contribution.pluginId, localId: source.service }
+        : source.service;
+      if (
+        service.pluginId !== selectedConnectedService.pluginId
+        || service.localId !== selectedConnectedService.localId
+      ) return [];
+      return source.rawGrants?.filter((grant) => (
+          grant.realm === 'daemon' && grant.phase === 'speech'
+        )) ?? [];
+    }) ?? [];
   const credentialSourceVisible = credentialDeclaration?.sources.some(
     (source) => source.kind === 'connectedAccount',
   ) === true;
@@ -296,6 +320,14 @@ function BundledSpeechSettings(props: Readonly<{
         onStatusChanged={onCredentialStatusChanged}
         onChanged={() => setCatalogRefreshRevision((current) => current + 1)}
       /> : null}
+      {selectedRawSpeechGrants.map((rawGrant, index) => (
+        <VoiceRawCredentialAccessReview
+          key={JSON.stringify(rawGrant)}
+          contribution={props.descriptor.contribution}
+          rawGrant={rawGrant}
+          testID={`settings.voice.speechCredential.${encodeURIComponent(props.descriptor.providerId)}.rawAccess${index === 0 ? '' : `.${index}`}`}
+        />
+      ))}
       {props.descriptor.fields.map((field) => {
         const value = config[field.key];
         if (field.kind === 'text') {
@@ -627,16 +659,10 @@ export function createBundledLocalTtsProviderSpec(
       const result = await bundledSpeechDaemonClient.synthesize({
         entry,
         input: sample,
-        model: requestSettings.model,
-        voiceName: requestSettings.voiceName,
-        languageCode: typeof config.languageCode === 'string' ? config.languageCode : null,
-        format: config.format === 'wav' ? 'wav' : 'mp3',
-        speakingRate: typeof config.speakingRate === 'number' ? config.speakingRate : null,
-        pitch: typeof config.pitch === 'number' ? config.pitch : null,
       });
       await playAudioBytesWithStopper({
         bytes: result.bytes.buffer.slice(result.bytes.byteOffset, result.bytes.byteOffset + result.bytes.byteLength) as ArrayBuffer,
-        format: config.format === 'wav' ? 'wav' : 'mp3',
+        format: result.mimeType === 'audio/wav' ? 'wav' : 'mp3',
         registerPlaybackStopper: () => () => {},
       });
     },

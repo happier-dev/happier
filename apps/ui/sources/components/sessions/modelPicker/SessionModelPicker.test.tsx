@@ -342,6 +342,42 @@ describe('SessionModelPicker', () => {
         expect(retryProjection).toHaveBeenCalledOnce();
     });
 
+    it('presents every connection refresh failure through the same retry owner', async () => {
+        const retryProjection = vi.fn(async () => {});
+        const failures = [
+            {
+                connectionId: ProviderConnectionIdSchema.parse('pc_secret'),
+                error: createProviderErrorV1('provider_secret_missing', {
+                    machineId: 'machine-a', connectionId: 'pc_secret',
+                }),
+            },
+            {
+                connectionId: ProviderConnectionIdSchema.parse('pc_endpoint'),
+                error: createProviderErrorV1('provider_endpoint_unavailable', {
+                    machineId: 'machine-a', connectionId: 'pc_endpoint',
+                }),
+            },
+        ] as const;
+        const screen = await renderScreen(
+            <SessionModelPicker
+                agentTargetKey="backend:codex"
+                nativeModels={[]}
+                providerGroups={[]}
+                providerProjectionAuthoritative
+                projectionFailures={failures}
+                retryProjection={retryProjection}
+                selected={null}
+                effectiveLabel="Automatic"
+                onSelect={() => {}}
+            />,
+        );
+
+        const errorItems = screen.findAllByType(ProviderErrorItems.type);
+        expect(errorItems.map((item) => item.props.error)).toEqual(failures.map((failure) => failure.error));
+        await act(async () => { await errorItems[1]!.props.retry(); });
+        expect(retryProjection).toHaveBeenCalledOnce();
+    });
+
     it('projects exact favorites as the first canonical section and keeps unavailable favorites removable', async () => {
         const available = {
             agentTargetKey: 'backend:codex',

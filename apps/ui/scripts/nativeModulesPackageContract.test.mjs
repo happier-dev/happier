@@ -597,8 +597,11 @@ test('terminal-native declares Expo module metadata and gated package surface', 
         'ios/Vendor/NOTICE.md',
         'ios/Vendor/LICENSE-libghostty-spm.txt',
         'android/build.gradle',
+        'android/consumer-rules.pro',
         'android/src',
-        'android/termux',
+        'android/termux/adapter-src',
+        'android/termux/NOTICE.md',
+        'android/termux/distribution',
         'scripts',
         'expo-module.config.json',
         'package.json',
@@ -660,11 +663,34 @@ test('terminal-native declares Expo module metadata and gated package surface', 
     }
 });
 
+test('terminal-native package excludes materialized native inputs while retaining adapter and license assets', async () => {
+    const terminalPackageRoot = join(repoRoot, 'packages', 'terminal-native');
+    const { stdout } = await execFile('npm', ['pack', '--dry-run', '--json'], {
+        cwd: terminalPackageRoot,
+        maxBuffer: 16 * 1024 * 1024,
+    });
+    const [pack] = JSON.parse(stdout);
+    const paths = new Set(pack.files.map((entry) => entry.path));
+
+    assert.equal(
+        [...paths].some((path) => path.startsWith('android/termux/vendor/')),
+        false,
+        'ignored Termux source must be materialized during native prebuild, not redistributed in the workspace tarball',
+    );
+    assert.equal(
+        [...paths].some((path) => path.includes('GhosttyKit.xcframework')),
+        false,
+        'the pinned Ghostty binary must be materialized during native prebuild, not redistributed in the workspace tarball',
+    );
+    assert.ok([...paths].some((path) => path.startsWith('android/termux/adapter-src/')));
+    assert.ok(paths.has('android/termux/distribution/LICENSE-APACHE-2.0.txt'));
+    assert.ok(paths.has('android/termux/distribution/NOTICE.txt'));
+});
+
 test('terminal-native records native renderer supply-chain gates', async () => {
     const terminalPackageRoot = join(repoRoot, 'packages', 'terminal-native');
     const rendererPolicy = await readJson(join(terminalPackageRoot, 'native-renderers.json'));
     const capturePolicy = await readJson(join(terminalPackageRoot, 'device-evidence-capture-authorities.json'));
-    const releaseApprovalPolicy = await readJson(join(terminalPackageRoot, 'release-approval-authorities.json'));
 
     assert.equal(capturePolicy.schemaVersion, 2);
     assert.deepEqual(
@@ -687,12 +713,6 @@ test('terminal-native records native renderer supply-chain gates', async () => {
         }],
         'capture authority must remain bounded to the approved internal-QA builds and validity window',
     );
-    assert.deepEqual(
-        releaseApprovalPolicy,
-        { schemaVersion: 1, authorities: [] },
-        'internal QA capture authority must never grant Android legal/product release approval',
-    );
-
     assert.equal(rendererPolicy.iosGhostty.renderer, 'ios-ghosttykit');
     assert.equal(rendererPolicy.iosGhostty.integration, 'expo-module-libghostty-spm-vendored-xcframework');
     assert.equal(rendererPolicy.iosGhostty.artifact.path, 'ios/Vendor/GhosttyKit.xcframework');
@@ -741,6 +761,10 @@ test('terminal-native records native renderer supply-chain gates', async () => {
 	assert.equal(rendererPolicy.androidTermux.license.scope, 'terminal-view-and-terminal-emulator-exception-only');
 	assert.equal(rendererPolicy.androidTermux.license.fullTermuxAppLicense, 'GPL-3.0-only');
 	assert.equal(rendererPolicy.androidTermux.license.bundleFullTermuxApp, false);
+	assert.equal(rendererPolicy.androidTermux.license.redistributionLicensePath, 'android/termux/distribution/LICENSE-APACHE-2.0.txt');
+	assert.equal(rendererPolicy.androidTermux.license.redistributionLicenseSha256, 'a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2');
+	assert.equal(rendererPolicy.androidTermux.license.redistributionNoticePath, 'android/termux/distribution/NOTICE.txt');
+	assert.equal(rendererPolicy.androidTermux.license.redistributionNoticeSha256, '7b620f17bed368d6ffe6736b523aae0dcee22dd56fe5f40428811b64b71d6b9a');
     assert.equal(rendererPolicy.androidTermux.interactionModel.kind, 'happier-owned-remote-session-adapter');
     assert.deepEqual(rendererPolicy.androidTermux.interactionModel.uses, [
         'TerminalEmulator',
@@ -757,7 +781,8 @@ test('terminal-native records native renderer supply-chain gates', async () => {
     assert.ok(rendererPolicy.androidTermux.interactionModel.completedDeviceQa.includes('renderer-crash-event'));
     assert.deepEqual(rendererPolicy.androidTermux.interactionModel.remainingGaps, []);
     assert.deepEqual(rendererPolicy.androidTermux.interactionModel.requiresDeviceQa, []);
-    assert.ok(rendererPolicy.androidTermux.gates.includes('legal-product-approval'));
+    assert.equal(rendererPolicy.androidTermux.gates.includes('legal-product-approval'), false);
+    assert.match(rendererPolicy.androidTermux.complianceBoundary.releaseSemantics, /no separate legal-approval build flag/);
     assert.ok(rendererPolicy.androidTermux.gates.includes('custom-accessibility-model-or-webview-accessible-fallback'));
 });
 
@@ -1108,7 +1133,6 @@ test('terminal-native Android availability gates are actionable and keep accessi
 
     for (const gate of [
         'HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED',
         'HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN',
@@ -1269,20 +1293,11 @@ test('EAS build install scopes include active first-party native Expo modules', 
     }
 });
 
-test('EAS profiles include terminal-native without self-asserting external release gates', async () => {
+test('EAS profiles include terminal-native with validated shared gates and no approval-record flags', async () => {
     const easJsonPath = join(appRoot, 'eas.json');
     const easJson = await readJson(easJsonPath);
-    const externalReleaseGates = [
-        'HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED',
-        'HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN',
-        'HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN',
-        'HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE',
-    ];
+    const rendererPolicy = await readJson(join(repoRoot, 'packages', 'terminal-native', 'native-renderers.json'));
+    const buildDefaults = rendererPolicy.buildDefaults;
 
     for (const profileId of Object.keys(easJson?.build ?? {})) {
         const env = resolveEasBuildProfileEnv({ easJsonPath, profileId });
@@ -1291,17 +1306,16 @@ test('EAS profiles include terminal-native without self-asserting external relea
             `Expected EAS profile ${profileId} to install terminal-native`,
         );
         assert.equal(env.HAPPIER_ENABLE_TERMINAL_NATIVE, '1');
-        for (const gate of externalReleaseGates) {
-            assert.equal(
-                env[gate],
-                undefined,
-                `EAS profile ${profileId} must not self-assert external release gate ${gate}`,
-            );
+        for (const [gate, value] of Object.entries(buildDefaults.env)) {
+            assert.equal(env[gate], value, `EAS profile ${profileId} must inherit validated native gate ${gate}=${value}`);
         }
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED, undefined);
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA, undefined);
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE, undefined);
     }
 });
 
-test('every EAS profile classifies terminal-native engineering QA with an explicit internal-only allowlist', async () => {
+test('every EAS profile classifies terminal-native crash-injection QA with an explicit internal-only allowlist', async () => {
     const easJsonPath = join(appRoot, 'eas.json');
     const easJson = await readJson(easJsonPath);
     const rendererPolicy = await readJson(join(repoRoot, 'packages', 'terminal-native', 'native-renderers.json'));
@@ -1310,6 +1324,9 @@ test('every EAS profile classifies terminal-native engineering QA with an explic
     );
     const expectedByProfile = {
         base: false,
+        // The carrier is directly runnable by EAS, so it must classify itself as
+        // internal instead of relying on a child profile to supply APP_ENV.
+        'internal-native-gates': true,
         internaldev: true,
         'internaldev-dev-client': true,
         'internaldev-native-ssh': true,
@@ -1339,9 +1356,41 @@ test('every EAS profile classifies terminal-native engineering QA with an explic
             expectedAllowed,
             `Unexpected terminal-native engineering-QA classification for EAS profile ${profileId}`,
         );
-        if (!expectedAllowed) {
-            assert.notEqual(env.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED, '1');
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED, undefined);
+        assert.equal(env.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA, undefined);
+    }
+});
+
+test('every EAS profile inherits the exact validated native gates from base', async () => {
+    const easJsonPath = join(appRoot, 'eas.json');
+    const easJson = await readJson(easJsonPath);
+    const rendererPolicy = await readJson(join(repoRoot, 'packages', 'terminal-native', 'native-renderers.json'));
+    const buildDefaults = rendererPolicy.buildDefaults;
+    const gates = Object.keys(buildDefaults.env);
+
+    assert.equal(buildDefaults.profileId, 'base');
+    const baseEnv = resolveEasBuildProfileEnv({ easJsonPath, profileId: 'base' });
+    for (const [gate, value] of Object.entries(buildDefaults.env)) {
+        assert.equal(baseEnv[gate], value, `base must encode validated native gate ${gate}=${value}`);
+    }
+
+    for (const profileId of Object.keys(easJson.build)) {
+        const env = resolveEasBuildProfileEnv({ easJsonPath, profileId });
+        for (const gate of gates) {
+            assert.equal(
+                env[gate],
+                buildDefaults.env[gate],
+                `EAS profile ${profileId} must inherit ${gate}=${buildDefaults.env[gate]}`,
+            );
         }
+        // iOS stays accessibility fallback-required on every profile: physical
+        // VoiceOver/hardware-key proof remains an external hold, so Auto keeps
+        // the accessible xterm WebView while a screen reader is active.
+        assert.equal(
+            env.HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE,
+            undefined,
+            `EAS profile ${profileId} must leave iOS accessibility-native unset so active screen readers keep xterm`,
+        );
     }
 });
 

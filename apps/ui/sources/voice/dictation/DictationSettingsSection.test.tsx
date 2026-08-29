@@ -11,6 +11,7 @@ import {
   removeExternalVoiceProviderRegistration,
 } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { createVoiceProviderRegistry } from '@/voice/registry/providerRegistry';
+import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,6 +23,7 @@ const nativeModelReadiness = vi.hoisted(() => ({
   read: vi.fn(),
 }));
 const providerFocus = vi.hoisted(() => vi.fn());
+const rawCredentialReadiness = vi.hoisted(() => vi.fn(async () => 'ready' as const));
 
 installVoiceSettingsPanelCommonModuleMocks({
   reactNative: async () => {
@@ -56,6 +58,13 @@ vi.mock('@/text', () => ({
   t: (key: string) => key,
   tLoose: (key: string) => key,
 }));
+vi.mock('@/voice/credentials/rawCredentialAuthorizationClient', () => ({
+  inspectRawCredentialAuthorizationReadiness: rawCredentialReadiness,
+  rawCredentialAuthorizationClient: {
+    inspect: vi.fn(async () => { throw new Error('unavailable'); }),
+    request: vi.fn(async () => { throw new Error('unavailable'); }),
+  },
+}));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
   ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
   ItemGroupSelectionContext: React.createContext(null),
@@ -87,6 +96,7 @@ vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(),
 }));
 vi.mock('@/sync/store/hooks', () => ({
+  useSettingsVersion: () => 1,
   useLocalSetting: (key: string) => {
     if (key === 'uiItemDensity') return 'comfortable';
     if (key === 'uiFontScale') return 1;
@@ -661,7 +671,7 @@ describe('DictationSettingsSection', () => {
   it('reprojects checked credential readiness after the selected secret is removed', async () => {
     const { DictationSettingsSection } = await import('./DictationSettingsSection');
     const { settingsParse } = await import('@/sync/domains/settings/settings');
-    const { upsertAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
+    const { saveAndUseAccountVoiceCredential } = await import('@/voice/credentials/accountVoiceCredential');
     const voice = {
       ...voiceSettingsDefaults,
       dictation: {
@@ -673,10 +683,15 @@ describe('DictationSettingsSection', () => {
         },
       },
     };
-    const ready = upsertAccountVoiceCredential({
+    const declaration = createDefaultVoiceProviderRegistry()
+      .get('happier.voice.google/gemini-stt')?.declaration;
+    if (declaration?.kind !== 'speech') throw new Error('Expected Gemini STT declaration');
+    const ready = saveAndUseAccountVoiceCredential({
       settings: settingsParse({ voice }),
       contribution: { pluginId: 'happier.voice.google', localId: 'gemini-stt' },
       credentialSlotId: 'api_key',
+      expectedSettingsVersion: 0,
+      currentDeclaration: declaration,
       machineId: 'machine-online',
       value: 'google-stt-key',
       generateId: () => 'google-stt-secret',

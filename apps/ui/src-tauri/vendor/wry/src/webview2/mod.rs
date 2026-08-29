@@ -503,16 +503,25 @@ impl InnerWebView {
       Self::add_script_to_execute_on_document_created(&webview, init_script.script)?;
     }
 
-    // Enable clipboard
-    if attributes.clipboard {
+    // Apply child-view permission policy in one handler. In particular, a
+    // process-wide app microphone grant must not implicitly authorize a view
+    // whose builder disabled media capture.
+    let clipboard = attributes.clipboard;
+    let media_capture_enabled = attributes.media_capture_enabled;
+    if clipboard || !media_capture_enabled {
       unsafe {
         webview.add_PermissionRequested(
-          &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+          &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
             let Some(args) = args else { return Ok(()) };
 
             let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
             args.PermissionKind(&mut kind)?;
-            if kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ {
+            if !media_capture_enabled
+              && (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA)
+            {
+              args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+            } else if clipboard && kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ {
               args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
             }
 

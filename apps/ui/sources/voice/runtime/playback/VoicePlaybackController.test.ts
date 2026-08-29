@@ -91,7 +91,19 @@ describe('VoicePlaybackController', () => {
         clearFirst();
         controller.interrupt();
 
-        expect(firstStop).not.toHaveBeenCalled();
+        expect(firstStop).toHaveBeenCalledTimes(1);
         expect(secondStop).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops the prior active target before a replacement becomes authoritative', () => {
+        const controller = createVoicePlaybackController();
+        const order: string[] = [];
+
+        controller.registerTarget({ stop: () => order.push('first:stopped') });
+        controller.registerTarget({ stop: () => order.push('second:stopped') });
+
+        expect(order).toEqual(['first:stopped']);
+        controller.interrupt();
+        expect(order).toEqual(['first:stopped', 'second:stopped']);
     });
 });

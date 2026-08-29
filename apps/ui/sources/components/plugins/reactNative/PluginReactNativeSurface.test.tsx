@@ -154,6 +154,13 @@ describe('PluginReactNativeSurface', () => {
         expect(renderSurface).not.toHaveBeenCalled();
         expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
         expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey })).toEqual([pending]);
+        await act(async () => {
+            screen.pressByTestId('plugin-rn-ui-unavailable-action');
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(reportFailure).toHaveBeenCalledTimes(2);
+        expect(renderSurface).not.toHaveBeenCalled();
     });
 
     it('mounts a surface whose durable store cannot be read and that never recorded a failure', async () => {
@@ -822,7 +829,7 @@ describe('PluginReactNativeSurface', () => {
             && node.props.testID.startsWith('plugin-rn-ui-unavailable-diagnostic-')
             && node.props.testID.includes('loader_backend_unavailable')).length).toBeGreaterThan(0);
         expect(screen.getTextContent()).not.toContain('loader_backend_unavailable');
-        expect(screen.findByTestId('plugin-rn-ui-unavailable-action')).toBeNull();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable-action')).toBeTruthy();
         expect(reportFailure).toHaveBeenCalledWith(expect.objectContaining({
             token: crashStateToken,
             failure: 'load_error',
@@ -830,6 +837,51 @@ describe('PluginReactNativeSurface', () => {
         }));
         expect(watchdog.readPending({ token: crashStateToken, scopeKey: crashReportScopeKey }))
             .toHaveLength(1);
+    });
+
+    it('restores a persisted load failure with one reconciliation Retry and successful reload', async () => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const watchdog = createPluginReactNativeWatchdog({
+            createFailureOccurrenceId: () => '6f46e1ba-4e7e-4e7e-8de8-6e8bc4ceac17',
+        });
+        const reportFailure = vi.fn()
+            .mockResolvedValueOnce({ ok: false as const, reason: 'request_failed' as const })
+            .mockResolvedValueOnce({ ok: true as const, disabled: false });
+        const renderSurface = vi.fn(() => React.createElement('PluginNativeSurface', { testID: 'plugin-native-surface' }));
+        const load = vi.fn()
+            .mockRejectedValueOnce(Object.freeze({
+                code: 'loader_backend_unavailable',
+                diagnostics: ['loader_backend_unavailable'],
+            }))
+            .mockResolvedValueOnce({ renderSurface });
+
+        const screen = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_1"
+            renderContext={defaultRenderContext}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            load={load}
+            loadPolicy={{ source: 'installedArtifact' }}
+            cacheKey="cache_1"
+            watchdog={watchdog}
+            crashStateToken={crashStateToken}
+            crashReportScopeKey={crashReportScopeKey}
+            reportFailure={reportFailure}
+        />);
+        await flushHookEffects({ cycles: 4, turns: 2 });
+
+        expect(reportFailure).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('plugin-rn-ui-unavailable-action')).toBeTruthy();
+        await act(async () => {
+            screen.pressByTestId('plugin-rn-ui-unavailable-action');
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 6, turns: 2 });
+
+        expect(reportFailure).toHaveBeenCalledTimes(2);
+        expect(load).toHaveBeenCalledTimes(2);
+        expect(renderSurface).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
+        expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
     });
 
     it('contains a startup timeout until the user retries the current mount', async () => {

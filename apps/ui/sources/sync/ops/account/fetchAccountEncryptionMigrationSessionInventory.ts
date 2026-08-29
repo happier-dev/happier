@@ -10,6 +10,7 @@ import {
 import type {
     AccountEncryptionMigrationSessionRow,
 } from './buildAccountEncryptionMigrationStorageDirectives';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 type SessionInventoryRequest = (
     path: string,
@@ -52,8 +53,7 @@ export async function fetchAccountEncryptionMigrationSessionInventory(
                     );
                 }
                 seenSessionIds.add(row.id);
-                const metadataLayoutVersion =
-                    row.metadataLayoutVersion ?? 0;
+                const metadataLayoutVersion = readSessionMetadataLayoutVersion(row.metadataLayoutVersion);
                 if (metadataLayoutVersion === 0) continue;
                 if (metadataLayoutVersion !== 1) {
                     throw new Error(

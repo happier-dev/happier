@@ -616,7 +616,7 @@ describe('voice context privacy (opt-out defaults)', () => {
             header: 'Confirm path',
             question: 'Should I continue in /Users/alice/SecretRepo?',
             multiSelect: false,
-            options: [{ label: 'Yes' }, { label: 'No' }],
+            options: [{ label: 'Yes for /private/choice.txt' }, { label: 'No' }],
           },
         ],
       },
@@ -625,7 +625,28 @@ describe('voice context privacy (opt-out defaults)', () => {
 
     expect(out).toContain('<question_text index="1">Should I continue in <path_redacted></question_text>');
     expect(out).not.toContain('/Users/alice/SecretRepo');
+    expect(out).not.toContain('/private/choice.txt');
     expect(out).toContain('<request_payload_redacted>true</request_payload_redacted>');
+  });
+
+  it('formats AskUserQuestion headers and choice descriptions from canonical request semantics', () => {
+    const out = formatUserActionRequest(
+      's1',
+      'req_question',
+      'AskUserQuestion',
+      {
+        questions: [{
+          header: 'Deployment',
+          question: 'Which target?',
+          choices: [{ label: 'Preview', description: 'Deploy to preview' }],
+        }],
+      },
+      prefs({ voiceShareToolArgs: false, voiceShareFilePaths: true }),
+    );
+
+    expect(out).toContain('<question_header index="1">Deployment</question_header>');
+    expect(out).toContain('<question_text index="1">Which target?</question_text>');
+    expect(out).toContain('<question_options index="1">Preview — Deploy to preview</question_options>');
   });
 
   it('tells the voice agent to stop and wait for the user before using more tools for user-action requests', () => {

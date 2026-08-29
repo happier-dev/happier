@@ -88,6 +88,16 @@ export function useDraft(
         ? sessionInitialPrompt
         : null;
 
+    // Exact hydration follows the active composer rather than the one-shot session-visible
+    // callback. That makes a warm session retry as soon as its account scope becomes available,
+    // while Sync remains the only owner of transport readiness, decryption, and reconciliation.
+    useEffect(() => {
+        if (!active || !draftScope || !resolvedSessionId) return;
+        fireAndForget(sync.materializeExistingSessionDraft(resolvedSessionId), {
+            tag: 'useDraft.materializeExistingSessionDraft',
+        });
+    }, [active, draftScope, resolvedSessionId]);
+
     // Do not let a render that React later abandons become the imperative draft authority.
     // Input handlers and draft lifecycle operations update this ref synchronously; controlled
     // values are reconciled only once their render commits.

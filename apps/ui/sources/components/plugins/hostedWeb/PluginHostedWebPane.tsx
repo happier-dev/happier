@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
-    PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
+    PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
     PluginHostedWebSecurityPolicyV1Schema,
     resolvePluginHostedWebNativeArtifactFrameOriginV1,
     type PluginHostedWebSecurityPolicyV1,
@@ -63,7 +63,7 @@ import type { PluginHostedWebSandboxPolicy } from './sandbox';
 import {
     createPluginHostedWebHostApiBridgeHandler,
     type PluginHostedWebHostApiBridgeHandler,
-    type PluginHostedWebCollectionUiQueryBridgeFactory,
+    type PluginHostedWebAccountDataBridgeFactory,
     type PluginHostedWebHostApiRequestHandler,
     type PluginHostedWebHostMessageSink,
     type PluginHostedWebComposerSubscriptionPublisher,
@@ -559,7 +559,7 @@ export function PluginHostedWebPane(props: Readonly<{
      * lends it only to the incumbent framed lifecycle after canonical host API
      * bootstrap is available; it never becomes an alternate guest transport.
      */
-    createCollectionUiQueryBridge?: PluginHostedWebCollectionUiQueryBridgeFactory;
+    createAccountDataBridge?: PluginHostedWebAccountDataBridgeFactory;
     interactionEnabled?: boolean;
     /** Outer physical mount's retained-pane eligibility, independent of availability. */
     focusEligible?: boolean;
@@ -869,10 +869,10 @@ export function PluginHostedWebPane(props: Readonly<{
     // hosted bootstrap exists. A descriptor cannot expose Data by declaring a
     // message kind alone: without hostApi there is no single ready/currentness
     // lifecycle or private guest bootstrap carrier to consume it.
-    const collectionUiQueryMessageAllowed = canonicalHostApi !== undefined
-        && allowedMessageKinds.includes(PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1);
-    const collectionUiQueryBridgeAllowed = collectionUiQueryMessageAllowed
-        && props.createCollectionUiQueryBridge !== undefined;
+    const accountDataMessageAllowed = canonicalHostApi !== undefined
+        && allowedMessageKinds.includes(PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1);
+    const accountDataBridgeAllowed = accountDataMessageAllowed
+        && props.createAccountDataBridge !== undefined;
     // `ready` is an internal lifecycle handshake for the canonical host API,
     // not an author-selected bridge method. A canonical frame cannot receive its
     // post-ready bootstrap without it, even when the declared author vocabulary
@@ -881,11 +881,11 @@ export function PluginHostedWebPane(props: Readonly<{
     const bridgeAllowedMessageKinds = React.useMemo(() => {
         const kinds = new Set<string>(allowedMessageKinds);
         if (canonicalHostApi) kinds.add('ready');
-        if (!collectionUiQueryMessageAllowed) {
-            kinds.delete(PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1);
+        if (!accountDataMessageAllowed) {
+            kinds.delete(PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1);
         }
         return kinds;
-    }, [allowedMessageKinds, canonicalHostApi, collectionUiQueryMessageAllowed]);
+    }, [allowedMessageKinds, canonicalHostApi, accountDataMessageAllowed]);
     const [readyTimedOut, setReadyTimedOut] = React.useState(false);
     // EU-8: the mounted frame lends its host->frame delivery primitive here for
     // as long as it is mounted. The registry is a ref, not state, so attaching a
@@ -984,15 +984,15 @@ export function PluginHostedWebPane(props: Readonly<{
         opaqueArtifactFrame,
         projectionGeneration,
         handleRequestInstalled,
-        collectionUiQueryBridgeAllowed,
+        accountDataBridgeAllowed,
         surfaceIdentity: bridgeSurfaceIdentityKey,
     });
-    const collectionUiQueryBridgeFactoryRef = React.useRef<PluginHostedWebCollectionUiQueryBridgeFactory | undefined>(undefined);
-    collectionUiQueryBridgeFactoryRef.current = collectionUiQueryBridgeAllowed
-        ? props.createCollectionUiQueryBridge
+    const accountDataBridgeFactoryRef = React.useRef<PluginHostedWebAccountDataBridgeFactory | undefined>(undefined);
+    accountDataBridgeFactoryRef.current = accountDataBridgeAllowed
+        ? props.createAccountDataBridge
         : undefined;
-    const createCollectionUiQueryBridge = React.useCallback<PluginHostedWebCollectionUiQueryBridgeFactory>((input) => {
-        const factory = collectionUiQueryBridgeFactoryRef.current;
+    const createAccountDataBridge = React.useCallback<PluginHostedWebAccountDataBridgeFactory>((input) => {
+        const factory = accountDataBridgeFactoryRef.current;
         if (!factory) {
             throw new Error('Plugin hosted-web collection UI-query bridge is unavailable.');
         }
@@ -1025,8 +1025,8 @@ export function PluginHostedWebPane(props: Readonly<{
                     postToFrame,
                 }
                 : {}),
-            ...(collectionUiQueryBridgeAllowed
-                ? { createCollectionUiQueryBridge }
+            ...(accountDataBridgeAllowed
+                ? { createAccountDataBridge }
                 : {}),
             isCurrent: isSurfaceCurrent,
             ...(handleRequestInstalled ? { handleRequest } : {}),
@@ -1050,8 +1050,8 @@ export function PluginHostedWebPane(props: Readonly<{
         handleRequest,
         handleRequestInstalled,
         postToFrame,
-        collectionUiQueryBridgeAllowed,
-        createCollectionUiQueryBridge,
+        accountDataBridgeAllowed,
+        createAccountDataBridge,
         isSurfaceCurrent,
         props.accountLifetime,
     ]);

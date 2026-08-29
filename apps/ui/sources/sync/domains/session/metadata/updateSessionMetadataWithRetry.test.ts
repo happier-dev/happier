@@ -35,6 +35,31 @@ const ownerCurrentEnvelope = {
 };
 
 describe('updateSessionMetadataWithRetry', () => {
+    it('rejects a present-null layout before any metadata effect', async () => {
+        const acquireTupleSnapshot = vi.fn();
+        const emitUpdateMetadata = vi.fn();
+        await expect(updateSessionMetadataWithRetry<Metadata>({
+            sessionId: 's_invalid_null_layout',
+            getSession: () => ({
+                metadataLayoutVersion: null as never,
+                metadataVersion: 3,
+                metadata: { path: '/workspace', host: 'owner-host' },
+            }),
+            refreshSessions: async () => undefined,
+            acquireTupleSnapshot,
+            tupleCrypto: {
+                encryptPayload: vi.fn(),
+                encodeOwnerMetadata: vi.fn(),
+            },
+            emitUpdateMetadata,
+            applyTupleSnapshot: vi.fn(),
+            updater: (base) => base,
+        })).rejects.toThrow(/Unsupported Session metadata layout/iu);
+
+        expect(acquireTupleSnapshot).not.toHaveBeenCalled();
+        expect(emitUpdateMetadata).not.toHaveBeenCalled();
+    });
+
     it('migrates an ordinary layout-0 metadata mutation through the owner tuple', async () => {
         const initial = {
             mode: 'legacy_owner' as const,

@@ -316,6 +316,62 @@ export async function inspectComposerContent(
     return { success: true, result: result.data };
 }
 
+type ComposerMediaStageClaimResponse =
+    | Readonly<{ success: true; newlyAcquired: boolean }>
+    | Readonly<{ success: false; error: string; claimedElsewhere?: boolean }>;
+
+export type ComposerContentClaimOutcome =
+    | Readonly<{ status: 'claimed'; newlyAcquired: boolean }>
+    | Readonly<{ status: 'claimedElsewhere' }>
+    | Readonly<{ status: 'unavailable' }>;
+
+/**
+ * Claims completed staged media for one exact Composer attachment at the
+ * transfer store, before the attachment can be published into a draft. The
+ * store is the custody owner: a handle already claimed by another document or
+ * attachment resolves `claimedElsewhere` and the caller must not publish.
+ */
+export async function claimComposerContent(
+    rawHandle: ComposerContentHandleV1,
+    claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>,
+    options?: Readonly<{ signal?: AbortSignal | null }>,
+): Promise<ComposerContentClaimOutcome> {
+    const handle = ComposerContentHandleV1Schema.safeParse(rawHandle);
+    const composer = ComposerRefV1Schema.safeParse(claimant.composer);
+    const attachmentInstanceId = ComposerInstanceIdSchema.safeParse(claimant.attachmentInstanceId);
+    if (!handle.success || !composer.success || !attachmentInstanceId.success) {
+        return { status: 'unavailable' };
+    }
+    const transferClient = createWorkspaceFileTransferRpcCaller({
+        machineId: handle.data.executionTarget.machineId,
+        serverId: handle.data.executionTarget.serverId,
+    });
+    try {
+        const response = await transferClient.call<ComposerMediaStageClaimResponse, Readonly<{
+            handle: ComposerContentHandleV1;
+            claimant: Readonly<{ composer: ComposerRefV1; attachmentInstanceId: string }>;
+        }>>({
+            machineMethod: RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM,
+            request: {
+                handle: handle.data,
+                claimant: {
+                    composer: composer.data,
+                    attachmentInstanceId: attachmentInstanceId.data,
+                },
+            },
+            signal: options?.signal ?? null,
+        });
+        if (response.success) {
+            return { status: 'claimed', newlyAcquired: response.newlyAcquired };
+        }
+        return response.claimedElsewhere === true
+            ? { status: 'claimedElsewhere' }
+            : { status: 'unavailable' };
+    } catch {
+        return { status: 'unavailable' };
+    }
+}
+
 /** Idempotent completed-stage release for post-transaction draft cleanup. */
 export async function releaseComposerContent(
     rawHandle: ComposerContentHandleV1,

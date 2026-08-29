@@ -1,6 +1,7 @@
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 import type {
   AutomationDefinition,
@@ -240,7 +241,7 @@ export function useSessionForkSupportSource(sessionId: string | null): SessionFo
       const ownerMetadataView = readSessionOwnerMetadataView(session);
       const signature = [
         session.serverId ?? '',
-        session.metadataLayoutVersion ?? 0,
+        readSessionMetadataLayoutVersion(session.metadataLayoutVersion),
         buildSessionMetadataStabilitySignature(ownerMetadataView),
       ].join('\u0000');
       const cached = sessionForkSupportSourceCache.get(normalizedSessionId);
@@ -2644,17 +2645,24 @@ export function useAllArtifacts(): DecryptedArtifact[] {
 }
 
 export function useAutomations(): AutomationDefinition[] {
-  // An Account can hold the full approved Automation bound, and a selector runs
-  // on every store mutation. Subscribe to the stable record instead and order
-  // it once per actual Automation change (see the note on useSessionMessages).
+  // An Account can hold a high-cardinality Automation catalog with no aggregate
+  // definition ceiling, and a selector runs on every store mutation. Subscribe
+  // to the stable record instead and order it once per actual Automation change
+  // (see the note on useSessionMessages).
   const isDataReady = getStorage()((state) => state.isDataReady);
   const automations = getStorage()((state) => state.automations);
   return React.useMemo(
     () => (isDataReady
-      ? sortValuesByUpdatedAtDescending(automations)
+      ? sortValuesByUpdatedAtDescending(automations).sort((left, right) => (
+          right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)
+        ))
       : emptyArray as AutomationDefinition[]),
     [isDataReady, automations],
   );
+}
+
+export function useAutomationDefinitionNextCursor(): string | null {
+  return getStorage()((state) => state.automationDefinitionNextCursor);
 }
 
 export function useEnabledAutomationsCountForSession(

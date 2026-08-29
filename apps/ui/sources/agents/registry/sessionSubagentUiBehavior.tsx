@@ -11,7 +11,6 @@ function readInlineDetailsResource(tab: DetailsTab): Readonly<{
     pluginId: string;
     agentId: string;
     surfaceId: string;
-    machineId: string | null;
     iconName: string | null;
     mode: string | null;
     initialTeamId: string | null;
@@ -30,7 +29,6 @@ function readInlineDetailsResource(tab: DetailsTab): Readonly<{
         pluginId,
         agentId,
         surfaceId,
-        machineId: read(value.machineId),
         iconName: read(value.iconName),
         mode: read((resource as Record<string, unknown>).mode),
         initialTeamId: read((resource as Record<string, unknown>).initialTeamId),
@@ -62,7 +60,6 @@ export function getSessionSubagentLaunchCards(params: Readonly<{
                 pluginId={surface.pluginId}
                 surfaceId={surface.surfaceId}
                 sessionId={surface.sessionId}
-                machineId={surface.machineId}
                 agentId={surface.agentId}
                 inlineMount={{ role: 'sessionSubagentLaunch', presentation: 'content' }}
                 launchInput={surface.launchInput}
@@ -100,6 +97,7 @@ export function hasSessionTeammateLauncher(session: Session | null): boolean {
 export function renderProviderSessionDetailsTab(params: Readonly<{
     sessionId: string;
     scopeId: string;
+    serverId?: string | null;
     tab: DetailsTab;
 }>): React.ReactNode | null {
     const inline = readInlineDetailsResource(params.tab);
@@ -109,7 +107,7 @@ export function renderProviderSessionDetailsTab(params: Readonly<{
                 pluginId={inline.pluginId}
                 surfaceId={inline.surfaceId}
                 sessionId={params.sessionId}
-                machineId={inline.machineId}
+                serverId={params.serverId}
                 agentId={inline.agentId}
                 inlineMount={{ role: 'sessionSubagentDetails', presentation: 'fill' }}
                 launchInput={{ mode: inline.mode, initialTeamId: inline.initialTeamId }}

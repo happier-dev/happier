@@ -658,12 +658,14 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 try {
                     result = await reportFailure(failure);
                 } catch {
+                    setRetrying(false);
                     return;
                 }
                 if (cancelled) {
                     return;
                 }
                 if (!result.ok) {
+                    setRetrying(false);
                     return;
                 }
                 watchdog.acknowledgeReportedFailure({
@@ -674,6 +676,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 if (result.disabled) {
                     setDaemonReportedDisabled(true);
                 }
+                setRetrying(false);
                 refreshWatchdogState();
             }
         })();
@@ -786,6 +789,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                         loadedModuleRegistry.write(props.cacheKey, nextModule, moduleWriteFence);
                     }
                     setLoadFailureDiagnostics([]);
+                    setLoadFailed(false);
                     setLoadedModuleState({
                         cacheKey: props.cacheKey,
                         loadPolicySource,
@@ -849,11 +853,19 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     ]);
 
     const handleRetry = React.useCallback(() => {
-        if (retrying || pendingQuarantine || crashDisabled) {
+        if (retrying || crashDisabled) {
+            return;
+        }
+        // Reconcile the exact persisted occurrence in place. This does not
+        // clear containment or execute plugin bytes; the daemon remains the
+        // crash-state owner and the existing effect resubmits the same UUID.
+        if (pendingQuarantine) {
+            setRetrying(true);
+            refreshWatchdogState();
             return;
         }
         retryCurrentMountLocalFailure();
-    }, [crashDisabled, pendingQuarantine, retryCurrentMountLocalFailure, retrying]);
+    }, [crashDisabled, pendingQuarantine, refreshWatchdogState, retryCurrentMountLocalFailure, retrying]);
 
     const handleCrash = React.useCallback((surfaceId: string, error: Error) => {
         recordDaemonCrashFailure('render_error', error);
@@ -1039,8 +1051,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         && loadPolicy.canLoad
         && (Boolean(props.load) || isPluginReactNativeSurfaceModule(props.module));
     const shouldOfferRetry = canRetryCurrentArtifact
-        && loadFailed
-        && !pendingQuarantine
+        && (loadFailed || pendingQuarantine)
         && !crashDisabled;
     const shouldOfferCrashReset = crashDisabled
         && props.resetCrashState !== undefined

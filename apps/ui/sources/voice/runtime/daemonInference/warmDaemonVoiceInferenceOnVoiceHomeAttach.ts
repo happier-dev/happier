@@ -1,4 +1,7 @@
-import { DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol';
+import {
+    DaemonVoiceInferenceModelsWarmResponseSchema,
+    VOICE_RUNTIME_WARM_DEFAULTS,
+} from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
@@ -14,16 +17,20 @@ import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErr
 import { resolveDaemonVoiceInferenceExecution } from './daemonVoiceInferencePolicy';
 
 export type WarmDaemonVoiceInferenceOnVoiceHomeAttachDeps = Readonly<{
-    warmModels: (packIds: readonly string[]) => Promise<void>;
+    warmModels: (packIds: readonly string[], signal?: AbortSignal | null) => Promise<void>;
 }>;
 
 export type WarmDaemonVoiceInferenceOnVoiceHomeAttachParams = Readonly<{
     settings: any;
     sessionId?: string | null;
-    warmModels?: (packIds: readonly string[]) => Promise<void>;
+    warmModels?: (packIds: readonly string[], signal?: AbortSignal | null) => Promise<void>;
+    signal?: AbortSignal | null;
 }>;
 
-async function warmDaemonVoiceInferenceModels(packIds: readonly string[]): Promise<void> {
+async function warmDaemonVoiceInferenceModels(
+    packIds: readonly string[],
+    signal?: AbortSignal | null,
+): Promise<void> {
     const machineId = resolveVoiceHomeDaemonMachineId();
     if (!machineId) {
         return;
@@ -34,6 +41,8 @@ async function warmDaemonVoiceInferenceModels(packIds: readonly string[]): Promi
             machineId,
             method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
             payload: { packIds },
+            timeoutMs: VOICE_RUNTIME_WARM_DEFAULTS.warmRequestTimeoutMs,
+            ...(signal ? { signal } : {}),
         }),
     );
     if (!parsed.success) {
@@ -99,5 +108,5 @@ export async function warmDaemonVoiceInferenceOnVoiceHomeAttach(
         return;
     }
 
-    await warmModels(packIds);
+    await warmModels(packIds, params.signal);
 }

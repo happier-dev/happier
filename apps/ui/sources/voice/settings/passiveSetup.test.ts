@@ -221,7 +221,7 @@ describe('projectVoiceProviderPassiveSetupFacts', () => {
       globalConnectedServices: {
         v: 1,
         bindingsByServiceId: {
-          'openai-codex': {
+          'happier.agent.codex/openai-codex': {
             source: 'connected',
             selection: 'profile',
             profileId: 'codex-profile',

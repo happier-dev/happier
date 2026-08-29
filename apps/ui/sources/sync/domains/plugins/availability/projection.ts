@@ -96,12 +96,12 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
     const lifetime = currentProjectionLifetime(input.scope);
     if (!lifetime) return;
     // Availability is the current Account projection owner. Binding the
-    // incumbent cache here makes prior-run bytes retire even when no surface
+    // incumbent Artifact custody here makes prior-run bytes retire even when no surface
     // acquires an Artifact during this app lifetime. Retiring reachability is
     // the whole transition: replacing this projection is never a deletion
     // authority, so `A -> B -> A` reuses retained bytes instead of paying for a
     // second download (PEP master decision 9; PEP-ARTIFACTS 8.2). Physical
-    // deletion stays with logout/forget/explicit clear and with the cache's own
+    // deletion stays with logout/forget/explicit clear and with the Artifact custody owner's
     // corruption and eviction owners.
     getInstalledPluginReactNativeBundleCache().bindAccountLifetime(lifetime);
 }
@@ -112,14 +112,14 @@ export function replacePluginAccountAvailabilityProjection(input: Readonly<{
  * Account-qualified bytes may remain inert and are reusable once the same
  * Account and exact current release authority are re-established. Forgetting
  * the Account on this device is the one path that also deletes those bytes,
- * through the incumbent cache owner's Account cleanup and quarantine fence,
+ * through the incumbent Artifact custody owner's Account cleanup and quarantine fence,
  * together with the Account's retained plugin UI admission snapshot: an index
  * entry that outlived a forgotten Account would still name its plugins.
  */
 export function forgetPluginAccountAvailabilityArtifacts(scope: ServerAccountScope): void {
     clearPluginAccountAvailabilityProjection();
     forgetPluginUiProjectionAdmissionSnapshots(scope);
-    // The cache owner fences the Account synchronously and owns the physical
+    // The Artifact custody owner fences the Account synchronously and owns the physical
     // deletion, its retry, and its quarantine. This adds no second cleanup
     // owner, timer or worker.
     void getInstalledPluginReactNativeBundleCache()

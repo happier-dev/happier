@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol';
 import type { ProviderBoundModelRef, ProviderErrorV1 } from '@happier-dev/protocol';
-import type { DaemonProviderCurrentSelectionRecoveryV1 } from '@happier-dev/protocol/rpc';
+import type {
+    DaemonProviderCurrentSelectionRecoveryV1,
+    DaemonProviderModelProjectionRefreshFailureV1,
+} from '@happier-dev/protocol/rpc';
 
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import {
@@ -109,6 +112,7 @@ export function SessionModelPicker(props: Readonly<{
     providerGroups: readonly SessionModelProjectionGroup[];
     providerProjectionAuthoritative: boolean;
     projectionError?: ProviderErrorV1 | null;
+    projectionFailures?: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProjection?: (() => Promise<void> | void) | null;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
@@ -337,6 +341,7 @@ export function SessionModelPicker(props: Readonly<{
             summary={reportedModelPresentation.label
                 || currentSelectionRecovery
                 || props.projectionError
+                || (props.projectionFailures?.length ?? 0) > 0
                 || props.experimentalConfirmation?.error ? (
                 <>
                     {props.reportedModel && reportedModelPresentation.label ? (
@@ -356,6 +361,15 @@ export function SessionModelPicker(props: Readonly<{
                                 : undefined}
                         />
                     ) : null}
+                    {props.projectionFailures?.map((failure) => (
+                        <ProviderErrorItems
+                            key={failure.connectionId}
+                            error={failure.error}
+                            retry={props.retryProjection
+                                ? async () => { await props.retryProjection?.(); }
+                                : undefined}
+                        />
+                    ))}
                     {props.experimentalConfirmation?.error ? (
                         <ProviderErrorItems
                             error={props.experimentalConfirmation.error}

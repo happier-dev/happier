@@ -103,6 +103,13 @@ import { waitForVisualUpdateWithTimeout } from '@/components/sessions/transcript
 type MutableRef<T> = { current: T };
 type PlatformOS = 'web' | 'ios' | 'android' | 'windows' | 'macos' | 'native';
 type ExplicitJumpTakeoverEffects = ReturnType<TranscriptLifecycleHost['planExplicitJumpTakeover']>['explicitJumpTakeoverEffects'];
+type ActiveExplicitJumpOperation = Readonly<{
+    releaseTakeover(): void;
+}>;
+type RouteJumpOperation = Readonly<{
+    seq: number;
+    sessionId: string;
+}>;
 const TRANSCRIPT_SCROLL_JUMP_TO_BOTTOM_REVEAL_VIEWPORT_RATIO_MAX = 4;
 
 /**
@@ -266,7 +273,7 @@ export type TranscriptJumpHostDeps = Readonly<{
     itemsRef: MutableRef<readonly ChatTranscriptListItem[]>;
     messagesById: Readonly<Record<string, Message>>;
     onJumpLanded?: (result: Extract<TranscriptJumpResult, { status: 'scrolled' | 'window-rendered' }>) => void;
-    onSuccessfulRouteJumpSettled(sessionId: string): void;
+    onRouteJumpSettled(sessionId: string): void;
     onViewportChangeRef: MutableRef<((state: TranscriptViewportChangeState) => void) | undefined>;
     pendingJumpSeqViewportPromotionRef: MutableRef<PendingJumpSeqViewportPromotion | null>;
     pinThresholdPx: number;
@@ -318,6 +325,7 @@ export type TranscriptJumpHost = Readonly<{
         target: TranscriptJumpTarget,
         options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean }>,
     ): Promise<TranscriptJumpResult>;
+    preemptExplicitJumpForUserTakeover(): void;
     /**
      * The session's ONE navigation-visibility publication point. `input` carries
      * this frame's user-authority classification, which releases a jump landing's
@@ -372,7 +380,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         itemsRef,
         messagesById,
         onJumpLanded,
-        onSuccessfulRouteJumpSettled,
+        onRouteJumpSettled,
         onViewportChangeRef,
         pendingJumpSeqViewportPromotionRef,
         pinThresholdPx,
@@ -401,9 +409,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
 
     const [jumpToBottomDistanceFromBottom, setJumpToBottomDistanceFromBottom] = React.useState(0);
     const jumpToBottomDistanceFromBottomRef = React.useRef(0);
-    const lastJumpSeqRef = React.useRef<number | null>(null);
-    const inFlightJumpSeqRef = React.useRef<number | null>(null);
-    const currentExplicitJumpOperationRef = React.useRef<TranscriptExplicitJumpOperationId | null>(null);
+    const consumedRouteJumpRef = React.useRef<RouteJumpOperation | null>(null);
+    const inFlightRouteJumpRef = React.useRef<RouteJumpOperation | null>(null);
+    const currentExplicitJumpOperationRef = React.useRef<ActiveExplicitJumpOperation | null>(null);
     const resolveSeqForMessageIdRef = React.useRef(resolveSeqForMessageId);
     useCommittedTranscriptRef(
         resolveSeqForMessageIdRef,
@@ -950,8 +958,21 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         const { normalizedTargetSeq, routeMessageId, transcriptBlockIndex, role } = targetRequest;
         if (!sessionId) return { status: 'not-found', reason: 'unavailable' };
         const operationId: TranscriptExplicitJumpOperationId = Symbol('transcript-explicit-jump');
-        currentExplicitJumpOperationRef.current = operationId;
-        const isCurrentOperation = (): boolean => currentExplicitJumpOperationRef.current === operationId;
+        let takeoverReleased = false;
+        let rendererTakeoverRelease: (() => void) | undefined;
+        let writeBarrierStarted = false;
+        const releaseTakeover = (): void => {
+            if (takeoverReleased) return;
+            takeoverReleased = true;
+            if (writeBarrierStarted) endExplicitJumpWriteBarrier();
+            rendererTakeoverRelease?.();
+        };
+        const operation: ActiveExplicitJumpOperation = { releaseTakeover };
+        currentExplicitJumpOperationRef.current = operation;
+        const isCurrentOperation = (): boolean => (
+            currentExplicitJumpOperationRef.current === operation &&
+            currentSessionIdRef.current === sessionId
+        );
         const takeoverPlan = lifecycleHost.planExplicitJumpTakeover({
             reason: 'jump-to-seq',
             sessionId,
@@ -959,8 +980,9 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         commitBottomFollowModeState(takeoverPlan.state.bottomFollowState);
         applyExplicitJumpTakeoverApplyEffects(takeoverPlan.explicitJumpTakeoverEffects);
         const acquiredRenderer = listRef.current;
-        const releaseRendererTakeover = acquiredRenderer?.beginExplicitJumpTakeover?.(operationId);
+        rendererTakeoverRelease = acquiredRenderer?.beginExplicitJumpTakeover?.(operationId);
         beginExplicitJumpWriteBarrier();
+        writeBarrierStarted = true;
         const scrollToTarget = (): boolean => {
             if (!isCurrentOperation()) return false;
             const command = resolveViewportCommand({
@@ -1126,9 +1148,8 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
             }
             return result;
         } finally {
-            endExplicitJumpWriteBarrier();
-            releaseRendererTakeover?.();
-            if (currentExplicitJumpOperationRef.current === operationId) {
+            releaseTakeover();
+            if (currentExplicitJumpOperationRef.current === operation) {
                 currentExplicitJumpOperationRef.current = null;
             }
         }
@@ -1168,6 +1189,27 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         sessionId,
         waitForNextVisualUpdate,
         wantsPinnedRef,
+    ]);
+
+    const completeRouteJumpOperation = React.useCallback((operation: RouteJumpOperation): void => {
+        if (inFlightRouteJumpRef.current !== operation) return;
+        inFlightRouteJumpRef.current = null;
+        consumedRouteJumpRef.current = operation;
+        onRouteJumpSettled(operation.sessionId);
+    }, [onRouteJumpSettled]);
+
+    const preemptExplicitJumpForUserTakeover = React.useCallback((): void => {
+        const activeOperation = currentExplicitJumpOperationRef.current;
+        const routeJumpOperation = inFlightRouteJumpRef.current;
+        currentExplicitJumpOperationRef.current = null;
+        pendingJumpSeqViewportPromotionRef.current = null;
+        promotedJumpSeqViewportProtectionRef.current = null;
+        activeOperation?.releaseTakeover();
+        if (routeJumpOperation) completeRouteJumpOperation(routeJumpOperation);
+    }, [
+        completeRouteJumpOperation,
+        pendingJumpSeqViewportPromotionRef,
+        promotedJumpSeqViewportProtectionRef,
     ]);
 
     const isTranscriptNavigationTargetInRenderedWindow = React.useCallback((target: TranscriptJumpTarget): boolean => {
@@ -1223,23 +1265,33 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
     ]);
 
     React.useEffect(() => {
+        const consumedRouteJump = consumedRouteJumpRef.current;
+        const inFlightRouteJump = inFlightRouteJumpRef.current;
         const normalizedTarget = resolveTranscriptRouteJumpSeqPlan({
             committedMessagesCount,
+            consumedJumpSeq: consumedRouteJump?.sessionId === sessionId
+                ? consumedRouteJump.seq
+                : null,
             hasUsableWebMetrics: () => {
                 const metrics = resolveWebScrollMetrics();
                 return !!metrics && metrics.clientHeight > 0 && metrics.scrollHeight > 0;
             },
-            inFlightJumpSeq: inFlightJumpSeqRef.current,
+            inFlightJumpSeq: inFlightRouteJump?.sessionId === sessionId
+                ? inFlightRouteJump.seq
+                : null,
             isLoaded,
             jumpToSeq,
-            lastJumpSeq: lastJumpSeqRef.current,
             listContentHeight,
             listLayoutHeight,
             platformOS,
             sessionId,
         });
         if (normalizedTarget == null) return;
-        inFlightJumpSeqRef.current = normalizedTarget;
+        const routeJumpOperation: RouteJumpOperation = {
+            seq: normalizedTarget,
+            sessionId,
+        };
+        inFlightRouteJumpRef.current = routeJumpOperation;
         fireAndForget((async () => {
             try {
                 const result = await jumpToTranscriptTarget(
@@ -1247,15 +1299,14 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
                     { preferTargetWindow: true },
                 );
                 if (
-                    (result.status === 'scrolled' || result.status === 'window-rendered') &&
-                    inFlightJumpSeqRef.current === normalizedTarget
+                    result.status !== 'aborted' &&
+                    !(result.status === 'not-found' && result.reason === 'unavailable')
                 ) {
-                    lastJumpSeqRef.current = normalizedTarget;
-                    onSuccessfulRouteJumpSettled(sessionId);
+                    completeRouteJumpOperation(routeJumpOperation);
                 }
             } finally {
-                if (inFlightJumpSeqRef.current === normalizedTarget) {
-                    inFlightJumpSeqRef.current = null;
+                if (inFlightRouteJumpRef.current === routeJumpOperation) {
+                    inFlightRouteJumpRef.current = null;
                 }
             }
         })(), { tag: 'ChatList.jumpToTranscriptSeq' });
@@ -1266,7 +1317,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToTranscriptTarget,
         listContentHeight,
         listLayoutHeight,
-        onSuccessfulRouteJumpSettled,
+        completeRouteJumpOperation,
         platformOS,
         resolveWebScrollMetrics,
         sessionId,
@@ -1311,6 +1362,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToTranscriptTarget,
         observeTranscriptNavigationVisibilityForSession,
         onScrollToIndexFailed,
+        preemptExplicitJumpForUserTakeover,
         promotePendingJumpSeqViewportSnapshot,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
     }), [
@@ -1323,6 +1375,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         jumpToTranscriptTarget,
         observeTranscriptNavigationVisibilityForSession,
         onScrollToIndexFailed,
+        preemptExplicitJumpForUserTakeover,
         promotePendingJumpSeqViewportSnapshot,
         shouldSuppressGenericViewportStateForProtectedJumpSeq,
     ]);

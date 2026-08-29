@@ -148,12 +148,6 @@ export function SelectionListColumnRow(props: Readonly<{
     const rowAria = props.rowIndex === undefined
         ? null
         : buildSelectionListRowA11yProps({ pattern, rowIndex: props.rowIndex });
-    // A grid row owns its cells directly. These per-column layout boxes sit
-    // between the row and the option wrapper that carries `role="gridcell"`, so
-    // without this they would be generic elements standing between a row and
-    // the cells it declares. `presentation` removes only their own semantics —
-    // everything inside, including the focusable control, is untouched.
-    const layoutCellRole = rowAria === null ? undefined : ('presentation' as const);
     return (
         <SelectionListScrollOffsetFrame
             style={[
@@ -166,11 +160,19 @@ export function SelectionListColumnRow(props: Readonly<{
                 ? {}
                 : { ariaProps: { 'aria-rowindex': rowAria['aria-rowindex'] } })}
         >
-            {props.children.map((cell, index) => (
-                <View key={`cell-${index}`} style={styles.cell} role={layoutCellRole}>
-                    {cell}
-                </View>
-            ))}
+            {props.children.map((cell, index) => {
+                if (rowAria !== null && React.isValidElement(cell)) {
+                    return React.cloneElement(cell, {
+                        key: cell.key ?? `cell-${index}`,
+                        columnCellStyle: styles.cell,
+                    } as Record<string, unknown>);
+                }
+                return (
+                    <View key={`cell-${index}`} style={styles.cell}>
+                        {cell}
+                    </View>
+                );
+            })}
             {/*
               * A trailing spacer holds a real column of the row — it is the
               * reason the last card keeps its column width instead of stretching

@@ -32,18 +32,34 @@ export function DaemonModelPackRow(props: Readonly<{
     onSetDefault: (packId: string) => void;
     onInstall: (packId: string) => void;
     onRemove: (packId: string) => Promise<void> | void;
+    onCancel?: () => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { row } = props;
     const canPromoteToDefault = row.canRemove && !row.isDefault;
     const isUnsupported = row.state === 'unsupported';
     const showRemove = row.canRemove;
+    const isDiscard = row.state === 'error';
+    const actionLabel = isDiscard ? t('common.discard') : t('common.remove');
 
-    const rightElement = showRemove ? (
+    const rightElement = props.actionInFlight && props.onCancel ? (
+        <Pressable
+            testID={`voice-model-cancel-${row.packId}`}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('common.cancel')}: ${row.displayName}`}
+            style={REMOVE_BUTTON_STYLE}
+            onPress={(event: any) => {
+                event?.stopPropagation?.();
+                props.onCancel?.();
+            }}
+        >
+            <Icon name="x" size={20} color={theme.colors.text.secondary} />
+        </Pressable>
+    ) : showRemove ? (
         <Pressable
             testID={`voice-model-remove-${row.packId}`}
             accessibilityRole="button"
-            accessibilityLabel={`${t('common.remove')}: ${row.displayName}`}
+            accessibilityLabel={`${actionLabel}: ${row.displayName}`}
             accessibilityState={{ disabled: props.actionsDisabled === true }}
             disabled={props.actionsDisabled === true}
             style={REMOVE_BUTTON_STYLE}
@@ -54,7 +70,7 @@ export function DaemonModelPackRow(props: Readonly<{
                     const confirmed = await Modal.confirm(
                         t('settingsVoice.local.models.removeConfirmTitle'),
                         t('settingsVoice.local.models.removeConfirmBody', { name: row.displayName }),
-                        { confirmText: t('common.remove'), destructive: true },
+                        { confirmText: actionLabel, destructive: true },
                     );
                     if (confirmed) await props.onRemove(row.packId);
                 })(), { tag: 'DaemonModelPackRow.remove' });
@@ -90,7 +106,7 @@ export function DaemonModelPackRow(props: Readonly<{
                             : undefined}
             detail={formatModelCatalogRowDetail(row)}
             rightElement={isUnknown ? undefined : rightElement}
-            rightElementOutsidePressable={showRemove}
+            rightElementOutsidePressable={showRemove || props.actionInFlight}
             onPress={onPress}
             disabled={props.actionsDisabled === true}
             loading={props.actionInFlight}
@@ -127,6 +143,7 @@ export function SelectedDaemonModelPackRow(props: Readonly<{
             onSetDefault={() => undefined}
             onInstall={controller.install}
             onRemove={controller.remove}
+            onCancel={controller.cancel}
         />
     );
 }

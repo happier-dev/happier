@@ -1,6 +1,6 @@
 import {
   ApprovalRequestV1Schema,
-  ActionsSettingsV1Schema,
+  normalizeActionsSettingsV1,
   buildBackendTargetKeyV2,
   createActionExecutor,
   isActionEnabledByActionsSettings,
@@ -155,6 +155,8 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   listContributedActionDefinitions?: () => readonly ActionDefinitionV1[];
   /** Optional surface-local policy composed with the canonical Action settings policy. */
   isActionEnabled?: NonNullable<ActionExecutorDeps['isActionEnabled']>;
+  /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
+  sessionSendMessage?: NonNullable<ActionExecutorDeps['sessionSendMessage']>;
   /** Current external Agent declaration supplied by a rendered lifecycle control. */
   currentAgentCapabilities?: CurrentProjectedAgentCapabilities | null;
   }>): ReturnType<typeof createActionExecutor> {
@@ -172,8 +174,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   const resolveActionsSettingsSnapshot = () => {
     const stateAny: any = storage.getState();
     const raw = stateAny?.settings?.actionsSettingsV1;
-    const parsed = ActionsSettingsV1Schema.safeParse(raw);
-    return parsed.success ? parsed.data : { v: 1 as const, actions: {} as Record<ActionId, any> };
+    return normalizeActionsSettingsV1(raw);
   };
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor();
   const executePluginPermissionGrantAction = createPluginPermissionGrantHttpActionExecutor();
@@ -489,8 +490,8 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
     agentsSessionModesList: async (args) => await listAgentSessionModesForActions(args),
     spawnConnectedServicesList: async (args) => await listSpawnConnectedServicesForActions(args),
 
-    sessionSendMessage: async ({ sessionId, message, serverId, requestedAction }) =>
-      await sendSessionMessageWithServerScope({ sessionId, message, serverId, requestedAction }),
+    sessionSendMessage: opts?.sessionSendMessage ?? (async ({ sessionId, message, serverId, requestedAction }) =>
+      await sendSessionMessageWithServerScope({ sessionId, message, serverId, requestedAction })),
 
     sessionTitleSet: async ({ sessionId, title, serverId }) => {
       const sid = String(sessionId ?? '').trim();
@@ -1002,6 +1003,7 @@ export async function replayApprovalRequestAtExactDaemon(input: Readonly<{
   const resolveContext = (context: Parameters<typeof executor.execute>[2]): ActionExecutorContext => ({
     ...(context ?? {}),
     surface: context?.surface ?? 'ui',
+    authority: context?.authority ?? 'present_user',
   });
 
   return {

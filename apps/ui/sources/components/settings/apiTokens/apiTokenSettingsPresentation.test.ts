@@ -37,7 +37,7 @@ describe('API-token Settings presentation', () => {
             token: {
                 tokenId: '11111111-1111-4111-8111-111111111111',
                 label: 'Release automation',
-                displayPrefix: 'hap_11111111',
+                displayPrefix: 'hap_v1_11111111',
                 createdAt: '2026-08-20T12:00:00.000Z',
                 lastUsedAt: null,
                 expiresAt: '2026-08-27T12:00:00.000Z',
@@ -45,11 +45,13 @@ describe('API-token Settings presentation', () => {
             nowMs: NOW,
         });
         expect(expiring).toMatchObject({
-            displayPrefix: 'hap_11111111…',
+            displayPrefix: 'hap_v1_11111111…',
             status: 'expiring',
             statusVariant: 'warning',
         });
-        expect(JSON.stringify(expiring)).not.toContain('hap_v1_');
+        expect(JSON.stringify(expiring)).not.toContain(
+            `hap_v1_${expiring.token.tokenId}_`,
+        );
 
         const expired = buildApiTokenRowPresentation({
             token: { ...expiring.token, expiresAt: '2026-08-21T12:00:00.000Z' },

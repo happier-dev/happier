@@ -72,7 +72,7 @@ export function useProviderModelProjection(input: Readonly<{
         return () => registration?.dispose();
     }, [accountLifetime]);
 
-    const refreshWithResult = React.useCallback(async () => {
+    const refreshWithResult = React.useCallback(async (forceRefresh: boolean = true) => {
         const requestGeneration = ++generation.current;
         const requestStillCurrent = (): boolean => (
             currentAccountLifetimeRef.current === accountLifetime
@@ -93,11 +93,16 @@ export function useProviderModelProjection(input: Readonly<{
                 serverId: input.serverId,
                 agentTargetKey: input.agentTargetKey,
                 ...(input.mode ? { mode: input.mode } : {}),
+                ...(forceRefresh ? { forceRefresh: true as const } : {}),
                 ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
             });
             if (requestGeneration !== generation.current || !requestStillCurrent()) return null;
             if (result.status === 'success') {
-                setState({ scopeKey, accountLifetime, data: result, error: null, loading: true });
+                setState({
+                    scopeKey, accountLifetime, data: result,
+                    error: null,
+                    loading: true,
+                });
             } else {
                 setState((current) => ({
                     scopeKey,
@@ -152,9 +157,13 @@ export function useProviderModelProjection(input: Readonly<{
     }, [refreshWithResult]);
 
     React.useEffect(() => {
-        void refreshWithResult();
+        void refreshWithResult(false);
         return () => { generation.current += 1; };
     }, [accountLifetime, refreshWithResult, scopeKey]);
 
-    return { data, error, loading, status, refresh, refreshWithResult };
+    return {
+        data, error,
+        refreshFailures: data?.refreshFailures ?? [],
+        loading, status, refresh, refreshWithResult,
+    };
 }

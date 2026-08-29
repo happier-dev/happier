@@ -41,6 +41,25 @@ function expectAtLeast44PointTarget(style: unknown): void {
 }
 
 describe('DaemonModelPackRow', () => {
+    it('keeps an accessible cancel action visible for the active install', async () => {
+        const row: ModelCatalogRow = {
+            packId: 'pack-active', kind: 'tts_sherpa', displayName: 'Active Pack', model: 'kokoro',
+            state: 'downloading', progress: 0.5, lastError: null, loadedArtifactBytes: null,
+            isDefault: false, canInstall: false, canRemove: false, licenseReview: null, sourcePluginId: null,
+        };
+        const onCancel = vi.fn();
+        const { tree } = await renderScreen(
+            <DaemonModelPackRow row={row} actionInFlight actionsDisabled
+                onSetDefault={() => undefined} onInstall={() => undefined}
+                onRemove={() => undefined} onCancel={onCancel} />,
+        );
+        const cancel = tree.root.findByProps({ testID: 'voice-model-cancel-pack-active' });
+        expect(cancel.props.accessibilityLabel).toContain(t('common.cancel'));
+        expectAtLeast44PointTarget(cancel.props.style);
+        await pressTestInstanceAsync(cancel);
+        expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
     it('uses one confirmation owner before removing an installed pack', async () => {
         const row: ModelCatalogRow = {
             packId: 'pack-1',
@@ -164,6 +183,7 @@ describe('DaemonModelPackRow', () => {
             install: vi.fn(async () => undefined),
             acceptLicense: vi.fn(async () => undefined),
             remove: vi.fn(async () => undefined),
+            cancel: vi.fn(),
         };
 
         const { tree } = await renderScreen(
@@ -205,6 +225,7 @@ describe('DaemonModelPackRow', () => {
             install: vi.fn(async () => undefined),
             acceptLicense: vi.fn(async () => undefined),
             remove: vi.fn(async () => undefined),
+            cancel: vi.fn(),
         };
 
         const { tree } = await renderScreen(

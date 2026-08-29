@@ -29,6 +29,11 @@ import type {
     PluginReactNativeArtifactLeasePersistentScope,
 } from '@/sync/domains/plugins/availability/reactNativeArtifactLease';
 import {
+    createPluginArtifactPersistentCustody,
+    type PluginArtifactPersistentAccountOperation,
+    type PluginArtifactPersistentCustody,
+} from '@/sync/domains/plugins/availability/artifactLease';
+import {
     createPluginNativeArtifactResourcePersistentStore,
     createPluginNativeArtifactResourceRegistry,
     type PluginNativeArtifactPersistentStore,
@@ -118,24 +123,7 @@ type PluginReactNativeBundleCacheWriteFence = Readonly<{
  * physical work and deliberately does not make an already-admitted lease
  * currentness forget its captured generation.
  */
-export type PluginReactNativePersistentAccountOperation = Readonly<{
-    scope: ServerAccountScope;
-    isCurrent: () => boolean;
-    isCacheCurrent: () => boolean;
-    isOpen: () => boolean;
-    /**
-     * Joins the cache owner's incumbent exact-key deletion ordering before a
-     * scoped raw-store adapter can re-adopt or replace persistent bytes.
-     */
-    awaitPendingPersistentArtifactRemoval: (
-        identity: PluginUiPersistentArtifactIdentity,
-    ) => Promise<void>;
-    /** Exact deletion remains in the incumbent cache's per-key ordering owner. */
-    removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
-    /** Explicit Account quarantine cleanup remains with that same cache owner. */
-    removePersistentArtifactsForAccount: () => Promise<void>;
-    release: () => void;
-}>;
+export type PluginReactNativePersistentAccountOperation = PluginArtifactPersistentAccountOperation;
 
 export type PluginReactNativeBundleCache = Readonly<{
     captureWriteFence: (
@@ -276,6 +264,8 @@ export type CreatePluginReactNativeBundleCacheOptions = Readonly<{
     // bytes are deleted from disk; tests may inject a fake.
     diskGc?: ReactNativeInstalledArtifactDiskGc;
     persistentStore?: PluginReactNativePersistentArtifactStore;
+    /** Existing Artifact-owned custody; RN owns only hot executable bytes. */
+    persistentCustody?: PluginArtifactPersistentCustody;
     /** Existing native-token registry callback; it revokes handles without deleting retained bytes. */
     revokeNativeArtifactResourcesForAccount?: (scope: ServerAccountScope) => void;
     onPersistentCacheDiagnostic?: (code: string) => void;
@@ -503,7 +493,7 @@ export function createPluginReactNativeArtifactLeasePersistentScope(input: Reado
     const canUseStore = () => operation !== null && operation.isOpen() && isCurrent();
     // Source acquisition may finish before its revocable Artifact lease does. A
     // lease that proves its retained bytes cannot satisfy the current digest
-    // still needs this cache owner's exact-entry cleanup while the captured
+    // still needs the Artifact custody owner's exact-entry cleanup while the captured
     // Account lifetime remains current. Availability withdrawal alone does not:
     // it retires reachability, and deletion of a superseded or withdrawn
     // identity belongs to the projection writer that holds both snapshots.
@@ -513,21 +503,21 @@ export function createPluginReactNativeArtifactLeasePersistentScope(input: Reado
             if (!isPluginReactNativePersistentArtifactIdentity(identity) || !canUseStore()) {
                 return null;
             }
-            const record = await input.cache.readPersistentArtifact(identity);
+            const record = await operation?.readPersistentArtifact(identity) ?? null;
             return canUseStore() ? record : null;
         },
         write: async (record) => {
             if (!isPluginReactNativePersistentArtifactRecord(record) || !canUseStore()) {
                 throw new Error('react_native_artifact_persistent_scope_retired');
             }
-            const written = await input.cache.writePersistentArtifact(record);
+            const written = await operation?.writePersistentArtifact(record) ?? false;
             if (!written || !canUseStore()) {
                 throw new Error('react_native_artifact_persistent_write_invalidated');
             }
         },
         remove: async (identity) => {
             if (!isPluginReactNativePersistentArtifactIdentity(identity) || !canRemovePersistentArtifact()) return;
-            await input.cache.removePersistentArtifact(identity);
+            await input.cache.removePersistentArtifact(identity, operation?.isCurrent);
         },
         removeAccount: async (scope) => {
             if (!areServerAccountScopesEqual(scope, input.lifetime.scope) || !canUseStore()) return;
@@ -550,25 +540,12 @@ export function createPluginReactNativeBundleCache(
     const diskGc = options.diskGc;
     const persistentStore = options.persistentStore;
     const diagnosePersistentCache = options.onPersistentCacheDiagnostic;
-    const retiredAccountScopes = new Set<string>();
-    const quarantinedPersistentAccountScopes = new Set<string>();
-    // One exact identity whose physical deletion failed. It is retired from
-    // lookup and its owed deletion is retried on the next read for that exact
-    // key. It deliberately does not quarantine the Account: a single failed
-    // entry must never make every other cached Artifact unreadable or delete
-    // them.
-    const quarantinedPersistentArtifactKeys = new Set<string>();
-    const pendingPersistentAccountCleanups = new Map<string, Promise<void>>();
-    // Exact deletes and later writes for one persistent identity must share
-    // ordering. An invalid-record discard for one key can already be inside the
-    // storage adapter when that same exact identity is re-verified and written
-    // again; the fresh write waits until that delete has drained instead of
-    // being erased by it afterward.
-    const pendingPersistentArtifactRemovals = new Map<string, Promise<void>>();
-    const persistentAccountGenerations = new Map<string, number>();
-    const activePersistentAccountOperations = new Map<string, number>();
+    const persistentCustody = options.persistentCustody ?? createPluginArtifactPersistentCustody({
+        store: persistentStore as unknown as PluginUiPersistentArtifactStore | undefined,
+        revokeNativeArtifactResourcesForAccount: options.revokeNativeArtifactResourcesForAccount,
+        onDiagnostic: options.onPersistentCacheDiagnostic,
+    });
     const hotEntryAccountScopes = new Map<string, string>();
-    const accountLifetimeRetirements = new Map<string, Readonly<{ dispose: () => void }>>();
     // This is the existing complete source union, indexed by hot-cache key
     // with the materializer's stable directory identity alongside it. It does
     // not own currentness; the projection reconciler supplies that truth.
@@ -578,154 +555,6 @@ export function createPluginReactNativeBundleCache(
     // is about to register that union. Afterwards, this existing set is the
     // sole write-currentness authority for every fenced identity.
     let hasReconciledActiveProjectionSources = false;
-
-    function isPersistentAccountUsable(scope: ServerAccountScope): boolean {
-        const key = accountScopeKey(scope);
-        return !retiredAccountScopes.has(key) && !quarantinedPersistentAccountScopes.has(key);
-    }
-
-    function persistentAccountGeneration(key: string): number {
-        return persistentAccountGenerations.get(key) ?? 0;
-    }
-
-    function advancePersistentAccountGeneration(key: string): void {
-        persistentAccountGenerations.set(key, persistentAccountGeneration(key) + 1);
-    }
-
-    function activePersistentAccountOperationCount(key: string): number {
-        return activePersistentAccountOperations.get(key) ?? 0;
-    }
-
-    async function awaitPendingPersistentArtifactRemoval(key: string): Promise<void> {
-        while (true) {
-            const pending = pendingPersistentArtifactRemovals.get(key);
-            if (!pending) return;
-            await pending.catch(() => undefined);
-        }
-    }
-
-    function capturePersistentAccountOperation(input: Readonly<{
-        scope: ServerAccountScope;
-        isCurrent: () => boolean;
-    }>): PluginReactNativePersistentAccountOperation | null {
-        const key = accountScopeKey(input.scope);
-        const generation = persistentAccountGeneration(key);
-        const isCacheCurrent = () => (
-            persistentAccountGeneration(key) === generation
-            && isPersistentAccountUsable(input.scope)
-        );
-        const isCurrent = () => {
-            try {
-                return input.isCurrent() && isCacheCurrent();
-            } catch {
-                return false;
-            }
-        };
-        if (!isCurrent()) return null;
-
-        activePersistentAccountOperations.set(key, activePersistentAccountOperationCount(key) + 1);
-        let open = true;
-        return Object.freeze({
-            scope: input.scope,
-            isCurrent,
-            isCacheCurrent,
-            isOpen: () => open,
-            awaitPendingPersistentArtifactRemoval: async (identity) => {
-                if (!areServerAccountScopesEqual(identity.accountScope, input.scope)) return;
-                await awaitPendingPersistentArtifactRemoval(
-                    derivePluginUiPersistentArtifactKey(identity),
-                );
-            },
-            removePersistentArtifact: (identity) => {
-                if (!areServerAccountScopesEqual(identity.accountScope, input.scope)) {
-                    return Promise.resolve();
-                }
-                return removePersistentArtifact(identity, () => open && isCurrent());
-            },
-            removePersistentArtifactsForAccount: () => removePersistentArtifactsForAccount(input.scope),
-            release: () => {
-                if (!open) return;
-                open = false;
-                const remaining = activePersistentAccountOperationCount(key) - 1;
-                if (remaining > 0) {
-                    activePersistentAccountOperations.set(key, remaining);
-                    return;
-                }
-                activePersistentAccountOperations.delete(key);
-                // A successful first delete can finish while an older raw
-                // read/write still holds bytes. Drain that operation, then
-                // run the incumbent Account cleanup once more before reuse.
-                if (
-                    quarantinedPersistentAccountScopes.has(key)
-                    && !pendingPersistentAccountCleanups.has(key)
-                ) {
-                    void removePersistentArtifactsForAccount(input.scope);
-                }
-            },
-        });
-    }
-
-    function removePersistentArtifactsForAccount(scope: ServerAccountScope): Promise<void> {
-        if (!persistentStore) return Promise.resolve();
-        const key = accountScopeKey(scope);
-        const pending = pendingPersistentAccountCleanups.get(key);
-        if (pending) return pending;
-
-        // Fence first: the next Account lifetime may bind before the async
-        // physical removal reaches storage, but it must not re-adopt or write
-        // bytes that this exact cleanup can later delete.
-        quarantinedPersistentAccountScopes.add(key);
-        // Once the quarantine is set, no later operation can capture this
-        // Account. Capture whether an older raw operation was still live when
-        // this physical delete began: even if it releases before the cleanup
-        // promise settles, its post-delete write needs one final Account pass.
-        const cleanupStartedWithActiveOperations = activePersistentAccountOperationCount(key) > 0;
-        let cleanupSucceeded = false;
-        let cleanup!: Promise<void>;
-        cleanup = Promise.resolve()
-            .then(() => persistentStore.removeAccount(scope))
-            .then(() => {
-                cleanupSucceeded = true;
-                if (
-                    pendingPersistentAccountCleanups.get(key) === cleanup
-                    && !cleanupStartedWithActiveOperations
-                    && activePersistentAccountOperationCount(key) === 0
-                ) {
-                    quarantinedPersistentAccountScopes.delete(key);
-                }
-            })
-            .catch(() => {
-                // A failed physical deletion must not make retained bytes readable again
-                // when the same Account becomes current later in this app lifetime.
-                diagnosePersistentCache?.('plugin_ui_artifact_account_cache_delete_failed');
-            })
-            .finally(() => {
-                if (pendingPersistentAccountCleanups.get(key) === cleanup) {
-                    pendingPersistentAccountCleanups.delete(key);
-                }
-                if (
-                    cleanupSucceeded
-                    && cleanupStartedWithActiveOperations
-                    && quarantinedPersistentAccountScopes.has(key)
-                    && activePersistentAccountOperationCount(key) === 0
-                ) {
-                    void removePersistentArtifactsForAccount(scope);
-                }
-            });
-        pendingPersistentAccountCleanups.set(key, cleanup);
-        return cleanup;
-    }
-
-    function retryQuarantinedPersistentAccountCleanup(scope: ServerAccountScope): void {
-        const key = accountScopeKey(scope);
-        if (
-            !persistentStore
-            || !quarantinedPersistentAccountScopes.has(key)
-            || pendingPersistentAccountCleanups.has(key)
-            || activePersistentAccountOperationCount(key) > 0
-        ) return;
-        void removePersistentArtifactsForAccount(scope);
-    }
 
     function scheduleDiskEviction(identities: readonly PluginReactNativeBundleCacheIdentity[]): void {
         if (!diskGc || identities.length === 0) {
@@ -790,12 +619,8 @@ export function createPluginReactNativeBundleCache(
     }
 
     async function retireAccount(scope: ServerAccountScope): Promise<void> {
+        await persistentCustody.retireAccount(scope);
         const key = accountScopeKey(scope);
-        advancePersistentAccountGeneration(key);
-        retiredAccountScopes.add(key);
-        accountLifetimeRetirements.get(key)?.dispose();
-        accountLifetimeRetirements.delete(key);
-        options.revokeNativeArtifactResourcesForAccount?.(scope);
         const evictedIdentities: PluginReactNativeBundleCacheIdentity[] = [];
         for (const [cacheKey, entryScope] of hotEntryAccountScopes.entries()) {
             if (entryScope !== key) continue;
@@ -816,35 +641,7 @@ export function createPluginReactNativeBundleCache(
         identity: PluginUiPersistentArtifactIdentity,
         isCurrent: () => boolean = () => true,
     ): Promise<void> {
-        const operation = capturePersistentAccountOperation({
-            scope: identity.accountScope,
-            isCurrent,
-        });
-        if (!persistentStore || !operation) return;
-        const key = derivePluginUiPersistentArtifactKey(identity);
-        const precedingRemoval = pendingPersistentArtifactRemovals.get(key) ?? null;
-        let removal!: Promise<void>;
-        removal = (async () => {
-            try {
-                if (precedingRemoval) await precedingRemoval.catch(() => undefined);
-                if (!operation.isCurrent()) return;
-                await persistentStore.remove(identity);
-                quarantinedPersistentArtifactKeys.delete(key);
-            } catch {
-                diagnosePersistentCache?.('plugin_ui_artifact_cache_delete_failed');
-                // Retire this exact identity from lookup and keep its physical
-                // deletion owed. Unrelated Account entries stay readable.
-                quarantinedPersistentArtifactKeys.add(key);
-            } finally {
-                operation.release();
-            }
-        })().finally(() => {
-            if (pendingPersistentArtifactRemovals.get(key) === removal) {
-                pendingPersistentArtifactRemovals.delete(key);
-            }
-        });
-        pendingPersistentArtifactRemovals.set(key, removal);
-        await removal;
+        await persistentCustody.removePersistentArtifact(identity, isCurrent);
     }
 
     return Object.freeze({
@@ -903,99 +700,26 @@ export function createPluginReactNativeBundleCache(
                 : null;
         },
         readPersistentArtifact: async (identity) => {
-            const operation = capturePersistentAccountOperation({
-                scope: identity.accountScope,
-                isCurrent: () => true,
-            });
-            if (!persistentStore || !operation) return null;
-            if (quarantinedPersistentArtifactKeys.has(derivePluginUiPersistentArtifactKey(identity))) {
-                operation.release();
-                // Retry the owed exact deletion opportunistically at the same
-                // choke point that observed the retired identity; no timer,
-                // worker, or second cleanup owner is involved.
-                void removePersistentArtifact(identity).catch(() => undefined);
+            const record = await persistentCustody.readPersistentArtifact(identity);
+            if (!record || !persistentRecordHasValidIntegrity(record as PluginReactNativePersistentArtifactRecord, identity)) {
+                if (record) await persistentCustody.removePersistentArtifact(identity);
                 return null;
             }
-            try {
-                await operation.awaitPendingPersistentArtifactRemoval(identity);
-                if (!operation.isCurrent()) return null;
-                const record = await persistentStore.read(identity).catch(() => {
-                    diagnosePersistentCache?.('plugin_ui_artifact_cache_read_failed');
-                    return null;
-                });
-                if (!operation.isCurrent() || !record) return null;
-                if (!persistentRecordHasValidIntegrity(record, identity)) {
-                    await operation.removePersistentArtifact(identity);
-                    return null;
-                }
-                return clonePersistentArtifactRecord(record);
-            } finally {
-                operation.release();
-            }
+            return clonePersistentArtifactRecord(record as PluginReactNativePersistentArtifactRecord);
         },
         writePersistentArtifact: async (record) => {
-            const scope = record.persistentIdentity.accountScope;
-            if (!persistentStore || retiredAccountScopes.has(accountScopeKey(scope))) {
-                return false;
-            }
-            const operation = capturePersistentAccountOperation({ scope, isCurrent: () => true });
-            if (!operation) {
-                // Cache custody is optional for the already-admitted executable path;
-                // do not repopulate a scope until its pending or failed cleanup succeeds.
-                return true;
-            }
-            try {
-                if (!persistentRecordHasValidIntegrity(record, record.persistentIdentity)) {
-                    return false;
-                }
-                await awaitPendingPersistentArtifactRemoval(
-                    derivePluginUiPersistentArtifactKey(record.persistentIdentity),
-                );
-                if (!operation.isCurrent()) return false;
-                try {
-                    await persistentStore.write(clonePersistentArtifactRecord(record));
-                    // The write replaced exactly the bytes an earlier failed
-                    // deletion left behind, so this key is reachable again.
-                    quarantinedPersistentArtifactKeys.delete(
-                        derivePluginUiPersistentArtifactKey(record.persistentIdentity),
-                    );
-                } catch {
-                    // A cache-store failure must not turn an otherwise admitted
-                    // artifact into an executable-load failure.
-                    diagnosePersistentCache?.('plugin_ui_artifact_cache_write_failed');
-                    return true;
-                }
-                if (!operation.isCurrent()) {
-                    // Account retirement invalidates the old operation without
-                    // deleting verified Artifact bytes. Retention and physical
-                    // deletion remain owned by the Artifact source/revocation path.
-                    return false;
-                }
-                return true;
-            } finally {
-                operation.release();
-            }
+            if (!persistentRecordHasValidIntegrity(record, record.persistentIdentity)) return false;
+            return persistentCustody.writePersistentArtifact(record);
         },
-        removePersistentArtifact,
+        removePersistentArtifact: (identity, isCurrent) => persistentCustody.removePersistentArtifact(identity, isCurrent),
         removePersistentArtifactsForAccount: async (scope) => {
-            await removePersistentArtifactsForAccount(scope);
+            await persistentCustody.removePersistentArtifactsForAccount(scope);
         },
         bindAccountLifetime: (lifetime) => {
-            const key = accountScopeKey(lifetime.scope);
-            accountLifetimeRetirements.get(key)?.dispose();
-            if (!lifetime.isCurrent()) {
-                retiredAccountScopes.add(key);
-                accountLifetimeRetirements.delete(key);
-                return;
-            }
-            retiredAccountScopes.delete(key);
-            retryQuarantinedPersistentAccountCleanup(lifetime.scope);
-            accountLifetimeRetirements.set(key, lifetime.onRetire(() => {
-                void retireAccount(lifetime.scope);
-            }));
+            persistentCustody.bindAccountLifetime(lifetime);
         },
-        isAccountCurrent: (scope) => !retiredAccountScopes.has(accountScopeKey(scope)),
-        capturePersistentAccountOperation,
+        isAccountCurrent: persistentCustody.isAccountCurrent,
+        capturePersistentAccountOperation: persistentCustody.capturePersistentAccountOperation,
         retireAccount,
         reconcileActiveProjectionIdentities,
     });

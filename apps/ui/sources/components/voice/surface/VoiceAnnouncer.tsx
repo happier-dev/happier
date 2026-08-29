@@ -78,6 +78,14 @@ function claimAnnouncement(scopedKey: string): boolean {
 }
 
 type VoiceAnnouncement = Readonly<{ key: string; text: string }>;
+export type VoiceStateAnnouncement = Readonly<{
+    /** Stable channel identity; for example microphone or recovery. */
+    id: string;
+    /** Changes exactly when that channel's truthful state changes. */
+    transitionKey: string;
+    /** Null records a silent retirement, allowing the next appearance to speak again. */
+    text: string | null;
+}>;
 
 /**
  * The announcement composer and live region, with no store behind it.
@@ -101,6 +109,8 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
      * silencing a genuinely different conversation that happens to reuse an id.
      */
     announcementScopeKey: string;
+    /** Additional canonical state channels, delivered through this same live region. */
+    stateAnnouncements?: readonly VoiceStateAnnouncement[];
     /**
      * Newest-first, as `visibleTranscriptEntries` produces them
      * (`useVoiceSurfaceConversationState.ts:161-167`). Reading the chronological
@@ -112,6 +122,7 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
     const initializedRef = React.useRef(false);
     const activeScopeKeyRef = React.useRef<string | null>(null);
     const lastStatusKeyRef = React.useRef<string | null>(null);
+    const lastStateKeysRef = React.useRef<Map<string, string>>(new Map());
     /**
      * Layer one: what *this* announcer has already seen. Kept beside the global
      * claim because a late-mounting owner would otherwise announce a whole
@@ -132,6 +143,9 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
         const scopeChanged = activeScopeKeyRef.current !== props.announcementScopeKey;
         activeScopeKeyRef.current = props.announcementScopeKey;
         const wasInitialized = initializedRef.current;
+        let changedStateAnnouncements = (props.stateAnnouncements ?? []).filter((item) => (
+            lastStateKeysRef.current.get(item.id) !== item.transitionKey
+        ));
 
         const keys: string[] = [];
         const texts: string[] = [];
@@ -147,6 +161,10 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
              * destination row with the same provider-local id later.
              */
             initializedRef.current = true;
+            lastStateKeysRef.current = new Map(
+                (props.stateAnnouncements ?? []).map((item) => [item.id, item.transitionKey]),
+            );
+            changedStateAnnouncements = [];
             for (const entry of candidates) {
                 rememberAnnouncement(
                     observedAnnouncements.current,
@@ -166,6 +184,12 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
             keys.push(props.statusTransitionKey);
             texts.push(props.statusAnnouncement);
         }
+        for (const item of changedStateAnnouncements) {
+            lastStateKeysRef.current.set(item.id, item.transitionKey);
+            if (!item.text) continue;
+            keys.push(item.transitionKey);
+            texts.push(item.text);
+        }
         for (const entry of candidates) {
             const key = entry.announcementId;
             const scopedKey = scopedAnnouncementKey(props.announcementScopeKey, key);
@@ -181,6 +205,7 @@ export const VoiceAnnouncerSurface = React.memo(function VoiceAnnouncerSurface(p
         props.announcementScopeKey,
         props.statusAnnouncement,
         props.statusTransitionKey,
+        props.stateAnnouncements,
         props.transcriptEntries,
     ]);
 
@@ -292,11 +317,32 @@ export const VoiceAnnouncer = React.memo(function VoiceAnnouncer(): React.ReactE
     ].join('|'), [accountScope, control.sessionId]);
 
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState);
+    const stateAnnouncements = React.useMemo<readonly VoiceStateAnnouncement[]>(() => [
+        {
+            id: 'microphone',
+            transitionKey: `voice-microphone:${control.muted ? 'muted' : control.capturing ? 'active' : 'inactive'}`,
+            text: control.micStateLabel,
+        },
+        {
+            id: 'recovery',
+            transitionKey: control.recoveryAvailable
+                ? `voice-recovery:${control.recoveryLabel ?? 'available'}`
+                : 'voice-recovery:none',
+            text: control.recoveryAvailable ? control.recoveryLabel : null,
+        },
+    ], [
+        control.capturing,
+        control.micStateLabel,
+        control.muted,
+        control.recoveryAvailable,
+        control.recoveryLabel,
+    ]);
     return (
         <VoiceAnnouncerSurface
             announcementScopeKey={announcementScopeKey}
             statusAnnouncement={t(statusPresentation.labelKey)}
             statusTransitionKey={`voice-status:${control.surfaceState}`}
+            stateAnnouncements={stateAnnouncements}
             transcriptEntries={visibleTranscriptEntries}
         />
     );

@@ -170,6 +170,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['claude', 'codex', 'customAcp'],
     isBundledAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
     getAgentCore: () => ({
         model: {
@@ -976,6 +977,7 @@ describe('NewSessionEngineOptionDetail', () => {
 
         expect(latestSelection).toEqual({
             modelId: 'default',
+            modelLabel: null,
             modelSelection: null,
             sessionModeId: 'default',
             configOverrides: {

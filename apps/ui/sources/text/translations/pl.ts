@@ -1088,6 +1088,7 @@ export const pl = {
       event: ({ eventId }: { eventId: string }) => `Zdarzenie: ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Gdy zakończy się przebieg · ${sessionId}`,
       noAutomaticTriggers: 'Brak automatycznych wyzwalaczy',
+      moreTriggers: ({ count }: { count: number }) => `+${count} więcej`,
       noNextRun: "Brak następnego uruchomienia",
       nextRun: ({ time }: { time: string }) => `Następne: ${time}`,
       nextRunPending: "Następne uruchomienie oczekuje",
@@ -2983,6 +2984,10 @@ export const pl = {
   connectedServices: {
     accountScopeMismatchTitle: 'Przełącz konto serwera, aby kontynuować',
     accountScopeMismatchDescription: 'Ta maszyna należy do konta innego serwera. Przełącz się na to konto serwera, aby zarządzać jego połączonymi kontami.',
+    purposeTargets: {
+      requiredPrompt: 'Wybierz konto lub grupę',
+      legacyUnavailable: 'Ten serwer nie może jeszcze wyświetlać celów połączonych kont',
+    },
     fallbackName: "Połączona usługa",
     serviceNames: {
       claudeSubscription: "Subskrypcja Claude",
@@ -6567,6 +6572,10 @@ export const pl = {
       captureDurationExceeded: "Dyktowanie osiągnęło limit 60 sekund słuchania. Zacznij od nowa, aby kontynuować.",
       transcriptionDeadlineExceeded: "Transkrypcja trwała dłużej niż 30 sekund. Spróbuj krótszego dyktowania.",
       transcriptLimitExceeded: "Podyktowany tekst jest za długi dla pola wiadomości. Spróbuj krótszego dyktowania.",
+      transcriptionCredentialsRequired: "Dyktowanie wymaga danych logowania wybranego dostawcy mowy. Sprawdź konfigurację i spróbuj ponownie.",
+      transcriptionMachineUnavailable: "Maszyna dyktowania lub lokalny model mowy jest niedostępny. Połącz ponownie albo sprawdź wybrany model.",
+      transcriptionTransferFailed: "Happier nie mógł wysłać nagrania do maszyny dyktowania. Sprawdź połączenie i spróbuj ponownie.",
+      transcriptionFailed: "Wybrany dostawca mowy nie mógł przepisać nagrania. Spróbuj ponownie lub sprawdź jego konfigurację.",
       recordedAudioSizeUnavailable: "Happier nie mógł sprawdzić rozmiaru nagrania. Nagraj jeszcze raz.",
       recordedAudioLimitExceeded: "Nagranie przekracza limit 8 MB. Spróbuj krótszego dyktowania.",
       microphoneOwnedByVoice: "Zakończ Voice, zanim zaczniesz dyktowanie.",
@@ -11227,6 +11236,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "Historia ustawień",
+      footer: "Przywraca preferencje konta z zapisanej migawki. Dane aplikacji, sekrety i poświadczenia pozostają bez zmian.",
+      loading: "Wczytywanie historii…",
+      empty: "Brak zapisanych migawek",
+      unavailable: "Historia jest niedostępna",
+      entryTitle: ({ version }: { version: string }) => `Przywróć wersję ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `Zapisano ${recordedAt}`,
+      restoreConfirmTitle: "Przywrócić ustawienia?",
+      restoreConfirmBody: "Preferencje konta zostaną zastąpione wartościami z wybranej migawki.",
+      restoreConfirmAction: "Przywróć",
+      restoredTitle: "Ustawienia przywrócone",
+      restoredBody: "Preferencje konta zostały przywrócone z wybranej migawki.",
+      unchangedBody: "Bieżące preferencje konta są już zgodne z wybraną migawką.",
+      conflictTitle: "Ustawienia się zmieniły",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `Ustawienia zmieniły się podczas przywracania (aktualna wersja ${currentVersion}). Nic nie zapisano — sprawdź bieżące ustawienia i spróbuj ponownie.`,
+      outcomeUnknownBody: "Nie można ustalić, czy przywracanie się powiodło. Sprawdź bieżące ustawienia przed ponowną próbą.",
+      invalidBody: "Wybranej migawki nie można bezpiecznie przywrócić. Nic nie zapisano.",
+      unavailableBody: "Nie udało się przywrócić wybranej migawki. Nic nie zapisano.",
+    },
     // Account settings screen
     accountInformation: "Informacje o koncie",
     status: "Stan",

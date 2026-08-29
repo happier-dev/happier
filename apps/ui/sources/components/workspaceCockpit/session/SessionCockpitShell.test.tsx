@@ -147,7 +147,6 @@ function createPluginProjection() {
     return Object.freeze({
         generation: 4,
         translationsByPluginId: Object.freeze({}),
-        structuredMessagesByKind: Object.freeze({}),
         sessionHeaderActionsById: Object.freeze({}),
         hostedWebById: Object.freeze({}),
         reactNativeBundlesById: Object.freeze({}),

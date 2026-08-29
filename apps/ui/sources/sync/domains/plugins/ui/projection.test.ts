@@ -188,14 +188,6 @@ function createProjection(): PluginProjectionV2 {
                             },
                         },
                     },
-                    'structuredMessage:acme.preview:preview-card': {
-                        id: 'structuredMessage:acme.preview:preview-card',
-                        pluginId: 'acme.preview',
-                        contributionKind: 'structuredMessage',
-                        descriptorId: 'preview-card',
-                        kind: 'acme.preview/preview-card.v1',
-                        fallback: { kind: 'summary', template: 'Preview unavailable' },
-                    },
                     'surfacePlacement:acme.preview:preview-pane': {
                         id: 'surfacePlacement:acme.preview:preview-pane',
                         pluginId: 'acme.preview',
@@ -667,11 +659,6 @@ describe('plugin UI projection normalization', () => {
             locale: 'en',
             fallback: 'Developer fallback',
         })).toBe('Preview');
-        expect(model.structuredMessagesByKind['acme.preview/preview-card.v1']).toMatchObject({
-            id: 'structuredMessage:acme.preview:preview-card',
-            pluginId: 'acme.preview',
-            descriptorId: 'preview-card',
-        });
         expect(model.surfacePlacementsById['surfacePlacement:acme.preview:preview-pane']).toMatchObject({
             binding: {
                 container: 'detailsTab',
@@ -753,7 +740,7 @@ describe('plugin UI projection normalization', () => {
         })).toBeNull();
     });
 
-    it('fails closed when multiple plugins project the same structured-message kind', () => {
+    it('does not project structured-message descriptors even when multiple plugins claim a kind', () => {
         const projection = createProjection();
         const entries = projection.familiesById.pluginUi?.entriesById;
         if (!entries) throw new Error('pluginUi fixture family is required');
@@ -768,7 +755,7 @@ describe('plugin UI projection normalization', () => {
 
         const model = normalizePluginUiProjection(projection);
 
-        expect(model.structuredMessagesByKind['acme.preview/preview-card.v1']).toBeUndefined();
+        expect(model.unknownEntriesById['structuredMessage:other.preview:preview-card']).toBeDefined();
     });
 
     it('retains a compiled session-header action without re-admitting its Action target in UI', () => {

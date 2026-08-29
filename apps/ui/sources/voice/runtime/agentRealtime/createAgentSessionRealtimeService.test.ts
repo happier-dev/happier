@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { AGENT_SESSION_REALTIME_SDP_MAX_BYTES } from '@happier-dev/protocol';
 import type { AgentSessionRealtimeHandle } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { createAgentSessionRealtimeService } from './createAgentSessionRealtimeService';
+import {
+  cleanupBoundAgentSessionRealtimeService,
+  createAgentSessionRealtimeService,
+} from './createAgentSessionRealtimeService';
 
 const provider = { pluginId: 'happier.agent.codex', localId: 'realtime-codex' } as const;
 const sentinels = {
@@ -507,6 +510,69 @@ describe('bound Agent-session realtime service', () => {
     ]);
     expect(stopRpc).toHaveBeenCalledTimes(4);
     expect(onStarted).not.toHaveBeenCalled();
+  });
+
+  it('keeps public abort bounded while host cleanup waits for late-start compensation', async () => {
+    let resolveStart!: (value: unknown) => void;
+    const pendingStart = new Promise((resolve) => {
+      resolveStart = resolve;
+    });
+    let resolveFirstStop!: (value: unknown) => void;
+    const stopRpc = vi.fn(async () => {
+      if (stopRpc.mock.calls.length === 1) {
+        return await new Promise((resolve) => {
+          resolveFirstStop = resolve;
+        });
+      }
+      return { ok: true, status: 'stopped' };
+    });
+    const sessionRpc = vi.fn(async ({ method }: Readonly<{ method: string }>) => {
+      if (method.endsWith('.start')) return await pendingStart;
+      if (method.endsWith('.stop')) return await stopRpc();
+      if (method.endsWith('.watch')) return await new Promise<never>(() => undefined);
+      return { ok: true, status: 'available', transport: 'webrtc' };
+    });
+    const attempt = new AbortController();
+    const caller = new AbortController();
+    const service = createAgentSessionRealtimeService({
+      provider,
+      conversationSessionId: 'session-late-start-host-cleanup',
+      applicationAttemptId: 'voice:late-start-host-cleanup',
+      signal: attempt.signal,
+      sessionRpc,
+      onStarted: vi.fn(),
+    });
+    const starting = service.start(
+      { transport: { kind: 'webrtc', offerSdp: 'v=0\r\na=pending-offer\r\n' } },
+      { signal: caller.signal },
+    );
+    await vi.waitFor(() => expect(sessionRpc).toHaveBeenCalledWith(
+      expect.objectContaining({ method: 'session.agentRealtime.start' }),
+    ));
+
+    caller.abort();
+    await expect(Promise.race([
+      starting,
+      new Promise<'still_pending'>((resolve) => {
+        setTimeout(() => resolve('still_pending'), 25);
+      }),
+    ])).resolves.toEqual({ status: 'aborted' });
+    await vi.waitFor(() => expect(stopRpc).toHaveBeenCalledOnce());
+
+    let cleanupSettled = false;
+    const cleanup = cleanupBoundAgentSessionRealtimeService(service).then(() => {
+      cleanupSettled = true;
+    });
+    resolveStart(successfulStart);
+    await Promise.resolve();
+    expect(cleanupSettled).toBe(false);
+    expect(stopRpc).toHaveBeenCalledOnce();
+
+    resolveFirstStop({ ok: true, status: 'already_stopped' });
+    await cleanup;
+
+    expect(stopRpc).toHaveBeenCalledTimes(2);
+    expect(cleanupSettled).toBe(true);
   });
 
   it('does not let a caller-aborted stop suppress mandatory disposal cleanup', async () => {

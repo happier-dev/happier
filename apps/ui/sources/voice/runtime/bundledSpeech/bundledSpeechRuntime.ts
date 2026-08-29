@@ -24,10 +24,6 @@ function normalizeMimeType(value: string): 'audio/wav' | 'audio/mpeg' | 'audio/m
   throw createRuntimeError('unsupported_audio');
 }
 
-function asTrimmedString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
 function isVoiceProviderSettingsJsonObject(
   value: VoiceProviderSettingsJsonValueV1,
 ): value is Readonly<Record<string, VoiceProviderSettingsJsonValueV1>> {
@@ -86,7 +82,6 @@ export function createBundledSpeechRuntime(input: Readonly<{
         throw createRuntimeError('provider_settings_invalid');
       }
       if (!correspondence.transcribe) throw createRuntimeError('provider_settings_invalid');
-      const language = asTrimmedString(config.language) ?? params.fallbackLanguage;
 
       let source: { kind: 'native'; uri: string } | { kind: 'memory'; bytes: Uint8Array };
       let mimeType: ReturnType<typeof normalizeMimeType>;
@@ -103,8 +98,6 @@ export function createBundledSpeechRuntime(input: Readonly<{
         source,
         mimeType,
         fileName: `recording.${mimeType === 'audio/wav' ? 'wav' : mimeType.split('/')[1]}`,
-        model: correspondence.transcribe.model,
-        language,
         originMachineId: params.originMachineId ?? null,
         signal: params.signal,
       });
@@ -129,7 +122,6 @@ export function createBundledSpeechRuntime(input: Readonly<{
         throw createRuntimeError('provider_settings_invalid');
       }
       if (!correspondence.synthesize) throw createRuntimeError('provider_settings_invalid');
-      const format = config.format === 'wav' ? 'wav' : 'mp3';
       const abortController = new AbortController();
       let stopPlayback: (() => void) | null = null;
       const stop = () => {
@@ -153,12 +145,6 @@ export function createBundledSpeechRuntime(input: Readonly<{
         const result = await client.synthesize({
           entry: contribution,
           input: params.text,
-          model: correspondence.synthesize.model,
-          voiceName: correspondence.synthesize.voiceName,
-          languageCode: asTrimmedString(config.languageCode),
-          format,
-          speakingRate: typeof config.speakingRate === 'number' ? config.speakingRate : null,
-          pitch: typeof config.pitch === 'number' ? config.pitch : null,
           signal: abortController.signal,
         });
         if (abortController.signal.aborted) return;
@@ -173,7 +159,7 @@ export function createBundledSpeechRuntime(input: Readonly<{
             result.bytes.byteOffset,
             result.bytes.byteOffset + result.bytes.byteLength,
           ) as ArrayBuffer,
-          format,
+          format: result.mimeType === 'audio/wav' ? 'wav' : 'mp3',
           registerPlaybackStopper: registerPlaybackOnly,
           onPlaybackStarted: params.onPlaybackStarted,
         });

@@ -236,9 +236,16 @@ export type PendingPluginChangeReview = Readonly<{
                 locator: string;
             }>
             | Readonly<{
-                kind: 'archive' | 'npm';
+                kind: 'archive';
                 locator: string;
-                integrity?: string;
+                integrity: string;
+                integrityBasis: 'observed' | 'expected';
+            }>
+            | Readonly<{
+                kind: 'npm';
+                locator: string;
+                integrity: string;
+                integrityBasis: 'expected';
             }>;
         updateChannel:
             | Readonly<{ kind: 'path'; locator: string; development: boolean }>
@@ -458,10 +465,16 @@ function readPluginInstallationReviewSource(
             : null;
     }
     if (value.kind !== 'archive' && value.kind !== 'npm') return null;
-    const integrity = value.integrity === undefined ? undefined : readNonEmptyString(value.integrity);
-    return hasOnlyKeys(value, ['kind', 'locator', 'integrity'])
-        && (value.integrity === undefined || integrity)
-        ? { kind: value.kind, locator, ...(integrity ? { integrity } : {}) }
+    const integrity = readNonEmptyString(value.integrity);
+    const integrityBasis = value.integrityBasis;
+    if (
+        !hasOnlyKeys(value, ['kind', 'locator', 'integrity', 'integrityBasis'])
+        || !integrity
+        || (integrityBasis !== 'observed' && integrityBasis !== 'expected')
+    ) return null;
+    if (value.kind === 'archive') return { kind: 'archive', locator, integrity, integrityBasis };
+    return integrityBasis === 'expected'
+        ? { kind: 'npm', locator, integrity, integrityBasis }
         : null;
 }
 
@@ -965,9 +978,13 @@ export function formatPluginInstallationReviewBody(review: PendingPluginChangeRe
             : `approved (${review.curation.sourceId}, ${review.curation.reviewedAt})${
                 review.curation.reason ? ` — ${review.curation.reason}` : ''
             }`;
-    const sourceIntegrity = review.source.kind === 'path' ? undefined : review.source.integrity;
+    const sourceIntegrity = review.source.kind === 'path'
+        ? t('common.none')
+        : review.source.integrityBasis === 'expected'
+            ? 'matched expected integrity'
+            : 'observed from staged bytes; not independently verified';
     const verification = [
-        `Source integrity: ${sourceIntegrity ? 'matched staged bytes' : t('common.unavailable')}`,
+        `Source integrity: ${sourceIntegrity}`,
         `Signature: ${signature}`,
         `Provenance: ${provenance}`,
         `Curation: ${curation}`,

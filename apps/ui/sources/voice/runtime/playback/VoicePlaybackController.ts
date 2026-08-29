@@ -58,6 +58,10 @@ export function createVoicePlaybackController(): VoicePlaybackController {
             return () => {};
         }
 
+        const replacedTarget = activeTarget;
+        if (replacedTarget && replacedTarget !== target) {
+            stopTarget(replacedTarget);
+        }
         activeTarget = target;
 
         let stoppedByPendingInterrupt = false;

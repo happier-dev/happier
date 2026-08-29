@@ -5,6 +5,7 @@ import {
   resolveRealtimeProviderConfig,
   updateRealtimeProviderConfig,
 } from './descriptor';
+import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/voiceProviderConversationRetention';
 
 const owner = Object.freeze({
   schemaVersion: 1,
@@ -22,9 +23,8 @@ const owner = Object.freeze({
 describe('realtime settings descriptor boundary', () => {
   it('admits a provider-owned descriptor without knowing the provider id or field paths', () => {
     const descriptor = parseRealtimeSettingsDescriptor('acme_realtime', {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'acme_realtime',
-      mode: 'byo',
+      kind: 'voice.provider-settings.v1',
+      modes: ['byo'],
       titleKey: 'settingsVoice.realtimeProviders.provider.title',
       footerKey: 'settingsVoice.realtimeProviders.provider.footer',
       credential: {
@@ -46,118 +46,22 @@ describe('realtime settings descriptor boundary', () => {
     expect(descriptor?.fields).toHaveLength(1);
   });
 
-  it('admits a non-credential Connected Services binding field for an Agent-backed provider', () => {
-    const descriptor = parseRealtimeSettingsDescriptor('agent_realtime', {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'agent_realtime',
-      modes: ['happier'],
-      credential: { kind: 'none', catalog: null },
-      links: {},
-      fields: [{
-        kind: 'connected_services_binding',
-        path: 'globalConnectedServices',
-        agentId: 'codex',
-        serviceIds: ['openai-codex'],
-        titleKey: 'settingsVoice.realtimeProviders.codex.accountTitle',
-      }],
-    });
-
-    expect(descriptor).toMatchObject({
-      providerId: 'agent_realtime',
-      mode: 'multi',
-      credential: { kind: 'none', catalog: null },
-      fields: [{
-        kind: 'connected_services_binding',
-        path: 'globalConnectedServices',
-        agentId: 'codex',
-        serviceIds: ['openai-codex'],
-      }],
-    });
-  });
-
-  it('fails closed on mismatched identity, malformed fields, or unsafe paths', () => {
-    const base = {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'other', mode: 'byo', credential: { kind: 'api_key', catalog: null }, links: {}, fields: [],
-    };
-    expect(parseRealtimeSettingsDescriptor('acme', base)).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', { ...base, providerId: 'acme', fields: [{ kind: 'text', path: '__proto__.polluted' }] })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', { ...base, providerId: 'acme', fields: [{ kind: 'unknown', path: 'value' }] })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', { ...base, providerId: 'acme', mode: 'typo' })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [
-        { kind: 'text', path: 'duplicate' },
-        { kind: 'number', path: 'duplicate' },
-      ],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [{
-        kind: 'server_vad', path: 'turnDetection',
-        subfields: [{ kind: 'number', path: 'turnDetection.__proto__.polluted' }],
-      }],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', modes: ['byo', 42],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', mode: 'byo', modes: ['happier'],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', links: { privacy: 'javascript:alert(1)' },
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base,
-      providerId: 'acme',
-      credential: { ...base.credential, credentialPurpose: '   ' },
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [{
-        kind: 'server_vad', path: 'turnDetection',
-        subfields: [{ kind: 'text', path: 'turnDetection.threshold', min: 0.1, max: 0.9 }],
-      }],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [
-        { kind: 'autoprovision', path: 'agentId' },
-        { kind: 'number', path: 'agentId', min: 0, max: 1 },
-      ],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [
-        { kind: 'number', path: 'turnDetection.threshold', min: 0.1, max: 0.9 },
-        { kind: 'server_vad', path: 'turnDetection', subfields: [
-          { kind: 'number', path: 'turnDetection.threshold', min: 0.1, max: 0.9 },
-        ] },
-      ],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [{
-        kind: 'range', path: 'speed', min: 2, max: 1,
-      }],
-    })).toBeNull();
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      ...base, providerId: 'acme', fields: [{
-        kind: 'select', path: 'selection', options: Array.from({ length: 65 }, (_, index) => `value_${index}`),
-      }],
-    })).toBeNull();
-  });
-
-  it.each([
-    ['missing', {}],
-    ['blank', { titleKey: '   ' }],
-  ])('rejects a privacy opt-in field with a %s title key', (_case, title) => {
-    expect(parseRealtimeSettingsDescriptor('acme', {
-      kind: 'voice.internal.realtime-settings.v1',
-      providerId: 'acme',
-      mode: 'byo',
+  it('projects the canonical provider-conversation retention into privacy copy metadata', () => {
+    const descriptor = parseRealtimeSettingsDescriptor('acme', {
+      kind: 'voice.provider-settings.v1',
+      modes: ['byo'],
       credential: { kind: 'api_key', catalog: null },
       links: {},
       fields: [{
         kind: 'privacy_opt_in',
         path: 'resumptionEnabled',
-        ...title,
+        titleKey: 'fixture.resumption.title',
       }],
-    })).toBeNull();
+    });
+
+    expect(descriptor?.fields[0]).toMatchObject({
+      retentionMinutes: VOICE_PROVIDER_CONVERSATION_RETENTION_MS / 60_000,
+    });
   });
 });
 

@@ -15,7 +15,10 @@ export function resolveVoiceContextSessionFromState(sessionId: string, state: un
     sessions?: Readonly<Record<string, Session | null>> | null | undefined;
   };
   const directSession = stateRecord.sessions?.[normalizedSessionId] ?? null;
-  if (directSession && (directSession.metadataLayoutVersion ?? 0) !== 0) {
+  if (directSession && (
+    directSession.metadataLayoutVersion !== undefined
+    && directSession.metadataLayoutVersion !== 0
+  )) {
     return directSession;
   }
 

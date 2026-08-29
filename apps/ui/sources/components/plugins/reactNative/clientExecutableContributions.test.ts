@@ -513,18 +513,22 @@ describe('generic client executable contribution registration', () => {
         expect(index.read(readRegistrationInput('voiceProviders', 'conversation'))).toBeNull();
     });
 
-    it('keeps independent exact targets live together and withdraws only the retired target before cleanup', async () => {
-        // A single plugin may declare more than one client executable target.
-        // Retiring one must not use the host's broad plugin invalidation and
-        // accidentally withdraw its still-current sibling.
-        const secondPluginId = pluginId;
+    it('retries failed plugin A without withdrawing or reactivating successful plugin B', async () => {
+        const secondPluginId = 'acme.second-preview';
         const secondTarget = Object.freeze({
             artifactId: 'second-runtime',
             modulePath: './secondRuntime',
             exportName: 'activateSecond',
             platform: 'web' as const,
         });
-        const secondOrigin: PluginMachineExecutionOriginV1 = executionOrigin;
+        const secondOrigin: PluginMachineExecutionOriginV1 = Object.freeze({
+            ...executionOrigin,
+            materializationRef: Object.freeze({
+                ...executionOrigin.materializationRef,
+                pluginId: secondPluginId,
+                materializationId: 'materialization-second',
+            }),
+        });
         const secondIdentityProjectionGeneration = identity.projectionGeneration;
         const secondAuthority = authority;
         const secondIdentity: PluginReactNativeBundleCacheIdentity = Object.freeze({
@@ -573,7 +577,9 @@ describe('generic client executable contribution registration', () => {
         });
         const firstCleanup = vi.fn(async () => {});
         const secondCleanup = vi.fn(async () => {});
+        let failFirstActivation = true;
         const firstActivate = vi.fn((api: PluginClientApi) => {
+            if (failFirstActivation) throw new Error('synthetic plugin A activation failure');
             api.actions.register('open-preview', async () => null);
             return firstCleanup;
         });
@@ -623,16 +629,13 @@ describe('generic client executable contribution registration', () => {
         });
 
         await expect(composition.reconcile([firstActivation, secondActivation])).resolves.toEqual([
-            expect.objectContaining({ result: { ok: true } }),
+            expect.objectContaining({ result: { ok: false, code: 'activation_failed' } }),
             expect.objectContaining({ result: { ok: true } }),
         ]);
-        // One composition owns one incumbent host. Exact target retirement
-        // still cannot let a sibling from the same authority disappear.
         expect(createExecutableHost).toHaveBeenCalledTimes(1);
         expect(firstActivate).toHaveBeenCalledTimes(1);
         expect(secondActivate).toHaveBeenCalledTimes(1);
-        const firstRegistration = composition.read(readRegistrationInput('actions', 'open-preview'));
-        expect(firstRegistration).not.toBeNull();
+        expect(composition.read(readRegistrationInput('actions', 'open-preview'))).toBeNull();
         expect(composition.read({
             family: 'actions',
             pluginId: secondPluginId,
@@ -641,6 +644,16 @@ describe('generic client executable contribution registration', () => {
             executionOrigin: secondOrigin,
             projectionGeneration: secondIdentity.projectionGeneration,
         })).not.toBeNull();
+
+        failFirstActivation = false;
+        await expect(composition.reconcile([firstActivation, secondActivation])).resolves.toEqual([
+            expect.objectContaining({ result: { ok: true }, reused: false }),
+            expect.objectContaining({ result: { ok: true }, reused: true }),
+        ]);
+        expect(firstActivate).toHaveBeenCalledTimes(2);
+        expect(secondActivate).toHaveBeenCalledTimes(1);
+        const firstRegistration = composition.read(readRegistrationInput('actions', 'open-preview'));
+        expect(firstRegistration).not.toBeNull();
 
         const retiring = composition.reconcile([secondActivation]);
         expect(firstRegistration?.lifecycle.signal.aborted).toBe(true);

@@ -1346,6 +1346,7 @@ describe('external Voice provider host composition', () => {
   it('offers host-owned provider conversation state only to a declared resumable leaf', async () => {
     const readProviderConversationState = vi.fn(async () => ({
       conversationId: 'provider-conversation-1',
+      updatedAt: Date.now(),
     }));
     const writeProviderConversationState = vi.fn(async (
       _input: Parameters<NonNullable<BundledRealtimeProviderRuntimeHost['writeProviderConversationState']>>[0],
@@ -1412,6 +1413,7 @@ describe('external Voice provider host composition', () => {
   it('withholds provider conversation persistence from a resumable leaf without a persistent session owner', async () => {
     const readProviderConversationState = vi.fn(async () => ({
       conversationId: 'must-not-resume',
+      updatedAt: Date.now(),
     }));
     const writeProviderConversationState = vi.fn(async (
       _input: Parameters<NonNullable<BundledRealtimeProviderRuntimeHost['writeProviderConversationState']>>[0],
@@ -2103,6 +2105,25 @@ describe('external Voice provider host composition', () => {
       }),
     } satisfies PluginUiClientExecutableActivation);
 
+    const previousSettings = storage.getState().settings;
+    storage.setState((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        experiments: true,
+        featureToggles: {
+          ...current.settings.featureToggles,
+          voice: true,
+        },
+        voice: {
+          ...current.settings.voice,
+          privacy: {
+            ...current.settings.voice.privacy,
+            currentUiContextMode: 'on_demand',
+          },
+        },
+      },
+    }));
     await composition.unload();
     try {
       const attempts = await composition.reconcile([activation]);
@@ -2231,6 +2252,7 @@ describe('external Voice provider host composition', () => {
     } finally {
       await composition.unload();
       toolCatalogLease.revoke();
+      storage.setState((current) => ({ ...current, settings: previousSettings }));
     }
   });
 

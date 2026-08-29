@@ -198,24 +198,65 @@ export function buildPluginMachineMatrix(params: Readonly<{
                     candidate,
                 );
             }
+            // The display axis is the union of current machines and retained
+            // materialization identities whose machine no longer exists in the
+            // inventory (removed/replaced). Dropping those rows would hide
+            // exactly the stranded installation that explains a stored
+            // unavailable origin, so they append as stale read-only cells.
+            const machineAxisKeys = new Set(machines.map(candidateMachineKey));
+            const orphanCandidates: PluginMachineExecutionOriginCandidateV1[] = [];
+            for (const [key, candidate] of candidatesByMachineKey) {
+                if (!machineAxisKeys.has(key)) orphanCandidates.push(candidate);
+            }
+            orphanCandidates.sort((left, right) => (
+                materializationMachineKey(left.materialization)
+                    .localeCompare(materializationMachineKey(right.materialization))
+            ));
             let installedCurrentCount = 0;
-            const cells = machines.map((machine) => {
-                const key = candidateMachineKey(machine);
-                const candidate = candidatesByMachineKey.get(key);
-                const state = candidate
-                    ? resolveInstalledCellState(candidate)
-                    : reportingMachineKeys.has(key) ? 'absent' : 'unknown';
-                if (state === 'installedCurrent') installedCurrentCount += 1;
-                return Object.freeze({
-                    machineKey: key,
-                    machineName: machine.displayName,
-                    serverLabel: machine.serverLabel,
-                    state,
-                    version: candidate?.materialization.version ?? null,
-                    observedAt: candidate?.materialization.observedAt ?? machine.observedAt,
-                    observation: machine.observation,
-                });
-            });
+            const cells = [
+                ...machines.map((machine) => {
+                    const key = candidateMachineKey(machine);
+                    const candidate = candidatesByMachineKey.get(key);
+                    const state = candidate
+                        ? resolveInstalledCellState(candidate)
+                        : reportingMachineKeys.has(key) ? 'absent' as const : 'unknown' as const;
+                    if (state === 'installedCurrent') installedCurrentCount += 1;
+                    return Object.freeze({
+                        machineKey: key,
+                        machineName: machine.displayName,
+                        serverLabel: machine.serverLabel,
+                        state,
+                        version: candidate?.materialization.version ?? null,
+                        observedAt: candidate?.materialization.observedAt ?? machine.observedAt,
+                        observation: machine.observation,
+                    });
+                }),
+                ...orphanCandidates.map((candidate) => {
+                    const materialization = candidate.materialization;
+                    // No live machine row remains, so the retained identity and
+                    // last observation are all the display facts available. The
+                    // server label still resolves from the server's inventory
+                    // snapshot when the server itself is known.
+                    const serverSnapshot = params.machineSnapshots.find((snapshot) => (
+                        snapshot.kind === 'resolved'
+                        && snapshot.serverIdentityId === materialization.serverIdentityId
+                    ));
+                    return Object.freeze({
+                        machineKey: materializationMachineKey(materialization),
+                        machineName: materialization.machineId,
+                        serverLabel: serverSnapshot?.kind === 'resolved'
+                            ? serverSnapshot.serverName
+                            : materialization.serverIdentityId,
+                        // No live inventory target exists, so this row cannot
+                        // inherit a selectable/current classification even if
+                        // its retained release bytes still match.
+                        state: 'machineUnavailable' as const,
+                        version: materialization.version,
+                        observedAt: materialization.observedAt,
+                        observation: 'stale' as const,
+                    });
+                }),
+            ];
             return Object.freeze({
                 pluginId,
                 cells: Object.freeze(cells),

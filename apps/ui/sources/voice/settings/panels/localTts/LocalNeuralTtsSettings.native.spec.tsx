@@ -3,6 +3,7 @@ import { act, ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
+import { DaemonVoiceModelCatalogProvider } from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogContext';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -254,5 +255,37 @@ describe('LocalNeuralTtsSettings (native)', () => {
     });
     expect(stopPropagation).toHaveBeenCalledOnce();
     expect(setKokoro).not.toHaveBeenCalled();
+  });
+
+  it('uses daemon status voices and its declared default for daemon execution', async () => {
+    const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
+    const controller = {
+      state: {
+        statuses: [{
+          packId: 'acme.voice/tts-pack', pluginIdentity: { pluginId: 'acme.voice', packId: 'tts-pack' },
+          kind: 'tts_sherpa', model: 'kokoro', version: '1', executionSupport: ['daemon'],
+          installState: 'installed', progress: null, lastError: null, updatedAtMs: 1,
+          voices: [{ id: 'calm', title: 'Calm' }, { id: 'bright', title: 'Bright' }],
+          defaultVoiceId: 'bright',
+        }],
+      },
+    } as any;
+
+    const { tree } = await renderScreen(
+      <DaemonVoiceModelCatalogProvider value={controller}>
+        <LocalNeuralTtsSettings
+          cfgKokoro={{ model: 'kokoro', assetId: 'acme.voice/tts-pack', voiceId: null, speed: 1, execution: 'daemon' }}
+          setKokoro={vi.fn()}
+          networkTimeoutMs={1000}
+          popoverBoundaryRef={null}
+        />
+      </DaemonVoiceModelCatalogProvider>,
+    );
+
+    const voiceMenu = tree.root.findAllByType('DropdownMenu')
+      .find((node) => node.props.itemTrigger?.title === 'settingsVoice.local.kokoro.voice.title');
+    expect(voiceMenu?.props.items.map((item: any) => item.id)).toEqual(['calm', 'bright']);
+    expect(voiceMenu?.props.selectedId).toBe('bright');
+    expect(voiceMenu?.props.items.every((item: any) => item.rightElement === undefined)).toBe(true);
   });
 });

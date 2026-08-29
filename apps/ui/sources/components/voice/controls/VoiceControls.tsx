@@ -10,6 +10,7 @@ import { useVoiceEnergy } from '@/components/voice/light/useVoiceEnergy';
 import { VOICE_MOTION, light, useVoiceLightTokens } from '@/components/voice/light/voiceLightTokens';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 
 const MINIMUM_TARGET_SIZE = resolveMinimumInteractiveTargetSize(Platform.OS);
 const MINIMUM_TARGET_CONTAINER_STYLE = Object.freeze({
@@ -88,6 +89,10 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
      * content. Anything that participates in the parent's layout belongs here.
      */
     containerStyle?: any;
+    /** Host ref used for ephemeral focus handoff; it owns no focus state. */
+    focusTargetRef?: React.RefCallback<FocusReturnTarget>;
+    onFocus?: () => void;
+    onBlur?: () => void;
     /*
      * There is deliberately no `hitSlop` here.
      *
@@ -115,6 +120,7 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
 
     return (
         <Pressable
+            ref={props.focusTargetRef as any}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
             accessibilityHint={props.accessibilityHint}
@@ -134,6 +140,8 @@ export const TactilePressable = React.memo(function TactilePressable(props: Read
             )}
             onPress={props.onPress}
             onLongPress={props.onLongPress}
+            onFocus={props.onFocus}
+            onBlur={props.onBlur}
         >
             <Animated.View style={[props.style, animated]}>{props.children}</Animated.View>
         </Pressable>
@@ -285,6 +293,8 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
     label?: boolean;
     /** Compact drops labels from the contextual row, never from the transport. */
     compact?: boolean;
+    /** The canonical primary transport node, for an ephemeral recovery handoff. */
+    primaryActionRef?: React.RefCallback<FocusReturnTarget>;
 }>) {
     const tokens = useVoiceLightTokens();
     const disabled = !props.live && !props.canStart;
@@ -295,6 +305,7 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <TactilePressable
+                focusTargetRef={props.primaryActionRef}
                 accessibilityLabel={props.live ? props.labels.end : props.labels.start}
                 accessibilityHint={props.live ? props.labels.endHint : props.labels.startHint}
                 disabled={disabled}

@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/agents';
 import {
     mergeSpawnConfigOptionAliases,
+    type AgentUiSettingReferenceV1,
     type RuntimeDescriptorV1,
     type SpawnConfigOptionValue,
 } from '@happier-dev/protocol';
@@ -41,17 +42,15 @@ import {
     createDescriptorAdapterBehavior,
     readRuntimeDescriptorAgentPayload,
 } from './agentUiBehaviorDescriptorAdapters';
+import { readAgentUiSetting } from './agentUiSettingLookup';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
-
-type SettingsKey = Extract<keyof Settings, string>;
 
 export function readOwnerMetadataFromSessionLike(session: unknown): Record<string, unknown> | null {
     if (!isRecord(session)) return null;
     const metadata = readSessionOwnerMetadataView({
-        metadataLayoutVersion: typeof session.metadataLayoutVersion === 'number'
-            ? session.metadataLayoutVersion
-            : undefined,
+        metadataLayoutVersion: readSessionMetadataLayoutVersion(session.metadataLayoutVersion),
         metadata: session.metadata,
         ownerMetadataView: session.ownerMetadataView,
     });
@@ -74,16 +73,26 @@ type DescriptorCondition =
     | Readonly<{ kind: 'experimentsEnabled' }>
     | Readonly<{
         kind: 'settingEquals';
-        settingKey: SettingsKey;
+        settingKey: AgentUiSettingReferenceV1;
         value: string;
         aliases?: Readonly<Record<string, string>>;
     }>
     | Readonly<{
         kind: 'settingTrue';
-        settingKey: SettingsKey;
+        settingKey: AgentUiSettingReferenceV1;
     }>
     | Readonly<{ all: readonly DescriptorCondition[] }>
     | Readonly<{ any: readonly DescriptorCondition[] }>;
+
+function readAgentUiSettingReference(value: unknown): AgentUiSettingReferenceV1 | undefined {
+    if (typeof value === 'string' && value.trim().length > 0) {
+        return { scope: 'account', localId: value.trim() };
+    }
+    if (!isRecord(value)) return undefined;
+    if (value.scope !== 'host' && value.scope !== 'account' && value.scope !== 'daemon') return undefined;
+    if (typeof value.localId !== 'string' || value.localId.trim().length === 0) return undefined;
+    return { scope: value.scope, localId: value.localId.trim() };
+}
 
 type BooleanOptionChipDescriptor = Readonly<{
     kind: 'booleanOption';
@@ -226,7 +235,7 @@ export type PluginUiBehaviorDescriptor = Readonly<{
     resume?: Readonly<{
         experimentSwitches?: readonly Readonly<{
             id: string;
-            settingKey?: SettingsKey;
+            settingKey?: AgentUiSettingReferenceV1;
             when?: DescriptorCondition;
         }>[];
     }>;
@@ -298,7 +307,7 @@ export type AgentUiBehaviorDescriptorResult = Readonly<{
 
 type AgentExperimentSwitchDescriptor = Readonly<{
     id: string;
-    settingKey?: SettingsKey;
+    settingKey?: AgentUiSettingReferenceV1;
     when?: DescriptorCondition;
 }>;
 
@@ -306,8 +315,8 @@ type SessionExtrasDescriptor = Readonly<{
     providerId: string;
     outputKey: string;
     values: readonly string[];
-    /** Account setting holding this Agent's configured mode. */
-    settingKey?: string;
+    /** Qualified setting holding this Agent's configured mode. */
+    settingKey?: AgentUiSettingReferenceV1;
     /** Retired spellings the setting can still hold. */
     aliases?: Readonly<Record<string, string>>;
     /** Mode used when the setting is unset or unreadable. */
@@ -423,12 +432,15 @@ function evaluateDescriptorCondition(
         return ctx.experiments?.enabled === true;
     }
     if (condition.kind === 'settingEquals') {
-        const actual = normalizeDescriptorValue(ctx.settings[condition.settingKey], condition.aliases);
+        const actual = normalizeDescriptorValue(
+            readAgentUiSetting(ctx.settings, condition.settingKey),
+            condition.aliases,
+        );
         const expected = normalizeDescriptorValue(condition.value, condition.aliases);
         return Boolean(actual && expected && actual === expected);
     }
     if (condition.kind === 'settingTrue') {
-        return ctx.settings[condition.settingKey] === true;
+        return readAgentUiSetting(ctx.settings, condition.settingKey) === true;
     }
     return false;
 }
@@ -451,7 +463,7 @@ function readSessionExtrasDescriptor(
         return null;
     }
 
-    const settingKey = readString(value.settingKey);
+    const settingKey = readAgentUiSettingReference(value.settingKey);
     const aliases = readDescriptorStringRecord(value.aliases);
     const defaultValue = readString(value.defaultValue);
     return {
@@ -502,10 +514,13 @@ function normalizeSessionExtraMode(
  */
 function readDeclaredSettingsMode(
     descriptor: SessionExtrasDescriptor,
-    settings: Readonly<Record<string, unknown>>,
+    settings: Settings | Readonly<Record<string, unknown>>,
 ): string | null {
     if (!descriptor.settingKey) return null;
-    const declared = normalizeDescriptorValue(settings[descriptor.settingKey], descriptor.aliases);
+    const declared = normalizeDescriptorValue(
+        readAgentUiSetting(settings, descriptor.settingKey),
+        descriptor.aliases,
+    );
     return normalizeSessionExtraMode(descriptor, declared)
         ?? normalizeSessionExtraMode(descriptor, descriptor.defaultValue);
 }
@@ -1242,7 +1257,6 @@ function createTeammateLauncherDetailsTab(
     teamId: string,
     pluginId: string,
     agentId: string,
-    machineId: string | null,
     resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): DetailsTab | null {
     const resourceKind = readString(descriptor.resourceKind);
@@ -1271,7 +1285,6 @@ function createTeammateLauncherDetailsTab(
                 agentId,
                 surfaceId,
                 iconName: readString(descriptor.iconName),
-                machineId,
             },
             ...(normalizedTeamId ? { initialTeamId: normalizedTeamId } : {}),
         },
@@ -1298,13 +1311,11 @@ function createSessionSubagentsBehaviorFromComponents(
                     for (const slot of launchCardSlots) {
                         const surfaceId = readString(slot.surfaceId);
                         if (!surfaceId) continue;
-                        const metadata = readOwnerMetadataFromSessionLike(session);
                         rendered.push(renderInlineSurface({
                             slotId: slot.id,
                             pluginId,
                             surfaceId,
                             sessionId,
-                            machineId: readString(metadata?.machineId),
                             agentId,
                             launchInput: { teamIds: collectSubagentGroupKeys(subagents, slot) },
                         }));
@@ -1316,14 +1327,12 @@ function createSessionSubagentsBehaviorFromComponents(
         ...(detailsTabSlots.length > 0
             ? {
                 createTeammateLauncherDetailsTab: ({ teamId, session }) => {
-                    const metadata = readOwnerMetadataFromSessionLike(session);
                     for (const slot of detailsTabSlots) {
                         const tab = createTeammateLauncherDetailsTab(
                             slot,
                             teamId,
                             pluginId,
                             agentId,
-                            readString(metadata?.machineId),
                             resolvePluginTranslation,
                         );
                         if (tab) return tab;
@@ -1508,14 +1517,16 @@ function createAskUserQuestionBehavior(
         let settingMutation: NonNullable<AgentUiBehavior['askUserQuestion']>['dialogs'][number]['settingMutation'];
         if (rawDialog.settingMutation !== undefined) {
             const rawMutation = rawDialog.settingMutation;
-            const settingId = isRecord(rawMutation) ? readString(rawMutation.settingId) : null;
+            const settingId = isRecord(rawMutation)
+                ? readAgentUiSettingReference(rawMutation.settingId)
+                : null;
             const rawAllowedValues = isRecord(rawMutation) ? rawMutation.allowedValues : undefined;
             const allowedValues = Array.isArray(rawAllowedValues)
                 && rawAllowedValues.length > 0
                 && rawAllowedValues.every((value) => typeof value === 'string' && value.trim().length > 0)
                 ? readStringArray(rawAllowedValues)
                 : [];
-            if (!settingId || allowedValues.length === 0) {
+            if (!settingId || settingId.scope === 'host' || allowedValues.length === 0) {
                 diagnostics.push(createUiProjectionDiagnostic(
                     'A16X1_MALFORMED_DESCRIPTOR',
                     `askUserQuestion.dialogs.${index}.settingMutation`,
@@ -1687,7 +1698,9 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
                         getValue: entry.when
                             ? (settings) => evaluateDescriptorCondition(entry.when, { settings })
                             : entry.settingKey
-                            ? (settings) => settings[entry.settingKey as SettingsKey] === true
+                            ? (settings) => {
+                                return readAgentUiSetting(settings, entry.settingKey) === true;
+                            }
                             : undefined,
                     })),
                 },

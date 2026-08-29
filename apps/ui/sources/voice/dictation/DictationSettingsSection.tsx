@@ -18,6 +18,7 @@ import {
   type VoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
 import { useSettings } from '@/sync/domains/state/storage';
+import { useSettingsVersion } from '@/sync/store/hooks';
 import { t, tLoose } from '@/text';
 import {
   getLocalSttProviderSpec,
@@ -32,6 +33,11 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { selectVoiceSpeechProvider } from '@/voice/registry/providerSelection';
 import type { VoiceReadinessFact, VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
+import { inspectRawCredentialAuthorizationReadiness } from '@/voice/credentials/rawCredentialAuthorizationClient';
+import {
+  resolveAccountVoiceCredentialSourceSelection,
+  resolveSelectedVoiceCredentialRawGrants,
+} from '@/voice/credentials/accountVoiceCredential';
 
 import {
   voiceDictationSettingsDefaults,
@@ -50,7 +56,17 @@ type DictationReadinessCheck = Readonly<{
   nativeModelPackId: string | null;
   status: 'checking' | 'checked';
   nativeLocalNeuralModel: VoiceReadinessFact | null;
+  rawCredentialAuthorization: 'ready' | 'approval_required' | 'unknown' | null;
+  rawAuthorizationKey: string;
 }>;
+
+function aggregateRawCredentialAuthorizationReadiness(
+  statuses: readonly ('ready' | 'approval_required' | 'unknown')[],
+): 'ready' | 'approval_required' | 'unknown' {
+  if (statuses.some((status) => status === 'unknown')) return 'unknown';
+  if (statuses.some((status) => status === 'approval_required')) return 'approval_required';
+  return 'ready';
+}
 
 function resolveRuntimePlatform(): VoiceRuntimePlatform | 'unknown' {
   const parsed = VoiceRuntimePlatformSchema.safeParse(Platform.OS);
@@ -80,6 +96,7 @@ export function DictationSettingsSection(props: Readonly<{
   const { theme } = useUnistyles();
   const providerSpecs = useLocalSttProviderSpecs('dictation_stt');
   const accountSettings = useSettings();
+  const settingsVersion = useSettingsVersion();
   const dictation = props.voice.dictation ?? voiceDictationSettingsDefaults;
   const [openMenu, setOpenMenu] = React.useState<null | 'provider' | 'language'>(null);
   const [readinessCheck, setReadinessCheck] = React.useState<DictationReadinessCheck | null>(null);
@@ -92,9 +109,48 @@ export function DictationSettingsSection(props: Readonly<{
     settings: readinessSettings,
     platform,
   });
+  const selectedSpeechEntry = voiceProviderRegistry.get(nativeModelSelection.providerId);
+  const selectedRawSpeechTarget = (() => {
+    if (selectedSpeechEntry?.kind !== 'voice.speech-engine.v1'
+      || selectedSpeechEntry.declaration?.kind !== 'speech'
+      || !selectedSpeechEntry.declaration.credentials) return null;
+    const contribution = {
+      pluginId: selectedSpeechEntry.pluginId,
+      localId: selectedSpeechEntry.declaration.id,
+    };
+    try {
+      const source = resolveAccountVoiceCredentialSourceSelection({
+        settings: accountSettings,
+        contribution,
+        credentialSlotId: selectedSpeechEntry.declaration.credentials.slot.id,
+        purpose: {
+          consumer: contribution,
+          purpose: selectedSpeechEntry.declaration.credentials.slot.purpose,
+        },
+        machineId: props.executionMachineId,
+      });
+      const rawGrants = resolveSelectedVoiceCredentialRawGrants({
+        declaration: selectedSpeechEntry.declaration,
+        contribution,
+        selection: source.selection,
+      }).filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech');
+      return rawGrants.length > 0 ? { contribution, rawGrants } : null;
+    } catch {
+      return null;
+    }
+  })();
+  const selectedRawSpeechContribution = selectedRawSpeechTarget?.contribution ?? null;
+  const rawAuthorizationKey = JSON.stringify({
+    target: selectedRawSpeechTarget,
+    machineId: props.executionMachineId,
+    realm: 'daemon',
+    phase: 'speech',
+    settingsVersion,
+  });
   const isCurrentReadinessCheck = readinessCheck !== null
     && readinessCheck.providerId === nativeModelSelection.providerId
-    && readinessCheck.nativeModelPackId === nativeModelSelection.packId;
+    && readinessCheck.nativeModelPackId === nativeModelSelection.packId
+    && readinessCheck.rawAuthorizationKey === rawAuthorizationKey;
   const isCheckingReadiness = readinessCheck?.status === 'checking';
   const checkedReadiness = isCurrentReadinessCheck && readinessCheck?.status === 'checked'
     ? resolveVoiceDictationReadiness({
@@ -105,6 +161,17 @@ export function DictationSettingsSection(props: Readonly<{
         executionMachineSelectionKind: props.executionMachineSelectionKind,
         localAvailability: props.localAvailability,
         nativeLocalNeuralModel: readinessCheck.nativeLocalNeuralModel ?? undefined,
+        ...(selectedRawSpeechContribution && readinessCheck.rawCredentialAuthorization
+          ? {
+              rawCredentialAuthorization: {
+                contribution: selectedRawSpeechContribution,
+                machineId: props.executionMachineId,
+                realm: 'daemon',
+                phase: 'speech',
+                status: readinessCheck.rawCredentialAuthorization,
+              },
+            }
+          : {}),
       })
     : null;
   const recoveryAction = checkedReadiness?.recoveryAction ?? 'none';
@@ -126,12 +193,14 @@ export function DictationSettingsSection(props: Readonly<{
   const checkSetup = React.useCallback(() => {
     if (nativeModelCheckInFlight.current || isCheckingReadiness) return;
     const { providerId, packId } = nativeModelSelection;
-    if (!packId) {
+    if (!packId && !selectedRawSpeechContribution) {
       setReadinessCheck({
         providerId,
         nativeModelPackId: null,
         status: 'checked',
         nativeLocalNeuralModel: null,
+        rawCredentialAuthorization: null,
+        rawAuthorizationKey,
       });
       return;
     }
@@ -144,8 +213,17 @@ export function DictationSettingsSection(props: Readonly<{
       nativeModelPackId: packId,
       status: 'checking',
       nativeLocalNeuralModel: null,
+      rawCredentialAuthorization: null,
+      rawAuthorizationKey,
     });
-    void readVoiceDictationNativeModelReadiness(packId).then((nativeLocalNeuralModel) => {
+    void Promise.all([
+      packId ? readVoiceDictationNativeModelReadiness(packId) : Promise.resolve(null),
+      selectedRawSpeechTarget
+        ? Promise.all(selectedRawSpeechTarget.rawGrants.map((rawGrant) => (
+            inspectRawCredentialAuthorizationReadiness(selectedRawSpeechTarget.contribution, rawGrant)
+          ))).then(aggregateRawCredentialAuthorizationReadiness)
+        : Promise.resolve(null),
+    ]).then(([nativeLocalNeuralModel, rawCredentialAuthorization]) => {
       nativeModelCheckInFlight.current = false;
       setReadinessCheck((current) => (
         current?.status === 'checking'
@@ -155,11 +233,12 @@ export function DictationSettingsSection(props: Readonly<{
               ...current,
               status: 'checked',
               nativeLocalNeuralModel,
+              rawCredentialAuthorization,
             }
           : current
       ));
     });
-  }, [isCheckingReadiness, nativeModelSelection]);
+  }, [isCheckingReadiness, nativeModelSelection, rawAuthorizationKey, selectedRawSpeechTarget]);
   const handleRecoveryAction = React.useCallback(() => {
     if (!recoveryActionHandler) return;
     if (recoveryAction === 'switch_provider') {

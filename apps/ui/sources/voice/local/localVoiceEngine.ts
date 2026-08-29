@@ -1,6 +1,7 @@
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { createAttemptGuard } from '@/utils/timing/attemptGuard';
 import { storage } from '@/sync/domains/state/storage';
+import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@/sync/runtime/rpcErrors';
@@ -85,6 +86,7 @@ import {
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
+let activeDaemonWarmAbortController: AbortController | null = null;
 let inputLevelWriter: VoiceRuntimeLevelWriter | null = null;
 type LocalVoiceCaptureAttempt = Readonly<{
   controlSessionId: string;
@@ -105,6 +107,11 @@ type LocalVoiceCaptureAdmission = {
   currentUiContextRetirementController?: AbortController;
   currentUiContextAutomaticUpdateProjector?: CurrentUiContextAutomaticUpdateProjector;
   currentUiContextUnsubscribe?: () => void;
+  accountScopeCurrentness?: Readonly<{
+    isCurrent(): boolean;
+    onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+  }>;
+  accountLifetimeRetirementRegistration?: Readonly<{ dispose(): void }>;
 };
 
 let captureAdmission: LocalVoiceCaptureAdmission | null = null;
@@ -156,11 +163,19 @@ function detachCaptureCurrentUiContext(controlSessionId?: string): void {
   admission.currentUiContextUnsubscribe = undefined;
 }
 
+/**
+ * Synchronously retires the Account-admitted Current UI port while the
+ * remaining Local Voice resources stop asynchronously. Account replacement
+ * must not leave a retained automatic-update callback able to read the next
+ * Account through the shared AppShell port.
+ */
 function releaseCaptureAdmission(controlSessionId?: string): void {
   const admission = captureAdmission;
   if (!admission) return;
   if (controlSessionId && admission.controlSessionId !== controlSessionId) return;
   detachCaptureCurrentUiContext(controlSessionId);
+  admission.accountLifetimeRetirementRegistration?.dispose();
+  admission.accountLifetimeRetirementRegistration = undefined;
   captureAdmission = null;
   admission.lease.release();
 }
@@ -226,7 +241,7 @@ function acquireCaptureAdmission(
   const currentUiContextRetirementController = currentUiContext
     ? new AbortController()
     : undefined;
-  captureAdmission = {
+  const nextAdmission: LocalVoiceCaptureAdmission = {
     controlSessionId,
     lease: admission.lease,
     captureAttempt: resolveLocalVoiceCaptureAttempt(controlSessionId, admission.lease),
@@ -240,7 +255,19 @@ function acquireCaptureAdmission(
       currentUiContextAutomaticUpdateProjector: createCurrentUiContextAutomaticUpdateProjector(),
     } : {}),
   };
-  return captureAdmission;
+  captureAdmission = nextAdmission;
+  if (currentUiContext) {
+    nextAdmission.accountScopeCurrentness = captureActiveServerAccountScopeCurrentness();
+    nextAdmission.accountLifetimeRetirementRegistration =
+      nextAdmission.accountScopeCurrentness.onRetire(() => {
+        if (captureAdmission !== nextAdmission) return;
+        // Revoke the exact admitted port synchronously. Remaining local media
+        // and Agent teardown may settle asynchronously without gaining access
+        // to the replacement Account's AppShell context.
+        detachCaptureCurrentUiContext(nextAdmission.controlSessionId);
+      });
+  }
+  return nextAdmission;
 }
 
 function readCaptureAdmission(controlSessionId: string): LocalVoiceCaptureAdmission | null {
@@ -270,6 +297,7 @@ function readCaptureCurrentUiContext(controlSessionId: string): VoiceCurrentUiTo
 
 function isCaptureCurrentUiContextAdmissionCurrent(admission: LocalVoiceCaptureAdmission): boolean {
   return captureAdmission === admission
+    && admission.accountScopeCurrentness?.isCurrent() !== false
     && admission.currentUiContextRetirementController?.signal.aborted !== true;
 }
 
@@ -1003,6 +1031,7 @@ export async function sendLocalVoiceAgentTextUpdate(sessionId: string, update: s
       voiceAgentSessions: {
         sendTurn: (nextSessionId, userText, opts) =>
           voiceAgentSessions.sendInterruptingTextUpdate(nextSessionId, userText, opts),
+        stop: (nextSessionId) => voiceAgentSessions.stop(nextSessionId),
       },
       onTtsStarted: noteTtsStarted,
       onAssistantFinalAvailable: noteAssistantFinalAvailable,
@@ -1204,11 +1233,20 @@ export async function toggleLocalVoiceTurn(
       return;
     }
 
-    fireAndForget(
-      warmDaemonVoiceInferenceOnVoiceHomeAttach({
+    activeDaemonWarmAbortController?.abort();
+    const warmAbortController = new AbortController();
+    activeDaemonWarmAbortController = warmAbortController;
+    const warmPromise = warmDaemonVoiceInferenceOnVoiceHomeAttach({
         settings: params.settings,
         sessionId: controlSessionId,
-      }),
+        signal: warmAbortController.signal,
+      }).finally(() => {
+        if (activeDaemonWarmAbortController === warmAbortController) {
+          activeDaemonWarmAbortController = null;
+        }
+      });
+    fireAndForget(
+      warmPromise,
       {
         tag: 'localVoiceEngine.prewarmDaemonVoiceInferenceOnConnect',
         onError: (error) => {
@@ -1314,6 +1352,8 @@ export async function stopLocalVoiceSession(): Promise<void> {
   // that work before reading the machine so a late completion cannot revive
   // the microphone after Stop (including a same-session retry).
   localVoicePreparationAttemptGuard.cancel();
+  activeDaemonWarmAbortController?.abort();
+  activeDaemonWarmAbortController = null;
   const current = getCurrentLocalRuntimeCompatState();
   if (!current.sessionId) {
     releaseCaptureAdmission();

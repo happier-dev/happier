@@ -1,7 +1,11 @@
 import * as React from 'react';
 
 import type { VoiceProviderSettingsActionDeclaration } from '@happier-dev/protocol';
-import { createHostPluginSettingsActionInvoker, VoiceRealtimeJsonValueSchema } from '@happier-dev/protocol';
+import {
+  createHostPluginSettingsActionInvoker,
+  pluginJsonValuesEqual,
+  VoiceRealtimeJsonValueSchema,
+} from '@happier-dev/protocol';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -259,12 +263,19 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
   async snapshot({ signal, context }) {
     if (!context) throw actionError('voice_provider_settings_action_context_missing');
     throwIfAborted(signal);
-    const prepared = await getSyncSingleton().prepareAccountSettingsForDaemonSpawn();
+    await getSyncSingleton().prepareAccountSettingsForDaemonSpawn();
     throwIfAborted(signal);
     if (!isContextCurrent(context)) throw actionError('voice_provider_settings_action_retired');
-    const version = prepared.accountSettingsVersionHint;
-    if (typeof version !== 'number') throw actionError('voice_provider_settings_version_unavailable');
-    const voice = voiceSettingsParse(storage.getState().settings.voice);
+    // Read revision and values from one canonical storage projection after the
+    // Account Settings owner has flushed. A server update may settle while the
+    // preparation promise is pending, so its earlier hint must not be paired
+    // with settings from a later projection.
+    const accountSettingsSnapshot = storage.getState();
+    const version = accountSettingsSnapshot.settingsVersion;
+    if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
+      throw actionError('voice_provider_settings_version_unavailable');
+    }
+    const voice = voiceSettingsParse(accountSettingsSnapshot.settings.voice);
     const config = context.owner.parseConfig(
       readVoiceProviderSettingsConfig(voice, context.providerId),
     ) ?? context.owner.parseConfig(context.owner.defaultConfig);
@@ -295,8 +306,8 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
     if (!Number.isInteger(expectedSettingsVersion) || expectedSettingsVersion < 0) {
       throw actionError('voice_provider_settings_version_unavailable');
     }
-    const result = await getSyncSingleton().mutateAccountSettingsOnce({
-      expectedSettingsVersion,
+    const mutateAtVersion = async (version: number) => await getSyncSingleton().mutateAccountSettingsOnce({
+      expectedSettingsVersion: version,
       mutate(raw) {
         if (!isContextCurrent(context) || signal.aborted) {
           throw actionError('voice_provider_settings_action_retired');
@@ -316,9 +327,29 @@ const settingsActionInvoker = createHostPluginSettingsActionInvoker<ActionContex
         });
       },
     });
+    let result = await mutateAtVersion(expectedSettingsVersion);
     throwIfAborted(signal);
     if (result.status === 'conflict') {
-      throw actionError('voice_provider_settings_action_conflict');
+      if (!isContextCurrent(context)) {
+        throw actionError('voice_provider_settings_action_retired');
+      }
+      const refreshedVoice = voiceSettingsParse(storage.getState().settings.voice);
+      const refreshedConfig = context.owner.parseConfig(
+        readVoiceProviderSettingsConfig(refreshedVoice, context.providerId),
+      ) ?? context.owner.parseConfig(context.owner.defaultConfig);
+      const actionReadFieldsAreUnchanged = refreshedConfig !== null
+        && Object.entries(snapshot.values).every(([fieldId, value]) => (
+          Object.hasOwn(refreshedConfig, fieldId)
+          && pluginJsonValuesEqual(value, refreshedConfig[fieldId] as JsonValue)
+        ));
+      if (!actionReadFieldsAreUnchanged) {
+        throw actionError('voice_provider_settings_action_outcome_unknown');
+      }
+      result = await mutateAtVersion(result.currentSettingsVersion);
+      throwIfAborted(signal);
+      if (result.status === 'conflict') {
+        throw actionError('voice_provider_settings_action_outcome_unknown');
+      }
     }
     if (result.status === 'outcomeUnknown') {
       // The Account Settings owner already performed its only safe readback.

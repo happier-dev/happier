@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import { t } from '@/text';
+import type { ConnectedAccountUiNegotiation } from './resolveConnectedAccountUiNegotiation';
 
 import {
   resolveConnectedAccountPurposeTargetEligibility,
@@ -65,7 +66,7 @@ export type ConnectedAccountPurposeTargetChoice = Readonly<{
   target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
   presentation: QualifiedConnectedAccountTargetPresentation;
   /** A semantic value, never a serialized target or contribution identity. */
-  kind: 'none' | 'account' | 'group' | 'unavailable';
+  kind: 'none' | 'account' | 'group' | 'unavailable' | 'hydrating' | 'legacy';
   eligibility: ConnectedAccountPurposeTargetEligibility | 'none';
   selectable: boolean;
   current: boolean;
@@ -89,6 +90,7 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
   labelsByKey: Readonly<Record<string, string | undefined>>;
   /** Applied descriptor title for the declaration service, never an installed-manifest guess. */
   serviceTitle: string;
+  sourceNegotiation?: ConnectedAccountUiNegotiation;
   resolveAuthentication: (
     service: PluginContributionIdentityV1,
   ) => PluginConnectedAccountAuthenticationV2 | null;
@@ -180,14 +182,23 @@ export function buildConnectedAccountPurposeTargetChoices(input: Readonly<{
   candidates.push(...groupCandidates);
 
   if (input.selectedTarget && !candidates.some((candidate) => candidate.current)) {
+    const presentation = presentQualifiedConnectedAccountTarget({
+      target: input.selectedTarget,
+      accounts: input.accounts,
+      groups: input.groups,
+      labelsByKey: input.labelsByKey,
+      serviceTitle: input.serviceTitle,
+      sourceNegotiation: input.sourceNegotiation,
+    });
     candidates.push({
       id: connectedAccountPurposeTargetChoiceId(input.selectedTarget),
       target: input.selectedTarget,
-      presentation: {
-        primaryLabel: t('common.unavailable'),
-        accessibilityLabel: t('common.unavailable'),
-      },
-      kind: 'unavailable',
+      presentation,
+      kind: input.sourceNegotiation === 'indeterminate'
+        ? 'hydrating'
+        : input.sourceNegotiation === 'legacy'
+          ? 'legacy'
+          : 'unavailable',
       eligibility: 'unusable',
       selectable: false,
       current: true,
@@ -203,6 +214,7 @@ export function resolveConnectedAccountPurposeTargetDisplay(input: Readonly<{
   groups: readonly QualifiedConnectedAccountGroupV4[];
   labelsByKey: Readonly<Record<string, string | undefined>>;
   serviceTitle: string;
+  sourceNegotiation?: ConnectedAccountUiNegotiation;
 }>): string {
   return presentQualifiedConnectedAccountTarget({
     target: input.target,
@@ -213,5 +225,6 @@ export function resolveConnectedAccountPurposeTargetDisplay(input: Readonly<{
       input.target.kind === 'account' ? input.target.account.service : input.target.service,
     )?.legacyServiceId ?? null,
     serviceTitle: input.serviceTitle,
+    sourceNegotiation: input.sourceNegotiation,
   }).primaryLabel;
 }

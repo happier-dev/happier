@@ -141,11 +141,11 @@ describe('bundledSpeechRuntime', () => {
     })).resolves.toBe('hello from package');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: CATALOG_STT_ID }),
-      model: 'gemini-test',
-      language: 'fr',
       mimeType: 'audio/wav',
       source: { kind: 'native', uri: 'file:///recording.wav' },
     }));
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('language');
   });
 
   it('fails closed before STT dispatch when the canonical root settings envelope is missing', async () => {
@@ -193,10 +193,11 @@ describe('bundledSpeechRuntime', () => {
     });
     expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: CATALOG_TTS_ID }),
-      model: null,
-      voiceName: 'en-US-Test-A',
-      format: 'wav',
+      input: 'hello',
     }));
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('voiceName');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('format');
     expect(play).toHaveBeenCalledTimes(1);
     expect(onPlaybackStarted).not.toHaveBeenCalled();
     notifyPlaybackStarted();
@@ -305,12 +306,12 @@ describe('bundledSpeechRuntime', () => {
     })).resolves.toBe('acme result');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: CATALOG_STT_ID }),
-      model: 'acme-v2',
-      language: 'de',
     }));
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('language');
   });
 
-  it('uses a declared text model when a speech-to-text contribution has no model catalog', async () => {
+  it('validates a declared text model without carrying it over the daemon RPC', async () => {
     const transcribe = vi.fn(async () => 'openai-compatible result');
     const fake = createFakeSpeechRegistry([{
       id: 'text-stt',
@@ -340,12 +341,11 @@ describe('bundledSpeechRuntime', () => {
       providerConfig: { model: 'whisper-custom' },
       fallbackLanguage: 'en',
     })).resolves.toBe('openai-compatible result');
-    expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'whisper-custom',
-    }));
+    expect(transcribe).toHaveBeenCalledOnce();
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');
   });
 
-  it('uses declared text voice and model settings when a text-to-speech contribution has no catalogs', async () => {
+  it('validates declared text voice and model settings without carrying them over the daemon RPC', async () => {
     const synthesize = vi.fn(async () => ({ bytes: new Uint8Array([1]), mimeType: 'audio/mpeg' as const }));
     const fake = createFakeSpeechRegistry([{
       id: 'text-tts',
@@ -381,9 +381,8 @@ describe('bundledSpeechRuntime', () => {
       providerConfig: { model: 'tts-custom', voiceName: 'verse' },
       registerPlaybackStopper: () => () => {},
     });
-    expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'tts-custom',
-      voiceName: 'verse',
-    }));
+    expect(synthesize).toHaveBeenCalledOnce();
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('voiceName');
   });
 });

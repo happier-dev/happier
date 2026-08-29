@@ -1,11 +1,13 @@
 import {
   compilePluginJsonSchema,
   isValidPluginJsonSchemaValue,
+  ConnectedServiceBindingsV1Schema,
   PersistedConnectedServiceBindingsV1Schema,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type ConnectedServiceId,
   type PluginSettingFieldV2,
   type VoiceProviderSettings,
+  type VoiceProviderSettingsPresentation,
   type VoiceProviderSettingsJsonValueV1,
 } from '@happier-dev/protocol';
 
@@ -13,6 +15,7 @@ export type ExternalVoiceProviderSettingsDescriptor = Readonly<{
   schemaVersion: 1 | 2;
   fields: readonly PluginSettingFieldV2[];
   privacyDisclosure: string | Readonly<{ key: string; fallback: string }> | null;
+  presentation: VoiceProviderSettingsPresentation | null;
   connectedServicesBinding: Readonly<{
     id: string;
     title: string | Readonly<{ key: string; fallback: string }>;
@@ -42,8 +45,9 @@ export function isExternalVoiceProviderConnectedServicesBindingReady(
   const binding = settings.connectedServicesBinding;
   if (!binding) return true;
   if (!envelope || envelope.schemaVersion !== settings.schemaVersion) return false;
-  const config = settings.parseConfig(envelope.config);
-  return config !== null && hasRequiredConnectedServicesBinding(config, settings);
+  if (!envelope.config || typeof envelope.config !== 'object' || Array.isArray(envelope.config)) return false;
+  const selectedBinding = (envelope.config as Readonly<Record<string, unknown>>)[binding.id];
+  return ConnectedServiceBindingsV1Schema.safeParse(selectedBinding).success;
 }
 
 export function projectExternalVoiceProviderSettings(
@@ -81,6 +85,9 @@ export function createExternalVoiceProviderSettingsDescriptor(
   const fields = deepFreeze(cloneJson(settings?.fields ?? [])) as unknown as readonly PluginSettingFieldV2[];
   const privacyDisclosure = settings?.privacyDisclosure
     ? deepFreeze(cloneJson(settings.privacyDisclosure)) as ExternalVoiceProviderSettingsDescriptor['privacyDisclosure']
+    : null;
+  const presentation = settings?.presentation
+    ? deepFreeze(cloneJson(settings.presentation)) as unknown as VoiceProviderSettingsPresentation
     : null;
   const connectedServicesBinding = settings?.connectedServicesBinding
     ? deepFreeze(cloneJson(settings.connectedServicesBinding)) as unknown as NonNullable<
@@ -120,6 +127,7 @@ export function createExternalVoiceProviderSettingsDescriptor(
     schemaVersion: settings?.schemaVersion ?? 1,
     fields,
     privacyDisclosure,
+    presentation,
     connectedServicesBinding,
     defaultConfig,
     parseConfig(config: unknown): VoiceProviderSettingsJsonValueV1 | null {

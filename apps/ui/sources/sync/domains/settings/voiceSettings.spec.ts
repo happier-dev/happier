@@ -361,6 +361,43 @@ describe('voiceSettings', () => {
     expect(parsed.dictation.stt).not.toHaveProperty('openaiCompat');
   });
 
+  it.each([
+    { label: 'overlong', language: 'x'.repeat(65) },
+    { label: 'non-string', language: { malformed: true } },
+  ])('preserves an explicit qualified Dictation provider when its $label language sibling is malformed', ({ language }) => {
+    const provider = 'acme.voice/private-stt';
+    const parsed = voiceSettingsParse({
+      dictation: {
+        sttBinding: 'explicit',
+        language,
+        stt: { provider },
+      },
+    });
+
+    expect(parsed.dictation).toMatchObject({
+      sttBinding: 'explicit',
+      language: null,
+      stt: { provider },
+    });
+    expect(parsed.dictation.stt.provider).not.toBe('device');
+  });
+
+  it('rejects only a malformed Dictation STT sibling while preserving valid binding and language fields', () => {
+    const parsed = voiceSettingsParse({
+      dictation: {
+        sttBinding: 'same_as_local',
+        language: 'de-CH',
+        stt: { provider: '' },
+      },
+    });
+
+    expect(parsed.dictation).toMatchObject({
+      sttBinding: 'same_as_local',
+      language: 'de-CH',
+      stt: voiceSettingsDefaults.dictation.stt,
+    });
+  });
+
   it('migrates the complete untouched legacy hosted default to unconfigured', () => {
     const parsed = voiceSettingsParse({
       providerId: 'realtime_elevenlabs',

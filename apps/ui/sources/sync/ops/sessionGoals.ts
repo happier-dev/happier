@@ -15,6 +15,8 @@ import { t } from '@/text';
 import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { resumeSession } from './sessions';
 import { resolveSessionGoalExecutionCapabilities } from '@/sync/domains/session/control/sessionGoalExecutionCapabilities';
+import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 export type SessionGoalMutationRequest = Readonly<{
     objective?: string;
@@ -199,8 +201,22 @@ async function resumeInactiveSessionWithInitialGoal(
     const session = state.sessions?.[sessionId];
     if (!session || session.active !== false) return null;
 
+    const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
+    const machineId = readMachineControlTargetForSession(sessionId)?.machineId ?? null;
+    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const pluginSettings = await readAgentScopedPluginSettingsSnapshot({
+        agentId,
+        machineId,
+        serverId,
+        accountLifetime,
+    });
+    if (accountLifetime && !accountLifetime.isCurrent()) {
+        return { ok: false, error: t('session.workState.goal.errorCannotResume') };
+    }
     const resumeCapabilityOptions = buildResumeCapabilityOptionsFromUiState({
         settings: state.settings,
+        pluginSettings,
         results: undefined,
     });
     const base = buildResumeSessionBaseOptionsFromSession({
@@ -212,7 +228,6 @@ async function resumeInactiveSessionWithInitialGoal(
         return { ok: false, error: t('session.workState.goal.errorCannotResume') };
     }
 
-    const agentId = resolveAgentIdFromSessionMetadata(readSessionOwnerMetadataView(session));
     const resumeExtras = agentId
         ? buildWakeResumeExtras({ agentId, resumeCapabilityOptions, session })
         : {};
@@ -220,7 +235,7 @@ async function resumeInactiveSessionWithInitialGoal(
     const result = await resumeSession({
         ...base,
         ...resumeExtras,
-        serverId: opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId),
+        serverId,
         ...(initialTranscriptAfterSeq !== undefined ? { initialTranscriptAfterSeq } : {}),
         initialGoal: {
             objective,

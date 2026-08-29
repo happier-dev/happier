@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -43,7 +43,6 @@ import {
   VoiceCredentialSourceField,
   type VoiceCredentialSourceFieldStatus,
 } from './realtime/VoiceCredentialSourceField';
-import { VoiceGlobalConnectedServicesBindingField } from './realtime/VoiceGlobalConnectedServicesBindingField';
 import { VoiceProviderSettingsActions } from './realtime/VoiceProviderSettingsActions';
 
 const providerRegistry = createDefaultVoiceProviderRegistry();
@@ -167,6 +166,18 @@ export function BundledConversationSettingsSection(props: Readonly<{
   const credentialSourceStatus = credentialSourceState?.targetKey === credentialTargetKey
     ? credentialSourceState.status
     : null;
+  const selectedSavedSecretRawReviewGrants = React.useMemo(() => {
+    if (credentialSourceStatus?.selection.kind !== 'savedSecret') return [];
+    const realm = Platform.OS === 'web' || Platform.OS === 'ios' || Platform.OS === 'android'
+      ? Platform.OS
+      : null;
+    if (!realm) return [];
+    return credentialDeclaration?.sources
+      .filter((source) => source.kind === 'savedSecret')
+      .flatMap((source) => source.rawGrants ?? [])
+      .filter((grant) => grant.realm === realm && grant.phase === 'prepare')
+      ?? [];
+  }, [credentialDeclaration, credentialSourceStatus?.selection.kind]);
   const credentialUsable = credentialDeclaration && credentialDeclaration.sources.length > 1
     ? credentialSourceStatus?.selection.kind === 'connectedAccount'
       ? credentialSourceStatus.usable
@@ -287,6 +298,7 @@ export function BundledConversationSettingsSection(props: Readonly<{
             : readRealtimeSavedSecretCredentialPurpose(descriptor) ?? undefined
           : undefined}
         credentialSourceDeclaration={credentialProviderDeclaration ?? undefined}
+        rawCredentialReviewGrants={selectedSavedSecretRawReviewGrants}
         recipientContract={accountCredentialSlot?.id === credential.kind
           ? accountCredentialSlot.recipientContract
           : null}
@@ -319,16 +331,6 @@ export function BundledConversationSettingsSection(props: Readonly<{
           config={config}
           placement={{ kind: 'afterField', fieldId: field.path }}
         />}
-        renderConnectedServicesBinding={(field, value, onChange) => (
-          <VoiceGlobalConnectedServicesBindingField
-            agentId={field.agentId}
-            serviceIds={field.serviceIds}
-            titleKey={field.titleKey}
-            subtitleKey={field.subtitleKey}
-            value={value}
-            onChange={onChange}
-          />
-        )}
       />
       <VoiceProviderSettingsActions
         providerId={providerId}

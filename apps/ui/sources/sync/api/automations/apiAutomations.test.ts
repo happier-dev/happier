@@ -65,7 +65,6 @@ const eventSummary = {
     createdAt: 1_786_257_600_000,
     updatedAt: 1_786_257_600_000,
     assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: 1_786_257_600_000 }],
-    retiredTriggers: [],
 };
 
 const eventExecutionRecipe = {
@@ -185,7 +184,7 @@ describe('apiAutomations', () => {
             return {
                 ok: true,
                 status: 200,
-                json: async () => ({ automations: [eventSummary] }),
+                json: async () => ({ automations: [eventSummary], nextCursor: 'next-page' }),
             } as Response;
         });
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
@@ -193,15 +192,15 @@ describe('apiAutomations', () => {
         const summaries = await listAutomationDefinitions(credentials);
         const detail = await getAutomationDefinition(credentials, 'automation-event-1');
 
-        expect(summaries).toEqual([eventSummary]);
-        expect(summaries[0]).not.toHaveProperty('triggerDefinitionEnvelope');
+        expect(summaries).toEqual({ automations: [eventSummary], nextCursor: 'next-page' });
+        expect(summaries.automations[0]).not.toHaveProperty('triggerDefinitionEnvelope');
         expect(detail).toMatchObject({
             id: 'automation-event-1',
             triggers: [expect.objectContaining({ triggerDefinitionEnvelope: expect.any(String) })],
             executionRecipe: expect.objectContaining({ templateVersion: 3 }),
         });
         expect(fetchSpy.mock.calls.map(([input]) => toUrlString(input))).toEqual(expect.arrayContaining([
-            expect.stringContaining('/v3/automations'),
+            expect.stringContaining('/v3/automations?limit=100'),
             expect.stringContaining('/v3/automations/automation-event-1'),
         ]));
     });
@@ -328,6 +327,7 @@ describe('apiAutomations', () => {
                     ...eventSummary,
                     triggers: eventDetail.triggers,
                 }],
+                nextCursor: null,
             }),
         }) as Response);
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);

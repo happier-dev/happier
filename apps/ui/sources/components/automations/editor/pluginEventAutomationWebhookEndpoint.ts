@@ -30,7 +30,7 @@ const executePluginWebhookEndpointAction = createFrontDoorUiActionExecutor();
  * setup identity and persisted with another.
  */
 export const PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 = Object.freeze({
-    kind: 'githubAccountEndpointV1',
+    kind: 'accountEndpointV1',
     credential: 'serverGenerated',
 } as const) satisfies PluginWebhookEndpointSetupV1;
 

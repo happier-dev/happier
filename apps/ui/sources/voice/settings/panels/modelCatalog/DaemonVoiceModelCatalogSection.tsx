@@ -60,6 +60,7 @@ function ModelCatalogGroup(props: Readonly<{
     onSetDefault: (packId: string) => void;
     onInstall: (packId: string) => void;
     onRemove: (packId: string) => Promise<void> | void;
+    onCancel: () => void;
 }>): React.ReactElement {
     return (
         <ItemGroup title={props.title} footer={props.footer}>
@@ -72,6 +73,7 @@ function ModelCatalogGroup(props: Readonly<{
                     onSetDefault={props.onSetDefault}
                     onInstall={props.onInstall}
                     onRemove={props.onRemove}
+                    onCancel={props.onCancel}
                 />
             ))}
         </ItemGroup>
@@ -101,7 +103,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
         client: props.client,
         enabled: !props.catalogController,
     });
-    const { state, refresh, install, acceptLicense, remove } = props.catalogController ?? ownedCatalog;
+    const { state, refresh, install, acceptLicense, remove, cancel } = props.catalogController ?? ownedCatalog;
 
     // The daemon health is unknown whenever the status request failed. Forces
     // every row uninstallable so an install/remove can never fire against an
@@ -166,6 +168,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
                 onSetDefault={(packId) => props.onSelectDefault('stt_sherpa', packId)}
                 onInstall={handleInstall}
                 onRemove={handleRemove}
+                onCancel={cancel}
             />
             <ModelCatalogGroup
                 title={t('settingsVoice.local.models.ttsGroupTitle')}
@@ -174,6 +177,7 @@ export function DaemonVoiceModelCatalogSection(props: Readonly<{
                 onSetDefault={(packId) => props.onSelectDefault('tts_sherpa', packId)}
                 onInstall={handleInstall}
                 onRemove={handleRemove}
+                onCancel={cancel}
             />
         </>
     );

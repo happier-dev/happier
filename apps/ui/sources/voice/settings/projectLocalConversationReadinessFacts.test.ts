@@ -6,7 +6,10 @@ import {
   voiceSettingsDefaults,
   writeLocalConversationVoiceSettings,
 } from '@/sync/domains/settings/voiceSettings';
-import { upsertAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
+import {
+  saveAndUseAccountVoiceCredential,
+  upsertAccountVoiceCredential,
+} from '@/voice/credentials/accountVoiceCredential';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 
 import {
@@ -61,10 +64,16 @@ function addCredential(
     : providerId === 'happier.voice.google/google-cloud-tts'
       ? { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' }
       : { pluginId: 'happier.voice.openai-compat', localId: 'stt' };
-  return upsertAccountVoiceCredential({
+  const entry = registry.get(providerId);
+  if (entry?.kind !== 'voice.speech-engine.v1' || entry.declaration?.kind !== 'speech') {
+    throw new Error(`Expected speech fixture ${providerId}`);
+  }
+  return saveAndUseAccountVoiceCredential({
     settings,
     contribution,
     credentialSlotId: 'api_key',
+    expectedSettingsVersion: 0,
+    currentDeclaration: entry.declaration,
     machineId,
     value: `${providerId}-${credentialSlotId}`,
     generateId: () => `${providerId}-${credentialSlotId}-${machineId ?? 'account'}`,
@@ -80,11 +89,23 @@ function project(settings: Settings) {
     voice: settings.voice,
     voiceSettingsV1: settings.voiceSettingsV1,
     secrets: settings.secrets,
+    connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
     platform: 'web',
     local,
     localInput,
     executionMachineId,
     voiceAgentEnabled: true,
+    rawCredentialAuthorizationByContribution: Object.fromEntries(([
+      ['happier.voice.google/gemini-stt', { pluginId: 'happier.voice.google', localId: 'gemini-stt' }],
+      ['happier.voice.google/google-cloud-tts', { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' }],
+      ['happier.voice.openai-compat/stt', { pluginId: 'happier.voice.openai-compat', localId: 'stt' }],
+    ] as const).map(([providerId, contribution]) => [providerId, {
+      contribution,
+      machineId: executionMachineId,
+      realm: 'daemon' as const,
+      phase: 'speech' as const,
+      status: 'ready' as const,
+    }])),
   });
 }
 
@@ -95,6 +116,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       registry,
       voice: direct.voice,
       voiceSettingsV1: direct.voiceSettingsV1,
+      connectedAccountPurposeBindingsV1: direct.connectedAccountPurposeBindingsV1,
       secrets: direct.secrets,
       platform: 'web',
       local,
@@ -112,6 +134,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       registry,
       voice: agentVoice,
       voiceSettingsV1: direct.voiceSettingsV1,
+      connectedAccountPurposeBindingsV1: direct.connectedAccountPurposeBindingsV1,
       secrets: direct.secrets,
       platform: 'web',
       local,
@@ -132,7 +155,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(project(bothReady).credential).toBe('ready');
   });
 
-  it('keeps the current credential-optional OpenAI-compatible declaration ready across secret changes', () => {
+  it('keeps an unselected optional credential ready and validates it once selected', () => {
     const missing = createLocalSettings('happier.voice.openai-compat/stt', 'device');
     expect(project(missing).credential).toBe('ready');
 
@@ -154,13 +177,13 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(project(settingsParse({
       ...rotated,
       secrets: ready.secrets,
-    })).credential).toBe('ready');
+    })).credential).toBe('missing');
 
     const removed = settingsParse({
       ...rotated,
       secrets: [],
     });
-    expect(project(removed).credential).toBe('ready');
+    expect(project(removed).credential).toBe('missing');
   });
 
   it('keeps Device and local inference credential-neutral', () => {
@@ -185,6 +208,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         registry,
         voice: settings.voice,
         voiceSettingsV1: settings.voiceSettingsV1,
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
         secrets: settings.secrets,
         platform: 'web',
         local: relayDisabledLocal,
@@ -216,6 +240,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
         registry,
         voice: settings.voice,
         voiceSettingsV1: settings.voiceSettingsV1,
+        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
         secrets: settings.secrets,
         platform: 'web',
         local: resolveVoiceProviderAvailability({

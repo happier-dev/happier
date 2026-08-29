@@ -6,9 +6,12 @@ import { resolveAutomationEventObserverRuntimeHealth } from './automationWatcher
 function projection(input: Readonly<{
     immutableGenerationId?: string;
     backgroundState?: 'active' | 'unavailable';
+    backgroundServiceLocalId?: string;
 }> = {}): PluginProjectionV2 {
     const immutableGenerationId = input.immutableGenerationId ?? 'github-generation-current';
     const backgroundState = input.backgroundState ?? 'active';
+    const backgroundServiceLocalId = input.backgroundServiceLocalId
+        ?? 'automation-repository-event-checkpointed-pull';
     return {
         v: 2,
         generation: 7,
@@ -40,8 +43,8 @@ function projection(input: Readonly<{
                     kind: 'localId',
                     pluginId: 'happier.scm.github',
                     family: 'backgroundServices',
-                    localId: 'automation-repository-event-checkpointed-pull',
-                    qualifiedId: 'happier.scm.github/backgroundServices/automation-repository-event-checkpointed-pull',
+                    localId: backgroundServiceLocalId,
+                    qualifiedId: `happier.scm.github/backgroundServices/${backgroundServiceLocalId}`,
                 },
                 progression: { declared: true, normalized: true, merged: true },
                 registration: backgroundState === 'active'
@@ -77,11 +80,14 @@ describe('Automation Event observer runtime health', () => {
         })).toEqual({ kind: 'generationReplaced' });
     });
 
-    it('rejects a terminally settled observer while its machine remains available', () => {
+    it('does not let an unrelated same-plugin background service suppress source-owned status', () => {
         expect(resolveAutomationEventObserverRuntimeHealth({
-            projection: projection({ backgroundState: 'unavailable' }),
+            projection: projection({
+                backgroundState: 'unavailable',
+                backgroundServiceLocalId: 'unrelated-maintenance-service',
+            }),
             eventPluginId: 'happier.scm.github',
             reporterImmutableGenerationId: 'github-generation-current',
-        })).toMatchObject({ kind: 'observerStopped' });
+        })).toEqual({ kind: 'current' });
     });
 });

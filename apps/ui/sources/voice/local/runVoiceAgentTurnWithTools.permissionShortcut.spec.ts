@@ -7,18 +7,40 @@ import {
   sessionRpcWithServerScope,
 } from './localVoiceEngine.testHarness';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
-import { runVoiceAgentTurnWithTools } from './runVoiceAgentTurnWithTools';
+import {
+  resolveDirectUserActionShortcutAssistantText,
+  runVoiceAgentTurnWithTools,
+} from './runVoiceAgentTurnWithTools';
 
 describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
   // This owner is stateless; retaining its module graph avoids charging the
   // large shared Voice harness import to every individual permission assertion.
   registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
 
+  it('reports deferred approval truthfully without claiming the user action executed', () => {
+    expect(resolveDirectUserActionShortcutAssistantText('allow', {
+      ok: true,
+      kind: 'approval_request_created',
+      artifactId: 'approval-1',
+      actionId: 'session.user_action.answer',
+    })).toBe('Created a confirmation request. The pending request has not been approved yet.');
+    expect(resolveDirectUserActionShortcutAssistantText('allow', {
+      ok: true,
+      status: 'done',
+    })).toBe('Approved the pending request.');
+  });
+
   it('does not treat neutral approve-or-deny wording as a deny command', async () => {
     const storage = await getStorage();
     storage.__setState({
       settings: {
         ...storage.getState().settings,
+        experiments: true,
+        featureToggles: {
+          ...storage.getState().settings.featureToggles,
+          voice: true,
+          'execution.runs': true,
+        },
       },
       sessions: {
         ...storage.getState().sessions,
@@ -207,6 +229,12 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     storage.__setState({
       settings: {
         ...storage.getState().settings,
+        experiments: true,
+        featureToggles: {
+          ...storage.getState().settings.featureToggles,
+          voice: true,
+          'execution.runs': true,
+        },
       },
       sessions: {
         ...storage.getState().sessions,

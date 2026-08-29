@@ -20,11 +20,7 @@ import {
     normalizePluginUiProjection,
     type PluginUiComposerAttachmentProjection,
 } from '@/sync/domains/plugins/ui/projection';
-import {
-    clearAllNewSessionComposerAttachmentSeeds,
-    readNewSessionComposerAttachmentSeeds,
-    writeNewSessionComposerAttachmentSeeds,
-} from '@/components/sessions/new/attachments/newSessionComposerAttachmentSeedStore';
+import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
     getSessionDraftSnapshot,
@@ -169,7 +165,6 @@ function newSessionComposerCatalogEntry(): DaemonPluginUiComposerSurfaceCatalogE
 }
 
 afterEach(() => {
-    clearAllNewSessionComposerAttachmentSeeds();
     resetSessionDraftRepositoryForTests();
     standardCleanup();
 });
@@ -180,21 +175,24 @@ describe('useNewSessionComposerDocument', () => {
             serverId: 'server-a',
             accountId: 'account-a',
         }) satisfies ServerAccountScope;
-        writeNewSessionComposerAttachmentSeeds({ scope: draftScope, draftId: 'draft-seeded' }, [{
+        const persistedAttachmentSeeds: readonly NewSessionComposerAttachmentSeedV1[] = [{
+            instanceId: 'seed-42',
             pluginId: 'acme.issues',
             attachmentLocalId: 'issue',
             value: { key: '42', value: { issueId: 42 }, presentation: { label: 'Issue #42' } },
         }, {
+            instanceId: 'seed-99',
             pluginId: 'acme.issues',
             attachmentLocalId: 'issue',
             value: { key: '99', value: { issueId: 99 }, presentation: { label: 'Issue #99' } },
-        }]);
+        }];
 
         const hook = await renderHook(() => useNewSessionComposerDocument({
             draftId: 'draft-seeded',
             draftScope,
             promptStore: createNewSessionPromptStore(''),
             persistedAttachments: [],
+            persistedAttachmentSeeds,
             composerAttachmentEntriesById: entriesById(issueAttachmentCatalogEntry),
             scopeKey: 'server-a/account-a',
             canSubmitRef: { current: true },
@@ -218,8 +216,123 @@ describe('useNewSessionComposerDocument', () => {
             }),
         ]));
         expect(new Set(attachments.map((attachment) => attachment.instanceId)).size).toBe(2);
-        expect(readNewSessionComposerAttachmentSeeds({ scope: draftScope, draftId: 'draft-seeded' })).toEqual([]);
 
+        await hook.unmount();
+    });
+
+    it('removes an unavailable pending seed from the canonical document and exact seed owner', async () => {
+        const draftScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        const draftId = 'draft-pending-removal';
+        const pendingSeed = {
+            pluginId: 'acme.unavailable',
+            attachmentLocalId: 'entry',
+            value: {
+                key: 'entry:pending',
+                value: { entryId: 'pending' },
+                presentation: { label: 'Pending entry' },
+            },
+        } as const;
+
+        const hook = await renderHook(() => useNewSessionComposerDocument({
+            draftId,
+            draftScope,
+            promptStore: createNewSessionPromptStore(''),
+            persistedAttachments: [],
+            persistedAttachmentSeeds: [{ instanceId: 'seed-pending', ...pendingSeed }],
+            // The contribution is intentionally unavailable on this mount.
+            composerAttachmentEntriesById: {},
+            scopeKey: 'server-a/account-a',
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }));
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        const before = hook.getCurrent().captureSubmissionSnapshot();
+        expect(before?.attachments).toEqual([expect.objectContaining({
+            attachment: { pluginId: pendingSeed.pluginId, localId: pendingSeed.attachmentLocalId },
+            key: pendingSeed.value.key,
+            availability: { status: 'unavailable' },
+        })]);
+        expect(readComposerPresentationSnapshot(hook.getCurrent().ref)?.state).toMatchObject({
+            editable: true,
+            submittable: false,
+        });
+        const row = hook.getCurrent().attachmentRowItems[0];
+        expect(row?.onRemove).toEqual(expect.any(Function));
+
+        await act(async () => {
+            row?.onRemove?.();
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        });
+
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).toEqual([]);
+
+        // A later effect/re-render must not resurrect the removed placeholder.
+        await hook.rerender();
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).toEqual([]);
+        await hook.unmount();
+    });
+
+    it('replaces pending seed custody atomically when the routed draft owner changes', async () => {
+        const scopeA = Object.freeze({ serverId: 'server-a', accountId: 'account-a' }) satisfies ServerAccountScope;
+        const scopeB = Object.freeze({ serverId: 'server-b', accountId: 'account-b' }) satisfies ServerAccountScope;
+        const seedA: NewSessionComposerAttachmentSeedV1 = {
+            instanceId: 'seed-a',
+            pluginId: 'acme.a',
+            attachmentLocalId: 'entry',
+            value: { key: 'a', value: { id: 'a' }, presentation: { label: 'A' } },
+        };
+        const seedB: NewSessionComposerAttachmentSeedV1 = {
+            instanceId: 'seed-b',
+            pluginId: 'acme.b',
+            attachmentLocalId: 'entry',
+            value: { key: 'b', value: { id: 'b' }, presentation: { label: 'B' } },
+        };
+        const hook = await renderHook((props: Readonly<{
+            draftId: string;
+            draftScope: ServerAccountScope;
+            scopeKey: string;
+            seeds: readonly NewSessionComposerAttachmentSeedV1[];
+        }>) => useNewSessionComposerDocument({
+            draftId: props.draftId,
+            draftScope: props.draftScope,
+            promptStore: createNewSessionPromptStore(''),
+            persistedAttachments: [],
+            persistedAttachmentSeeds: props.seeds,
+            composerAttachmentEntriesById: {},
+            scopeKey: props.scopeKey,
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }), {
+            initialProps: {
+                draftId: 'draft-a',
+                draftScope: scopeA,
+                scopeKey: 'server-a/account-a',
+                seeds: [seedA],
+            },
+        });
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).toEqual([
+            expect.objectContaining({ instanceId: 'seed-a', key: 'a' }),
+        ]);
+
+        await hook.rerender({
+            draftId: 'draft-b',
+            draftScope: scopeB,
+            scopeKey: 'server-b/account-b',
+            seeds: [seedB],
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).toEqual([
+            expect.objectContaining({ instanceId: 'seed-b', key: 'b' }),
+        ]);
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.attachments).not.toEqual([
+            expect.objectContaining({ instanceId: 'seed-a' }),
+        ]);
         await hook.unmount();
     });
 
@@ -390,7 +503,7 @@ describe('useNewSessionComposerDocument', () => {
         await hook.unmount();
     });
 
-    it('clears text-bound newer references together with unchanged accepted text', async () => {
+    it('retains a newer reference and its token when accepted text is otherwise unchanged', async () => {
         const promptStore = createNewSessionPromptStore('Draft @issue @new');
         const hook = await renderHook(() => useNewSessionComposerDocument({
             promptStore,
@@ -457,11 +570,14 @@ describe('useNewSessionComposerDocument', () => {
         });
         expect(didClear).toBe(true);
         expect(hook.getCurrent().captureSubmissionSnapshot()).toMatchObject({
-            text: '',
-            references: [],
+            text: 'Draft @issue @new',
+            references: [
+                expect.objectContaining({ ref: 'partner:issue-42' }),
+                expect.objectContaining({ ref: 'partner:issue-99' }),
+            ],
             attachments: [],
         });
-        expect(hook.getCurrent().structuredInputMentions).toEqual([]);
+        expect(hook.getCurrent().structuredInputMentions).toHaveLength(2);
 
         await hook.unmount();
     });
@@ -691,6 +807,40 @@ describe('useNewSessionComposerDocument', () => {
 
         expect(promptStore.getPrompt()).toBe('Durable draft text');
         expect(hook.getCurrent().captureSubmissionSnapshot()?.text).toBe('Durable draft text');
+
+        await hook.unmount();
+    });
+
+    it('observes a composer write from another repository owner after mount', async () => {
+        const draftId = 'draft-external-composer-write';
+        const draftScope = Object.freeze({
+            serverId: 'server-a',
+            accountId: 'account-a',
+        }) satisfies ServerAccountScope;
+        const promptStore = createNewSessionPromptStore('Initial draft text');
+        const hook = await renderHook(() => useNewSessionComposerDocument({
+            draftId,
+            draftScope,
+            promptStore,
+            persistedAttachments: [],
+            composerAttachmentEntriesById: {},
+            scopeKey: 'server-a/account-a',
+            canSubmitRef: { current: true },
+            isSubmitting: false,
+        }));
+
+        await act(async () => {
+            writeNewSessionDraft({
+                scope: draftScope,
+                draftId,
+                patch: { text: 'Text from another mounted owner' },
+                materializationIntent: 'userEdit',
+            });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(promptStore.getPrompt()).toBe('Text from another mounted owner');
+        expect(hook.getCurrent().captureSubmissionSnapshot()?.text).toBe('Text from another mounted owner');
 
         await hook.unmount();
     });

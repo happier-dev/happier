@@ -26,6 +26,7 @@ const applySettingsLocal = vi.fn();
 const sendSessionMessageWithServerScope = vi.fn();
 const sessionRpcWithServerScope = vi.fn();
 const teleportVoiceAgentToSessionRoot = vi.fn();
+const createArtifactWithHeader = vi.fn();
 
 function createBaseState(): any {
   return {
@@ -169,6 +170,15 @@ function createBaseState(): any {
     },
     settings: {
       ...settingsDefaults,
+      // These handlers are only reachable from an admitted Voice attempt. Keep
+      // the shared fixture at that real boundary; individual policy tests below
+      // deliberately revoke Voice or a specific Action after capture.
+      experiments: true,
+      featureToggles: {
+        ...settingsDefaults.featureToggles,
+        voice: true,
+        'execution.runs': true,
+      },
       voice: {
         ...settingsDefaults.voice,
         ui: {
@@ -222,6 +232,7 @@ vi.mock('@/sync/sync', () => ({
     ensureSessionVisibleForMessageRoute: (sessionId: string, options?: { forceRefresh?: boolean }) =>
       ensureSessionVisibleForMessageRoute(sessionId, options),
     refreshSessionMessages: (sessionId: string) => refreshSessionMessages(sessionId),
+    createArtifactWithHeader: (...args: any[]) => createArtifactWithHeader(...args),
     encryption: {
       getSessionEncryption: (sessionId: string) => getSessionEncryption(sessionId),
     },
@@ -302,6 +313,8 @@ describe('voice tool handlers', () => {
     refreshFromActiveServer.mockReset();
     applySettingsLocal.mockReset();
     teleportVoiceAgentToSessionRoot.mockReset();
+    createArtifactWithHeader.mockReset();
+    createArtifactWithHeader.mockResolvedValue('approval-artifact-1');
     useVoiceTargetStore.getState().setPrimaryActionSessionId(null);
     useVoiceTargetStore.getState().setTrackedSessionIds([]);
   });
@@ -334,6 +347,30 @@ describe('voice tool handlers', () => {
     expect(submitMessage).not.toHaveBeenCalled();
   });
 
+  it('routes sendSessionMessage through canonical Voice approval before delivery', async () => {
+    state.settings.actionsSettingsV1 = {
+      v: 1,
+      actions: {
+        'session.message.send': {
+          approvalRequiredSurfaces: ['voice'],
+        },
+      },
+    };
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = JSON.parse(await tools.sendSessionMessage({ message: 'requires approval' }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      kind: 'approval_request_created',
+      artifactId: 'approval-artifact-1',
+      actionId: 'session.message.send',
+    });
+    expect(createArtifactWithHeader).toHaveBeenCalledTimes(1);
+    expect(submitMessage).not.toHaveBeenCalled();
+  });
+
   it('reports a target update requirement from canonical Voice admission without retaining an unknown outcome', async () => {
     submitMessage.mockRejectedValueOnce(Object.assign(
       new Error('The selected remote session requires an updated agent runtime before Voice can send a message.'),
@@ -348,6 +385,7 @@ describe('voice tool handlers', () => {
       ok: false,
       errorCode: 'session_input_target_update_required',
       errorMessage: 'session_input_target_update_required',
+      actionId: 'session.message.send',
       sessionId: 's1',
     });
   });
@@ -583,6 +621,25 @@ describe('voice tool handlers', () => {
     expect(tools.invokeAction).toBeUndefined();
   });
 
+  it('denies a captured read-only tool when the Voice feature is disabled mid-attempt', async () => {
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+    const listSessions = tools.listSessions;
+    if (!listSessions) throw new Error('Expected the session list tool while Voice is enabled');
+
+    state.settings = {
+      ...state.settings,
+      featureToggles: { ...state.settings.featureToggles, voice: false },
+    };
+
+    await expect(listSessions({ limit: 1 })).resolves.toBe(JSON.stringify({
+      ok: false,
+      errorCode: 'action_disabled',
+      errorMessage: 'action_disabled',
+      actionId: 'session.list',
+    }));
+  });
+
   it('starts an execution run through the canonical Voice Action binding', async () => {
     const startArgs = {
       intent: 'voice_agent',
@@ -705,7 +762,9 @@ describe('voice tool handlers', () => {
           localId: 'codex',
         },
       },
-      initialMessage: 'Inspect this project.',
+      initialInput: {
+        text: 'Inspect this project.',
+      },
     };
     const spawnResult = {
       type: 'success' as const,
@@ -859,10 +918,10 @@ describe('voice tool handlers', () => {
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
     const machinesRaw = await tools.listMachines({ limit: 10 });
-    expect(JSON.parse(machinesRaw)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+    expect(JSON.parse(machinesRaw)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
 
     const pathsRaw = await tools.listRecentPaths({ limit: 10 });
-    expect(JSON.parse(pathsRaw)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
+    expect(JSON.parse(pathsRaw)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
   });
 
   it('can list agent backends and models for spawning via voice', async () => {
@@ -1030,6 +1089,37 @@ describe('voice tool handlers', () => {
       method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] } },
     });
+  });
+
+  it('reports approval custody truthfully before answering a pending user-action request', async () => {
+    state.settings.actionsSettingsV1 = {
+      v: 1,
+      actions: {
+        'session.user_action.answer': {
+          approvalRequiredSurfaces: ['voice'],
+        },
+      },
+    };
+    state.sessions.s1.agentState.requests = {
+      req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
+    };
+    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+
+    const result = JSON.parse(await tools.answerUserActionRequest({
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      kind: 'approval_request_created',
+      artifactId: 'approval-artifact-1',
+      actionId: 'session.user_action.answer',
+    });
+    expect(createArtifactWithHeader).toHaveBeenCalledTimes(1);
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('maps allow-or-deny decisions onto AskUserQuestion option labels when no structured answers are provided', async () => {

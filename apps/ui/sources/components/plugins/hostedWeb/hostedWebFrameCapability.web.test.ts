@@ -98,7 +98,7 @@ describe('hosted web frame capability', () => {
 
         hostedArtifactNativeCapability.invoke.mockResolvedValueOnce({
             kind: 'unavailable',
-            code: 'desktop_hosted_artifact_platform_frame_unproved',
+            code: 'desktop_hosted_artifact_wayland_gtk_container_unimplemented',
         });
         expect(await resolveHostedWebFrameCapability()).toBeNull();
 

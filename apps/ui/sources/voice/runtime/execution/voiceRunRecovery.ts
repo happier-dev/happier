@@ -1,6 +1,8 @@
 import { storage } from '@/sync/domains/state/storage';
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import {
+    resolveVoiceAgentRunBackendId,
+    type VoiceAssistantAction,
+} from '@happier-dev/protocol';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { isVoiceAgentNotFoundError } from '@/voice/agent/voiceAgentErrorGuards';
@@ -13,75 +15,6 @@ import {
     persistVoiceAgentRunMetadata,
     resolveVoiceRunMetadataSessionId,
 } from '@/voice/agent/voiceAgentRunState';
-
-function resolveExecutionRunBackendId(run: Readonly<Record<string, unknown>> | null | undefined): string | null {
-    const backendIdRaw = typeof run?.backendId === 'string' ? run.backendId.trim() : '';
-    if (backendIdRaw) return backendIdRaw;
-
-    const backendTarget = run?.backendTarget as Record<string, unknown> | undefined;
-    if (backendTarget?.kind === 'builtInAgent' && typeof backendTarget.agentId === 'string' && backendTarget.agentId.trim()) {
-        return backendTarget.agentId.trim();
-    }
-    if (
-        backendTarget?.kind === 'configuredAcpBackend'
-        && typeof backendTarget.backendId === 'string'
-        && backendTarget.backendId.trim()
-    ) {
-        return backendTarget.backendId.trim();
-    }
-
-    const resumeHandle = run?.resumeHandle as Record<string, unknown> | undefined;
-    const backendTargetFromHandle = resumeHandle?.backendTarget as Record<string, unknown> | undefined;
-    if (
-        backendTargetFromHandle?.kind === 'builtInAgent'
-        && typeof backendTargetFromHandle.agentId === 'string'
-        && backendTargetFromHandle.agentId.trim()
-    ) {
-        return backendTargetFromHandle.agentId.trim();
-    }
-    if (
-        backendTargetFromHandle?.kind === 'configuredAcpBackend'
-        && typeof backendTargetFromHandle.backendId === 'string'
-        && backendTargetFromHandle.backendId.trim()
-    ) {
-        return backendTargetFromHandle.backendId.trim();
-    }
-
-    const backendIdFromHandle = typeof resumeHandle?.backendId === 'string' ? resumeHandle.backendId.trim() : '';
-    return backendIdFromHandle || null;
-}
-
-function resolveExecutionRunBackendTarget(
-    run: Readonly<Record<string, unknown>> | null | undefined,
-): { kind: 'builtInAgent'; agentId: string } | { kind: 'configuredAcpBackend'; backendId: string } | null {
-    const backendTarget = run?.backendTarget as Record<string, unknown> | undefined;
-    if (backendTarget?.kind === 'builtInAgent' && typeof backendTarget.agentId === 'string' && backendTarget.agentId.trim()) {
-        return { kind: 'builtInAgent', agentId: backendTarget.agentId.trim() };
-    }
-    if (
-        backendTarget?.kind === 'configuredAcpBackend'
-        && typeof backendTarget.backendId === 'string'
-        && backendTarget.backendId.trim()
-    ) {
-        return { kind: 'configuredAcpBackend', backendId: backendTarget.backendId.trim() };
-    }
-
-    const resumeHandle = run?.resumeHandle as Record<string, unknown> | undefined;
-    const targetFromHandle = resumeHandle?.backendTarget as Record<string, unknown> | undefined;
-    if (targetFromHandle?.kind === 'builtInAgent' && typeof targetFromHandle.agentId === 'string' && targetFromHandle.agentId.trim()) {
-        return { kind: 'builtInAgent', agentId: targetFromHandle.agentId.trim() };
-    }
-    if (
-        targetFromHandle?.kind === 'configuredAcpBackend'
-        && typeof targetFromHandle.backendId === 'string'
-        && targetFromHandle.backendId.trim()
-    ) {
-        return { kind: 'configuredAcpBackend', backendId: targetFromHandle.backendId.trim() };
-    }
-
-    const backendId = resolveExecutionRunBackendId(run);
-    return backendId ? { kind: 'builtInAgent', agentId: backendId } : null;
-}
 
 type SendTurnResult = Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>;
 
@@ -138,18 +71,15 @@ export function createVoiceRunRecovery(args: Readonly<{
                     ?? resolveVoiceRunMetadataSessionId(sessionId, handle.backend);
                 if (metadataSessionId) {
                     try {
-                        const getRes: any = await sessionExecutionRunGet(handle.rpcSessionId, {
+                        const getRes = await sessionExecutionRunGet(handle.rpcSessionId, {
                             runId: handle.voiceAgentId,
                             includeStructured: false,
                         });
-                        const resumeHandle = getRes?.run?.resumeHandle ?? null;
-                        const backendId = resolveExecutionRunBackendId(getRes?.run ?? null);
-                        const backendTarget = resolveExecutionRunBackendTarget(getRes?.run ?? null);
-                        if (backendId && backendTarget) {
+                        if ('run' in getRes) {
                             await persistVoiceAgentRunMetadata(metadataSessionId, {
                                 runId: handle.voiceAgentId,
-                                backendTarget,
-                                resumeHandle,
+                                backendTarget: getRes.run.backendTarget,
+                                resumeHandle: getRes.run.resumeHandle ?? null,
                             });
                         }
                     } catch {
@@ -216,21 +146,17 @@ export function createVoiceRunRecovery(args: Readonly<{
         }
 
         if (daemonBackendId) {
-            const listed: any = await Promise.resolve(sessionExecutionRunList(daemonRpcSessionId, {})).catch(() => null);
-            const runs = Array.isArray(listed?.runs) ? listed.runs : [];
+            const listed = await Promise.resolve(sessionExecutionRunList(daemonRpcSessionId, {})).catch(() => null);
+            const runs = listed && 'runs' in listed ? listed.runs : [];
             const matchingRunIds: string[] = Array.from(
                 new Set(
                     runs
-                        .filter((run: any) =>
-                            run
-                            && run.intent === 'voice_agent'
+                        .filter((run) =>
+                            run.intent === 'voice_agent'
                             && run.status === 'running'
-                            && typeof run.runId === 'string'
-                            && run.runId.trim().length > 0
-                            && resolveExecutionRunBackendId(run) === daemonBackendId,
+                            && resolveVoiceAgentRunBackendId(run.backendTarget) === daemonBackendId,
                         )
-                        .map((run: any) => String(run.runId).trim())
-                        .filter((runId: string) => runId.length > 0),
+                        .map((run) => run.runId),
                 ),
             );
             for (const runId of matchingRunIds) {

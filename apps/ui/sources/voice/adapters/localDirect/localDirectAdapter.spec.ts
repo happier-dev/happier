@@ -49,9 +49,15 @@ describe('local direct voice adapter', () => {
       allowsGlobalStart: false,
       controlSessionScope: 'surface',
       requiresVoiceAgentFeature: false,
-      bargeInEnabled: false,
+      bargeInEnabled: true,
       cancelResponse: 'immediate',
     });
+    expect(adapter.resolveSurfaceCapabilities?.({
+      ...selected,
+      providers: {
+        local_direct: { schemaVersion: 1, config: { tts: { bargeInEnabled: false } } },
+      },
+    })?.bargeInEnabled).toBe(false);
     expect(adapter.resolveSurfaceCapabilities?.({ ...selected, providerId: 'local_conversation' })).toBeNull();
   });
 

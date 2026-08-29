@@ -103,6 +103,7 @@ import type { VoiceCurrentUiToolPort } from '@/voice/tools/currentUiContextToolP
 import type { VoiceHostAuthoredContextScope } from '@/voice/session/types';
 import {
   isCurrentUiContextVoiceAction,
+  isVoiceActionAvailableInState,
   resolveEnabledVoiceSdkSafeToolActionSpecsFromState,
   resolveEnabledVoiceToolActionSpecsFromState,
 } from '@/voice/tools/resolveDisabledVoiceActionIds';
@@ -619,6 +620,9 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           parameters: createRealtimeClientToolParameters(spec.inputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
+            if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId)) {
+              throw new Error('voice_action_unavailable');
+            }
             if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();
             if (typeof handler !== 'function') throw new Error('voice_read_tool_unavailable');
             const raw = await handler(parameters);
@@ -1049,7 +1053,10 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
       const session = storage.getState().sessions[input.conversationSessionId] ?? null;
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
       const state = readVoiceProviderConversationMetadata(metadata, input.providerId);
-      return state ? Object.freeze({ conversationId: state.conversationId }) : null;
+      return state ? Object.freeze({
+        conversationId: state.conversationId,
+        updatedAt: state.updatedAt,
+      }) : null;
     },
     async writeProviderConversationState(input: Readonly<{
       providerId: string;

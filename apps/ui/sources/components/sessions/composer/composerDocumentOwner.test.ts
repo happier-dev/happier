@@ -71,7 +71,7 @@ describe('ComposerDocumentOwner', () => {
         expect(owner.apply(0, { text: 'B', references: [], attachments: [] })).toMatchObject({ revision: 1 });
         expect(owner.apply(1, { text: 'A', references: [], attachments: [] })).toMatchObject({ revision: 2 });
 
-        expect(owner.clearAccepted(accepted)).toBe(false);
+        expect(owner.clearAccepted(accepted).changed).toBe(false);
         expect(owner.read().document.text).toBe('A');
     });
 
@@ -101,7 +101,7 @@ describe('ComposerDocumentOwner', () => {
                 availability: { status: 'ready' },
             }],
         })).toEqual({ status: 'applied', revision: 0 });
-        expect(owner.clearAccepted(accepted)).toBe(true);
+        expect(owner.clearAccepted(accepted).changed).toBe(true);
         expect(owner.read().document.composerAttachments).toEqual([]);
 
         // Positive twin: a real nested value change is still a mutation.
@@ -137,7 +137,7 @@ describe('ComposerDocumentOwner', () => {
             initialDocument: { text: 'second', structuredInputMentions: [], composerAttachments: [] },
         });
 
-        expect(second.clearAccepted(first.captureCurrentness())).toBe(false);
+        expect(second.clearAccepted(first.captureCurrentness()).changed).toBe(false);
         expect(second.read().document.text).toBe('second');
     });
 

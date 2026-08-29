@@ -13,7 +13,7 @@ import {
   VoiceProviderCatalogResponseSchema,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { PluginSettingsActionInput, PluginSettingsActionResult } from '@happier-dev/plugin-sdk/settings';
+import type { PluginSettingsActionResult } from '@happier-dev/plugin-sdk/settings';
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { createTransferRecipientKeyPair, downloadInChunks, uploadInChunks } from '@/sync/domains/transfers/runtime/transferRuntime/carriers/chunkTransferClient';
@@ -63,7 +63,6 @@ export class BundledSpeechDaemonClient {
   async executeSettingsAction(params: Readonly<{
     entry: VoiceProviderRegistryEntry;
     actionId: string;
-    settings: PluginSettingsActionInput['settings'];
     expectedSettingsVersion: number;
     signal?: AbortSignal | null;
   }>): Promise<PluginSettingsActionResult> {
@@ -73,7 +72,6 @@ export class BundledSpeechDaemonClient {
       {
         target: target.ref,
         actionId: params.actionId,
-        settings: params.settings,
         expectedSettingsVersion: params.expectedSettingsVersion,
       },
       params.signal,
@@ -87,8 +85,6 @@ export class BundledSpeechDaemonClient {
     source: LocalUploadSource;
     mimeType: 'audio/wav' | 'audio/mpeg' | 'audio/mp4' | 'audio/webm' | 'audio/ogg';
     fileName: string;
-    model: string;
-    language: string | null;
     /** Target captured when the originating attempt started, if it had one. */
     originMachineId?: string | null;
     signal?: AbortSignal | null;
@@ -132,8 +128,6 @@ export class BundledSpeechDaemonClient {
         {
           target: target.ref,
           requestId: randomUUID(),
-          model: params.model,
-          language: params.language,
           mimeType: params.mimeType,
           uploadId: uploaded.uploadId,
         },
@@ -149,12 +143,6 @@ export class BundledSpeechDaemonClient {
   async synthesize(params: Readonly<{
     entry: VoiceProviderRegistryEntry;
     input: string;
-    model: string | null;
-    voiceName: string;
-    languageCode: string | null;
-    format: 'mp3' | 'wav';
-    speakingRate: number | null;
-    pitch: number | null;
     /** Target captured when the originating attempt started, if it had one. */
     originMachineId?: string | null;
     signal?: AbortSignal | null;
@@ -164,12 +152,12 @@ export class BundledSpeechDaemonClient {
     // serve, so chunk, finalize and abort stay bound to that same machine.
     const machine = this.machine.bindOperation(params.originMachineId);
     const recipient = createTransferRecipientKeyPair();
-    const { signal, entry: _entry, originMachineId: _originMachineId, ...request } = params;
+    const { signal, entry: _entry, originMachineId: _originMachineId, input } = params;
     const started = parseCredentialResponse(DaemonVoiceSpeechSynthesizeResponseSchema, await machine.invoke(
       RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE,
       {
         target: target.ref,
-        ...request,
+        input,
         requestId: randomUUID(),
         recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
       },

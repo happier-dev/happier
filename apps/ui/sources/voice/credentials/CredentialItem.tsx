@@ -7,6 +7,7 @@ import type {
   PluginContributionIdentityV1,
   RecipientContractV1,
   VoiceProviderContribution,
+  VoiceRawCredentialGrantDeclaration,
 } from '@happier-dev/protocol';
 import {
   buildQualifiedPluginContributionKey,
@@ -35,7 +36,9 @@ import {
   removeAccountVoiceCredential,
   resolveExactAccountVoiceCredentialSecretId,
   resolveAccountVoiceCredential,
+  resolveAccountVoiceCredentialSourceSelection,
   resolveAccountVoiceCredentialStatus,
+  resolveSelectedVoiceCredentialRawGrants,
   upsertAccountVoiceCredential,
   type AccountVoiceCredentialSource,
   type AccountVoiceCredentialUseStatus,
@@ -51,12 +54,6 @@ import {
 import { VoiceRawCredentialAccessReview } from './VoiceRawCredentialAccessReview';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
-
-export function voiceCredentialDeclarationHasRawGrants(
-  declaration: VoiceProviderContribution | undefined,
-): boolean {
-  return declaration?.credentials?.sources.some((source) => (source.rawGrants?.length ?? 0) > 0) === true;
-}
 
 /**
  * What the row can do with one credential slot. `useSavedSecret` points the
@@ -142,6 +139,7 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
   credentialSlotId: string;
   credentialSourcePurpose?: string;
   credentialSourceDeclaration?: VoiceProviderContribution;
+  rawCredentialReviewGrants?: readonly VoiceRawCredentialGrantDeclaration[];
   recipientContract?: RecipientContractV1 | null;
   recipientContractDigest?: string | null;
   machineId?: string | null;
@@ -694,17 +692,55 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
       onPress={() => runCredentialGesture('enterNew')}
     />;
 
-  if (!props.contribution || !voiceCredentialDeclarationHasRawGrants(props.credentialSourceDeclaration)) {
+  let selectedForRawReview = false;
+  const rawCredentialReviewGrants = props.rawCredentialReviewGrants ?? [];
+  if (
+    props.contribution
+    && props.credentialSourcePurpose
+    && props.credentialSourceDeclaration
+    && rawCredentialReviewGrants.length > 0
+  ) {
+    try {
+      const source = resolveAccountVoiceCredentialSourceSelection({
+        settings,
+        contribution: props.contribution,
+        credentialSlotId: props.credentialSlotId,
+        purpose: {
+          consumer: props.contribution,
+          purpose: props.credentialSourcePurpose,
+        },
+        machineId: props.machineId ?? null,
+      });
+      const selectedGrants = resolveSelectedVoiceCredentialRawGrants({
+        declaration: props.credentialSourceDeclaration,
+        contribution: props.contribution,
+        selection: source.selection,
+      });
+      selectedForRawReview = source.selection.kind === 'savedSecret'
+        && rawCredentialReviewGrants.some((rawGrant) => (
+          selectedGrants.some((grant) => JSON.stringify(grant) === JSON.stringify(rawGrant))
+        ));
+    } catch {
+      selectedForRawReview = false;
+    }
+  }
+  if (!props.contribution || !selectedForRawReview) {
     return credentialItem;
   }
 
   return (
     <>
       {credentialItem}
-      <VoiceRawCredentialAccessReview
-        contribution={props.contribution}
-        testID={props.testID ? `${props.testID}-raw-credential-access` : undefined}
-      />
+      {rawCredentialReviewGrants.map((rawGrant, index) => (
+        <VoiceRawCredentialAccessReview
+          key={JSON.stringify(rawGrant)}
+          contribution={props.contribution!}
+          rawGrant={rawGrant}
+          testID={props.testID
+            ? `${props.testID}-raw-credential-access${index === 0 ? '' : `-${index}`}`
+            : undefined}
+        />
+      ))}
     </>
   );
 });

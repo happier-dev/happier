@@ -133,7 +133,7 @@ describe('useNewSessionMachinePathState', () => {
         });
 
         expect(getSelection(hook.getCurrent())).toEqual({
-            selectedMachineId: 'machine-other',
+            selectedMachineId: null,
             selectedPath: '/repo/desired',
         });
 
@@ -170,8 +170,8 @@ describe('useNewSessionMachinePathState', () => {
         });
 
         expect(getSelection(hook.getCurrent())).toEqual({
-            selectedMachineId: 'machine-other',
-            selectedPath: '/other',
+            selectedMachineId: null,
+            selectedPath: '',
         });
 
         await hook.rerender({
@@ -184,6 +184,24 @@ describe('useNewSessionMachinePathState', () => {
         expect(getSelection(hook.getCurrent())).toEqual({
             selectedMachineId: 'machine-target',
             selectedPath: '/target',
+        });
+
+        await hook.unmount();
+    });
+
+    it('never pairs an exact seeded directory with a persisted machine from another target', async () => {
+        const hook = await renderMachinePathState({
+            machines: toMachines({ id: 'machine-a', metadata: { homeDir: '/a' } }),
+            recentMachinePaths: [],
+            machineIdParam: 'machine-b',
+            pathParam: '/b/repo',
+            persistedMachineId: 'machine-a',
+            persistedPath: '/a/repo',
+        } as HookParams & { persistedMachineId: string; persistedPath: string });
+
+        expect(getSelection(hook.getCurrent())).toEqual({
+            selectedMachineId: null,
+            selectedPath: '/b/repo',
         });
 
         await hook.unmount();

@@ -13,6 +13,7 @@ import {
     type PluginUiProjectionModel,
 } from '@/sync/domains/plugins/ui/projection';
 import { PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
+import { storage } from '@/sync/domains/state/storage';
 
 import {
     appendPluginTranscriptActivityTranscriptItems,
@@ -21,6 +22,7 @@ import {
 } from './pluginTranscriptActivityTranscriptItem';
 import { PluginTranscriptActivityDismissalProvider } from './PluginTranscriptActivityDismissalProvider';
 import { usePluginTranscriptActivities } from './usePluginTranscriptActivities';
+import { usePluginTranscriptActivityDismissal } from './PluginTranscriptActivityDismissalProvider';
 
 const transport = vi.hoisted(() => ({
     read: vi.fn(),
@@ -169,6 +171,86 @@ function ResourceOnlyTestProviders(props: Readonly<{ children: React.ReactNode }
 }
 
 describe('plugin transcript Activity Resource projection', () => {
+    it('retires a zero-consumer dismissal when the canonical Session owner records deletion', async () => {
+        const account = createAccountLifetime('dismissal-retirement');
+        const sessionA = 'dismissal-retirement-session-a';
+        let latest: ReturnType<typeof usePluginTranscriptActivityDismissal> | null = null;
+        function Probe(props: Readonly<{ sessionId: string }>) {
+            latest = usePluginTranscriptActivityDismissal({
+                accountLifetime: account.lifetime,
+                sessionId: props.sessionId,
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                generation: '1',
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<PluginTranscriptActivityDismissalProvider><Probe sessionId={sessionA} /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            latest!.dismissActivity('activity-a', 'source-a');
+            tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="dismissal-retirement-session-b" /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+        expect(latest?.dismissedActivityIds).toEqual(new Set());
+
+        await act(async () => {
+            storage.getState().deleteSession(sessionA);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId={sessionA} /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+        expect(latest?.dismissedActivityIds).toEqual(new Set());
+        await act(async () => { tree?.unmount(); });
+    });
+
+    it('retires a dormant prior-generation dismissal when the same Session is reacquired at a new generation', async () => {
+        const account = createAccountLifetime('generation-retirement');
+        let latest: ReturnType<typeof usePluginTranscriptActivityDismissal> | null = null;
+        function Probe(props: Readonly<{ sessionId: string; generation: string }>) {
+            latest = usePluginTranscriptActivityDismissal({
+                accountLifetime: account.lifetime,
+                sessionId: props.sessionId,
+                machineId: 'machine-1',
+                serverId: 'server-1',
+                generation: props.generation,
+            });
+            return null;
+        }
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<PluginTranscriptActivityDismissalProvider><Probe sessionId="generation-session-a" generation="1" /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            latest!.dismissActivity('activity-a', 'source-a');
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="generation-session-b" generation="1" /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="generation-session-a" generation="2" /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree?.update(<PluginTranscriptActivityDismissalProvider><Probe sessionId="generation-session-a" generation="1" /></PluginTranscriptActivityDismissalProvider>);
+            await Promise.resolve();
+        });
+        expect(latest?.dismissedActivityIds).toEqual(new Set());
+        await act(async () => { tree?.unmount(); });
+    });
+
     it('consumes the real Channels daemon-projected descriptor through the generic Resource owner', async () => {
         transport.read.mockReset();
         transport.open.mockReset();

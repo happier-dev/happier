@@ -51,7 +51,7 @@ type MockWithCalls = {
 
 async function waitForCondition(check: () => boolean, timeoutMessage: string) {
     await vi.waitFor(() => {
-        expect(check()).toBe(true);
+        expect(check(), timeoutMessage).toBe(true);
     });
 }
 
@@ -81,6 +81,7 @@ describe('local voice engine agent behavior', () => {
 
     beforeEach(async () => {
         warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockReset();
+        warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mockResolvedValue(undefined);
         ({ useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore'));
         localVoiceEngine = await loadLocalVoiceEngineWithCompatState();
     }, 180_000);
@@ -286,7 +287,6 @@ describe('local voice engine agent behavior', () => {
                 s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
             },
         });
-
         daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
         daemonVoiceAgentStartTurnStream.mockResolvedValueOnce({ streamId: 'stream-abc' });
         daemonVoiceAgentReadTurnStream.mockResolvedValueOnce({
@@ -949,7 +949,10 @@ describe('local voice engine agent behavior', () => {
             toggleLocalVoiceTurn,
         } = localVoiceEngine;
         await toggleLocalVoiceTurn('voice-warm-cancelled');
+        const warmSignal = warmDaemonVoiceInferenceOnVoiceHomeAttachMock.mock.calls.at(-1)?.[0]?.signal;
+        expect(warmSignal).toBeInstanceOf(AbortSignal);
         await stopLocalVoiceSession();
+        expect(warmSignal.aborted).toBe(true);
 
         rejectWarm(Object.assign(
             new Error('daemon_voice_inference_runtime_unavailable'),
@@ -1327,22 +1330,65 @@ describe('local voice engine agent behavior', () => {
                 s1: { id: 's1', active: true, presence: 'online', modelMode: 'default', metadata: { flavor: 'claude' } },
             },
         });
+        storage.__setState({
+            ...storage.getState(),
+            settings: {
+                ...storage.getState().settings,
+                voiceSettingsV1: storage.getState().settings.voice,
+            },
+        });
 
         daemonVoiceAgentStart.mockResolvedValueOnce({ voiceAgentId: 'va1' });
         daemonVoiceAgentStartTurnStream.mockResolvedValueOnce({ streamId: 'stream-tts-1' });
+        // The canonical settings parser may retain the released 200-character
+        // chunk size rather than this legacy fixture's smaller override. Keep
+        // the stream comfortably above two admitted chunks so this composed
+        // test proves queueing instead of depending on a stale threshold.
+        const firstStreamedDelta = 'First streamed assistant sentence with enough content to cross the canonical chunk boundary. '.repeat(3).trim();
+        const secondStreamedDelta = 'Second streamed assistant sentence continues beyond another canonical chunk boundary. '.repeat(3).trim();
+        const finalStreamedText = `${firstStreamedDelta} ${secondStreamedDelta}`;
         daemonVoiceAgentReadTurnStream.mockResolvedValueOnce({
             streamId: 'stream-tts-1',
             events: [
-                { t: 'delta', textDelta: 'hello world. this is chunk one. ' },
-                { t: 'delta', textDelta: 'and this is chunk two with extra words.' },
-                { t: 'done', assistantText: 'hello world. this is chunk one. and this is chunk two with extra words.' },
+                {
+                    t: 'voice_output',
+                    output: {
+                        v: 1,
+                        kind: 'speech_segment',
+                        turnId: 'stream-tts-1',
+                        seq: 0,
+                        segmentId: 'stream-tts-1:segment:0',
+                        text: firstStreamedDelta,
+                    },
+                },
+                {
+                    t: 'voice_output',
+                    output: {
+                        v: 1,
+                        kind: 'speech_segment',
+                        turnId: 'stream-tts-1',
+                        seq: 1,
+                        segmentId: 'stream-tts-1:segment:1',
+                        text: secondStreamedDelta,
+                    },
+                },
+                {
+                    t: 'voice_output',
+                    output: {
+                        v: 1,
+                        kind: 'turn_final',
+                        turnId: 'stream-tts-1',
+                        seq: 2,
+                        text: finalStreamedText,
+                    },
+                },
             ],
             nextCursor: 3,
             done: true,
         });
         expoSpeechSpeak.mockImplementation((_text: string, options: any) => {
             options?.onStart?.();
-            options?.onDone?.();
+            queueMicrotask(() => options?.onDone?.());
         });
 
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -1355,6 +1401,7 @@ describe('local voice engine agent behavior', () => {
         await toggleLocalVoiceTurn('s1');
 
         expect(daemonVoiceAgentStartTurnStream).toHaveBeenCalledTimes(1);
+        await waitForMockCalls(expoSpeechSpeak, 2);
         expect(expoSpeechSpeak.mock.calls.length).toBeGreaterThan(1);
     });
 
@@ -1412,7 +1459,7 @@ describe('local voice engine agent behavior', () => {
         });
         expoSpeechSpeak.mockImplementation((_text: string, options: any) => {
             options?.onStart?.();
-            options?.onDone?.();
+            queueMicrotask(() => options?.onDone?.());
         });
 
         (globalThis.fetch as any).mockResolvedValueOnce({
@@ -1428,13 +1475,21 @@ describe('local voice engine agent behavior', () => {
         expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
     });
 
-    it('retires the real Local Agent context admission synchronously on Account retirement before deferred native stop settles', async () => {
+    it('retires the real Local Agent context admission synchronously on Account retirement', async () => {
         const storage = await getStorage();
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        expect(activeServerId).not.toBe('');
         storage.__setState({
             ...storage.getState(),
-            profileScope: { serverId: 'server-a', accountId: 'account-a' },
+            profileScope: { serverId: activeServerId, accountId: 'account-a' },
             settings: {
                 ...storage.getState().settings,
+                experiments: true,
+                featureToggles: {
+                    ...storage.getState().settings.featureToggles,
+                    voice: true,
+                },
                 voice: {
                     ...storage.getState().settings.voice,
                     providerId: 'local_conversation',
@@ -1509,10 +1564,6 @@ describe('local voice engine agent behavior', () => {
                 return { ok: true as const };
             },
         };
-        vi.doMock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort', () => ({
-            useCurrentUiContextVoiceToolPort: () => currentUiContext,
-        }));
-
         const agentStart = {
             resolve: null as ((value: { voiceAgentId: string }) => void) | null,
         };
@@ -1522,44 +1573,41 @@ describe('local voice engine agent behavior', () => {
             }),
         );
 
-        const { VoiceSessionRuntime } = await import('@/voice/session/VoiceSessionRuntime');
-        const { getVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
-        const { getVoiceAdapterRegistry } = await import('@/voice/session/voiceAdapterRegistry');
-        const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
         registerStorageStateReader(() => storage.getState());
-        const screen = await renderScreen(React.createElement(VoiceSessionRuntime), {
-            // The lifecycle owner is installed in a layout effect. Do not
-            // drain unrelated diagnostics background effects in this local
-            // engine composition fixture.
-            flushOptions: { cycles: 0 },
+        const {
+            captureActiveServerAccountScopeLifetime,
+            retireActiveServerAccountScopeLifetime,
+        } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const admittedAccountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(admittedAccountLifetime?.scope).toEqual({
+            serverId: activeServerId,
+            accountId: 'account-a',
         });
-        const controller = getVoiceSessionLifecycleController();
-        if (!controller) throw new Error('voice lifecycle controller unavailable');
-
-        const start = controller.toggle(VOICE_AGENT_GLOBAL_SESSION_ID);
-        await waitForMockCalls(daemonVoiceAgentStart, 1);
-        await start;
+        const { getVoiceAdapterRegistry } = await import('@/voice/session/voiceAdapterRegistry');
+        // Exercise the capture admission directly. VoiceSessionRuntime has its
+        // own Account-change lifecycle responsibility; mounting it here would
+        // add a second retirement writer and would not decide whether the
+        // retained Local Voice port itself is fenced.
+        const start = localVoiceEngine.toggleLocalVoiceTurn(
+            VOICE_AGENT_GLOBAL_SESSION_ID,
+            currentUiContext,
+        );
+        await waitForCondition(
+            () => daemonVoiceAgentStart.mock.calls.length >= 1,
+            'local Agent start admission',
+        );
         const resolveAgentStart = agentStart.resolve;
         if (!resolveAgentStart) throw new Error('missing local agent start resolver');
         resolveAgentStart({ voiceAgentId: 'local-agent-account-a' });
+        await start;
         await waitForCondition(() => subscription.listener !== null, 'local current UI subscription');
         const retainedAutomaticListener = subscription.listener;
         if (!retainedAutomaticListener) throw new Error('missing retained local current UI subscription');
 
-        const pendingNativeStop = {
-            release: null as (() => void) | null,
-        };
-        audioSessionRelease.mockImplementationOnce(
-            () => new Promise<void>((resolve) => {
-                pendingNativeStop.release = resolve;
-            }),
-        );
-
-        // Retirement is synchronous at the Account owner. The Local Adapter and
-        // engine must revoke their admission before this native boundary settles.
+        // Retirement is synchronous at the Account owner. It revokes the exact
+        // admitted Current UI port independently from later resource teardown.
         retireActiveServerAccountScopeLifetime();
-        await waitForMockCalls(audioSessionRelease, 1);
         currentAccount = 'account-b';
         const readsBeforeLateEvents = reads.length;
         const invocationsBeforeLateEvents = invocations.length;
@@ -1588,15 +1636,11 @@ describe('local voice engine agent behavior', () => {
             onAccepted: async () => {},
         });
 
-        const releasePendingNativeStop = pendingNativeStop.release;
-        if (!releasePendingNativeStop) throw new Error('missing deferred native stop release');
-        releasePendingNativeStop();
         await act(async () => {
             await Promise.resolve();
         });
-        await screen.unmount();
+        await localVoiceEngine.stopLocalVoiceSession();
         retireActiveServerAccountScopeLifetime();
-        vi.doUnmock('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
 
         expect(subscription.unsubscribeCalls).toBeGreaterThan(0);
         expect(subscription.listener).toBeNull();

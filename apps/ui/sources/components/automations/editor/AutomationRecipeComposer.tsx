@@ -21,7 +21,9 @@ import { resolveExecutionRunLauncherBackendChoices } from '@/components/sessions
 import { extractExecutionRunsBackendsFromMachineCapabilitiesState } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
 import { openAutomationRecipeForAuthoring, buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
 import { replaceAutomationEditorExecutionRecipe, type AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
-import { useSessions, useSettings } from '@/sync/domains/state/storage';
+import { isAutomationSessionCandidate } from '@/sync/domains/automations/isAutomationSessionCandidate';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { storage, useSessions, useSettings } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -97,12 +99,15 @@ export function AutomationRecipeComposer(props: Readonly<{
         settings,
     ]);
     const existingSessionOptions = React.useMemo<readonly SelectionListOption[]>(() => sessions
-        .filter((session) => session.serverId === activeServer.serverId)
+        .filter((session) => (
+            session.serverId === activeServer.serverId
+            && isAutomationSessionCandidate(session, settings)
+        ))
         .map((session) => ({
             id: session.id,
             label: getSessionName(session),
             disabled: !sessionCanBeAutomationExecutionTarget(props.value, session.id),
-        })), [activeServer.serverId, props.value, sessions]);
+        })), [activeServer.serverId, props.value, sessions, settings]);
     const existingSessionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-recipe-existing-session',
         inputPlaceholder: t('sessionsList.searchSessionsPlaceholder'),
@@ -122,6 +127,15 @@ export function AutomationRecipeComposer(props: Readonly<{
         const credentials = sync.getCredentials();
         if (!credentials) return;
         const captured = props.value;
+        if (target.kind === 'existingSession') {
+            const candidate = storage.getState().sessions[target.sessionId];
+            if (
+                !candidate
+                || candidate.serverId !== getActiveServerSnapshot().serverId
+                || !isAutomationSessionCandidate(candidate, storage.getState().settings)
+                || !sessionCanBeAutomationExecutionTarget(captured, target.sessionId)
+            ) return;
+        }
         if (pluginJsonValuesEqual(captured.executionRecipe.target, target)) {
             setPicker('none');
             return;

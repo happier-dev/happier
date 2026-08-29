@@ -51,7 +51,11 @@ function stringList(value: unknown): readonly string[] {
 }
 
 function translate(key: unknown, fallback = ''): string {
-  return typeof key === 'string' && key.length > 0 ? tLoose(key) : fallback;
+  if (typeof key === 'string' && key.length > 0) return tLoose(key);
+  const localized = record(key);
+  return typeof localized?.fallback === 'string' && localized.fallback.length > 0
+    ? localized.fallback
+    : fallback;
 }
 
 function fieldTestId(field: RealtimeSettingsFieldDescriptor): string {
@@ -114,11 +118,6 @@ export function RealtimeProviderFields(props: Readonly<{
   welcomeSelection?: string;
   onWelcomeSelection?: (selection: string) => void;
   renderAfterField?: (field: RealtimeSettingsFieldDescriptor) => React.ReactNode;
-  renderConnectedServicesBinding?: (
-    field: RealtimeSettingsFieldDescriptor,
-    value: unknown,
-    onChange: (value: unknown) => void,
-  ) => React.ReactNode;
 }>) {
   const { theme } = useUnistyles();
   const [openField, setOpenField] = React.useState<string | null>(null);
@@ -187,7 +186,12 @@ export function RealtimeProviderFields(props: Readonly<{
         if (previewGenerationRef.current !== generation) return;
         const { createAudioPlayer } = await import('expo-audio');
         if (previewGenerationRef.current !== generation) return;
-        const player = createAudioPlayer(row.previewUrl!);
+        const player = createAudioPlayer(row.previewUrl!, {
+          // The canonical Voice audio-mode lease owns activation/deactivation.
+          // Expo remains a media decoder/player and must not deactivate the
+          // shared AVAudioSession behind the coordinator's back on completion.
+          keepAudioSessionActive: true,
+        });
         if (previewGenerationRef.current !== generation) {
           try { player.remove?.(); } catch { /* player boundary */ }
           return;
@@ -311,14 +315,6 @@ export function RealtimeProviderFields(props: Readonly<{
         />;
       }
 
-      if (field.kind === 'connected_services_binding') {
-        return <React.Fragment key={key}>
-          {props.renderConnectedServicesBinding?.(field, value, (next) => {
-            write(field, next);
-          }) ?? null}
-        </React.Fragment>;
-      }
-
       if (field.kind === 'privacy_opt_in') {
         const enabled = value === true;
         return <React.Fragment key={key}>
@@ -395,27 +391,12 @@ export function RealtimeProviderFields(props: Readonly<{
         </React.Fragment>;
       }
 
-      if (field.kind === 'nullable_boolean') {
-        const rows = [
-          { id: '', title: tLoose('settingsVoice.realtimeProviders.options.automatic') },
-          { id: 'true', title: tLoose('common.on') },
-          { id: 'false', title: tLoose('common.off') },
-        ];
-        return <DropdownMenu key={key} testID={fieldTestId(field)} open={openField === key}
-          onOpenChange={(next) => setOpenField(next ? key : null)} variant="selectable" search={false}
-          selectedId={value === null || value === undefined ? '' : String(value)} items={rows}
-          showCategoryTitles={false} matchTriggerWidth={true} connectToTrigger={true} rowKind="item"
-          popoverBoundaryRef={props.popoverBoundaryRef}
-          itemTrigger={{ title: translate(field.titleKey), subtitle: translate(field.subtitleKey), showSelectedSubtitle: false }}
-          onSelect={(id) => { write(field, id === '' ? null : id === 'true'); setOpenField(null); }} />;
-      }
-
       if (field.kind === 'number' || field.kind === 'range') {
         return <Item key={key} testID={fieldTestId(field)} title={translate(field.titleKey)}
           subtitle={translate(field.subtitleKey)} detail={detail(value)} onPress={() => promptNumber(field, value)} />;
       }
 
-      if (field.kind === 'text' || field.kind === 'instructions' || field.kind === 'optional_model') {
+      if (field.kind === 'text' || field.kind === 'instructions') {
         return <Item key={key} testID={fieldTestId(field)} title={translate(field.titleKey)}
           subtitle={translate(field.subtitleKey)} detail={detail(value)} onPress={() => promptText(field, value)} />;
       }

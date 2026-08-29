@@ -14,6 +14,15 @@ describe('resolveConnectedServiceProfileActionRoute', () => {
         connectCommand: 'happier connect openai-codex',
         supportsOauth: true,
         executable: true,
+    }, {
+        serviceId: 'reviewer-service',
+        service: {
+            pluginId: 'acme.review',
+            localId: 'reviewer-service',
+        },
+        connectCommand: 'happier connect acme.review/reviewer-service',
+        supportsOauth: false,
+        executable: true,
     }] as const;
 
     it('routes every profile recovery action to the exact qualified account owner', () => {
@@ -50,6 +59,17 @@ describe('resolveConnectedServiceProfileActionRoute', () => {
             params: {
                 pluginId: 'happier.agent.codex',
                 localId: 'openai-codex',
+            },
+        });
+        expect(resolveConnectedServiceProfileActionRoute(
+            { serviceId: 'acme.review/reviewer-service', profileId: 'reviewer' },
+            entries,
+        )).toEqual({
+            pathname: '/(app)/settings/connected-services/account',
+            params: {
+                pluginId: 'acme.review',
+                localId: 'reviewer-service',
+                accountId: 'reviewer',
             },
         });
     });

@@ -103,6 +103,7 @@ function createAutomationListItem(input: Readonly<{
 
 const automationsState = vi.hoisted(() => ({
     list: [] as AutomationListItem[],
+    nextCursor: null as string | null,
 }));
 
 const machinesState = vi.hoisted(() => ({
@@ -111,6 +112,7 @@ const machinesState = vi.hoisted(() => ({
 
 const syncSpies = vi.hoisted(() => ({
     refreshAutomations: vi.fn(async () => {}),
+    loadMoreAutomations: vi.fn(async () => ({ nextCursor: null })),
     runAutomationNow: vi.fn(async (_id: string) => {}),
     pauseAutomation: vi.fn(async (_id: string) => {}),
     resumeAutomation: vi.fn(async (_id: string) => {}),
@@ -146,6 +148,7 @@ installAutomationScreensCommonModuleMocks({
             })),
             useActiveServerAccountScope: () => ({ serverId: 'server-1', accountId: 'account-1' }),
             useAutomations: () => automationsState.list,
+            useAutomationDefinitionNextCursor: () => automationsState.nextCursor,
             useAllMachines: () => machinesState.list,
         });
     },
@@ -186,6 +189,7 @@ vi.mock('@/sync/sync', () => ({
 describe('AutomationsScreen', () => {
     beforeEach(() => {
         automationsState.list = [];
+        automationsState.nextCursor = null;
         machinesState.list = [];
         routerPushSpy.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
@@ -193,6 +197,7 @@ describe('AutomationsScreen', () => {
         modalConfirmSpy.mockResolvedValue(true);
         modalAlertSpy.mockReset();
         syncSpies.refreshAutomations.mockClear();
+        syncSpies.loadMoreAutomations.mockClear();
         syncSpies.runAutomationNow.mockClear();
         syncSpies.pauseAutomation.mockClear();
         syncSpies.resumeAutomation.mockClear();
@@ -201,6 +206,7 @@ describe('AutomationsScreen', () => {
 
     afterEach(() => {
         automationsState.list = [];
+        automationsState.nextCursor = null;
         machinesState.list = [];
     });
 
@@ -385,6 +391,26 @@ describe('AutomationsScreen', () => {
             .toBe(200);
         const largestChunk = rows.reduce((max, row) => Math.max(max, row.automations?.length ?? 0), 0);
         expect(largestChunk).toBeLessThanOrEqual(8);
+    });
+
+    it('continues the server-owned Automation cursor from the virtualized list boundary', async () => {
+        automationsState.list = [createAutomationListItem()];
+        automationsState.nextCursor = 'definition-cursor-1';
+
+        const { AutomationsScreen } = await import('./AutomationsScreen');
+        await renderScreen(React.createElement(AutomationsScreen));
+        await flushHookEffects();
+
+        expect(legendListMock.state.props?.onEndReached).toEqual(expect.any(Function));
+        await act(async () => {
+            legendListMock.state.props.onEndReached();
+            // Virtualized lists may report the same boundary more than once
+            // before React commits state. The pagination owner must establish
+            // its in-flight fence synchronously rather than issue duplicates.
+            legendListMock.state.props.onEndReached();
+        });
+        expect(syncSpies.loadMoreAutomations).toHaveBeenCalledTimes(1);
+        expect(syncSpies.loadMoreAutomations).toHaveBeenCalledWith('definition-cursor-1');
     });
 
     it('keeps list navigation semantic while its controls remain independent', async () => {

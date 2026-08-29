@@ -9,6 +9,7 @@ import {
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { isInventoryPrivacyAction } from '@/sync/domains/settings/actionSettingsPolicy';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
+import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 
 const CURRENT_UI_CONTEXT_ACTION_IDS: ReadonlySet<ActionId> = new Set<ActionId>([
   'ui.current_context.read',
@@ -28,6 +29,9 @@ export function isVoiceActionAvailableInState(
   actionId: ActionId,
 ): boolean {
   if (state?.settings) {
+    if (!resolveLocalFeaturePolicyEnabled('voice', state.settings as any)) {
+      return false;
+    }
     const privacy = readVoicePrivacySettings(state.settings);
     if (privacy.currentUiContextMode === 'off' && isCurrentUiContextVoiceAction(actionId)) {
       return false;

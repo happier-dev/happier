@@ -34,6 +34,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     capabilityServerId: string;
     cwd?: string | null;
     probeContext?: NewSessionCapabilityProbeContext | null;
+    enabled?: boolean;
 }>): Readonly<{
     configOptions: readonly AcpConfigOption[] | null;
     unavailable: boolean;
@@ -117,6 +118,16 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     }, [params.capabilityServerId, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
 
     React.useEffect(() => {
+        if (params.enabled === false) {
+            setConfigOptions(null);
+            configOptionsRef.current = null;
+            setUnavailable(false);
+            setProbePhase('idle');
+            setRefreshedAt(null);
+            refreshedAtRef.current = null;
+            lastScopeKeyRef.current = probeScopeKey;
+            return;
+        }
         if (!cacheKey || !agentType) {
             setConfigOptions(null);
             configOptionsRef.current = null;
@@ -279,7 +290,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, cacheKey, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, probeScopeKey, refreshNonce]);
+    }, [agentType, backendTargetForProbe, cacheKey, params.enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, probeScopeKey, refreshNonce]);
 
     return {
         configOptions,

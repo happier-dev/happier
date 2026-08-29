@@ -13,6 +13,7 @@ import {
     buildComparableBasePathPeerSessions,
     listComparableBasePathPeerSessions,
 } from './buildComparableBasePathPeerSessions';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 type ProjectLookupResult = {
@@ -243,8 +244,11 @@ export function applyReachableTargetsToSessionListRenderables(
         // Reachable machine/path facts come from the owner view and must never
         // be copied into that participant-visible projection. Owner-local
         // renderables may still project the already-hydrated owner view.
+        const rawMetadataLayoutVersion = session.metadataLayoutVersion === undefined
+            ? sessionRecord.metadataLayoutVersion
+            : session.metadataLayoutVersion;
         const isLayout1Participant =
-            (session.metadataLayoutVersion ?? sessionRecord.metadataLayoutVersion ?? 0) === 1
+            readSessionMetadataLayoutVersion(rawMetadataLayoutVersion) === 1
             && (
                 session.accessLevel === 'view'
                 || session.accessLevel === 'edit'

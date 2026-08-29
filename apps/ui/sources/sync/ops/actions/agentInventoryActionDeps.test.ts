@@ -105,8 +105,8 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'sessions.spawn.connected_services.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
-      { surface: 'voice' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { surface: 'voice', serverId: 'server-remote' },
     );
 
     expect(res.ok).toBe(true);
@@ -149,8 +149,8 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'agents.session_modes.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
-      { surface: 'voice' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { surface: 'voice', serverId: 'server-remote' },
     );
 
     expect(res.ok).toBe(true);
@@ -196,8 +196,8 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
 
     const res = await executor.execute(
       'agents.config_options.list',
-      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1', serverId: 'server-remote' },
-      { surface: 'voice' },
+      { agentId: 'acme-voice-agent', backendTargetKey: 'agent:acme.voice/agent', machineId: 'machine-1' },
+      { surface: 'voice', serverId: 'server-remote' },
     );
 
     expect(res.ok).toBe(true);

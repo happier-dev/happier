@@ -44,6 +44,8 @@ export type FailedOutboundHandoffRestoreParams = Readonly<{
         snapshot: SessionDraftTextSnapshot,
         expectedCurrentValue: string,
     ) => boolean;
+    /** Whether the canonical Composer owner actually cleared the text field. */
+    restoreDraftText?: boolean;
     restoreTransientInputState?: () => void;
     /** The semantic-draft owner restores only fields unchanged since its clear. */
     restoreSemanticDraftValuesMatchingClearedSnapshot?: () => boolean;
@@ -69,13 +71,16 @@ export function restoreComposerAfterFailedOutboundHandoff({
     wasClearedAtHandoff,
     isCanonicalOutboundHandoffPresent,
     restoreDraftForSessionIfCurrentValueMatches,
+    restoreDraftText = true,
     restoreTransientInputState,
     restoreSemanticDraftValuesMatchingClearedSnapshot,
 }: FailedOutboundHandoffRestoreParams): boolean {
     if (!wasClearedAtHandoff) return false;
     if (isCanonicalOutboundHandoffPresent()) return false;
 
-    const didRestoreDraft = restoreDraftForSessionIfCurrentValueMatches(snapshot, '');
+    const didRestoreDraft = restoreDraftText
+        ? restoreDraftForSessionIfCurrentValueMatches(snapshot, '')
+        : false;
     const didRestoreSemanticDraftValues = restoreSemanticDraftValuesMatchingClearedSnapshot?.() ?? false;
 
     if (didRestoreDraft) {

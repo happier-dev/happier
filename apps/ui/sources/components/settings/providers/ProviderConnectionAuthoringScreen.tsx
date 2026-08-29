@@ -49,6 +49,29 @@ import { CustomProviderAuthoringView } from './authoring/CustomProviderAuthoring
 
 const PRESETS: readonly CustomProviderPreset[] = ['openai-responses', 'openai-chat', 'anthropic'];
 
+/**
+ * The pristine-vs-edited form fingerprint behind the unsaved-changes guard.
+ * Account retirement rebuilds the same fingerprint from reset values, so the
+ * guard keeps comparing like with like.
+ */
+function buildAuthoringStateKey(input: Readonly<{
+    draft: CustomProviderDraft;
+    secretId: string | null;
+    enableAfterSaving: boolean;
+    selectedCandidateId: string | null;
+    contributionDisplayName: string | null;
+    contributionEndpointValues: Readonly<Record<string, string>>;
+}>): string {
+    return JSON.stringify({
+        draft: input.draft,
+        secretId: input.secretId,
+        enableAfterSaving: input.enableAfterSaving,
+        selectedCandidateId: input.selectedCandidateId,
+        contributionDisplayName: input.contributionDisplayName,
+        contributionEndpointValues: input.contributionEndpointValues,
+    });
+}
+
 function localEndpointHint(draft: CustomProviderDraft): string | null {
     const candidates = draft.advanced
         ? draft.endpoints.filter((endpoint) => endpoint.enabled).map((endpoint) => endpoint.baseUrl)
@@ -128,13 +151,6 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const [draft, setDraft] = React.useState<CustomProviderDraft>(() => createCustomProviderDraft('openai-responses'));
     const [secretId, setSecretId] = React.useState<string | null>(null);
     const effectiveSecretId = selectedTargetServerMatchesActiveAccount ? secretId : null;
-    // A SavedSecret reference belongs to the Account Settings that hold it, so
-    // the selection is retired with the Account that made it. The rest of the
-    // draft describes a machine-local Provider connection and stays.
-    const discardAccountScopedSecretSelection = React.useCallback(() => {
-        setSecretId(null);
-    }, []);
-    useRetireProviderStateOnAccountChange(discardAccountScopedSecretSelection);
     React.useEffect(() => {
         if (!selectedTargetServerMatchesActiveAccount) setSecretId(null);
     }, [selectedTargetServerMatchesActiveAccount]);
@@ -161,6 +177,15 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     const probeGenerationRef = React.useRef(0);
     const authoringPreviewGenerationRef = React.useRef(0);
     const candidateMachineRef = React.useRef(machineId);
+    const secretPickerModalIdRef = React.useRef<string | null>(null);
+    const closeSecretPicker = React.useCallback(() => {
+        if (!secretPickerModalIdRef.current) return;
+        Modal.hide(secretPickerModalIdRef.current);
+        secretPickerModalIdRef.current = null;
+    }, []);
+    React.useEffect(() => () => {
+        closeSecretPicker();
+    }, [closeSecretPicker]);
     const requestedContributionKey = props.contributionKey;
     const contribution = requestedContributionKey
         ? query.data?.available.find((item) =>
@@ -202,7 +227,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     // restored on return, and it can be initialized automatically from a sole
     // verified candidate after the first render — including it here would mark
     // a pristine form dirty and prompt for changes the user never made.
-    const authoringStateKey = JSON.stringify({
+    const authoringStateKey = buildAuthoringStateKey({
         draft, secretId: effectiveSecretId, enableAfterSaving,
         selectedCandidateId, contributionDisplayName,
         contributionEndpointValues,
@@ -215,6 +240,59 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     });
     const initialAuthoringStateKeyRef = React.useRef(authoringStateKey);
     isDirtyRef.current = authoringStateKey !== initialAuthoringStateKeyRef.current;
+
+    // Everything this form holds is Account-derived authoring state: the draft
+    // and its secret/config buffers, validation and probe truth, the candidate
+    // and preview the Account's daemon produced, and the pristine baseline the
+    // unsaved-changes guard compares against. The incumbent Account lifetime
+    // retires all of it when Account A hands this route to Account B, while the
+    // same Account keeps full route continuity. Dispatch-time fencing is owned
+    // independently by the target resolver, so a buffer captured under A can
+    // reach neither this screen's state nor B's daemon.
+    const discardAccountScopedAuthoringState = React.useCallback(() => {
+        const freshDraft = createCustomProviderDraft('openai-responses');
+        const resetStateKey = buildAuthoringStateKey({
+            draft: freshDraft,
+            secretId: null,
+            enableAfterSaving: true,
+            selectedCandidateId: props.candidateId ?? null,
+            contributionDisplayName: props.displayName ?? null,
+            contributionEndpointValues: {},
+        });
+        closeSecretPicker();
+        setDraft(freshDraft);
+        setSecretId(null);
+        setPresetOpen(false);
+        setCredentialOpen(false);
+        setProbeState('idle');
+        setProbeError(null);
+        setLocalError(null);
+        setManualModelsError(null);
+        setInvalidField(null);
+        setSelectedCandidateId(props.candidateId ?? null);
+        setContributionDisplayName(props.displayName ?? null);
+        setContributionEndpointValues({});
+        setAuthoringPreview(null);
+        setAuthoringPreviewLoading(false);
+        setAuthoringPreviewError(null);
+        setEnableAfterSaving(true);
+        setAuthoringPreviewRefreshNonce(0);
+        // Fence queued probe/preview continuations from the retired Account.
+        probeGenerationRef.current += 1;
+        authoringPreviewGenerationRef.current += 1;
+        mutation.clearError();
+        ignoreUnsavedGuardRef.current = false;
+        isDirtyRef.current = false;
+        candidateMachineRef.current = machineId;
+        // The reset form is pristine again, so the guard must not claim
+        // unsaved Account A work on Account B's behalf.
+        initialAuthoringStateKeyRef.current = resetStateKey;
+    }, [closeSecretPicker, machineId, mutation.clearError, props.candidateId, props.displayName]);
+    // One incumbent lifetime owns both synchronous form retirement and every
+    // callback fence; there is no Provider-local Account epoch.
+    const accountLifetime = useRetireProviderStateOnAccountChange(discardAccountScopedAuthoringState);
+    const accountStillCurrent = React.useCallback(
+        () => accountLifetime?.isCurrent() ?? true, [accountLifetime]);
 
     React.useEffect(() => {
         probeGenerationRef.current += 1;
@@ -232,7 +310,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
     React.useEffect(() => {
         const generation = authoringPreviewGenerationRef.current + 1;
         authoringPreviewGenerationRef.current = generation;
-        if (!enabled || !props.contributionKey || !machineId) {
+        if (!accountStillCurrent() || !enabled || !props.contributionKey || !machineId) {
             setAuthoringPreview(null);
             setAuthoringPreviewError(null);
             setAuthoringPreviewLoading(false);
@@ -256,7 +334,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 endpointOverrides: contributionEndpointOverrides,
             },
         }).then((result) => {
-            if (authoringPreviewGenerationRef.current !== generation) return;
+            if (!accountStillCurrent() || authoringPreviewGenerationRef.current !== generation) return;
             setAuthoringPreviewLoading(false);
             if (result.status === 'error') {
                 setAuthoringPreviewError(result.error);
@@ -270,34 +348,43 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             }
             setAuthoringPreview(result.authoringPreview);
         }).catch((caught) => {
-            if (authoringPreviewGenerationRef.current !== generation) return;
+            if (!accountStillCurrent() || authoringPreviewGenerationRef.current !== generation) return;
             setAuthoringPreviewLoading(false);
             setAuthoringPreviewError(providerErrorFromRpcFailure(caught, { connectionId, machineId }));
         });
-    }, [authoringPreviewRefreshNonce, connectionId, contributionDisplayName, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, machineId, props.contributionKey, selectedCandidateId, serverId]);
+    }, [accountLifetime, accountStillCurrent, authoringPreviewRefreshNonce, connectionId, contributionDisplayName, contributionEndpointOverridesKey, contributionEndpointsComplete, enabled, machineId, props.contributionKey, selectedCandidateId, serverId]);
     const retryAuthoringPreview = React.useCallback(async (): Promise<void> => {
+        if (!accountStillCurrent()) return;
         setAuthoringPreviewRefreshNonce((current) => current + 1);
-    }, []);
+    }, [accountStillCurrent]);
 
     const pickSecret = React.useCallback(() => {
-        if (!selectedTargetServerMatchesActiveAccount) return;
-        Modal.show({
+        if (!accountStillCurrent() || !selectedTargetServerMatchesActiveAccount) return;
+        closeSecretPicker();
+        secretPickerModalIdRef.current = Modal.show({
             component: SavedSecretPickerModal,
-            props: { selectedId: secretId, onSelectId: setSecretId },
+            props: {
+                selectedId: secretId,
+                onSelectId: (selectedId) => {
+                    secretPickerModalIdRef.current = null;
+                    if (accountStillCurrent()) setSecretId(selectedId);
+                },
+            },
             chrome: { kind: 'card', title: t('settingsProviders.detail.pickSecretTitle'), dimensions: { size: 'lg' } },
             closeOnBackdrop: true,
         });
-    }, [secretId, selectedTargetServerMatchesActiveAccount]);
+    }, [accountStillCurrent, closeSecretPicker, secretId, selectedTargetServerMatchesActiveAccount]);
 
     const reviewConnectionDraft = React.useCallback(() => {
+        if (!accountStillCurrent()) return;
         mutation.clearError();
         setLocalError(null);
         setProbeError(null);
         baseUrlFieldRef.current?.focus();
-    }, [mutation.clearError]);
+    }, [accountStillCurrent, mutation.clearError]);
 
     const save = React.useCallback(async (): Promise<boolean> => {
-        if (!machineId) return false;
+        if (!accountStillCurrent() || !machineId) return false;
         setLocalError(null);
         setManualModelsError(null);
         setInvalidField(null);
@@ -356,20 +443,21 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
             };
             if (!request) return false;
             const result = await mutation.run(request, 'save');
-            if (result?.status === 'success' && 'connection' in result) {
+            if (accountStillCurrent() && result?.status === 'success' && 'connection' in result) {
                 isDirtyRef.current = false;
                 ignoreUnsavedGuardRef.current = true;
                 router.replace(`/(app)/settings/providers/${result.connection.connectionId}` as never);
                 return true;
             }
         } catch {
-            setLocalError('provider_connection_invalid');
+            if (accountStillCurrent()) setLocalError('provider_connection_invalid');
         }
         return false;
-    }, [authoringPreview, connectionId, contribution?.credential, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, mutation, pickSecret, props.contributionKey, router]);
+    }, [accountStillCurrent, authoringPreview, connectionId, contribution?.credential, contributionDisplayName, contributionEndpointOverrides, draft, draftRequiresApiKey, effectiveSecretId, enableAfterSaving, machineId, mutation, pickSecret, props.contributionKey, router]);
 
     const chooseAuthoringCandidate = React.useCallback(async (candidateId: string) => {
         const candidate = query.data?.discoveryCandidates.find((entry) => entry.candidateId === candidateId);
+        if (!accountStillCurrent()) return;
         let displayName = contributionDisplayName;
         if (candidate?.connection.status === 'requires_named_connection' && !displayName) {
             displayName = await Modal.prompt(
@@ -383,15 +471,17 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 },
             );
             if (!displayName?.trim()) return;
+            if (!accountStillCurrent()) return;
             displayName = displayName.trim();
         }
         setContributionDisplayName(displayName);
         setSelectedCandidateId(candidateId);
-    }, [contributionDisplayName, query.data?.discoveryCandidates]);
+    }, [accountStillCurrent, contributionDisplayName, query.data?.discoveryCandidates]);
 
     const testDraft = React.useCallback(async () => {
         // Re-resolve immediately before the probe so a draft is never tested
         // against a machine the selection has since moved away from.
+        if (!accountStillCurrent()) return;
         const target = resolveCurrentTarget();
         if (!machineId || props.contributionKey || !target || target.machineId !== machineId) return;
         const generation = probeGenerationRef.current;
@@ -418,7 +508,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 savedSecretId: draftRequiresApiKey ? effectiveSecretId : null,
                 actionNonce: `probe_${randomUUID()}`,
             });
-            if (probeGenerationRef.current !== generation) return;
+            if (!accountStillCurrent() || probeGenerationRef.current !== generation) return;
             if (result.status === 'error') {
                 setProbeState('idle');
                 setProbeError(result.error);
@@ -426,28 +516,32 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 setProbeState(result.status === 'success' ? 'success' : 'notSupported');
             }
         } catch (caught) {
-            if (probeGenerationRef.current !== generation) return;
+            if (!accountStillCurrent() || probeGenerationRef.current !== generation) return;
             setProbeState('idle');
             setProbeError(providerErrorFromRpcFailure(caught, {
                 connectionId,
                 machineId,
             }));
         }
-    }, [connectionId, draft, draftRequiresApiKey, effectiveSecretId, machineId, props.contributionKey, resolveCurrentTarget]);
+    }, [accountStillCurrent, connectionId, draft, draftRequiresApiKey, effectiveSecretId, machineId, props.contributionKey, resolveCurrentTarget]);
 
-    const requestUnsavedChangesDecision = React.useCallback(() => promptUnsavedChangesAlert(
-        (title, message, buttons) => Modal.alert(title, message, buttons),
-        {
+    const requestUnsavedChangesDecision = React.useCallback(async () => {
+        if (!accountStillCurrent()) return 'keepEditing' as const;
+        const decision = await promptUnsavedChangesAlert((title, message, buttons) => {
+            if (accountStillCurrent()) Modal.alert(title, message, buttons);
+        }, {
             title: t('common.discardChanges'),
             message: t('settingsProviders.authoring.unsavedDescription'),
             discardText: t('common.discard'),
             saveText: t('common.save'),
             keepEditingText: t('common.keepEditing'),
-        },
-    ), []);
+        });
+        return accountStillCurrent() ? decision : 'keepEditing';
+    }, [accountStillCurrent]);
     const continueNavigation = React.useCallback((action: unknown) => {
+        if (!accountStillCurrent()) return;
         if (action) (navigation as { dispatch?: (value: unknown) => void } | null)?.dispatch?.(action);
-    }, [navigation]);
+    }, [accountStillCurrent, navigation]);
 
     useUnsavedChangesBeforeRemoveGuard({
         ignoreRef: ignoreUnsavedGuardRef,
@@ -483,6 +577,10 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
         { id: 'custom-header', title: t('settingsProviders.authoring.credentialStyle.customHeader') },
         { id: 'custom-header-bearer', title: t('settingsProviders.authoring.credentialStyle.customHeaderBearer') },
     ], []);
+    const retryMutation = React.useCallback(async (): Promise<void> => {
+        if (!accountStillCurrent() || !mutation.retry) return;
+        await mutation.retry();
+    }, [accountStillCurrent, mutation.retry]);
 
     if (availabilityPresentation) {
         return <ItemList><ItemGroup><ProviderFeatureAvailabilityNotice presentation={availabilityPresentation} /></ItemGroup></ItemList>;
@@ -493,7 +591,7 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
 
     const displayError = mutation.error ?? authoringPreviewError ?? localError;
     const displayErrorRetry = mutation.error
-        ? mutation.retry
+        ? (mutation.retry ? retryMutation : undefined)
         : authoringPreviewError
             ? retryAuthoringPreview
             : undefined;
@@ -528,13 +626,16 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 onPickSecret={pickSecret}
                 onChooseCandidate={(candidateId) => { void chooseAuthoringCandidate(candidateId); }}
                 onEndpointChange={(endpointTemplateId, baseUrl) => {
+                    if (!accountStillCurrent()) return;
                     setSelectedCandidateId(null);
                     setContributionEndpointValues((current) => ({
                         ...current,
                         [endpointTemplateId]: baseUrl,
                     }));
                 }}
-                onEnableAfterSavingChange={setEnableAfterSaving}
+                onEnableAfterSavingChange={(enable) => {
+                    if (accountStillCurrent()) setEnableAfterSaving(enable);
+                }}
                 onSave={() => { void save(); }}
             />
         );
@@ -570,34 +671,47 @@ export const ProviderConnectionAuthoringScreen = React.memo(function ProviderCon
                 manualModelsFieldRef,
             }}
             actions={{
-                onPresetOpenChange: setPresetOpen,
-                onCredentialOpenChange: setCredentialOpen,
+                onPresetOpenChange: (open) => {
+                    if (accountStillCurrent()) setPresetOpen(open);
+                },
+                onCredentialOpenChange: (open) => {
+                    if (accountStillCurrent()) setCredentialOpen(open);
+                },
                 onPresetSelect: (preset) => {
+                    if (!accountStillCurrent()) return;
                     if (PRESETS.includes(preset as CustomProviderPreset)) {
                         setDraft((current) => updateCustomProviderDraftPreset(current, preset as CustomProviderPreset));
                     }
                 },
                 onCredentialStyleSelect: (credentialStyle) => {
+                    if (!accountStillCurrent()) return;
                     if (credentialStyle === 'bearer' || credentialStyle === 'x-api-key'
                         || credentialStyle === 'api-key' || credentialStyle === 'custom-header'
                         || credentialStyle === 'custom-header-bearer') {
                         setDraft((current) => ({ ...current, credentialStyle }));
                     }
                 },
-                onDraftChange: setDraft,
+                onDraftChange: (nextDraft) => {
+                    if (accountStillCurrent()) setDraft(nextDraft);
+                },
                 onNameChange: (name) => {
+                    if (!accountStillCurrent()) return;
                     setInvalidField((current) => current === 'name' ? null : current);
                     setDraft((current) => ({ ...current, name }));
                 },
                 onBaseUrlChange: (baseUrl) => {
+                    if (!accountStillCurrent()) return;
                     setInvalidField((current) => current === 'baseUrl' ? null : current);
                     setDraft((current) => ({ ...current, baseUrl }));
                 },
                 onManualModelsChange: (manualModelsText) => {
+                    if (!accountStillCurrent()) return;
                     setManualModelsError(null);
                     setDraft((current) => ({ ...current, manualModelsText }));
                 },
-                onEnableAfterSavingChange: setEnableAfterSaving,
+                onEnableAfterSavingChange: (enable) => {
+                    if (accountStillCurrent()) setEnableAfterSaving(enable);
+                },
                 onPickSecret: pickSecret,
                 onReviewConnection: reviewConnectionDraft,
                 onTest: () => { void testDraft(); },

@@ -207,7 +207,6 @@ describe('voice provider registry', () => {
             configPatch: { billingMode: 'byo' },
           },
         ],
-        createSettingsSection: () => ({ kind: 'voice.internal.realtime-settings.v1' }),
       }],
     });
     const entry = registry.get(

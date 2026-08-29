@@ -28,10 +28,11 @@ import type { VoiceLabSurface } from './conceptTypes';
 /**
  * The Voice design lab.
  *
- * An isolated exploration surface. It does not import, wrap, or modify the
- * production Voice surface, and the production surface does not know it exists.
- * Its whole job is to make nine structurally different directions comparable
- * under identical state, theme, motion, and surrounding product.
+ * An isolated exploration surface. Exploration-only directions stay local;
+ * selected Horizon and Orb directions render production through fixture
+ * adapters, so the lab cannot grow a second shipping geometry or action owner.
+ * Production does not know the lab exists. The lab makes structurally different
+ * directions comparable under identical state, theme, motion, and surroundings.
  *
  * The scenario player is the important control: static frames cannot prove feel,
  * and the transitions between states are most of what is being judged here.
@@ -359,7 +360,7 @@ export function VoiceLabScreen() {
                             {state.basis === 'model' ? 'Live today' : state.basis === 'derivable' ? 'Derivable' : 'Proposed'}
                             {' — '}
                         </Text>
-                        {state.source ?? state.modelState ?? BASIS_COPY[state.basis]}
+                        {state.source ?? state.modelNote ?? state.modelState ?? BASIS_COPY[state.basis]}
                     </Text>
                 </View>
             </View>

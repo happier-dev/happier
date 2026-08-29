@@ -24,6 +24,7 @@ import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestrati
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { nowServerMs } from '@/sync/runtime/time';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 export type SessionManualReadState = 'read' | 'unread';
 
@@ -163,7 +164,9 @@ function buildManualReadStateRenderablePatch(params: Readonly<{
     lastViewedSessionSeq: number | null;
     updatedAt: number;
 }>): Partial<SessionListRenderableSession> {
-    const metadata = (params.renderable.metadataLayoutVersion ?? 0) === 1
+    const metadataLayoutVersion =
+        readSessionMetadataLayoutVersion(params.renderable.metadataLayoutVersion);
+    const metadata = metadataLayoutVersion !== 0
         ? params.renderable.metadata
         : applyManualReadStateToRenderableMetadata({
             metadata: params.renderable.metadata,
@@ -272,9 +275,15 @@ function applyManualReadStateToLocalState(params: Readonly<{
         const nextSession: Session = {
             ...session,
             lastViewedSessionSeq: params.lastViewedSessionSeq,
-            ...((session.metadataLayoutVersion ?? 0) === 1
+            ...(readSessionMetadataLayoutVersion(
+                session.metadataLayoutVersion,
+            ) === 1
                 ? { ownerMetadataView }
-                : { metadata: ownerMetadataView }),
+                : readSessionMetadataLayoutVersion(
+                    session.metadataLayoutVersion,
+                ) === 0
+                    ? { metadata: ownerMetadataView }
+                    : {}),
             updatedAt,
         };
 

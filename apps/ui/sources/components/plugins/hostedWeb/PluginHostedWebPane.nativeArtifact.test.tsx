@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
     PluginHostedWebBridgeEnvelopeV1,
-    PluginHostedWebCollectionUiQueryBridgeOperationV1,
-    PluginHostedWebCollectionUiQueryBridgeResponseV1,
+    PluginHostedWebAccountDataBridgeOperationV1,
+    PluginHostedWebAccountDataBridgeResponseV1,
     PluginUiHostApiWireIdentityV1,
     PluginUiLaunchInputV1,
     PluginUiSurfaceContextV1,
@@ -1002,13 +1002,13 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
             const dataHandle = vi.fn();
             const dataDispose = vi.fn();
             let dataSignal: AbortSignal | undefined;
-            let settleData: ((response: PluginHostedWebCollectionUiQueryBridgeResponseV1) => void) | undefined;
+            let settleData: ((response: PluginHostedWebAccountDataBridgeResponseV1) => void) | undefined;
             dataHandle.mockImplementation((
-                _operation: PluginHostedWebCollectionUiQueryBridgeOperationV1,
+                _operation: PluginHostedWebAccountDataBridgeOperationV1,
                 options?: Readonly<{ signal?: AbortSignal }>,
             ) => {
                 dataSignal = options?.signal;
-                return new Promise<PluginHostedWebCollectionUiQueryBridgeResponseV1>((resolve) => {
+                return new Promise<PluginHostedWebAccountDataBridgeResponseV1>((resolve) => {
                     settleData = resolve;
                 });
             });
@@ -1020,7 +1020,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                     ...projection.hostedWebById,
                     'hostedWeb:acme.preview:preview-web': {
                         ...projection.hostedWebById['hostedWeb:acme.preview:preview-web'],
-                        bridge: { allowedMessages: ['hostApi', 'collectionUiQuery'] },
+                        bridge: { allowedMessages: ['hostApi', 'accountData'] },
                     },
                 },
             };
@@ -1054,7 +1054,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                         translations: {},
                         targetedContributions: canonicalTargetedContributions,
                     }}
-                    createCollectionUiQueryBridge={() => ({ handle: dataHandle, dispose: dataDispose })}
+                    createAccountDataBridge={() => ({ handle: dataHandle, dispose: dataDispose })}
                     nativeArtifactAdoption={artifactAdoption}
                 />,
             );
@@ -1075,7 +1075,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
             });
             hostMessages.length = 0;
 
-            const operation: PluginHostedWebCollectionUiQueryBridgeOperationV1 = {
+            const operation: PluginHostedWebAccountDataBridgeOperationV1 = {
                 kind: 'open',
                 collectionId: 'tasks',
                 uiQueryId: 'open',
@@ -1085,7 +1085,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                 surface: bridgeSurface,
                 nonce: 'artifact-revoke-nonce',
                 sequence: 2,
-                kind: 'collectionUiQuery',
+                kind: 'accountData',
                 payload: { kind: 'request', operation },
             })));
             await vi.waitFor(() => expect(dataHandle).toHaveBeenCalledTimes(1));
@@ -1110,7 +1110,7 @@ describe('PluginHostedWebPane native Artifact consumer', () => {
                     surface: bridgeSurface,
                     nonce: 'artifact-revoke-nonce',
                     sequence: 3,
-                    kind: 'collectionUiQuery',
+                    kind: 'accountData',
                     payload: { kind: 'request', operation },
                 })));
                 laterHostApi = Promise.resolve(bridge.onMessage(createBridgeEnvelope({

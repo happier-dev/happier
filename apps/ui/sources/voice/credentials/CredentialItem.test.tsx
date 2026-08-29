@@ -217,32 +217,60 @@ const credentialSourceDeclaration = VoiceProviderContributionSchema.parse({
 });
 
 describe('VoiceCredentialItem', () => {
-  it('mounts the generic raw credential permission review only for manifest-declared raw grants', async () => {
-    boundary.settings = null;
+  it('mounts raw review only for the selected source in the current realm and phase', async () => {
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const {
+      applyAccountVoiceCredentialSourceSelection,
+      upsertAccountVoiceCredential,
+    } = await import('./accountVoiceCredential');
+    const contribution = { pluginId: 'com.acme.voice', localId: 'conversation' } as const;
+    const withSecret = upsertAccountVoiceCredential({
+      settings: settingsParse({}), contribution, credentialSlotId: 'api-key', value: 'secret',
+      generateId: () => 'secret-id', now: 1, expectedSecretId: null, expectedSecretUpdatedAt: null,
+    }).settings;
+    boundary.settings = applyAccountVoiceCredentialSourceSelection({
+      settings: withSecret,
+      mutation: {
+        contribution,
+        credentialSlotId: 'api-key',
+        selection: { kind: 'savedSecret' },
+        expectedSettingsVersion: 0,
+      },
+      currentDeclaration: credentialSourceDeclaration,
+    }).settings;
     const { VoiceCredentialItem } = await import('./CredentialItem');
     const screen = await renderScreen(<VoiceCredentialItem
       testID="credential"
       title="API key"
       promptTitle="Connect"
       promptDescription="Paste key"
-      contribution={{ pluginId: 'com.acme.voice', localId: 'conversation' }}
+      contribution={contribution}
       credentialSlotId="api-key"
+      credentialSourcePurpose="voice.client-auth"
       credentialSourceDeclaration={credentialSourceDeclaration}
+      rawCredentialReviewGrants={credentialSourceDeclaration.credentials?.sources[0]?.rawGrants ?? []}
       disclosePlainStorage={true}
     />);
 
-    expect(screen.tree.findByTestId('credential-raw-credential-access')?.props.contribution).toEqual({
+    const review = screen.tree.findByTestId('credential-raw-credential-access');
+    expect(review?.props.contribution).toEqual({
       pluginId: 'com.acme.voice',
       localId: 'conversation',
     });
+    expect(review?.props.rawGrant).toEqual(
+      credentialSourceDeclaration.credentials?.sources[0]?.rawGrants?.[0],
+    );
 
     await screen.update(<VoiceCredentialItem
       testID="credential"
       title="API key"
       promptTitle="Connect"
       promptDescription="Paste key"
-      contribution={{ pluginId: 'com.acme.voice', localId: 'conversation' }}
+      contribution={contribution}
       credentialSlotId="api-key"
+      credentialSourcePurpose="voice.client-auth"
+      credentialSourceDeclaration={credentialSourceDeclaration}
+      rawCredentialReviewGrants={[]}
       disclosePlainStorage={true}
     />);
     expect(screen.tree.findByTestId('credential-raw-credential-access')).toBeNull();

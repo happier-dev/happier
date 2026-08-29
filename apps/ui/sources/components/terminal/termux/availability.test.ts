@@ -5,41 +5,6 @@ async function loadTermuxAvailabilityModule() {
 }
 
 describe('Termux terminal renderer selection', () => {
-    it('keeps xterm WebView selected unless Android native is available and accepted', async () => {
-        const mod = await loadTermuxAvailabilityModule();
-        expect(mod).toHaveProperty('resolveTermuxRendererSelection');
-        const selection = mod as {
-            resolveTermuxRendererSelection: (options: {
-                featureEnabled: boolean;
-                platform: string;
-                availability: unknown;
-                accessibilityAccepted: boolean;
-                legalAccepted: boolean;
-                packageProofAccepted: boolean;
-                crashFallbackAvailable: boolean;
-            }) => unknown;
-        };
-
-        expect(selection.resolveTermuxRendererSelection({
-            featureEnabled: true,
-            platform: 'android',
-            accessibilityAccepted: true,
-            legalAccepted: false,
-            packageProofAccepted: true,
-            crashFallbackAvailable: true,
-            availability: {
-                available: true,
-                platform: 'android',
-                renderer: 'android-termux',
-                moduleVersion: '0.0.0',
-                accessibility: 'native',
-            },
-        })).toEqual({
-            renderer: 'xterm-webview',
-            reason: 'legal-not-approved',
-        });
-    });
-
     it('keeps xterm WebView selected when Termux package proof is not accepted', async () => {
         const mod = await loadTermuxAvailabilityModule();
         expect(mod).toHaveProperty('resolveTermuxRendererSelection');
@@ -49,7 +14,6 @@ describe('Termux terminal renderer selection', () => {
                 platform: string;
                 availability: unknown;
                 accessibilityAccepted: boolean;
-                legalAccepted: boolean;
                 packageProofAccepted: boolean;
                 crashFallbackAvailable: boolean;
             }) => unknown;
@@ -59,7 +23,6 @@ describe('Termux terminal renderer selection', () => {
             featureEnabled: true,
             platform: 'android',
             accessibilityAccepted: true,
-            legalAccepted: true,
             packageProofAccepted: false,
             crashFallbackAvailable: true,
             availability: {
@@ -84,7 +47,6 @@ describe('Termux terminal renderer selection', () => {
                 platform: string;
                 availability: unknown;
                 accessibilityAccepted: boolean;
-                legalAccepted: boolean;
                 packageProofAccepted: boolean;
                 crashFallbackAvailable: boolean;
             }) => unknown;
@@ -94,7 +56,6 @@ describe('Termux terminal renderer selection', () => {
             featureEnabled: true,
             platform: 'android',
             accessibilityAccepted: true,
-            legalAccepted: true,
             packageProofAccepted: true,
             crashFallbackAvailable: false,
             availability: {
@@ -119,7 +80,6 @@ describe('Termux terminal renderer selection', () => {
                 platform: string;
                 availability: unknown;
                 accessibilityAccepted: boolean;
-                legalAccepted: boolean;
                 packageProofAccepted: boolean;
                 crashFallbackAvailable: boolean;
             }) => unknown;
@@ -129,7 +89,6 @@ describe('Termux terminal renderer selection', () => {
             featureEnabled: true,
             platform: 'android',
             accessibilityAccepted: true,
-            legalAccepted: true,
             packageProofAccepted: true,
             crashFallbackAvailable: true,
             availability: {
@@ -154,7 +113,6 @@ describe('Termux terminal renderer selection', () => {
                 platform: string;
                 availability: unknown;
                 accessibilityAccepted: boolean;
-                legalAccepted: boolean;
                 packageProofAccepted: boolean;
                 crashFallbackAvailable: boolean;
             }) => unknown;
@@ -164,7 +122,6 @@ describe('Termux terminal renderer selection', () => {
             featureEnabled: true,
             platform: 'android',
             accessibilityAccepted: true,
-            legalAccepted: true,
             packageProofAccepted: true,
             crashFallbackAvailable: true,
             availability: { available: false },
@@ -174,7 +131,7 @@ describe('Termux terminal renderer selection', () => {
         });
     });
 
-    it('selects Android Termux only when feature, legal, proof, fallback, availability, and accessibility gates pass', async () => {
+    it('selects Android Termux only when feature, proof, fallback, availability, and accessibility gates pass', async () => {
         const mod = await loadTermuxAvailabilityModule();
         expect(mod).toHaveProperty('resolveTermuxRendererSelection');
         const selection = mod as {
@@ -183,7 +140,6 @@ describe('Termux terminal renderer selection', () => {
                 platform: string;
                 availability: unknown;
                 accessibilityAccepted: boolean;
-                legalAccepted: boolean;
                 packageProofAccepted: boolean;
                 crashFallbackAvailable: boolean;
             }) => unknown;
@@ -193,7 +149,6 @@ describe('Termux terminal renderer selection', () => {
             featureEnabled: true,
             platform: 'android',
             accessibilityAccepted: true,
-            legalAccepted: true,
             packageProofAccepted: true,
             crashFallbackAvailable: true,
             availability: {

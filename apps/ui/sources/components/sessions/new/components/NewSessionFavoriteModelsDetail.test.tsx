@@ -19,6 +19,8 @@ import {
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 import { SelectionList } from '@/components/ui/selectionList';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
+import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
@@ -102,17 +104,27 @@ const agentCoreById: Partial<Record<AgentId, { dynamicProbe: 'dynamic' | 'static
     codex: { dynamicProbe: 'dynamic' },
 };
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentCore: (agentId: AgentId | null) => ({
-        model: {
-            dynamicProbe: agentId ? (agentCoreById[agentId]?.dynamicProbe ?? 'dynamic') : 'dynamic',
+vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
+    return {
+        ...actual,
+        AGENT_IDS: ['claude', 'codex'],
+        getAgentCore: (agentId: AgentId | null) => {
+            const core = actual.getAgentCore(agentId);
+            return {
+                ...core,
+                model: {
+                    ...core.model,
+                    dynamicProbe: agentId ? (agentCoreById[agentId]?.dynamicProbe ?? 'dynamic') : 'dynamic',
+                },
+            };
         },
-    }),
-    getAgentIconSource: () => null,
-    getAgentIconSvgXml: () => null,
-    getAgentIconTintColor: () => null,
-    isBundledAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
-}));
+        getAgentIconSource: () => null,
+        getAgentIconSvgXml: () => null,
+        getAgentIconTintColor: () => null,
+        isBundledAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
+    };
+});
 
 const preflightModelsByTargetKey: Record<string, {
     modelOptions: ModelOption[];
@@ -120,6 +132,7 @@ const preflightModelsByTargetKey: Record<string, {
     probePhase?: 'idle' | 'loading' | 'refreshing';
 }> = {};
 const providerGroupsByTargetKey: Record<string, any[]> = {};
+const providerFailuresByTargetKey: Record<string, any[]> = {};
 let providersFeatureEnabled = true;
 let retainStaleProviderProjectionDataWhenDisabled = false;
 const providerProjectionInputs: Array<Readonly<{
@@ -136,6 +149,7 @@ vi.mock('@/providers/hooks/useProviderModelProjection', () => ({
                 ? { status: 'success', agentTargetKey: input.agentTargetKey, groups: providerGroupsByTargetKey[input.agentTargetKey] ?? [] }
                 : null,
             error: null,
+            refreshFailures: input.enabled ? (providerFailuresByTargetKey[input.agentTargetKey] ?? []) : [],
             loading: false,
             status: input.enabled ? 'success' : 'disabled',
             refresh: vi.fn(),
@@ -166,6 +180,9 @@ describe('NewSessionFavoriteModelsDetail', () => {
         }
         for (const key of Object.keys(providerGroupsByTargetKey)) {
             delete providerGroupsByTargetKey[key];
+        }
+        for (const key of Object.keys(providerFailuresByTargetKey)) {
+            delete providerFailuresByTargetKey[key];
         }
         providersFeatureEnabled = true;
         retainStaleProviderProjectionDataWhenDisabled = false;
@@ -214,6 +231,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             selectedModelId="claude-opus-4-6"
             selectedMachineId="machine-1"
             capabilityServerId="server-1"
+            projectionCurrent
             cwd="/repo"
             settings={settings}
             onSelectFavoriteModel={vi.fn()}
@@ -250,6 +268,43 @@ describe('NewSessionFavoriteModelsDetail', () => {
             20,
             20,
         ]);
+    });
+
+    it('surfaces every Provider projection failure for favorite backends', async () => {
+        providerFailuresByTargetKey['agent:codex'] = [
+            {
+                connectionId: 'pc_secret',
+                error: createProviderErrorV1('provider_secret_missing', {
+                    machineId: 'machine-1', connectionId: 'pc_secret',
+                }),
+            },
+            {
+                connectionId: 'pc_endpoint',
+                error: createProviderErrorV1('provider_endpoint_unavailable', {
+                    machineId: 'machine-1', connectionId: 'pc_endpoint',
+                }),
+            },
+        ];
+        const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
+        await renderScreen(<NewSessionFavoriteModelsDetail
+            favoriteModelSelections={[favoriteModel('agent:codex', 'gpt-5.5', {
+                catalogAgentId: 'codex', builtInAgentId: 'codex', backendLabel: 'Codex', modelLabel: 'GPT 5.5',
+            })]}
+            resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
+            selectedBackendTargetKey="agent:codex"
+            selectedModelId="gpt-5.5"
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            projectionCurrent
+            settings={settings}
+            onSelectFavoriteModel={vi.fn()}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        const summary = optionPickerOverlayProps.at(-1)?.summary;
+        const summaryScreen = await renderScreen(<>{summary}</>);
+        expect(summaryScreen.findAllByType(ProviderErrorItems.type).map((item) => item.props.error.code))
+            .toEqual(['provider_secret_missing', 'provider_endpoint_unavailable']);
     });
 
     it('keeps the real favorite picker root scope stable across non-structural parent rerenders', async () => {

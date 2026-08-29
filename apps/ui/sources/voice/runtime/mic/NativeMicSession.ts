@@ -24,6 +24,10 @@ import {
     joinMicAcquisition,
     type MicAcquisitionAttempt,
 } from './micAcquisitionLifecycle';
+import {
+    createRecordedAudioArtifactCleanup,
+    deleteRecordedAudioArtifact,
+} from '@/voice/runtime/input/recordedAudioArtifactCleanup';
 
 type CreateNativeMicSessionOptions = Readonly<{
     ensurePermission?: () => Promise<void>;
@@ -50,6 +54,7 @@ type CreateExpoAudioRecordingMicSessionOptions = Readonly<{
     showPermissionDenied?: (canAskAgain: boolean) => void;
     acquireAudioMode?: () => Promise<VoiceAudioModeLease>;
     createNativeFileRecording?: () => VoiceFileRecording | null;
+    deleteRecordedAudio?: (uri: string) => Promise<void>;
 }>;
 
 export function createNativeMicSession(options: CreateNativeMicSessionOptions = {}): MicSession {
@@ -183,6 +188,13 @@ export function createExpoAudioRecordingMicSession(
             Platform.OS === 'ios' ? 'native-file-recorder' : 'expo-audio-recorder',
         ));
     const createNativeRecording = options.createNativeFileRecording ?? createVoiceFileRecording;
+    const deleteRecordedAudio = options.deleteRecordedAudio ?? deleteRecordedAudioArtifact;
+
+    const discardTerminalArtifact = async (uri: string | null): Promise<void> => {
+        const cleanup = createRecordedAudioArtifactCleanup(deleteRecordedAudio);
+        cleanup.admit(uri);
+        await cleanup.cleanup();
+    };
 
     const releaseAudioMode = async (): Promise<void> => {
         const activeLease = audioModeLease;
@@ -228,7 +240,7 @@ export function createExpoAudioRecordingMicSession(
             nativeFileRecording = null;
             if (activeNativeRecording) {
                 try {
-                    await activeNativeRecording.stop();
+                    await discardTerminalArtifact(await activeNativeRecording.stop());
                 } catch {
                     // Terminal artifact custody is best-effort here. The
                     // ordinary stop path transfers the finalized URI to the
@@ -240,6 +252,7 @@ export function createExpoAudioRecordingMicSession(
             if (activeRecorder) {
                 try {
                     await activeRecorder.stop();
+                    await discardTerminalArtifact(activeRecorder.uri ?? null);
                 } catch {
                     // Recorder teardown is best-effort; the audio-session lease
                     // must still be restored by its canonical owner.
@@ -273,13 +286,17 @@ export function createExpoAudioRecordingMicSession(
                     try {
                         await nextNativeRecording.start();
                         if (signal?.aborted) {
-                            await nextNativeRecording.stop().catch(() => null);
+                            await discardTerminalArtifact(
+                                await nextNativeRecording.stop().catch(() => null),
+                            );
                             await nextAudioModeLease.release();
                             return;
                         }
                         if (muted) await nextNativeRecording.setMuted(true);
                     } catch (error) {
-                        await nextNativeRecording.stop().catch(() => null);
+                        await discardTerminalArtifact(
+                            await nextNativeRecording.stop().catch(() => null),
+                        );
                         throw error;
                     }
                     audioModeLease = nextAudioModeLease;
@@ -291,6 +308,7 @@ export function createExpoAudioRecordingMicSession(
                 if (signal?.aborted) {
                     try {
                         await nextRecorder.stop();
+                        await discardTerminalArtifact(nextRecorder.uri ?? null);
                     } catch {
                         // Preparation rollback is best-effort; releasing the
                         // attempt-local audio-mode lease remains authoritative.

@@ -466,6 +466,59 @@ describe('authGetToken key-challenge gate', () => {
         ]);
     });
 
+    it("refreshes a cached v1 capability snapshot before ordinary login can select the auth assertion", async () => {
+        const profile = upsertServerProfile({
+            serverUrl: "https://fresh-probe.example.test",
+            name: "Fresh-probe server",
+        });
+        setActiveServerId(profile.id);
+
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: {},
+                }),
+            )
+            .mockResolvedValueOnce(jsonResponse({ token: "legacy-token" }));
+        await expect(authGetToken(new Uint8Array(32).fill(3))).resolves.toBe("legacy-token");
+
+        mocks.serverFetch.mockReset();
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    features: {
+                        auth: { login: { keyChallenge: { enabled: true } } },
+                        sharing: { contentKeys: { enabled: false } },
+                    },
+                    capabilities: keyChallengeV2Capabilities("srv_fresh_probe"),
+                }),
+            )
+            .mockResolvedValueOnce(
+                jsonResponse({
+                    challengeId: "challenge-fresh-probe",
+                    nonce: "nonce-fresh-probe",
+                    issuedAt: "2026-08-22T12:00:00.000Z",
+                    expiresAt: "2026-08-22T12:05:00.000Z",
+                    audience: {
+                        origin: "https://fresh-probe.example.test",
+                        serverIdentityId: "srv_fresh_probe",
+                    },
+                }),
+            )
+            .mockResolvedValueOnce(jsonResponse({ token: "v2-token" }));
+
+        await expect(authGetToken(new Uint8Array(32).fill(3))).resolves.toBe("v2-token");
+        expect(mocks.serverFetch.mock.calls.map((call) => call[0])).toEqual([
+            "/v1/features",
+            "/v1/auth/challenge",
+            "/v1/auth",
+        ]);
+    });
+
     it('redeems a negotiated v2 challenge without sending the legacy assertion', async () => {
         const profile = upsertServerProfile({
             serverUrl: 'https://selected.example.test/api',

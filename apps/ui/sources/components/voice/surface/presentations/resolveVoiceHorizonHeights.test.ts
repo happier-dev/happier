@@ -101,7 +101,23 @@ describe('Horizon vessel minimum height', () => {
         expect(heights.availableHeight).toBeLessThan(heights.desiredHeight);
     });
 
-    it('does not let the composer scaffold clamp the vessel below its own floor', () => {
+    it('treats zero and non-finite panel measurements as not yet bounded', () => {
+        const base = {
+            ...ROOMY,
+            statusRowHeight: VOICE_HORIZON_STATUS_ROW_HEIGHT,
+            actionsBlockHeight: VOICE_HORIZON_ACTIONS_BLOCK_HEIGHT,
+            conversational: true,
+        } as const;
+
+        const unmeasured = resolveVoiceHorizonHeights({ ...base, availablePanelHeight: 0 });
+        const invalid = resolveVoiceHorizonHeights({ ...base, availablePanelHeight: Number.POSITIVE_INFINITY });
+        const absent = resolveVoiceHorizonHeights(base);
+
+        expect(unmeasured.availableHeight).toBe(absent.availableHeight);
+        expect(invalid.availableHeight).toBe(absent.availableHeight);
+    });
+
+    it('treats the keyboard-aware composer region as a hard ceiling at 200% text', () => {
         // Keyboard up on a phone at 200% web text: the status row wraps to 96pt
         // and a recoverable error puts a 44pt button plus its gap in the actions
         // block, so the floor is 182pt while the scaffold offers 150pt.
@@ -115,11 +131,11 @@ describe('Horizon vessel minimum height', () => {
         });
 
         expect(heights.minimumHeight).toBe(182);
-        // The scaffold's reservation may squeeze the transcript to nothing. It may
-        // not cut End Voice and Retry off the bottom (§2.7).
-        expect(heights.availableHeight).toBeGreaterThanOrEqual(heights.minimumHeight);
-        // …and it borrows only from the reservation, never past the physical region.
-        expect(heights.availableHeight).toBeLessThanOrEqual(780 - 34);
+        // The scaffold already removed the keyboard, composer, header and safe
+        // area. Horizon may shrink/scroll its information region, but it may not
+        // paint through that physical allocation.
+        expect(heights.availableHeight).toBe(150);
+        expect(heights.availableHeight).toBeLessThan(heights.minimumHeight);
     });
 
     it('still yields to a physical region smaller than the vessel floor', () => {
@@ -133,8 +149,9 @@ describe('Horizon vessel minimum height', () => {
         });
 
         expect(heights.minimumHeight).toBe(182);
-        // 120 - 34 is all there physically is; the floor cannot invent pixels.
-        expect(heights.availableHeight).toBe(86);
+        // The keyboard/composer scaffold owns the tighter 40pt allocation; the
+        // vessel cannot borrow the other 46pt back from sibling chrome.
+        expect(heights.availableHeight).toBe(40);
     });
 
     it('grows with a long translation or 200% text instead of clipping the controls', () => {

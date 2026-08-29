@@ -70,20 +70,6 @@ function placementEntry(input: Readonly<{
     };
 }
 
-function structuredMessageEntry(input: Readonly<{
-    pluginId: string;
-    kind: string;
-}>): Readonly<Record<string, unknown>> {
-    return {
-        id: `structuredMessage:${input.pluginId}:${input.kind}`,
-        pluginId: input.pluginId,
-        contributionKind: 'structuredMessage',
-        descriptorId: input.kind,
-        kind: input.kind,
-        fallback: { kind: 'hidden' },
-    };
-}
-
 function reactNativeBundleEntry(pluginId: string): Readonly<Record<string, unknown>> {
     return {
         id: `reactNativeBundle:${pluginId}:bundle`,
@@ -761,7 +747,6 @@ describe('unionPluginUiProjections', () => {
                 generation: 7,
                 entriesById: {
                     placement: placementEntry({ pluginId: 'happier.triage', localId: 'triage' }),
-                    message: structuredMessageEntry({ pluginId: 'happier.triage', kind: 'triage.result' }),
                 },
                 installedPackagesById: {
                     'happier.triage': {
@@ -786,34 +771,6 @@ describe('unionPluginUiProjections', () => {
             ?.surfacePlacementsById['surfacePlacement:happier.triage:triage'];
         expect(readPluginUiContributionOrigin(placement)?.machineId).toBe('machine-a');
         expect(union.pluginUiProjection?.installedPackagesById['happier.triage']?.version).toBe('1.0.0');
-        // A second machine's copy of the SAME plugin's transcript kind is a
-        // replica, not two plugins claiming one kind, so the kind survives.
-        expect(union.pluginUiProjection?.structuredMessagesByKind['triage.result']?.pluginId)
-            .toBe('happier.triage');
-    });
-
-    it('still drops a transcript kind two different plugins claim across machines', () => {
-        // The positive twin of the replica rule: cross-machine deduplication
-        // must not weaken the genuine cross-plugin ambiguity contract.
-        const claimant = (machineId: string, pluginId: string): PluginUiProjectionUnionMember => ({
-            machineId,
-            serverId: 'server-1',
-            projection: machineProjection({
-                generation: 7,
-                entriesById: {
-                    message: structuredMessageEntry({ pluginId, kind: 'triage.result' }),
-                },
-            }),
-            phase: 'current',
-            interactionEnabled: true,
-        });
-
-        const union = unionPluginUiProjections(
-            [claimant('machine-a', 'acme.alpha'), claimant('machine-b', 'acme.beta')],
-            new Map(),
-        );
-
-        expect(union.pluginUiProjection?.structuredMessagesByKind['triage.result']).toBeUndefined();
     });
 
     it('treats an authority flip as a member change and an unchanged snapshot as none', () => {

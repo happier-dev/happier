@@ -84,8 +84,8 @@ describe('Voice History export targets', () => {
     await saveVoiceHistoryExportArtifactToWeb(ARTIFACT);
 
     expect(createObjectURL).toHaveBeenCalledOnce();
-    // Every chunk reaches the Blob, in order: a streamed export that dropped or
-    // reordered a chunk would still download, as invalid JSON.
+    // Every chunk reaches the Blob, in order: a lazy export that dropped or
+    // reordered a chunk would still download as invalid JSON.
     expect(await (createObjectURL.mock.calls[0]![0] as unknown as Blob).text())
       .toBe(ARTIFACT_CHUNKS.join(''));
     expect(anchor.href).toBe('blob:voice-history');
@@ -100,6 +100,50 @@ describe('Voice History export targets', () => {
 
     expect(remove).toHaveBeenCalledOnce();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:voice-history');
+  });
+
+  it('keeps the unavoidable whole-export materialization at the web Blob boundary', async () => {
+    vi.useFakeTimers();
+    const chunks = {
+      *[Symbol.iterator]() {
+        yield '{"version":1,"entries":[';
+        yield ']}';
+      },
+    };
+    const artifact: VoiceHistoryExportArtifact = {
+      ...ARTIFACT,
+      chunks: () => chunks,
+    };
+    const receivedParts: unknown[] = [];
+    class TestBlob {
+      constructor(parts: unknown) {
+        receivedParts.push(parts);
+      }
+    }
+    vi.stubGlobal('Blob', TestBlob);
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({
+        href: '',
+        download: '',
+        rel: '',
+        style: { display: '' },
+        click: vi.fn(),
+        remove: vi.fn(),
+      })),
+      body: { appendChild: vi.fn() },
+    });
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:voice-history'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    await saveVoiceHistoryExportArtifactToWeb(artifact);
+
+    // The standard object-URL download path cannot append/stream to disk. The
+    // platform owner therefore materializes one parts sequence and one Blob;
+    // this is a truthful web limitation, not permission to cap "all".
+    expect(receivedParts).toEqual([[...chunks]]);
+    await vi.runAllTimersAsync();
   });
 
   it('coalesces ordered native writes to a bounded buffer, shares the result, and removes it', async () => {

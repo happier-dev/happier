@@ -24,7 +24,6 @@ function detail(overrides: Partial<AutomationDefinitionDetail> = {}): Automation
         createdAt: timestamp,
         updatedAt: timestamp,
         assignments: [],
-        retiredTriggers: [],
         triggers: [],
         executionRecipe: {
             v: 1,

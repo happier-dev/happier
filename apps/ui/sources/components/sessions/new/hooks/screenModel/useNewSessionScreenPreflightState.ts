@@ -7,6 +7,10 @@ import {
     resolveNewSessionOperationalBackendTarget,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type {
+    AgentPluginSettingsReadiness,
+    AgentPluginSettingsSnapshot,
+} from '@/agents/registry/registryUiBehavior';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
 import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
@@ -30,6 +34,8 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
     runtimeCarrierAgentId?: string | null;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
+    pluginSettingsReadiness?: AgentPluginSettingsReadiness | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd: string | null;
@@ -46,26 +52,36 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     acpConfigOptions: ReturnType<typeof useNewSessionPreflightConfigOptionsState>['configOptions'];
     acpConfigOptionsProbeState: AcpConfigOptionsProbeState;
 }> {
+    const probesEnabled = params.pluginSettingsReadiness === null
+        || params.pluginSettingsReadiness === undefined
+        || params.pluginSettingsReadiness.ready;
+    const effectivePluginSettings = probesEnabled ? params.pluginSettings : null;
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget: params.backendTarget,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId,
     }), [params.backendTarget, params.runtimeCarrierAgentId]);
     const capabilityProbeContext = React.useMemo(() => {
+        if (!probesEnabled) return null;
         return resolveNewSessionCapabilityProbeContext({
             backendTarget: params.backendTarget,
             settings: params.settings,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+            machineId: params.selectedMachineId,
+            pluginSettings: effectivePluginSettings,
         });
-    }, [params.backendTarget, params.runtimeCarrierAgentId, params.settings]);
+    }, [effectivePluginSettings, params.backendTarget, params.runtimeCarrierAgentId, params.selectedMachineId, params.settings, probesEnabled]);
     const modelCapabilityProbeContext = React.useMemo(() => {
+        if (!probesEnabled) return null;
         return resolveNewSessionModelCapabilityProbeContext({
             backendTarget: params.backendTarget,
             settings: params.settings,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+            machineId: params.selectedMachineId,
+            pluginSettings: effectivePluginSettings,
             connectedServices: params.connectedServicesBindingsPayload,
             connectedServicesCacheIdentity: params.connectedServicesModelProbeCacheIdentity,
         });
-    }, [params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.settings]);
+    }, [effectivePluginSettings, params.backendTarget, params.connectedServicesBindingsPayload, params.connectedServicesModelProbeCacheIdentity, params.runtimeCarrierAgentId, params.selectedMachineId, params.settings, probesEnabled]);
 
     const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: operationalBackendTarget,
@@ -74,6 +90,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         capabilityServerId: params.capabilityServerId,
         cwd: params.cwd,
         probeContext: modelCapabilityProbeContext,
+        enabled: probesEnabled,
     });
     const { preflightModes: preflightSessionModes, modeOptions: acpSessionModeOptions, probe: acpSessionModeProbe } =
         useNewSessionPreflightSessionModesState({
@@ -83,6 +100,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             capabilityServerId: params.capabilityServerId,
             cwd: params.cwd,
             probeContext: capabilityProbeContext,
+            enabled: probesEnabled,
         });
     const { configOptions: acpConfigOptions, probe: acpConfigOptionsProbe } = useNewSessionPreflightConfigOptionsState({
         backendTarget: operationalBackendTarget,
@@ -91,6 +109,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
         capabilityServerId: params.capabilityServerId,
         cwd: params.cwd,
         probeContext: capabilityProbeContext,
+        enabled: probesEnabled,
     });
 
     return {

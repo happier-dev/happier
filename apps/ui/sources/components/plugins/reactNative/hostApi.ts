@@ -67,7 +67,9 @@ import {
 } from '@happier-dev/plugin-sdk';
 import {
     decodePluginUiClipboardReadResult,
+    decodePluginUiConfirmResult,
     decodePluginUiResourceContent,
+    encodePluginUiDiagnostic,
 } from '@happier-dev/plugin-sdk/host/ui';
 
 import { resolveNegotiatedPluginSurfaceHostApiMethods } from '../hostApi/negotiatedMethods';
@@ -1323,21 +1325,14 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             // mid-flight withdrawal as the typed failure — never a boolean the
             // plugin would read as the user's decision — while the signal
             // beside the request lets the mount dismiss the open dialog.
-            const record = result && typeof result === 'object' && !Array.isArray(result)
-                ? result as Readonly<Record<string, PluginUiJsonValueV1>>
-                : null;
-            // The user's answer is the settlement. A malformed reply is a typed
-            // failure rather than a silent `false`, which would read as a decline
-            // the user never made.
-            if (typeof record?.confirmed !== 'boolean') {
-                throwHostApiError('invalid_payload', ['confirm_response_invalid']);
-            }
-            return record.confirmed;
+            const decoded = decodePluginUiConfirmResult(result);
+            if (!decoded.ok) throwHostApiError('invalid_payload', [decoded.diagnostic]);
+            return decoded.value;
         },
         diagnostic: (data) => {
             assertActive();
             assertInstalled('diagnostic');
-            void transport.request('diagnostic', data as PluginUiJsonValueV1).catch(() => undefined);
+            void transport.request('diagnostic', encodePluginUiDiagnostic(data)).catch(() => undefined);
         },
         readClipboard: async (options) => {
             assertActive(options?.signal);

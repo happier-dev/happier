@@ -58,7 +58,7 @@ function TestHarness(props: Readonly<{
     refreshKey?: unknown;
     suspendAfterHook?: Promise<never>;
 }>): React.ReactElement {
-    const { state, install, refresh } = useDaemonVoiceModelCatalogState({
+    const { state, install, refresh, cancel } = useDaemonVoiceModelCatalogState({
         client: React.useMemo(() => catalogClient(props.client), [props.client]),
         pollIntervalMs: 100,
         enabled: props.enabled,
@@ -78,6 +78,7 @@ function TestHarness(props: Readonly<{
             })}
             {React.createElement('InstallButton', { onPress: () => install(STT_PACK) })}
             {React.createElement('RefreshButton', { onPress: refresh })}
+            {React.createElement('CancelButton', { onPress: cancel })}
         </>
     );
 }
@@ -319,13 +320,69 @@ describe('useDaemonVoiceModelCatalogState', () => {
         await act(async () => {
             await pressTestInstanceAsync(tree.root.findByType('InstallButton'));
         });
-        expect(installModel).toHaveBeenCalledWith({ packId: STT_PACK });
+        expect(installModel).toHaveBeenCalledWith(expect.objectContaining({
+            packId: STT_PACK,
+            signal: expect.any(AbortSignal),
+        }));
         expect(tree.root.findByType('State').props.installState).toBe('installing');
 
         await act(async () => {
             vi.advanceTimersByTime(100);
             await Promise.resolve();
         });
+        expect(tree.root.findByType('State').props.installState).toBe('installed');
+    });
+
+    it('never overlaps catalog polls and schedules the next poll after the current one settles', async () => {
+        let resolvePendingPoll!: (statuses: DaemonVoiceInferenceModelStatus[]) => void;
+        const pendingPoll = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
+            resolvePendingPoll = resolve;
+        });
+        const getModelsStatus = vi.fn()
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installing' })])
+            .mockImplementationOnce(() => pendingPoll)
+            .mockResolvedValueOnce([status(STT_PACK, { installState: 'installed' })]);
+        const client = {
+            getModelsStatus,
+            installModel: vi.fn(async () => status(STT_PACK)),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => {
+            await Promise.resolve();
+        });
+        expect(tree.root.findByType('State').props.installState).toBe('installing');
+
+        await act(async () => {
+            vi.advanceTimersByTime(100);
+            await Promise.resolve();
+        });
+        expect(getModelsStatus).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            vi.advanceTimersByTime(500);
+            await Promise.resolve();
+        });
+        expect(getModelsStatus).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            resolvePendingPoll([status(STT_PACK, { installState: 'installing' })]);
+            await pendingPoll;
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            vi.advanceTimersByTime(99);
+            await Promise.resolve();
+        });
+        expect(getModelsStatus).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            vi.advanceTimersByTime(1);
+            await Promise.resolve();
+        });
+        expect(getModelsStatus).toHaveBeenCalledTimes(3);
         expect(tree.root.findByType('State').props.installState).toBe('installed');
     });
 
@@ -623,6 +680,36 @@ describe('useDaemonVoiceModelCatalogState', () => {
         expect(tree.root.findByType('State').props.actionErrorPackId).toBe(STT_PACK);
     });
 
+    it('cancels the exact active install through its caller signal without retaining an action error', async () => {
+        let observedSignal: AbortSignal | null = null;
+        const client = {
+            getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
+            installModel: vi.fn(({ signal }: { signal?: AbortSignal | null }) => {
+                observedSignal = signal ?? null;
+                return new Promise<DaemonVoiceInferenceModelStatus>((_resolve, reject) => {
+                    signal?.addEventListener('abort', () => reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })), { once: true });
+                });
+            }),
+            removeModel: vi.fn(async () => undefined),
+        };
+        const { tree } = await renderScreen(<TestHarness client={client} />);
+        await act(async () => { await Promise.resolve(); });
+
+        let action!: Promise<void>;
+        await act(async () => {
+            action = tree.root.findByType('InstallButton').props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            tree.root.findByType('CancelButton').props.onPress();
+            await action;
+        });
+
+        expect(observedSignal?.aborted).toBe(true);
+        expect(tree.root.findByType('State').props.actionPackId).toBeNull();
+        expect(tree.root.findByType('State').props.actionErrorPackId).toBeNull();
+    });
+
     it('clears a retained install failure when authoritative status later reports installed', async () => {
         let resolveRefresh!: (value: DaemonVoiceInferenceModelStatus[]) => void;
         const pendingRefresh = new Promise<DaemonVoiceInferenceModelStatus[]>((resolve) => {
@@ -659,9 +746,13 @@ describe('useDaemonVoiceModelCatalogState', () => {
         const pendingInstall = new Promise<DaemonVoiceInferenceModelStatus>((_resolve, reject) => {
             rejectInstall = reject;
         });
+        let installSignal: AbortSignal | null = null;
         const client = {
             getModelsStatus: vi.fn(async () => [status(STT_PACK)]),
-            installModel: vi.fn(() => pendingInstall),
+            installModel: vi.fn((input: { signal?: AbortSignal | null }) => {
+                installSignal = input.signal ?? null;
+                return pendingInstall;
+            }),
             removeModel: vi.fn(async () => undefined),
         };
         const { tree } = await renderScreen(<TestHarness client={client} refreshKey="machine-a" />);
@@ -679,6 +770,7 @@ describe('useDaemonVoiceModelCatalogState', () => {
             await Promise.resolve();
         });
         expect(tree.root.findByType('State').props.actionPackId).toBeNull();
+        expect(installSignal?.aborted).toBe(true);
 
         await act(async () => {
             rejectInstall(Object.assign(new Error('old machine failed'), { code: 'internal_error' }));

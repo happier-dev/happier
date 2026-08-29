@@ -2,10 +2,83 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { HappierUiTheme } from '@happier-dev/plugin-ui/environment';
+import { Spinner } from '@happier-dev/plugin-ui/components';
 
 import { renderDeclarativeNode, type DeclarativeNodeRenderContext } from './declarativeNodes';
 
 describe('declarative item action structure', () => {
+    it('routes live loading state through the activity-aware shared Spinner adapter', () => {
+        const rendered = renderDeclarativeNode({
+            kind: 'state',
+            path: 'root',
+            state: 'loading',
+            title: 'Loading reviews',
+        }, {
+            colors: {} as DeclarativeNodeRenderContext['colors'],
+            presentationTheme: {
+                colors: { textSecondary: '#777777' },
+            } as unknown as HappierUiTheme,
+            minimumTouchTarget: 44,
+            useSharedSpinner: true,
+            localize: (value) => typeof value === 'string' ? value : '',
+            resolveAction: () => null,
+            renderField: () => null,
+            renderCollectionList: () => null,
+        });
+
+        expect(React.isValidElement(rendered)).toBe(true);
+        const tile = (rendered as React.ReactElement<Readonly<{ children?: React.ReactNode }>>).props.children;
+        expect(React.isValidElement(tile)).toBe(true);
+        const icon = (tile as React.ReactElement<Readonly<{ icon?: React.ReactNode }>>).props.icon;
+        expect(React.isValidElement(icon)).toBe(true);
+        expect((icon as React.ReactElement).type).toBe(Spinner);
+    });
+
+    it('projects focus-visible and pressed state through the shared pressable style owner', () => {
+        const context = {
+            colors: {
+                button: {
+                    primary: { background: '#111111', tint: '#ffffff' },
+                    secondary: { background: '#eeeeee' },
+                },
+                border: { default: '#777777' },
+                text: { primary: '#222222' },
+                state: { danger: { background: '#ffeeee', border: '#cc0000', foreground: '#990000' } },
+            } as DeclarativeNodeRenderContext['colors'],
+            presentationTheme: { colors: { focus: '#0055ff' } } as HappierUiTheme,
+            minimumTouchTarget: 44,
+            localize: (value: unknown) => typeof value === 'string' ? value : '',
+            resolveAction: () => ({ key: 'acme.plugin/refresh', disabled: false, busy: false }),
+            renderField: () => null,
+            renderCollectionList: () => null,
+        } satisfies DeclarativeNodeRenderContext;
+        const rendered = renderDeclarativeNode({
+            kind: 'action',
+            path: 'root',
+            action: 'refresh',
+            label: 'Refresh',
+        }, context) as React.ReactElement<Readonly<{ style?: unknown }>>;
+
+        expect(rendered.props.style).toEqual(expect.any(Function));
+        const style = rendered.props.style as (state: Readonly<{
+            focused: boolean;
+            pressed: boolean;
+            disabled: boolean;
+        }>) => Readonly<Record<string, unknown>>;
+        expect(style({ focused: true, pressed: false, disabled: false })).toMatchObject({
+            borderColor: '#0055ff',
+            opacity: 1,
+        });
+        expect(style({ focused: false, pressed: true, disabled: false })).toMatchObject({
+            borderColor: '#777777',
+            opacity: 0.8,
+        });
+        expect(style({ focused: true, pressed: true, disabled: true })).toMatchObject({
+            borderColor: '#0055ff',
+            opacity: 0.5,
+        });
+    });
+
     it('retains one disabled primary-action host when an admitted action is temporarily unavailable', () => {
         const context: DeclarativeNodeRenderContext = {
             colors: {} as DeclarativeNodeRenderContext['colors'],

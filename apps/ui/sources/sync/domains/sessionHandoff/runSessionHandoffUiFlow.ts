@@ -58,7 +58,9 @@ export async function runSessionHandoffUiFlow(
 ): Promise<RunSessionHandoffUiFlowResult> {
     while (true) {
         const actionRequestId = String(args.context.actionRequestId ?? '').trim();
-        const modalId = openSessionHandoffProgressModal();
+        const modalId = openSessionHandoffProgressModal({
+            workspaceTransferEnabled: args.workspaceTransfer?.enabled === true,
+        });
         let activeResumeHandler: Readonly<{
             key: string;
             run: () => Promise<void>;

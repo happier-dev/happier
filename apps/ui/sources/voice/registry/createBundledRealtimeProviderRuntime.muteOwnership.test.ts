@@ -62,12 +62,15 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
     const providerSettlements: boolean[] = [];
     const providerOperations = [
       { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
+      { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: true, deferred: settledInitialMute },
       { muted: false, deferred: delayedUnmuteA },
       { muted: true, deferred: delayedMuteB },
       { muted: false, deferred: rejectedUnmute },
       { muted: true, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: false, deferred: delayedReplacedUnmute },
+      { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
+      { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: true, deferred: delayedReplacedMute },
       { muted: false, deferred: (() => { const value = createDeferredVoid(); value.resolve(); return value; })() },
       { muted: true, deferred: rejectedTerminalMute },
@@ -259,7 +262,7 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       await Promise.all([unmuteA, muteB]);
 
       expect(providerCapture.muted).toBe(true);
-      expect(providerSettlements).toEqual([false, true, false, true]);
+      expect(providerSettlements).toEqual([false, false, true, false, true]);
       expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
       expect(physicalTrack.enabled).toBe(true);
 
@@ -284,26 +287,40 @@ describe('createBundledRealtimeProviderRuntime mute ownership', () => {
       expect(setInputMuted).toHaveBeenLastCalledWith(true);
 
       const replacedUnmute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: false });
-      await vi.waitFor(() => expect(setInputMuted).toHaveBeenCalledTimes(7));
-      const replacedMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
+      await vi.waitFor(() => expect(setInputMuted).toHaveBeenCalledTimes(8));
+      // Replacement is a lifecycle boundary, not a second concurrent Start on
+      // the same adapter. Stop must retire the old attempt without joining a
+      // public provider hook that may remain pending indefinitely.
+      await runtime.adapter.stop({ sessionId: controlSessionId });
+      const replacementStart = runtime.adapter.start({ sessionId: controlSessionId });
+      await expect(replacementStart).rejects.toThrow('voice_input_mute_failed');
+
+      // The replacement attempt must fail closed before entering the same
+      // provider-owned capture side effect while retired attempt A can still
+      // settle afterward and physically unmute it. The public hook has no
+      // cancellation signal, so Start must remain bounded without overlapping.
+      expect(setInputMuted).toHaveBeenCalledTimes(8);
+      expect(providerCapture.muted).toBe(true);
 
       delayedReplacedUnmute.resolve();
-      delayedReplacedMute.resolve();
-      await Promise.all([replacedUnmute, replacedMute]);
-      // Replacement is a lifecycle boundary, not a second concurrent Start on
-      // the same adapter. Stop retires the old attempt; the fresh Start must
-      // establish an unmuted provider baseline without inheriting its state.
-      await runtime.adapter.stop({ sessionId: controlSessionId });
+      await replacedUnmute;
       await runtime.adapter.start({ sessionId: controlSessionId });
 
-      expect(providerCapture.muted).toBe(false);
-      expect(providerSettlements).toEqual([false, true, false, true, true, false, true, false]);
-      expect(setInputMuted.mock.calls.map(([muted]) => muted)).toEqual([
-        false, true, false, true, false, true, false, true, false,
+      const replacementMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
+      delayedReplacedMute.resolve();
+      await replacementMute;
+
+      expect(providerCapture.muted).toBe(true);
+      expect(providerSettlements).toEqual([
+        false, false, true, false, true, true, false, false, false, true,
       ]);
-      expect(runtimeMachine.getSnapshot().micMuted).toBe(false);
+      expect(setInputMuted.mock.calls.map(([muted]) => muted)).toEqual([
+        false, false, true, false, true, false, true, false, false, false, true,
+      ]);
+      expect(runtimeMachine.getSnapshot().micMuted).toBe(true);
       expect(physicalTrack.enabled).toBe(true);
 
+      await runtime.adapter.setMuted({ sessionId: controlSessionId, muted: false });
       const failedMute = runtime.adapter.setMuted({ sessionId: controlSessionId, muted: true });
       expect(physicalTrack.enabled).toBe(true);
       rejectedTerminalMute.reject(new Error('provider_input_mute_rejected'));

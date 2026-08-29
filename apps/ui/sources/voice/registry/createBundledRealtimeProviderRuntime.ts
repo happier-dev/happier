@@ -11,6 +11,7 @@ import {
   type VoiceRealtimeJsonValue,
 } from '@happier-dev/protocol';
 import type {
+  PluginVoiceAgentSessionRealtimeService,
   VoiceProviderExecutionAuthority,
   VoiceRealtimeConnection,
 } from '@happier-dev/plugin-sdk/voice/client';
@@ -21,6 +22,7 @@ import {
   type VoiceHostAuthoredContextScope,
 } from '@/voice/session/types';
 import type { VoiceConnectionCloseReason } from '@/voice/runtime/connection/VoiceRealtimeConnection';
+import { cleanupBoundAgentSessionRealtimeService } from '@/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
 import type {
   VoiceRealtimePreparedSession,
   VoiceRealtimeProtocolAdapter,
@@ -166,6 +168,7 @@ export function createBundledRealtimeProviderRuntime(
     micRequested: boolean;
     inputMuted: boolean;
     appliedInputMuted: boolean;
+    inputMuteTail: Promise<void>;
     preparePromise: Promise<void | Readonly<{ kind: 'declined'; code: string }>> | null;
     releasePromise: Promise<void> | null;
   };
@@ -316,27 +319,80 @@ export function createBundledRealtimeProviderRuntime(
       inputLevelWriter?.write(level);
     },
   });
-  let inputMuteTail: Promise<void> = Promise.resolve();
+  const createResourceAttempt = (): ResourceAttempt => ({
+    audioModeLease: null,
+    directMediaConversation: null,
+    transcriptCarrierRebindPromise: null,
+    transcriptCarrierRebindDrain: null,
+    micRequested: false,
+    inputMuted: false,
+    appliedInputMuted: false,
+    inputMuteTail: Promise.resolve(),
+    preparePromise: null,
+    releasePromise: null,
+  });
+  // Provider mute hooks may control one physical capture resource shared by
+  // consecutive controller attempts. The public hook has no cancellation
+  // signal, so an entered operation cannot safely overlap a replacement. Keep
+  // attempt-local desired/applied state and serialization, and fail a newer
+  // attempt closed before provider capture construction while the retired
+  // attempt's external side effect remains unsettled.
+  let activeProviderInputMuteAttempt: ResourceAttempt | null = null;
+  const retireUnpreparedResourceAttempt = (attemptId: number): void => {
+    const attempt = resourceAttempts.get(attemptId);
+    if (!attempt || attempt.preparePromise !== null || attempt.releasePromise !== null) return;
+    resourceAttempts.delete(attemptId);
+    const hasNewerMicOwner = [...resourceAttempts].some(
+      ([candidateAttemptId, candidate]) => (
+        candidateAttemptId > attemptId
+        && candidate.inputMuted
+        && candidate.releasePromise === null
+      ),
+    );
+    if (!usesProviderManagedMic && !hasNewerMicOwner) mic.setMuted(false);
+  };
   const settleInputMute = (
     controlSessionId: string,
     attemptId: number,
+    attempt: ResourceAttempt,
     readMuted: () => boolean,
   ): Promise<boolean | null> => {
-    const operation = inputMuteTail.then(async () => {
-      const activeRuntime = runtime;
+    const operation = attempt.inputMuteTail.then(async () => {
+      const applyInputMute = async (): Promise<boolean | null> => {
+        const activeRuntime = runtime;
+        if (
+          disposed
+          || !activeRuntime
+          || resourceAttempts.get(attemptId) !== attempt
+          || attempt.releasePromise !== null
+          || activeRuntime.getOwnedControlSessionId() !== controlSessionId
+          || activeRuntime.getOwnedAttemptId() !== attemptId
+        ) {
+          return null;
+        }
+        const muted = readMuted();
+        await config.setInputMuted?.(muted);
+        return muted;
+      };
+      if (!config.setInputMuted) return await applyInputMute();
       if (
-        disposed
-        || !activeRuntime
-        || activeRuntime.getOwnedControlSessionId() !== controlSessionId
-        || activeRuntime.getOwnedAttemptId() !== attemptId
+        activeProviderInputMuteAttempt
+        && activeProviderInputMuteAttempt !== attempt
       ) {
-        return null;
+        throw Object.assign(new Error('voice_input_mute_failed'), {
+          code: 'voice_input_mute_failed',
+        });
       }
-      const muted = readMuted();
-      await config.setInputMuted?.(muted);
-      return muted;
+      activeProviderInputMuteAttempt = attempt;
+      try {
+        return await applyInputMute();
+      } finally {
+        if (activeProviderInputMuteAttempt === attempt) {
+          activeProviderInputMuteAttempt = null;
+        }
+      }
     });
-    inputMuteTail = operation.then(() => undefined, () => undefined);
+    attempt.inputMuteTail = operation.then(() => undefined, () => undefined);
     return operation;
   };
   const closeOutputLevelWriter = (): void => {
@@ -457,17 +513,7 @@ export function createBundledRealtimeProviderRuntime(
       if (existingAttempt?.preparePromise) {
         return await existingAttempt.preparePromise;
       }
-      const attempt: ResourceAttempt = existingAttempt ?? {
-        audioModeLease: null,
-        directMediaConversation: null,
-        transcriptCarrierRebindPromise: null,
-        transcriptCarrierRebindDrain: null,
-        micRequested: false,
-        inputMuted: false,
-        appliedInputMuted: false,
-        preparePromise: null,
-        releasePromise: null,
-      };
+      const attempt: ResourceAttempt = existingAttempt ?? createResourceAttempt();
       resourceAttempts.set(input.attemptId, attempt);
       if (!existingAttempt) {
         // Mute belongs to the controller attempt. A fresh Start establishes an
@@ -562,6 +608,32 @@ export function createBundledRealtimeProviderRuntime(
           attempt.audioModeLease = await host.acquireAudioMode(providerId);
         }
         abortIfRequested(input.signal);
+        // Establish the exact attempt's desired input state before provider
+        // connection construction. This resets provider-owned desired state
+        // for a fresh attempt and carries an interruption that arrived before
+        // resource preparation into late SDK/media startup.
+        const settledMuted = await settleInputMute(
+          input.controlSessionId,
+          input.attemptId,
+          attempt,
+          () => attempt.inputMuted,
+        );
+        abortIfRequested(input.signal);
+        if (
+          settledMuted !== null
+          && resourceAttempts.get(input.attemptId) === attempt
+          && attempt.inputMuted === settledMuted
+        ) {
+          attempt.appliedInputMuted = settledMuted;
+          if (!usesProviderManagedMic) mic.setMuted(settledMuted);
+          if (settledMuted) inputLevelWriter?.reset();
+          host.machine.setMuted(
+            input.controlSessionId,
+            providerId,
+            input.attemptId,
+            settledMuted,
+          );
+        }
       })();
       attempt.preparePromise = prepare;
       return await prepare;
@@ -688,6 +760,7 @@ export function createBundledRealtimeProviderRuntime(
         activeHostedLease = null;
         bargeInCoordinator?.reset();
         closeLevelWriters();
+        retireUnpreparedResourceAttempt(attemptId);
         let declineError: ReturnType<typeof host.createMachineError> | null = null;
         if (code) {
           const kind = machineErrorKindForFailureCode(code);
@@ -706,6 +779,7 @@ export function createBundledRealtimeProviderRuntime(
         activeHostedLease = null;
         bargeInCoordinator?.reset();
         closeLevelWriters();
+        retireUnpreparedResourceAttempt(attemptId);
         const kind = machineErrorKindForFailureCode(code);
         recordMachinePortFailure('failed', kind, code, diagnosticReason);
         host.machine.setError(
@@ -734,6 +808,13 @@ export function createBundledRealtimeProviderRuntime(
       let mediaFactoryOpen = true;
       let mediaConnection: VoiceRealtimeConnection | null = null;
       let executionLifetime: AbortController | null = null;
+      let agentSessionRealtimeService: PluginVoiceAgentSessionRealtimeService | null = null;
+      const cleanupAgentSessionRealtime = async (reason?: unknown): Promise<void> => {
+        executionLifetime?.abort(reason);
+        if (agentSessionRealtimeService) {
+          await cleanupBoundAgentSessionRealtimeService(agentSessionRealtimeService);
+        }
+      };
       const controlSessionId = runtime?.getOwnedControlSessionId();
       if (!controlSessionId) throw new Error('voice_execution_control_session_unavailable');
       const safeMetadata = session.safeMetadata && typeof session.safeMetadata === 'object'
@@ -776,6 +857,7 @@ export function createBundledRealtimeProviderRuntime(
             lifetime.abort();
             throw new Error('voice_agent_realtime_execution_authority_unavailable');
           }
+          agentSessionRealtimeService = service;
           return Object.freeze({
             kind: 'experimental_agent_session_realtime' as const,
             agentSessionRealtime: service,
@@ -811,8 +893,8 @@ export function createBundledRealtimeProviderRuntime(
             duckGain: VOICE_RUNTIME_CONFIG_DEFAULTS.turnTaking.interruption.duckGain,
             ...(executionLifetime
               ? {
-                  onClosed: (reason: VoiceConnectionCloseReason) => {
-                    executionLifetime?.abort(reason);
+                  onClosed: async (reason: VoiceConnectionCloseReason) => {
+                    await cleanupAgentSessionRealtime(reason);
                   },
                 }
               : {}),
@@ -886,6 +968,7 @@ export function createBundledRealtimeProviderRuntime(
             detail: 'voice_connection_creation_failed',
           }).catch(() => {});
         }
+        await cleanupAgentSessionRealtime().catch(() => {});
         if (outputLevelWriter === attemptOutputWriter) outputLevelWriter = null;
         attemptOutputWriter?.close();
         throw error;
@@ -1301,6 +1384,7 @@ export function createBundledRealtimeProviderRuntime(
         const settledMuted = await settleInputMute(
           controlSessionId,
           attemptId,
+          resourceAttempt,
           () => resourceAttempt.inputMuted,
         );
         if (
@@ -1614,8 +1698,13 @@ export function createBundledRealtimeProviderRuntime(
       const controlSessionId = runtime?.getOwnedControlSessionId();
       const attemptId = runtime?.getOwnedAttemptId();
       if (!controlSessionId || attemptId === null || attemptId === undefined) return;
-      const resourceAttempt = resourceAttempts.get(attemptId);
-      if (!resourceAttempt) return;
+      // The controller owns the attempt before resource preparation begins.
+      // Retain an interruption/user mute on that exact attempt immediately so
+      // the eventual capture/connection cannot publish an unmuted resource.
+      const resourceAttempt = resourceAttempts.get(attemptId) ?? createResourceAttempt();
+      if (!resourceAttempts.has(attemptId)) {
+        resourceAttempts.set(attemptId, resourceAttempt);
+      }
       if (
         resourceAttempt.inputMuted === muted
         && resourceAttempt.appliedInputMuted === muted
@@ -1633,19 +1722,32 @@ export function createBundledRealtimeProviderRuntime(
       }
       let settledMuted: boolean | null;
       try {
-        settledMuted = await settleInputMute(controlSessionId, attemptId, () => muted);
+        settledMuted = await settleInputMute(
+          controlSessionId,
+          attemptId,
+          resourceAttempt,
+          () => muted,
+        );
       } catch (error) {
-        if (
+        const muteStillOwned = (
           resourceAttempts.get(attemptId) === resourceAttempt
+          && resourceAttempt.releasePromise === null
+          && runtime?.getOwnedControlSessionId() === controlSessionId
+          && runtime.getOwnedAttemptId() === attemptId
+        );
+        const rejectedValueStillDesired = (
+          muteStillOwned
           && resourceAttempt.inputMuted === muted
-        ) {
+        );
+        if (rejectedValueStillDesired) {
           resourceAttempt.inputMuted = previousDesiredMuted;
         }
-        // A provider-managed mute rejection cannot prove physical silence.
-        // Retire that exact attempt instead of leaving a truthful-looking
-        // muted surface over a live provider microphone. Rejected unmute stays
-        // safely muted and remains available for an explicit retry.
-        if (usesProviderManagedMic && muted) {
+        // Any declared provider mute hook may own a secondary capture path.
+        // A rejected mute therefore cannot prove physical silence even when
+        // the host track is already muted. Retire that exact attempt instead
+        // of leaving a truthful-looking muted surface over live input.
+        // Rejected unmute stays safely muted and remains explicitly retryable.
+        if (rejectedValueStillDesired && config.setInputMuted && muted) {
           await runtime?.fail('voice_input_mute_failed').catch(() => undefined);
         }
         throw error;

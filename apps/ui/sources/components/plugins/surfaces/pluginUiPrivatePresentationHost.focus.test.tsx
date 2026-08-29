@@ -33,4 +33,21 @@ describe('createPluginUiPrivatePresentationHost focus transfer', () => {
         expect(host.renderIcon({ name: 'back', size: 16 }).props.name).toBe('arrow-right');
         expect(host.renderIcon({ name: 'forward', size: 16 }).props.name).toBe('arrow-left');
     });
+
+    it('forwards a read-only unified diff to the incumbent app renderer without adding state', () => {
+        const host = createPluginUiPrivatePresentationHost();
+        const unifiedDiff = '@@ -1 +1 @@\n-old\n+new';
+        const rendered = host.renderDiffViewer({
+            unifiedDiff,
+            filePath: 'src/provider.ts',
+            testID: 'provider-diff',
+        });
+
+        expect(typeof rendered.type).toBe('function');
+        expect(rendered.props).toEqual({
+            unifiedDiff,
+            filePath: 'src/provider.ts',
+            testID: 'provider-diff',
+        });
+    });
 });

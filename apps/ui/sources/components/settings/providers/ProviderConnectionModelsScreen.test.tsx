@@ -56,6 +56,49 @@ const navigationPreventRemove = vi.hoisted(() => ({
     enabled: false,
     callback: null as null | ((event: { data: { action: unknown } }) => void),
 }));
+// Controllable incumbent Account lifetime; null matches the real module under
+// this harness (no registered profile scope) for existing tests.
+const accountLifetimeController = vi.hoisted(() => {
+    type ControllerLifetime = NonNullable<{
+        scope: { serverId: string; accountId: string };
+        isCurrent: () => boolean;
+        onRetire: (cancel: () => void) => Readonly<{ dispose(): void }>;
+    }>;
+    const controller: {
+        lifetime: ControllerLifetime | null;
+        install(accountId: string): Readonly<{ retire(): void }>;
+    } = {
+        lifetime: null,
+        install(accountId) {
+            let retired = false;
+            const retireCallbacks = new Set<() => void>();
+            controller.lifetime = {
+                scope: { serverId: 'server-a', accountId },
+                isCurrent: () => !retired,
+                onRetire: (cancel) => {
+                    if (retired) {
+                        cancel();
+                        return Object.freeze({ dispose() {} });
+                    }
+                    retireCallbacks.add(cancel);
+                    return Object.freeze({ dispose() { retireCallbacks.delete(cancel); } });
+                },
+            };
+            return Object.freeze({
+                retire() {
+                    if (retired) return;
+                    retired = true;
+                    for (const cancel of [...retireCallbacks]) cancel();
+                    retireCallbacks.clear();
+                },
+            });
+        },
+    };
+    return controller;
+});
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => accountLifetimeController.lifetime,
+}));
 let modelsRequestCount = 0;
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
@@ -127,6 +170,7 @@ describe('ProviderConnectionModelsScreen', () => {
         navigationDispatch.mockClear();
         navigationPreventRemove.enabled = false;
         navigationPreventRemove.callback = null;
+        accountLifetimeController.lifetime = null;
         mutate.mockReset();
         mutate.mockImplementation(async () => ({ status: 'success', action: 'manualRemove' }));
         state.providerDecisionState = 'enabled';
@@ -517,6 +561,42 @@ describe('ProviderConnectionModelsScreen', () => {
         expect(mutate).not.toHaveBeenCalled();
     });
 
+    it('retires an Account A queued write even when Account B restores the same machine identity', async () => {
+        const accountA = accountLifetimeController.install('account-a');
+        const firstWrite = createDeferred<DaemonProviderModelSettingsMutationResponseV1>();
+        mutate.mockImplementationOnce(async () => await firstWrite.promise);
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        const setVisibility = screen.findByType(ProviderModelManager).props.onSetVisibility;
+        const ref = { scope: 'allAgents' as const, providerConnectionId: 'pc_a', modelId: 'manual-a' };
+
+        let both!: Promise<unknown>;
+        await act(async () => {
+            both = Promise.all([
+                setVisibility?.(ref, true),
+                setVisibility?.(ref, false),
+            ]);
+            await Promise.resolve();
+        });
+        expect(mutate).toHaveBeenCalledOnce();
+
+        await act(async () => {
+            accountA.retire();
+            accountLifetimeController.install('account-b');
+            await screen.update(
+                <ProviderConnectionModelsScreen connectionId="pc_a" startAdding />,
+            );
+            await flushHookEffects();
+        });
+
+        await act(async () => {
+            firstWrite.resolve({ status: 'success', action: 'setVisibility' });
+            await both;
+            await flushHookEffects();
+        });
+
+        expect(mutate).toHaveBeenCalledOnce();
+    });
     it('keeps a typed manual-model draft through the shared navigation transaction', async () => {
         const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
         const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
@@ -544,6 +624,52 @@ describe('ProviderConnectionModelsScreen', () => {
 
         expect(navigationDispatch).not.toHaveBeenCalled();
         expect(mutate).not.toHaveBeenCalled();
+    });
+
+    it('retires the Account A manual-model buffer and its editor error when the Account lifetime retires', async () => {
+        const accountA = accountLifetimeController.install('account-a');
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+        expect(navigationPreventRemove.enabled).toBe(false);
+
+        await act(async () => {
+            screen.findByType('MachineSetupTextField').props.onChangeText?.('bad model');
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+        await act(async () => {
+            await screen.findByType('InlineAddExpander').props.onSave?.();
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+        // Account A authored both an unsaved buffer and inline validation state.
+        expect(screen.findByType('MachineSetupTextField').props.value).toBe('bad model');
+        expect(screen.findByType('MachineSetupTextField').props.errorText).toBeTruthy();
+        expect(navigationPreventRemove.enabled).toBe(true);
+
+        await act(async () => { accountA.retire(); });
+
+        // The retired Account leaves no buffer or validation state behind.
+        // (The catalog hook also clears Account A's rows through the same
+        // lifetime, so the editor may unmount with the cleared policy —
+        // the screen's own contract is what must be clean.)
+        const modelsView = screen.findByType(ProviderConnectionModelsView);
+        expect(modelsView.props.manualModelText).toBe('');
+        expect(modelsView.props.editorError).toBeNull();
+        // The guard stays truthful: retirement left no unsaved Account A work.
+        expect(navigationPreventRemove.enabled).toBe(false);
+    });
+
+    it('keeps the typed manual-model buffer while the same Account lifetime stays current', async () => {
+        accountLifetimeController.install('account-a');
+        const { ProviderConnectionModelsScreen } = await import('./ProviderConnectionModelsScreen');
+        const screen = await renderScreen(<ProviderConnectionModelsScreen connectionId="pc_a" />);
+
+        await act(async () => {
+            screen.findByType('MachineSetupTextField').props.onChangeText?.('same-account-model');
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+
+        expect(screen.findByType('MachineSetupTextField').props.value).toBe('same-account-model');
+        expect(navigationPreventRemove.enabled).toBe(true);
     });
 
     it('contains a single-model visibility transport failure in the same inline recovery owner', async () => {
@@ -780,11 +906,17 @@ describe('ProviderConnectionModelsScreen', () => {
             refreshButton?.props.onPress?.();
             await Promise.resolve();
         });
-        administrationTarget.controller.setMachines([
-            { machineId: 'machine-a', displayName: 'Mac' },
-            { machineId: 'machine-b', displayName: 'Linux' },
-        ]);
-        await act(async () => { administrationTarget.controller.select('machine-b', 'srv_test'); });
+        await act(async () => {
+            administrationTarget.controller.setMachines([
+                { machineId: 'machine-a', displayName: 'Mac' },
+                { machineId: 'machine-b', displayName: 'Linux' },
+            ]);
+            administrationTarget.controller.select('machine-b', 'srv_test');
+            await flushHookEffects();
+        });
+        // Target selection owns a normal catalog load. Isolate publication by
+        // the still-pending manual probe from that expected request.
+        refresh.mockClear();
         await act(async () => {
             deferred.resolve({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:old-target' });
         });

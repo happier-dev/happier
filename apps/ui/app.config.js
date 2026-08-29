@@ -329,19 +329,17 @@ const ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN = './plugins/withAndroidVoiceForeg
 
 const withRequiredAndroidVoiceForegroundService = (expoConfig) => {
     const plugins = Array.isArray(expoConfig.plugins) ? expoConfig.plugins : [];
-    let found = false;
-    const requiredPlugins = plugins.flatMap((plugin) => {
+    let requiredPlugin = ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN;
+    const remainingPlugins = plugins.flatMap((plugin) => {
         const pluginName = Array.isArray(plugin) ? plugin[0] : plugin;
         if (pluginName !== ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN) return [plugin];
-        if (found) return [];
-        found = true;
-        // Keep a local override's placement and any future plugin options.
-        return [plugin];
+        requiredPlugin = plugin;
+        return [];
     });
-    if (!found) {
-        requiredPlugins.push(ANDROID_VOICE_FOREGROUND_SERVICE_PLUGIN);
-    }
-    return { ...expoConfig, plugins: requiredPlugins };
+    // Expo Android mods execute in reverse registration order. Keep the exact
+    // one invariant plugin first so it observes and canonicalizes the complete
+    // manifest after every upstream plugin and repeated-prebuild input.
+    return { ...expoConfig, plugins: [requiredPlugin, ...remainingPlugins] };
 };
 const iosLiveActivitiesFrequentUpdates =
     parseOptionalBoolean(

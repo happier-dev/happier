@@ -3,6 +3,7 @@ import * as React from 'react';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { Settings } from '@/sync/domains/settings/settings';
 
@@ -11,6 +12,7 @@ export function useResumeCapabilityOptions(opts: {
     machineId: string | null | undefined;
     serverId?: string | null;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
     enabled?: boolean;
 }): {
     resumeCapabilityOptions: ResumeCapabilityOptions;
@@ -43,6 +45,7 @@ export function useResumeCapabilityOptions(opts: {
     const resumeCapabilityOptions = React.useMemo(() => {
         const base = buildResumeCapabilityOptionsFromUiState({
             settings: opts.settings,
+            pluginSettings: opts.pluginSettings,
             results: undefined,
         });
         return {
@@ -50,7 +53,7 @@ export function useResumeCapabilityOptions(opts: {
             linkedSessionCurrentAgent,
             currentAgentCapabilities,
         };
-    }, [currentAgentCapabilities, linkedSessionCurrentAgent, opts.settings]);
+    }, [currentAgentCapabilities, linkedSessionCurrentAgent, opts.pluginSettings, opts.settings]);
 
     return { resumeCapabilityOptions };
 }

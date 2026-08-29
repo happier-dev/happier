@@ -39,6 +39,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     capabilityServerId: string;
     cwd?: string | null;
     probeContext?: NewSessionCapabilityProbeContext | null;
+    enabled?: boolean;
 }>): Readonly<{
     preflightModes: PreflightSessionModeList | null;
     modeOptions: readonly SessionModeOption[];
@@ -170,6 +171,15 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
     }, [preflightModes, refreshedAt]);
 
     React.useEffect(() => {
+        if (params.enabled === false) {
+            setPreflightModes(null);
+            preflightModesRef.current = null;
+            setProbePhase('idle');
+            setRefreshedAt(null);
+            refreshedAtRef.current = null;
+            lastScopeKeyRef.current = probeScopeKey;
+            return;
+        }
         if (!preflightModesKey) {
             setPreflightModes(null);
             preflightModesRef.current = null;
@@ -332,19 +342,19 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, preflightModesKey, params.selectedMachineId, params.capabilityServerId, params.cwd, probeContextKey, probeContextCapabilityParams, probeScopeKey, refreshNonce, supportsPreflightModeProbe]);
+    }, [agentType, backendTargetForProbe, preflightModesKey, params.enabled, params.selectedMachineId, params.capabilityServerId, params.cwd, probeContextKey, probeContextCapabilityParams, probeScopeKey, refreshNonce, supportsPreflightModeProbe]);
 
     const modeOptions = React.useMemo(() => {
         if (staticModeOptions.length > 0) return staticModeOptions;
         if (preflightModes) {
             return getSessionModeOptionsForPreflightModeList(preflightModes);
         }
-        if (supportsPreflightModeProbe && params.selectedMachineId) {
+        if (params.enabled !== false && supportsPreflightModeProbe && params.selectedMachineId) {
             // Provide a stable placeholder so the UI can show loading/refreshing states.
             return [{ id: 'default', name: 'Default' }];
         }
         return [];
-    }, [params.selectedMachineId, preflightModes, staticModeOptions, supportsPreflightModeProbe]);
+    }, [params.enabled, params.selectedMachineId, preflightModes, staticModeOptions, supportsPreflightModeProbe]);
 
     return {
         preflightModes,

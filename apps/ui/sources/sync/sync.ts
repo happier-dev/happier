@@ -2397,6 +2397,8 @@ class Sync {
             sessionPending: {},
             artifacts: {},
             automations: {},
+            automationDefinitionNextCursor: null,
+            automationDefinitionWindowExtended: false,
             automationRunsByAutomationId: {},
             automationRunNextCursorByAutomationId: {},
             friends: {},
@@ -2483,16 +2485,6 @@ class Sync {
 
         onSessionVisible = (sessionId: string) => {
             if (isDemoModeActive()) return;
-            const capturedDraftScope = getActiveServerAccountScope();
-            if (capturedDraftScope) {
-                fireAndForget(materializeVisibleExistingSessionDraft({
-                    sessionId,
-                    capturedScope: capturedDraftScope,
-                    readActiveScope: getActiveServerAccountScope,
-                    ensureRuntimeReady: () => this.ensureSessionDraftRepositoryRuntimeReady(),
-                    materializeExact: materializeExactSessionDraft,
-                }), { tag: 'Sync.onSessionVisible.sessionDraft' });
-            }
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
             this.ensureSessionViewportHydrated();
@@ -2546,6 +2538,19 @@ class Sync {
                 );
         }
     }
+
+        materializeExistingSessionDraft = async (sessionId: string): Promise<void> => {
+            if (isDemoModeActive()) return;
+            const capturedDraftScope = getActiveServerAccountScope();
+            if (!capturedDraftScope) return;
+            await materializeVisibleExistingSessionDraft({
+                sessionId,
+                capturedScope: capturedDraftScope,
+                readActiveScope: getActiveServerAccountScope,
+                ensureRuntimeReady: () => this.ensureSessionDraftRepositoryRuntimeReady(),
+                materializeExact: materializeExactSessionDraft,
+            });
+        }
 
         refreshSessionMessages = async (
             sessionId: string,
@@ -3790,15 +3795,19 @@ class Sync {
         await updateSessionMetadataWithRetryRpc<Metadata, AgentState>({
             sessionId,
             metadataLayoutVersion:
-                patchContext.session?.metadataLayoutVersion ?? 0,
+                readSessionMetadataLayoutVersion(
+                    patchContext.session?.metadataLayoutVersion,
+                ),
             getSession: () => {
                 const s = storage.getState().sessions[sessionId];
                 if (!s?.metadata) return null;
-                const metadata = (s.metadataLayoutVersion ?? 0) === 1
+                const metadataLayoutVersion =
+                    readSessionMetadataLayoutVersion(s.metadataLayoutVersion);
+                const metadata = metadataLayoutVersion === 1
                     ? s.ownerMetadataView ?? s.metadata
                     : s.metadata;
                 return {
-                    metadataLayoutVersion: s.metadataLayoutVersion ?? 0,
+                    metadataLayoutVersion,
                     metadataVersion: s.metadataVersion,
                     metadata,
                 };
@@ -3940,9 +3949,12 @@ class Sync {
         if (!ownerMetadata) return;
         const nextMetadata = updater(ownerMetadata);
         if (nextMetadata === ownerMetadata) return;
+        const metadataLayoutVersion =
+            readSessionMetadataLayoutVersion(latestSession.metadataLayoutVersion);
+        if (metadataLayoutVersion !== 0 && metadataLayoutVersion !== 1) return;
         this.applySessions([{
             ...latestSession,
-            ...((latestSession.metadataLayoutVersion ?? 0) === 1
+            ...(metadataLayoutVersion === 1
                 ? { ownerMetadataView: nextMetadata }
                 : { metadata: nextMetadata }),
         }]);
@@ -4476,6 +4488,10 @@ class Sync {
             replacementLocalId?: string;
             preparedComposerAdmission?: Readonly<{
                 stagedMediaHandles: readonly ComposerContentHandleV1[];
+                sessionMediaMetadata?: Readonly<{
+                    key: 'happier' | 'happierMedia';
+                    envelope: import('@happier-dev/protocol').SessionMediaMessageMetaV1;
+                }>;
             }>;
         }>,
     ): Promise<PendingMessageComposerAdmissionAcceptedFactV1 | undefined> {
@@ -5601,6 +5617,24 @@ class Sync {
         return this.automationsSync.invalidateAndAwait();
     }
 
+    /**
+     * Continue the one Account-scoped Automation definition window. The
+     * store's exact-cursor writer rejects a response if refresh/account
+     * movement replaced that continuation while this request was in flight.
+     */
+    public loadMoreAutomations = async (expectedCursor: string): Promise<{ nextCursor: string | null }> => {
+        const shouldContinue = this.createServerScopeGuard();
+        return await fetchAndApplyAutomations({
+            credentials: this.credentials,
+            cursor: expectedCursor,
+            shouldContinue,
+            applyAutomations: (automations, nextCursor) =>
+                storage.getState().applyAutomations(automations, nextCursor),
+            appendAutomations: (cursor, automations, nextCursor) =>
+                storage.getState().appendAutomations(cursor, automations, nextCursor),
+        });
+    }
+
     /** Account-scoped Automation settings stay direct: their server owner is not another UI cache. */
     public async getAutomationSettings(): Promise<AutomationV3Settings> {
         const credentials = this.credentials;
@@ -6063,7 +6097,10 @@ class Sync {
         await fetchAndApplyAutomations({
             credentials: this.credentials,
             shouldContinue,
-            applyAutomations: (automations) => storage.getState().applyAutomations(automations),
+            applyAutomations: (automations, nextCursor) =>
+                storage.getState().applyAutomations(automations, nextCursor),
+            appendAutomations: (cursor, automations, nextCursor) =>
+                storage.getState().appendAutomations(cursor, automations, nextCursor),
             loadedAutomationRunIds: Object.keys(storage.getState().automationRunsByAutomationId),
             refreshAutomationRunsWindow: (automationId, runs, nextCursor) =>
                 storage.getState().refreshAutomationRunsWindow(automationId, runs, nextCursor),

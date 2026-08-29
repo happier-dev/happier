@@ -4,6 +4,7 @@ import type {
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
     MentionRefV1,
+    ComposerAttachmentViewV1,
 } from '@happier-dev/protocol';
 import { sameStrictJsonValue } from '@happier-dev/protocol';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
@@ -15,10 +16,14 @@ import type {
     AgentInputComposerInputLock,
     AgentInputExtraActionChip,
 } from '@/components/sessions/agentInput/agentInputContracts';
-import { useNewSessionSeededComposerAttachments } from '@/components/sessions/new/attachments/useNewSessionSeededComposerAttachments';
+import {
+    isNewSessionComposerAttachmentSeedAdmitted,
+    useNewSessionSeededComposerAttachments,
+} from '@/components/sessions/new/attachments/useNewSessionSeededComposerAttachments';
 import { projectComposerAttachmentRowItems } from '@/components/sessions/composer/composerAttachmentProjection';
 import { createEphemeralComposerDocumentOwner } from '@/components/sessions/composer/composerDocumentOwner';
 import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
+import { clearNewSessionComposerAttachmentSeedsFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import {
     composerAttachmentDraftToView,
     composerReferencesFromStructuredMentions,
@@ -46,6 +51,8 @@ import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import type { NewSessionComposerAttachmentSeedV1 } from '@/sync/domains/state/persistence';
+import { t } from '@/text';
 
 import type { NewSessionPromptStore } from './newSessionPromptStore';
 
@@ -53,6 +60,35 @@ type NewSessionComposerDocumentState = Readonly<{
     attachments: readonly ComposerAttachmentDraftV1[];
     mentions: readonly ComposerStructuredInputMention[];
 }>;
+
+const EMPTY_PENDING_ATTACHMENT_IDS: ReadonlySet<string> = new Set();
+
+function projectPendingAttachmentSeed(
+    seed: NewSessionComposerAttachmentSeedV1,
+): ComposerAttachmentViewV1 {
+    return {
+        v: 1,
+        instanceId: seed.instanceId,
+        attachment: { pluginId: seed.pluginId, localId: seed.attachmentLocalId },
+        key: seed.value.key,
+        value: seed.value.value,
+        presentation: { ...seed.value.presentation, typeLabel: t('common.unavailable') },
+        availability: { status: 'unavailable' },
+    };
+}
+
+function isUnadmittedPendingAttachmentView(
+    seed: NewSessionComposerAttachmentSeedV1,
+    attachment: ComposerAttachmentViewV1,
+): boolean {
+    const pending = projectPendingAttachmentSeed(seed);
+    return attachment.instanceId === pending.instanceId
+        && attachment.attachment.pluginId === pending.attachment.pluginId
+        && attachment.attachment.localId === pending.attachment.localId
+        && attachment.key === pending.key
+        && sameStrictJsonValue(attachment.value, pending.value)
+        && sameStrictJsonValue(attachment.presentation, pending.presentation);
+}
 
 export type NewSessionComposerDocument = Readonly<{
     ref: Extract<ComposerRefV1, Readonly<{ kind: 'newSession' }>>;
@@ -102,6 +138,8 @@ export function useNewSessionComposerDocument(params: Readonly<{
     draftScope?: ServerAccountScope | null;
     promptStore: NewSessionPromptStore;
     persistedAttachments: readonly ComposerAttachmentDraftV1[];
+    /** Draft-local attachment requests waiting for current catalog admission. */
+    persistedAttachmentSeeds?: readonly NewSessionComposerAttachmentSeedV1[];
     /** Exact current daemon projection for this new-session machine/account scope. */
     composerAttachmentEntriesById: ComposerAttachmentAvailabilityCatalog['entriesById'];
     /** Raw daemon projection remains the one controls/regions/catalog owner. */
@@ -154,6 +192,14 @@ export function useNewSessionComposerDocument(params: Readonly<{
     isSubmittingRef.current = params.isSubmitting;
     const suppressPromptNotificationRef = React.useRef(false);
     const localDocumentChangeRef = React.useRef(false);
+    // A local apply publishes its owner notification synchronously from inside
+    // `documentOwner.apply`. This latch marks that window so the observe listener
+    // below stays a no-op for a document this mount just wrote and reconciles
+    // itself; genuinely external (repository-side) writes still observe normally.
+    // Without it, the listener observes the half-applied transaction — the prompt
+    // store has not been reconciled yet — and duplicates the store write and the
+    // React state commit for every local edit.
+    const localApplyInFlightRef = React.useRef(false);
     const hydratedScopeKeyRef = React.useRef<string | null>(params.scopeKey);
     const hydratedAttachmentsRef = React.useRef(params.persistedAttachments);
 
@@ -220,6 +266,26 @@ export function useNewSessionComposerDocument(params: Readonly<{
     };
     const documentRef = React.useRef<NewSessionComposerDocumentState>(initialStateRef.current);
     const [documentState, setDocumentState] = React.useState<NewSessionComposerDocumentState>(initialStateRef.current);
+    // Pending requests remain presentation-only until the mounted catalog
+    // admits them through the canonical transaction applier. Keeping them out
+    // of the document prevents a request and its eventual canonical record
+    // from becoming two attachments (especially for cardinality-one entries).
+    const [pendingAttachmentRetirements, setPendingAttachmentRetirements] = React.useState<Readonly<{
+        ownerKey: string;
+        instanceIds: ReadonlySet<string>;
+    }>>({
+        ownerKey: documentOwnerKey,
+        instanceIds: EMPTY_PENDING_ATTACHMENT_IDS,
+    });
+    const retiredPendingAttachmentIds = pendingAttachmentRetirements.ownerKey === documentOwnerKey
+        ? pendingAttachmentRetirements.instanceIds
+        : EMPTY_PENDING_ATTACHMENT_IDS;
+    const pendingAttachmentSeeds = React.useMemo(
+        () => (params.persistedAttachmentSeeds ?? []).filter(
+            (seed) => !retiredPendingAttachmentIds.has(seed.instanceId),
+        ),
+        [params.persistedAttachmentSeeds, retiredPendingAttachmentIds],
+    );
     const submissionCurrentnessRef = React.useRef(new WeakMap<object, ComposerDraftFieldCurrentness>());
     const composerInputEffects = useComposerPresentationInputEffects({
         ref,
@@ -301,45 +367,65 @@ export function useNewSessionComposerDocument(params: Readonly<{
             return current.revision;
         }
 
-        const result = documentOwner.apply(current.revision, {
-            text: input.text,
-            references: composerReferencesFromStructuredMentions({
+        localApplyInFlightRef.current = true;
+        try {
+            const result = documentOwner.apply(current.revision, {
                 text: input.text,
-                mentions: input.state.mentions,
-            }),
-            attachments: input.state.attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
-                entriesById: params.composerAttachmentEntriesById,
-            })),
-        });
-        if (result.status !== 'applied') return documentOwner.read().revision;
+                references: composerReferencesFromStructuredMentions({
+                    text: input.text,
+                    mentions: input.state.mentions,
+                }),
+                attachments: input.state.attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
+                    entriesById: params.composerAttachmentEntriesById,
+                })),
+            });
+            if (result.status !== 'applied') return documentOwner.read().revision;
 
-        if (textChanged) {
-            suppressPromptNotificationRef.current = true;
-            try {
-                params.promptStore.setPrompt(input.text);
-            } finally {
-                suppressPromptNotificationRef.current = false;
+            if (textChanged) {
+                suppressPromptNotificationRef.current = true;
+                try {
+                    params.promptStore.setPrompt(input.text);
+                } finally {
+                    suppressPromptNotificationRef.current = false;
+                }
             }
+            if (stateChanged) {
+                documentRef.current = input.state;
+                setDocumentState(input.state);
+            }
+            if (input.local) {
+                localDocumentChangeRef.current = true;
+            }
+            if (input.notify) {
+                notifyComposerPresentationTargetChanged(ref);
+            }
+            return result.revision;
+        } finally {
+            localApplyInFlightRef.current = false;
         }
-        if (stateChanged) {
-            documentRef.current = input.state;
-            setDocumentState(input.state);
-        }
-        if (input.local) {
-            localDocumentChangeRef.current = true;
-        }
-        if (input.notify) {
-            notifyComposerPresentationTargetChanged(ref);
-        }
-        return result.revision;
     }, [documentOwner, params.composerAttachmentEntriesById, params.promptStore, ref]);
 
     const readSnapshot = React.useCallback((): ComposerSnapshotV1 => {
         const state = documentRef.current;
         const text = params.promptStore.getPrompt();
-        const canSubmit = params.canSubmitRef.current === true && !isSubmittingRef.current;
+        const attachmentViews = state.attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
+            entriesById: params.composerAttachmentEntriesById,
+        }));
+        const pendingViews = pendingAttachmentSeeds
+            .filter((seed) => !state.attachments.some((attachment) => (
+                isNewSessionComposerAttachmentSeedAdmitted(seed, attachment)
+            )))
+            .map(projectPendingAttachmentSeed);
+        const attachmentsReady = pendingViews.length === 0
+            && attachmentViews.every((attachment) => attachment.availability.status === 'ready');
+        const canSubmit = params.canSubmitRef.current === true
+            && !isSubmittingRef.current
+            && attachmentsReady;
         const inputLock = composerInputEffects.readComposerInputLock();
-        const editable = canSubmit && inputLock?.mode !== 'editAndSubmit';
+        // Readiness gates submission, not authoring. In particular an
+        // unavailable seeded attachment must remain removable so the user can
+        // clear the canonical placeholder and its pending seed custody.
+        const editable = !isSubmittingRef.current && inputLock?.mode !== 'editAndSubmit';
         const submittable = canSubmit && inputLock === null;
         return {
             revision: documentOwner.read().revision,
@@ -348,9 +434,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
             // The scope adapter exposes immutable normalized references. The
             // Protocol snapshot is the wire-shaped mutable-array boundary.
             references: [...composerReferencesFromStructuredMentions({ text, mentions: state.mentions })],
-            attachments: state.attachments.map((attachment) => composerAttachmentDraftToView(attachment, {
-                entriesById: params.composerAttachmentEntriesById,
-            })),
+            attachments: [...attachmentViews, ...pendingViews],
             layout: composerActionBarLayoutRef.current,
             capabilities: {
                 text: true,
@@ -367,31 +451,47 @@ export function useNewSessionComposerDocument(params: Readonly<{
                 ...(inputLock ? { inputLock } : {}),
             },
         };
-    }, [composerInputEffects.readComposerInputLock, documentOwner, params.composerAttachmentEntriesById, params.promptStore, ref]);
+    }, [composerInputEffects.readComposerInputLock, documentOwner, params.composerAttachmentEntriesById, params.promptStore, pendingAttachmentSeeds, ref]);
 
     const commitDocument = React.useCallback((input: Readonly<{
         expectedRevision: number;
         mutation: ComposerPresentationDocumentMutation;
     }>): ComposerTransactionResultV1 => {
         if (!composerRefsV1Equal(refRef.current, ref)) return { status: 'composerUnavailable' };
-        const result = documentOwner.apply(input.expectedRevision, input.mutation);
-        if (result.status !== 'applied') return result;
-        const next = documentOwner.read().document;
-        suppressPromptNotificationRef.current = true;
+        localApplyInFlightRef.current = true;
         try {
-            params.promptStore.setPrompt(next.text);
+            // Pending seed rows participate in visible submit truth but are not
+            // admitted records. A transaction starts from that public snapshot;
+            // exclude only untouched pending rows while retaining the row the
+            // canonical attachment applier actually resolved (its host-owned
+            // presentation differs from the pending projection).
+            const attachments = input.mutation.attachments.filter((attachment) => !pendingAttachmentSeeds.some(
+                (seed) => isUnadmittedPendingAttachmentView(seed, attachment),
+            ));
+            const result = documentOwner.apply(input.expectedRevision, {
+                ...input.mutation,
+                attachments,
+            });
+            if (result.status !== 'applied') return result;
+            const next = documentOwner.read().document;
+            suppressPromptNotificationRef.current = true;
+            try {
+                params.promptStore.setPrompt(next.text);
+            } finally {
+                suppressPromptNotificationRef.current = false;
+            }
+            const nextState = {
+                attachments: next.composerAttachments,
+                mentions: next.structuredInputMentions,
+            };
+            documentRef.current = nextState;
+            setDocumentState(nextState);
+            localDocumentChangeRef.current = true;
+            return result;
         } finally {
-            suppressPromptNotificationRef.current = false;
+            localApplyInFlightRef.current = false;
         }
-        const nextState = {
-            attachments: next.composerAttachments,
-            mentions: next.structuredInputMentions,
-        };
-        documentRef.current = nextState;
-        setDocumentState(nextState);
-        localDocumentChangeRef.current = true;
-        return result;
-    }, [documentOwner, params.promptStore, ref]);
+    }, [documentOwner, params.promptStore, pendingAttachmentSeeds, ref]);
 
     const target = useStableComposerPresentationTarget(ref, {
         readRevision: () => documentOwner.read().revision,
@@ -436,21 +536,49 @@ export function useNewSessionComposerDocument(params: Readonly<{
     // contribution authority and the host-minted instance id exist, so it is
     // where the request becomes a record — through the same applier a live
     // plugin composer control uses.
+    const onSeedsApplied = React.useCallback((seeds: readonly NewSessionComposerAttachmentSeedV1[]) => {
+        if (!isNewSessionComposerCurrent()) return;
+        const admittedIds = new Set(seeds.map((seed) => seed.instanceId));
+        setPendingAttachmentRetirements((current) => ({
+            ownerKey: documentOwnerKey,
+            instanceIds: new Set([
+                ...(current.ownerKey === documentOwnerKey ? current.instanceIds : []),
+                ...admittedIds,
+            ]),
+        }));
+        if (!draftScope || !params.draftId) return;
+        clearNewSessionComposerAttachmentSeedsFromRepository({
+            scope: draftScope,
+            draftId: params.draftId,
+            seeds,
+        });
+    }, [documentOwnerKey, draftScope, isNewSessionComposerCurrent, params.draftId]);
+    const isSeedAdmitted = React.useCallback(
+        (seed: NewSessionComposerAttachmentSeedV1) => documentOwner.read().document.composerAttachments.some(
+            (attachment) => isNewSessionComposerAttachmentSeedAdmitted(seed, attachment),
+        ),
+        [documentOwner],
+    );
     useNewSessionSeededComposerAttachments({
         scope: params.draftScope,
         draftId,
         ref,
+        seeds: pendingAttachmentSeeds,
         entriesById: params.composerAttachmentEntriesById,
         localize: composerPluginPresentation.localizePluginText,
         isCurrent: isNewSessionComposerCurrent,
+        isSeedAdmitted,
+        onSeedsApplied,
     });
 
     React.useEffect(() => documentOwner.observe(() => {
+        if (localApplyInFlightRef.current) return;
         const next = documentOwner.read().document;
         const nextState = {
             attachments: next.composerAttachments,
             mentions: next.structuredInputMentions,
         };
+        const stateChanged = !sameDocumentState(documentRef.current, nextState);
         if (
             params.promptStore.getPrompt() === next.text
             && sameDocumentState(documentRef.current, nextState)
@@ -473,8 +601,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
         } finally {
             suppressPromptNotificationRef.current = false;
         }
-        documentRef.current = nextState;
-        setDocumentState(nextState);
+        if (stateChanged) {
+            documentRef.current = nextState;
+            setDocumentState(nextState);
+        }
         notifyComposerPresentationTargetChanged(ref);
     }), [documentOwner, params.promptStore, ref]);
 
@@ -575,7 +705,7 @@ export function useNewSessionComposerDocument(params: Readonly<{
     const clearAcceptedSnapshot = React.useCallback((snapshot: ComposerSubmissionSnapshot): boolean => {
         if (!mountedRef.current || !composerRefsV1Equal(refRef.current, snapshot.ref)) return false;
         const currentness = submissionCurrentnessRef.current.get(snapshot);
-        if (!currentness || !documentOwner.clearAccepted(currentness)) return false;
+        if (!currentness || !documentOwner.clearAccepted(currentness).changed) return false;
         const next = documentOwner.read().document;
         suppressPromptNotificationRef.current = true;
         try {
@@ -607,26 +737,55 @@ export function useNewSessionComposerDocument(params: Readonly<{
 
     const removeAttachment = React.useCallback((instanceId: string) => {
         const snapshot = readSnapshot();
-        applyComposerPresentationTransaction({
+        const pending = pendingAttachmentSeeds.find((seed) => seed.instanceId === instanceId);
+        if (pending) {
+            setPendingAttachmentRetirements((current) => ({
+                ownerKey: documentOwnerKey,
+                instanceIds: new Set([
+                    ...(current.ownerKey === documentOwnerKey ? current.instanceIds : []),
+                    instanceId,
+                ]),
+            }));
+            if (draftScope && params.draftId) {
+                clearNewSessionComposerAttachmentSeedsFromRepository({
+                    scope: draftScope,
+                    draftId: params.draftId,
+                    seeds: [pending],
+                });
+            }
+            notifyComposerPresentationTargetChanged(ref);
+            return;
+        }
+        const result = applyComposerPresentationTransaction({
             ref,
             transaction: {
                 expectedRevision: snapshot.revision,
                 operations: [{ kind: 'attachment.remove', instanceId }],
             },
         });
-    }, [readSnapshot, ref]);
+        if (result.status !== 'applied') return;
+        // The commit path retires the exact pending seed for every removed
+        // canonical attachment, including removals issued by Host API callers.
+        // Keep this callback a thin canonical transaction launcher.
+    }, [draftScope, params.draftId, pendingAttachmentSeeds, readSnapshot, ref]);
     const attachmentViews = React.useMemo(() => documentState.attachments.map((attachment) => (
         composerAttachmentDraftToView(attachment, {
             entriesById: params.composerAttachmentEntriesById,
         })
     )), [documentState.attachments, params.composerAttachmentEntriesById]);
+    const pendingAttachmentViews = React.useMemo(
+        () => pendingAttachmentSeeds
+            .filter((seed) => !documentState.attachments.some((attachment) => (
+                isNewSessionComposerAttachmentSeedAdmitted(seed, attachment)
+            )))
+            .map(projectPendingAttachmentSeed),
+        [documentState.attachments, pendingAttachmentSeeds],
+    );
     const attachmentRowItems = React.useMemo(() => projectComposerAttachmentRowItems({
-        attachments: attachmentViews,
-        // Mirrors this scope's `ComposerSnapshotV1.state.editable`: an
-        // `editAndSubmit` lock or an in-flight submission refuses the removal
-        // transaction, so the row must not offer the control there.
-        ...(params.canSubmitRef.current === true
-            && !isSubmittingRef.current
+        attachments: [...attachmentViews, ...pendingAttachmentViews],
+        // Mirrors this scope's `ComposerSnapshotV1.state.editable`: readiness
+        // only gates submit, so an unavailable pending seed remains removable.
+        ...(!isSubmittingRef.current
             && composerInputEffects.composerInputLock?.mode !== 'editAndSubmit'
             ? { onRemove: removeAttachment }
             : {}),
@@ -635,10 +794,10 @@ export function useNewSessionComposerDocument(params: Readonly<{
         resolveInteraction: composerPluginPresentation.resolveAttachmentInteraction,
     }), [
         attachmentViews,
+        pendingAttachmentViews,
         composerInputEffects.composerInputLock,
         composerPluginPresentation.renderAttachmentSurface,
         composerPluginPresentation.resolveAttachmentInteraction,
-        params.canSubmitRef,
         params.composerAttachmentEntriesById,
         removeAttachment,
     ]);

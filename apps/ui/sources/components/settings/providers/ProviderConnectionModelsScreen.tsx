@@ -11,6 +11,9 @@ import { TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useProviderConnectionModels } from '@/providers/hooks/useProviderConnectionModels';
 import { useProviderModelLoadAction } from '@/providers/hooks/useProviderModelLoadAction';
+import {
+    useRetireProviderStateOnAccountChange,
+} from '@/providers/hooks/accountLifetimeRetirement';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import {
     buildProviderModelVisibilityChanges,
@@ -61,6 +64,33 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     }> | null>(null);
     const manualModelsRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
     const connection = connectionQuery.data?.connections.find((candidate) => candidate.connectionId === props.connectionId) ?? null;
+    const modelSettingsQueue = React.useRef<Promise<unknown>>(Promise.resolve());
+    const manualDraftDirtyRef = React.useRef(false);
+    const ignoreManualDraftGuardRef = React.useRef(false);
+
+    // The manual-model editor buffer, its inline validation state, and the
+    // pending flags it drives are Account-derived authoring state: the catalog
+    // they were typed against belongs to the Account that mounted this route,
+    // and that Account's lifetime retires them when Account B takes over, while
+    // the catalog hook clears Account A's rows through the
+    // same lifetime.
+    const discardAccountScopedManualModelState = React.useCallback(() => {
+        setManualModelText('');
+        setEditorError(null);
+        setShowHidden(false);
+        setEditorOpen(props.startAdding === true);
+        setSavingManualModels(false);
+        setRefreshingCatalog(false);
+        setOperationError(null);
+        modelSettingsQueue.current = Promise.resolve();
+        manualDraftDirtyRef.current = false;
+        ignoreManualDraftGuardRef.current = false;
+    }, [props.startAdding]);
+    // One incumbent lifetime owns both the local form retirement and all queued
+    // write/modal/async callback fencing.
+    const accountLifetime = useRetireProviderStateOnAccountChange(discardAccountScopedManualModelState);
+    const accountStillCurrent = React.useCallback(
+        () => accountLifetime?.isCurrent() ?? true, [accountLifetime]);
 
     const groups = React.useMemo<readonly ProviderModelManagerGroup[]>(() => connection ? [{
         connectionId: props.connectionId,
@@ -90,10 +120,13 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
             loadModel?: () => Promise<void>;
             reviewCurrentState?: () => Promise<void>;
         }> = {},
-    ) => setOperationError({ error, ...recovery }), []);
+    ) => {
+        if (accountStillCurrent()) setOperationError({ error, ...recovery });
+    }, [accountStillCurrent]);
     const reviewCurrentState = React.useCallback(async (): Promise<void> => {
+        if (!accountStillCurrent()) return;
         await catalog.refresh();
-    }, [catalog.refresh]);
+    }, [accountStillCurrent, catalog.refresh]);
     const showTransportError = React.useCallback((
         caught: unknown,
         retry: () => Promise<void>,
@@ -121,16 +154,16 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     // visibility toggles dispatched concurrently could otherwise be applied by
     // the daemon in the opposite order and leave the catalog showing the
     // opposite of the user's last intent.
-    const modelSettingsQueue = React.useRef<Promise<unknown>>(Promise.resolve());
     const runModelSettingsMutation = React.useCallback((
         request: Parameters<typeof mutateProviderModelSettings>[0]['request'],
         retry: () => Promise<void>,
     ): Promise<boolean> => {
+        if (!accountStillCurrent()) return Promise.resolve(false);
         const queued = modelSettingsQueue.current.then(async (): Promise<boolean> => {
             // Re-resolve the canonical target immediately before the write: a
             // confirmation modal may have kept this request waiting while the
             // user moved to another machine or server profile.
-            const target = resolveCurrentTarget();
+            const target = accountStillCurrent() ? resolveCurrentTarget() : null;
             if (!target || target.machineId !== request.machineId) {
                 showError(createProviderErrorV1('provider_authorization_changed', {
                     connectionId: props.connectionId,
@@ -142,6 +175,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
             try {
                 result = await mutateProviderModelSettings({ serverId: target.serverId, request });
             } catch (caught) {
+                if (!accountStillCurrent()) return false;
                 await handleModelSettingsMutationFailure(providerErrorFromRpcFailure(caught, {
                     connectionId: props.connectionId,
                     machineId: target.machineId,
@@ -149,23 +183,25 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 return false;
             }
             if (result.status === 'error') {
+                if (!accountStillCurrent()) return false;
                 await handleModelSettingsMutationFailure(result.error, retry);
                 return false;
             }
+            if (!accountStillCurrent()) return false;
             setOperationError(null);
             await catalog.refresh();
-            return true;
+            return accountStillCurrent();
         });
         modelSettingsQueue.current = queued.catch(() => undefined);
         return queued;
-    }, [catalog.refresh, handleModelSettingsMutationFailure, props.connectionId, resolveCurrentTarget, showError]);
+    }, [accountStillCurrent, catalog.refresh, handleModelSettingsMutationFailure, props.connectionId, resolveCurrentTarget, showError]);
     const refreshLoadedModel = React.useCallback(async (connectionId: string, modelId: string) => {
-        if (connectionId !== props.connectionId) return false;
+        if (!accountStillCurrent() || connectionId !== props.connectionId) return false;
         const result = await catalog.refreshWithResult();
         if (!result) return false;
         if (result.status === 'error') throw result.error;
-        return result.models.some((model) => model.id === modelId && model.loadState === 'loaded');
-    }, [catalog.refreshWithResult, props.connectionId]);
+        return accountStillCurrent() && result.models.some((model) => model.id === modelId && model.loadState === 'loaded');
+    }, [accountStillCurrent, catalog.refreshWithResult, props.connectionId]);
     const modelLoad = useProviderModelLoadAction({
         machineId,
         serverId,
@@ -173,6 +209,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         resolveExecutionTarget: resolveCurrentTarget,
     });
     const loadModel = React.useCallback(async (connectionId: string, modelId: string) => {
+        if (!accountStillCurrent()) return;
         const result = await modelLoad.load(connectionId, modelId);
         if (result.status === 'error') {
             const retryLoad = () => loadModel(connectionId, modelId);
@@ -182,23 +219,23 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         } else if (result.status === 'not_supported') {
             showError(createProviderErrorV1('provider_model_unloaded', { connectionId }));
         } else if (result.status === 'loaded') {
-            setOperationError(null);
+            if (accountStillCurrent()) setOperationError(null);
         }
-    }, [modelLoad.load, reviewCurrentState, showError]);
+    }, [accountStillCurrent, modelLoad.load, reviewCurrentState, showError]);
     const setVisibility = React.useCallback(async (ref: ModelVisibilityRefV1, hidden: boolean) => {
-        if (!machineId) return;
+        if (!accountStillCurrent() || !machineId) return;
         await runModelSettingsMutation(
             { action: 'setVisibility', machineId, ref, hidden },
             () => setVisibility(ref, hidden),
         );
-    }, [machineId, runModelSettingsMutation]);
+    }, [accountStillCurrent, machineId, runModelSettingsMutation]);
     const reset = React.useCallback(async () => {
-        if (!machineId) return;
+        if (!accountStillCurrent() || !machineId) return;
         await runModelSettingsMutation({
             action: 'resetVisibility', machineId,
             scope: { kind: 'connection', connectionId: props.connectionId },
         }, reset);
-    }, [machineId, props.connectionId, runModelSettingsMutation]);
+    }, [accountStillCurrent, machineId, props.connectionId, runModelSettingsMutation]);
     const bulkChanges = React.useCallback((
         action: 'showAll' | 'hideAll' | 'showOnly',
         selected?: ModelVisibilityRefV1,
@@ -213,11 +250,11 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
         action: 'showAll' | 'hideAll' | 'showOnly',
         selected?: ModelVisibilityRefV1,
     ) => {
-        if (!machineId) return;
+        if (!accountStillCurrent() || !machineId) return;
         await applyProviderModelBulkAction({
             action,
             changes: bulkChanges(action, selected),
-            confirm: async () => await Modal.confirm(
+            confirm: async () => accountStillCurrent() && await Modal.confirm(
                 action === 'hideAll'
                     ? t('settingsProviders.models.hideAll')
                     : t('settingsProviders.models.showOnly'),
@@ -225,7 +262,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                     ? t('settingsProviders.models.hideAllConfirmation')
                     : t('settingsProviders.models.showOnlyConfirmation'),
                 { confirmText: t('common.continue'), ...(action === 'hideAll' ? { destructive: true } : {}) },
-            ),
+            ) && accountStillCurrent(),
             apply: async (changes) => {
                 await runModelSettingsMutation(
                     { action: 'bulkVisibility', machineId, changes: [...changes] },
@@ -233,10 +270,10 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 );
             },
         });
-    }, [bulkChanges, machineId, runModelSettingsMutation]);
+    }, [accountStillCurrent, bulkChanges, machineId, runModelSettingsMutation]);
 
     const addManualModels = React.useCallback(async (): Promise<boolean> => {
-        if (!machineId || catalog.connectionRevision === null || savingManualModels) return false;
+        if (!accountStillCurrent() || !machineId || catalog.connectionRevision === null || savingManualModels) return false;
         const parsed = parseProviderManualModelInput(manualModelText, {
             existingIds: new Set(catalog.models.map((model) => model.id)),
         });
@@ -259,7 +296,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 expectedConnectionRevision: catalog.connectionRevision,
                 models: parsed.accepted.map((id) => ({ id })),
             }, async () => { await addManualModels(); });
-            if (!succeeded) return false;
+            if (!succeeded || !accountStillCurrent()) return false;
             const rejectedText = parsed.rejected.map((entry) => entry.value).join('\n');
             setManualModelText(rejectedText);
             setEditorOpen(parsed.rejected.length > 0);
@@ -268,29 +305,31 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 : null);
             return parsed.rejected.length === 0;
         } finally {
-            setSavingManualModels(false);
+            if (accountStillCurrent()) setSavingManualModels(false);
         }
-    }, [catalog.connectionRevision, catalog.models, machineId, manualModelText, props.connectionId, runModelSettingsMutation, savingManualModels]);
+    }, [accountStillCurrent, catalog.connectionRevision, catalog.models, machineId, manualModelText, props.connectionId, runModelSettingsMutation, savingManualModels]);
 
     // A typed manual-model draft is unsaved work. It joins the shared
     // unsaved-change transaction every other authoring surface uses, so leaving
     // the screen prompts instead of silently discarding it.
-    const manualDraftDirtyRef = React.useRef(false);
     manualDraftDirtyRef.current = manualModelText.trim().length > 0;
-    const ignoreManualDraftGuardRef = React.useRef(false);
-    const requestManualDraftDecision = React.useCallback(() => promptUnsavedChangesAlert(
-        (title, message, buttons) => Modal.alert(title, message, buttons),
-        {
+    const requestManualDraftDecision = React.useCallback(async () => {
+        if (!accountStillCurrent()) return 'keepEditing' as const;
+        const decision = await promptUnsavedChangesAlert((title, message, buttons) => {
+            if (accountStillCurrent()) Modal.alert(title, message, buttons);
+        }, {
             title: t('common.discardChanges'),
             message: t('common.unsavedChangesWarning'),
             discardText: t('common.discard'),
             saveText: t('common.save'),
             keepEditingText: t('common.keepEditing'),
-        },
-    ), []);
+        });
+        return accountStillCurrent() ? decision : 'keepEditing';
+    }, [accountStillCurrent]);
     const continueManualDraftNavigation = React.useCallback((action: unknown) => {
+        if (!accountStillCurrent()) return;
         if (action) (navigation as { dispatch?: (value: unknown) => void } | null)?.dispatch?.(action);
-    }, [navigation]);
+    }, [accountStillCurrent, navigation]);
     useUnsavedChangesBeforeRemoveGuard({
         ignoreRef: ignoreManualDraftGuardRef,
         isDirty: manualDraftDirtyRef.current,
@@ -314,22 +353,22 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
     });
 
     const removeManualModel = React.useCallback(async (connectionId: string, modelId: string) => {
-        if (!machineId || catalog.connectionRevision === null || connectionId !== props.connectionId) return;
+        if (!accountStillCurrent() || !machineId || catalog.connectionRevision === null || connectionId !== props.connectionId) return;
         const confirmed = await Modal.confirm(
             t('settingsProviders.models.remove'),
             t('settingsProviders.models.removeConfirmation'),
             { confirmText: t('common.delete'), destructive: true },
         );
-        if (!confirmed) return;
+        if (!confirmed || !accountStillCurrent()) return;
         await runModelSettingsMutation({
             action: 'manualRemove', machineId, connectionId,
             modelId, expectedConnectionRevision: catalog.connectionRevision,
         }, () => removeManualModel(connectionId, modelId));
-    }, [catalog.connectionRevision, machineId, props.connectionId, runModelSettingsMutation]);
+    }, [accountStillCurrent, catalog.connectionRevision, machineId, props.connectionId, runModelSettingsMutation]);
 
     const refreshCatalog = React.useCallback(async () => {
         const target = resolveCurrentTarget();
-        if (!machineId || refreshingCatalog || !target || target.machineId !== machineId) return;
+        if (!accountStillCurrent() || !machineId || refreshingCatalog || !target || target.machineId !== machineId) return;
         setRefreshingCatalog(true);
         try {
             const result = await probeProviderConnection({
@@ -337,6 +376,7 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
                 serverId: target.serverId,
                 connectionId: props.connectionId,
             });
+            if (!accountStillCurrent()) return;
             if (result.status === 'error') {
                 showError(result.error, { retry: refreshCatalog });
                 return;
@@ -344,20 +384,26 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
             // The probe belongs to the render-scoped target. If selection moved
             // while it was running, its catalog presentation is stale and must
             // not be published into the new target's screen.
-            if (!resolveCurrentTarget()) return;
+            const currentTarget = accountStillCurrent() ? resolveCurrentTarget() : null;
+            if (!currentTarget || currentTarget.machineId !== target.machineId
+                || currentTarget.serverId !== target.serverId) return;
             setOperationError(null);
             await catalog.refresh();
         } catch (caught) {
-            showTransportError(caught, refreshCatalog);
+            if (accountStillCurrent()) showTransportError(caught, refreshCatalog);
         } finally {
-            setRefreshingCatalog(false);
+            if (accountStillCurrent()) setRefreshingCatalog(false);
         }
-    }, [catalog.refresh, machineId, props.connectionId, refreshingCatalog, resolveCurrentTarget, showError, showTransportError]);
+    }, [accountStillCurrent, catalog.refresh, machineId, props.connectionId, refreshingCatalog, resolveCurrentTarget, showError, showTransportError]);
 
     const displayError = operationError?.error
         ?? catalog.error;
+    const retryCatalog = React.useCallback(async (): Promise<void> => {
+        if (!accountStillCurrent()) return;
+        await catalog.refresh();
+    }, [accountStillCurrent, catalog.refresh]);
     const errorRetry = operationError?.retry
-        ?? (!operationError && displayError ? catalog.refresh : undefined);
+        ?? (!operationError && displayError ? retryCatalog : undefined);
     const errorLoadModel = operationError?.loadModel;
     const errorReviewCurrentState = operationError?.reviewCurrentState;
 
@@ -385,15 +431,19 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
             loadingModelKey={modelLoad.loadingModelKey}
             loadCancelledProviderMayContinue={modelLoad.cancelledProviderMayContinue}
             onEditorOpenChange={(open) => {
+                if (!accountStillCurrent()) return;
                 setEditorOpen(open);
                 if (!open) setEditorError(null);
             }}
             onManualModelTextChange={(text) => {
+                if (!accountStillCurrent()) return;
                 setManualModelText(text);
                 setEditorError(null);
             }}
             onAddManualModels={() => { void addManualModels(); }}
-            onToggleShowHidden={() => setShowHidden((current) => !current)}
+            onToggleShowHidden={() => {
+                if (accountStillCurrent()) setShowHidden((current) => !current);
+            }}
             onRefreshCatalog={() => { void refreshCatalog(); }}
             onSetVisibility={(ref, hidden) => { void setVisibility(ref, hidden); }}
             onShowAll={() => { void runBulk('showAll'); }}
@@ -401,9 +451,13 @@ export const ProviderConnectionModelsScreen = React.memo(function ProviderConnec
             onResetVisibility={() => { void reset(); }}
             onShowOnly={(ref) => { void runBulk('showOnly', ref); }}
             onLoadModel={(connectionId, modelId) => { void loadModel(connectionId, modelId); }}
-            onCancelModelLoad={() => { void modelLoad.cancel(); }}
+            onCancelModelLoad={() => {
+                if (accountStillCurrent()) void modelLoad.cancel();
+            }}
             onRemoveManualModel={(connectionId, modelId) => { void removeManualModel(connectionId, modelId); }}
-            onRequestClose={() => router.back()}
+            onRequestClose={() => {
+                if (accountStillCurrent()) router.back();
+            }}
         />
     );
 });

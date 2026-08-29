@@ -88,6 +88,14 @@ export function useNewSessionMachinePathState(params: Readonly<{
     }, [params.persistedMachineId, resolveMachineId]);
 
     const [selectedMachineId, setSelectedMachineIdState] = React.useState<string | null>(() => {
+        const requestedMachineId = normalizeMachineIdParam(params.machineIdParam);
+        // A route/seeded machine is an exact target. Do not pair its directory
+        // with a persisted or preferred machine while that target hydrates.
+        if (requestedMachineId) {
+            return params.machines.some((machine) => machine.id === requestedMachineId)
+                ? requestedMachineId
+                : null;
+        }
         return resolvePersistedMachineId() ?? resolveMachineId(null);
     });
     const hasUserSelectedMachineRef = React.useRef(false);
@@ -151,6 +159,14 @@ export function useNewSessionMachinePathState(params: Readonly<{
             return;
         }
         if (!hasMachine(machineId)) {
+            // The requested machine and path are one atomic target. Keeping a
+            // previous selection here would launch with machine A + path B.
+            // Once the reader explicitly chooses another machine, the stale
+            // route parameter is no longer authoritative for this mount.
+            if (!hasUserSelectedMachineRef.current && selectedMachineId !== null) {
+                hasUserSelectedMachineRef.current = false;
+                setSelectedMachineIdState(null);
+            }
             return;
         }
 
@@ -205,6 +221,7 @@ export function useNewSessionMachinePathState(params: Readonly<{
     React.useEffect(() => {
         if (selectedMachineId !== null) return;
         if (params.machines.length === 0) return;
+        if (normalizeMachineIdParam(params.machineIdParam)) return;
         const machineIdToUse = resolveMachineId(null);
         const trimmedPath = normalizePathParam(params.pathParam);
 
@@ -259,11 +276,6 @@ export function useNewSessionMachinePathState(params: Readonly<{
     // Handle path route param from picker screens (main's navigation pattern)
     React.useEffect(() => {
         const trimmedPath = normalizePathParam(params.pathParam);
-        const routeMachineId = normalizeMachineIdParam(params.machineIdParam);
-
-        if (routeMachineId && !hasMachine(routeMachineId)) {
-            return;
-        }
 
         if (trimmedPath === lastAppliedPathParamRef.current) {
             return;

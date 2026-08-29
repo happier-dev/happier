@@ -34,6 +34,15 @@ vi.mock('@/sync/store/hooks', () => ({
 }));
 
 const contribution = Object.freeze({ pluginId: 'acme.voice', localId: 'browser' });
+const rawGrant = Object.freeze({
+  realm: 'web' as const,
+  phase: 'connection' as const,
+  request: Object.freeze({
+    kind: 'httpHeaders' as const,
+    origin: 'https://voice.example.test',
+    headerNames: Object.freeze(['authorization']),
+  }),
+});
 const subject = Object.freeze({
   kind: 'credential_access_disclosure' as const,
   contribution,
@@ -178,6 +187,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const screen = await renderScreen(
       <VoiceRawCredentialAccessReview
         contribution={contribution}
+        rawGrant={rawGrant}
         client={client}
         actions={actions}
         testID="raw-access"
@@ -197,7 +207,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
     });
-    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution));
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution, rawGrant));
     const sheet = screen.tree.findByTestId('raw-access-sheet');
     expect(sheet).not.toBeNull();
     expect(JSON.stringify(sheet?.props.detailRows)).toContain('@acme/voice');
@@ -255,6 +265,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const screen = await renderScreen(
       <VoiceRawCredentialAccessReview
         contribution={contribution}
+        rawGrant={rawGrant}
         client={client}
         actions={actions as never}
         testID="raw-access"
@@ -273,7 +284,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
     });
-    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution));
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution, rawGrant));
     expect(actions.revoke).not.toHaveBeenCalled();
   });
 
@@ -301,6 +312,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const screen = await renderScreen(
       <VoiceRawCredentialAccessReview
         contribution={contribution}
+        rawGrant={rawGrant}
         client={client}
         actions={actions as never}
         testID="raw-access"
@@ -340,6 +352,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     const renderReview = () => (
       <VoiceRawCredentialAccessReview
         contribution={contribution}
+        rawGrant={rawGrant}
         client={client}
         actions={actions as never}
         testID="raw-access"
@@ -350,7 +363,7 @@ describe('VoiceRawCredentialAccessReview', () => {
     await act(async () => {
       screen.tree.findByTestId('raw-access')?.props.onPress();
     });
-    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution));
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(contribution, rawGrant));
     const staleSheet = screen.tree.findByTestId('raw-access-sheet');
     expect(staleSheet).not.toBeNull();
     const staleGrant = staleSheet?.props.onGrant;

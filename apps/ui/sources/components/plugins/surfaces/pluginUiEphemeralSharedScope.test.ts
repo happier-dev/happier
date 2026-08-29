@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
 import { act, create } from 'react-test-renderer';
 
+import type { PluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
+
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import {
@@ -94,7 +96,7 @@ describe('plugin UI ephemeral shared scope', () => {
         expect(disposeA).toHaveBeenCalledTimes(1);
         expect(generationA?.acquire(
             'mounted-window',
-            () => Object.freeze({ value: { generation: 'revived-a' }, dispose: vi.fn() }),
+            () => Object.freeze({ value: { generation: 'revived-a' }, dispose(): void {} }),
         )).toBeNull();
 
         expect(getPluginUiEphemeralSharedScope({
@@ -105,7 +107,7 @@ describe('plugin UI ephemeral shared scope', () => {
         })).toBeNull();
         expect(generationB?.acquire(
             'mounted-window',
-            () => Object.freeze({ value: { generation: 'b' }, dispose: vi.fn() }),
+            () => Object.freeze({ value: { generation: 'b' }, dispose(): void {} }),
         )?.value).toEqual({ generation: 'b' });
         leaseA?.release();
         expect(disposeA).toHaveBeenCalledTimes(1);
@@ -117,6 +119,53 @@ describe('plugin UI ephemeral shared scope', () => {
             immutableGenerationId: 'generation-a',
             isCurrent: () => currentGeneration === 'generation-a',
         })).not.toBeNull();
+    });
+
+    it('keeps independently current materialization origins alive for one Account and plugin', () => {
+        const accountLifetime = createAccountLifetime();
+        const origin = (machineId: string) => ({
+            serverIdentityId: 'server-identity-a',
+            materializationRef: {
+                pluginId: 'acme.triage',
+                machineId,
+                materializationId: `materialization-${machineId}`,
+            },
+        });
+        const disposeA = vi.fn();
+        const disposeB = vi.fn();
+        const scopeA = getPluginUiEphemeralSharedScope({
+            accountLifetime,
+            pluginId: 'acme.triage',
+            immutableGenerationId: 'generation-a',
+            executionOrigin: origin('machine-a'),
+            isCurrent: () => true,
+        });
+        scopeA?.acquire('mounted-window', () => Object.freeze({ value: 'a', dispose: disposeA }));
+        const scopeB = getPluginUiEphemeralSharedScope({
+            accountLifetime,
+            pluginId: 'acme.triage',
+            immutableGenerationId: 'generation-b',
+            executionOrigin: origin('machine-b'),
+            isCurrent: () => true,
+        });
+        const leaseB = scopeB?.acquire('mounted-window', () => Object.freeze({ value: 'b', dispose: disposeB }));
+
+        expect(leaseB?.value).toBe('b');
+        expect(disposeA).not.toHaveBeenCalled();
+        const replacementA = getPluginUiEphemeralSharedScope({
+            accountLifetime,
+            pluginId: 'acme.triage',
+            immutableGenerationId: 'generation-a-next',
+            executionOrigin: origin('machine-a'),
+            isCurrent: () => true,
+        });
+        expect(replacementA).not.toBeNull();
+        expect(disposeA).toHaveBeenCalledTimes(1);
+        expect(disposeB).not.toHaveBeenCalled();
+        expect(scopeB?.acquire('mounted-window', () => Object.freeze({ value: 'b2', dispose(): void {} }))?.value).toBe('b');
+        accountLifetime.retire();
+        expect(disposeA).toHaveBeenCalledTimes(1);
+        expect(disposeB).toHaveBeenCalledTimes(1);
     });
 
     it('fences acquisition and disposes every value when the Account retires', () => {
@@ -133,7 +182,7 @@ describe('plugin UI ephemeral shared scope', () => {
         accountLifetime.retire();
 
         expect(dispose).toHaveBeenCalledTimes(1);
-        expect(scope?.acquire('mounted-window', () => Object.freeze({ value: {}, dispose: vi.fn() }))).toBeNull();
+        expect(scope?.acquire('mounted-window', () => Object.freeze({ value: {}, dispose(): void {} }))).toBeNull();
         expect(getPluginUiEphemeralSharedScope({
             accountLifetime,
             pluginId: 'acme.triage',
@@ -241,7 +290,7 @@ describe('plugin UI ephemeral shared scope', () => {
         act(() => {
             committed = create(createElement(Probe, { generation: 'generation-a' }));
         });
-        const scopeA = observedScope;
+        const scopeA = observedScope as PluginUiEphemeralSharedScope | null;
         const disposeA = vi.fn();
         scopeA?.acquire('window', () => Object.freeze({ value: {}, dispose: disposeA }));
 

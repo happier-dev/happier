@@ -25,7 +25,7 @@ export function resolveSessionServerStartCandidateSelection(params: Readonly<{
     const target = params.selectedCandidate === undefined
         ? params.mountedTarget
         : {
-            serverId: params.mountedTarget.serverId,
+            serverId: params.selectedCandidate.serverId,
             machineId: params.selectedCandidate.machineId,
         };
     const machine = resolveExactServerScopedMachine({

@@ -111,6 +111,11 @@ function availableMatrix(matrix: PluginMachineMatrixV1) {
     return matrix;
 }
 
+/** Mirrors the matrix's identity-only machine key format. */
+function machineKeyFor(serverIdentityId: string, machineId: string): string {
+    return `${serverIdentityId.length}:${serverIdentityId}|${machineId.length}:${machineId}`;
+}
+
 function stateByMachineName(
     matrix: PluginMachineMatrixV1,
     pluginId: string,
@@ -206,6 +211,48 @@ describe('buildPluginMachineMatrix', () => {
 
         expect(selectableMachineIds).toEqual(['machine-a']);
         expect(currentMachineNames).toEqual(['A']);
+    });
+
+    it('keeps a retained materialization visible as a stale read-only row when its machine is gone', () => {
+        // The materialization survives in Account Availability after its
+        // machine disappeared from the inventory. Dropping the cell would
+        // hide exactly the stranded installation that explains a stored
+        // unavailable origin, so the axis keeps the identity as a stale,
+        // target-less observation.
+        const snapshots = [resolvedSnapshot({
+            serverIdentityId: 'srv_one',
+            serverName: 'Server One',
+            machines: [machine({ id: 'machine-live', displayName: 'Live' })],
+        })];
+
+        const matrix = buildPluginMachineMatrix({
+            admission: admission([
+                materialization({ machineId: 'machine-live' }),
+                materialization({ machineId: 'machine-gone', version: '0.9.0' }),
+            ]),
+            machineSnapshots: snapshots,
+            classifyRelease: () => MATCHED,
+            pluginId: 'acme.plugin',
+        });
+
+        const row = availableMatrix(matrix).rows[0]!;
+        expect(row.installedCurrentCount).toBe(1);
+        const orphan = row.cells.find((cell) => cell.machineName === 'machine-gone');
+        expect(orphan).not.toBeUndefined();
+        expect(orphan).toMatchObject({
+            machineKey: machineKeyFor('srv_one', 'machine-gone'),
+            serverLabel: 'Server One',
+            state: 'machineUnavailable',
+            version: '0.9.0',
+            observedAt: OBSERVED_AT,
+            observation: 'stale',
+        });
+        // The live axis is unchanged and the orphan carries no executable
+        // surface: it renders in the read-only info list like every cell.
+        expect(stateByMachineName(matrix, 'acme.plugin')).toEqual({
+            Live: 'installedCurrent',
+            'machine-gone': 'machineUnavailable',
+        });
     });
 
     it('never presents an unloaded Account projection as an Account-wide grid of absences', () => {

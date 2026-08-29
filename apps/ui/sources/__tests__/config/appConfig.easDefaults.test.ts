@@ -1,5 +1,5 @@
 import { getConfig } from '@expo/config';
-import { compileModsAsync, withPlugins } from '@expo/config-plugins';
+import { compileModsAsync, withAndroidManifest, withPlugins } from '@expo/config-plugins';
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -118,6 +118,19 @@ function findAndroidService(value: unknown, serviceName: string): Record<string,
     }
 
     return undefined;
+}
+
+function countAndroidServices(value: unknown, serviceName: string): number {
+    if (!isRecord(value) || !Array.isArray(value.application)) return 0;
+
+    return value.application.reduce((count, application) => {
+        if (!isRecord(application) || !Array.isArray(application.service)) return count;
+        return count + application.service.filter((entry) => (
+            isRecord(entry)
+            && isRecord(entry.$)
+            && entry.$['android:name'] === serviceName
+        )).length;
+    }, 0);
 }
 
 async function compileAndroidManifest(
@@ -357,6 +370,8 @@ describe('app.config.js', () => {
     it('registers the Android Voice foreground-service config plugin', () => {
         const exp = withCleanEnv(() => getPublicConfig());
 
+        expect(getPluginName((exp.plugins ?? [])[0]))
+            .toBe('./plugins/withAndroidVoiceForegroundService.js');
         expect((exp.plugins ?? []).filter(
             (plugin) => getPluginName(plugin) === './plugins/withAndroidVoiceForegroundService.js',
         )).toEqual(['./plugins/withAndroidVoiceForegroundService.js']);
@@ -389,6 +404,50 @@ describe('app.config.js', () => {
             'android:exported': 'false',
             'android:foregroundServiceType': 'microphone|mediaPlayback',
         }));
+    });
+
+    it('keeps Android service declarations unique after repeated prebuild inputs', async () => {
+        const exp = withCleanEnv(() => getPublicConfig());
+        const upstreamAudioService =
+            'com.swmansion.audioapi.system.MediaNotificationManager$AudioForegroundService';
+        const seedRepeatedPrebuildService = (config: Parameters<typeof withAndroidManifest>[0]) => (
+            withAndroidManifest(config, (manifestConfig) => {
+                const applications = manifestConfig.modResults.manifest.application ?? [];
+                manifestConfig.modResults.manifest.application = applications;
+                if (applications.length === 0) applications.push({ $: {} });
+                const services = applications[0].service ?? [];
+                applications[0].service = services;
+                services.push({
+                    $: {
+                        'android:name': upstreamAudioService,
+                        'android:stopWithTask': 'true',
+                        'android:foregroundServiceType': 'mediaPlayback',
+                    },
+                });
+                services.push({
+                    $: {
+                        'android:name': upstreamAudioService,
+                        'android:stopWithTask': 'true',
+                        'android:foregroundServiceType': 'mediaPlayback',
+                    },
+                });
+                return manifestConfig;
+            })
+        );
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const voiceForegroundServicePlugin = require(
+            join(getUiDir(), 'plugins', 'withAndroidVoiceForegroundService.js'),
+        );
+        const androidManifest = await compileAndroidManifest(exp, [
+            voiceForegroundServicePlugin,
+            seedRepeatedPrebuildService,
+        ]);
+
+        expect(countAndroidServices(androidManifest, upstreamAudioService)).toBe(1);
+        expect(countAndroidServices(
+            androidManifest,
+            'dev.happier.audio.HappierVoiceAudioForegroundService',
+        )).toBe(1);
     });
 
     it('allows disabling Android cleartext traffic explicitly via env override', () => {

@@ -40,6 +40,7 @@ type VoicePlaybackControllerLike = Readonly<{
 
 type VoiceAgentSessionsLike = Readonly<{
   commitUserTranscript?: (sessionId: string, userText: string, localId: string) => Promise<void>;
+  stop?: (sessionId: string) => Promise<void>;
   sendTurn: (
     sessionId: string,
     userText: string,
@@ -200,9 +201,6 @@ export async function sendVoiceTextTurn(params: {
     const streamingChunkChars = resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars);
 
     voiceConversationRuntimeMachine.transitionToThinking({ controlSessionId: sessionId });
-    // Cleanup for the streaming playback queue's interrupt stopper. Hoisted so the
-    // outer `finally` releases it on any exit path (success, abort, or failure).
-    let releaseStreamingQueueStopper = () => {};
     const canonicalOutputTurnIds = new Set<string>();
     let streamingPlaybackError: unknown = null;
     try {
@@ -245,6 +243,12 @@ export async function sendVoiceTextTurn(params: {
           if (!chunk.text) return;
           if (params.signal?.aborted) return;
           if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
+          // The provider playback registered by speakAssistantText is the one
+          // physical target. Registering this ordering queue as another target
+          // would make the latest-wins playback owner stop the queue when the
+          // first real chunk registers, discarding every later chunk. An
+          // interrupt advances playbackEpoch and stops the active provider;
+          // the checks above then retire every queued successor without audio.
           await speakAssistantText({
             sessionId,
             text: chunk.text,
@@ -264,19 +268,9 @@ export async function sendVoiceTextTurn(params: {
         },
       });
 
-      // The queue is the live ordering owner, so a barge-in/interrupt must abort
-      // it. `playbackController.interrupt()` (driven by the barge-in controller
-      // and manual/turn aborts) advances the playback epoch and fires the
-      // registered stopper; here that stopper aborts the queue handle so no
-      // further chunks play. The in-flight chunk's own provider stopper
-      // (registered inside `speakAssistantText` → provider controller) still
-      // stops the live audio, keeping the interrupt → abort path intact.
       const ensureQueueStarted = () => {
         if (speakHandle) return;
         speakHandle = playbackQueue.speak();
-        releaseStreamingQueueStopper = registerPlaybackStopper(() => {
-          speakHandle?.abort();
-        });
       };
 
       // When the assistant text ends we mark the latest enqueued chunk as the
@@ -340,8 +334,6 @@ export async function sendVoiceTextTurn(params: {
             throw streamingPlaybackError;
           }
         } finally {
-          releaseStreamingQueueStopper();
-          releaseStreamingQueueStopper = () => {};
           speakHandle = null;
         }
       };
@@ -357,8 +349,6 @@ export async function sendVoiceTextTurn(params: {
           params.playbackController.interrupt();
           await handle.done;
         }
-        releaseStreamingQueueStopper();
-        releaseStreamingQueueStopper = () => {};
       };
 
       const consumeCanonicalOutputEvent = async ({ event, effects }: VoiceAgentAcceptedOutputV1) => {
@@ -427,7 +417,7 @@ export async function sendVoiceTextTurn(params: {
         });
       };
 
-      await runVoiceAgentTurnWithTools({
+      const agentTurnResult = await runVoiceAgentTurnWithTools({
         sessionId,
         userText,
         durableLocalId: params.durableDispatch!.localId,
@@ -452,6 +442,21 @@ export async function sendVoiceTextTurn(params: {
           appendSyntheticToolResultNotes(toolResults as ReadonlyArray<LocalVoiceAgentToolResultEntry>);
         },
       });
+      if (agentTurnResult.disposition === 'tool_round_limit_reached') {
+        const turnId = 'local_voice_agent:tool_round_limit';
+        voiceOutputStatusStore.show({
+          sessionId,
+          turnId,
+          statusId: 'tool_round_limit_reached',
+          text: 'Tool round limit reached before the requested actions could run.',
+        });
+        if (projectedConversationSessionId && uiOwnsTranscriptProjection) {
+          appendVoiceConversationNoteText({
+            conversationSessionId: projectedConversationSessionId,
+            text: 'Tool round limit reached before the requested actions could run.',
+          });
+        }
+      }
       return;
     } catch (error) {
       if (isTurnAbortedError(error) || params.signal?.aborted) {
@@ -485,7 +490,6 @@ export async function sendVoiceTextTurn(params: {
       // (success, abort, failure, or barge-in interrupt) so no stale window
       // outlives the reply.
       clearReplyTtsGuard();
-      releaseStreamingQueueStopper();
       if (voiceConversationRuntimeMachine.getSnapshot().state !== 'listening') {
         transitionVoiceRuntimeToIdleIfCurrent({ controlSessionId: sessionId });
       }

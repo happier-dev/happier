@@ -15,6 +15,14 @@ const takeoverEffect = (
     ...overrides,
 });
 
+const explicitJumpTakeoverEffect = (
+    overrides: Partial<WebUserScrollTakeoverApplyEffect> = {},
+): WebUserScrollTakeoverApplyEffect => ({
+    sessionId: 'session-a',
+    type: 'web-user-scroll-preempt-explicit-jump',
+    ...overrides,
+});
+
 const timestampEffect = (
     overrides: Partial<WebUserScrollIntentTimestampApplyEffect> = {},
 ): WebUserScrollIntentTimestampApplyEffect => ({
@@ -43,7 +51,7 @@ describe('web user-scroll intent apply effects', () => {
     it('returns current-session takeover effects in order', () => {
         const effects = [
             takeoverEffect(),
-            takeoverEffect(),
+            explicitJumpTakeoverEffect(),
         ];
 
         expect(resolveWebUserScrollTakeoverApplyEffects({
@@ -99,13 +107,14 @@ describe('web user-scroll intent apply effects', () => {
             nativeTouchEffect,
             localInteractionEffect,
             currentTakeover,
+            explicitJumpTakeoverEffect(),
             currentTimestamp,
         ];
 
         expect(resolveWebUserScrollTakeoverApplyEffects({
             effects,
             sessionId: 'session-a',
-        })).toEqual([currentTakeover]);
+        })).toEqual([currentTakeover, explicitJumpTakeoverEffect()]);
         expect(resolveWebUserScrollIntentTimestampApplyEffects({
             effects,
             sessionId: 'session-a',

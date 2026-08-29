@@ -11,6 +11,8 @@ import {
     type OpenableContentRefV1,
     type OpenableContentStatResultV1,
 } from '@happier-dev/protocol';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex } from '@noble/hashes/utils';
 import type {
     PluginUiHostApiRequestEnvelopeV1,
     PluginUiJsonValueV1,
@@ -171,6 +173,10 @@ function classifyOpenableContentBytes(bytes: Uint8Array): 'text' | 'binary' {
     return isBinaryContent(text) ? 'binary' : 'text';
 }
 
+function revisionFromBytes(bytes: Uint8Array): string {
+    return revisionFromWorkspaceStat(bytes.byteLength, bytesToHex(sha256(bytes)));
+}
+
 /**
  * One revision that answers for bytes, not just for metadata.
  *
@@ -180,22 +186,16 @@ function classifyOpenableContentBytes(bytes: Uint8Array): 'text' | 'binary' {
  * edit both produced the same revision for different bytes, so a viewer holding
  * it saw no change and kept presenting stale content as current.
  *
- * The status-change time closes that: a write always advances it, and no
- * `utimes` call can put it back. It also advances for a permission or rename
- * change, which produces a revision the viewer treats as changed and re-reads —
- * the safe direction. An older daemon does not report it, and this deliberately
- * keeps the previous two-part identity there rather than inventing a value:
- * degrading to the predecessor's guarantee is honest, and inventing one would
- * make every stat look like an edit.
+ * The daemon's content hash closes that: it names the bytes themselves, even
+ * when a rewrite preserves size and every filesystem timestamp. An older
+ * daemon does not report it, so this owner refuses a revision-backed binding
+ * rather than presenting metadata as byte currentness.
  */
 function revisionFromWorkspaceStat(
     sizeBytes: number,
-    modifiedMs: number,
-    changedMs: number | null,
+    contentHash: string,
 ): string {
-    return changedMs === null
-        ? `workspace-file:${sizeBytes}:${modifiedMs}`
-        : `workspace-file:${sizeBytes}:${modifiedMs}:${changedMs}`;
+    return `workspace-file:${sizeBytes}:${contentHash}`;
 }
 
 type WorkspaceOpenableContentMetadata =
@@ -203,8 +203,9 @@ type WorkspaceOpenableContentMetadata =
   | Readonly<{ status: 'unavailable' | 'unsupported' | 'cancelled' }>;
 
 /**
- * The cheap host-owned facts. The read path guards itself with this alone, so
- * its before/after revision checks never pay for content classification.
+ * Host-owned metadata plus the canonical file-content digest. The digest is
+ * opt-in at STAT_FILE so ordinary workspace browsing keeps its cheap path;
+ * this revision-backed viewer refuses daemons that cannot provide it.
  */
 async function statWorkspaceFileMetadata(input: Readonly<{
     target: WorkspaceFileSystemTarget;
@@ -214,6 +215,7 @@ async function statWorkspaceFileMetadata(input: Readonly<{
     try {
         const result = await awaitCancellable(
             workspaceStatFile(input.target, input.filePath, {
+                includeContentHash: true,
                 ...(input.signal ? { signal: input.signal } : {}),
             }),
             input.signal,
@@ -233,15 +235,15 @@ async function statWorkspaceFileMetadata(input: Readonly<{
         }
 
         const sizeBytes = Math.floor(result.sizeBytes);
-        const changedMs = typeof result.changedMs === 'number'
-            && Number.isFinite(result.changedMs)
-            && result.changedMs >= 0
-            ? result.changedMs
+        const contentHash = typeof result.contentHash === 'string'
+            && /^[0-9a-f]{64}$/iu.test(result.contentHash)
+            ? result.contentHash.toLowerCase()
             : null;
+        if (contentHash === null) return { status: 'unsupported' };
         return {
             status: 'ready',
             sizeBytes,
-            revision: revisionFromWorkspaceStat(sizeBytes, result.modifiedMs, changedMs),
+            revision: revisionFromWorkspaceStat(sizeBytes, contentHash),
         };
     } catch {
         return input.signal?.aborted ? { status: 'cancelled' } : { status: 'unavailable' };
@@ -280,6 +282,9 @@ async function classifyWorkspaceOpenableContent(input: Readonly<{
     if (probe === CANCELLED || !probe.success) return derived.kind;
     const bytes = decodeBase64(probe.content, 'base64');
     if (bytes.byteLength !== input.sizeBytes) return derived.kind;
+    // The stat digest and probe bytes must describe one exact snapshot. A
+    // same-size ABA during this classification is not safe to memoize.
+    if (revisionFromBytes(bytes) !== input.revision) return null;
 
     const kind: OpenableContentKind = classifyOpenableContentBytes(bytes) === 'binary'
         ? {
@@ -410,6 +415,10 @@ export function createWorkspaceFileOpenableContentBinding(input: Readonly<{
             // A response whose decoded length conflicts with the owner stat is
             // not a stable snapshot. Do not reinterpret it as a usable read.
             if (bytes.byteLength !== readyAfter.sizeBytes) return { status: 'changed' };
+            // Metadata can return to an earlier value while the read is in
+            // flight. Hash the delivered bytes at this owner boundary so an
+            // ABA cannot be disclosed under the old revision.
+            if (revisionFromBytes(bytes) !== readyBefore.revision) return { status: 'changed' };
 
             // The bytes in hand are the authority, and they are classified by
             // the same rule the stat metadata used. A file the filename could

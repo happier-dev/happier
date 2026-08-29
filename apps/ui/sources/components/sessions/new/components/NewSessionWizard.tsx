@@ -157,6 +157,7 @@ export interface NewSessionWizardAgentProps {
     providerModelGroups?: readonly SessionModelProjectionGroup[];
     providerModelProjectionAuthoritative?: boolean;
     providerModelProjectionError?: ProviderErrorV1 | null;
+    providerModelProjectionFailures?: React.ComponentProps<typeof NewSessionModelSelectionContent>['providerProjectionFailures'];
     retryProviderModelProjection?: (() => Promise<void> | void) | null;
     providerCurrentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
     hiddenNativeModelKeys?: ReadonlySet<string>;
@@ -426,6 +427,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         providerModelGroups,
         providerModelProjectionAuthoritative,
         providerModelProjectionError,
+        providerModelProjectionFailures,
         retryProviderModelProjection,
         providerCurrentSelectionRecovery,
         hiddenNativeModelKeys,
@@ -1057,6 +1059,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             providerGroups={providerModelGroups}
                                             providerProjectionAuthoritative={providerModelProjectionAuthoritative === true}
                                             providerProjectionError={providerModelProjectionError}
+                                            providerProjectionFailures={providerModelProjectionFailures}
                                             retryProviderProjection={retryProviderModelProjection}
                                             currentSelectionRecovery={providerCurrentSelectionRecovery}
                                             hiddenNativeModelKeys={hiddenNativeModelKeys}

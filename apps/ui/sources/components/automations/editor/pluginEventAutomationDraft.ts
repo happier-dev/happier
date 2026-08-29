@@ -22,14 +22,16 @@ import { PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1 } from './pluginEvent
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 
 /**
- * The one observation transport this draft was authored for. The pull arm
- * needs nothing beyond the selected origin; the push arm carries only the
- * endpoint identity returned by the canonical webhook endpoint owner, because
- * the endpoint materialization and routing source instance are re-derived
- * from the same origin and setup result the request is built from.
+ * The one observation transport this draft was authored for. The pull and
+ * socket arms need nothing beyond the selected origin; the push arm carries
+ * only the endpoint identity returned by the canonical webhook endpoint
+ * owner, because the endpoint materialization and routing source instance
+ * are re-derived from the same origin and setup result the request is built
+ * from.
  */
 export type PluginEventAutomationObservationDraft =
     | Readonly<{ kind: 'checkpointedPull' }>
+    | Readonly<{ kind: 'socket' }>
     | Readonly<{ kind: 'durablePush'; webhookEndpointId: PluginWebhookEndpointIdV1 }>;
 
 export type PluginEventAutomationAuthoringDraft = Readonly<{
@@ -108,6 +110,7 @@ function normalizeObservationDraft(
     observation: PluginEventAutomationObservationDraft,
 ): PluginEventAutomationObservationDraft | null {
     if (observation.kind === 'checkpointedPull') return Object.freeze({ kind: 'checkpointedPull' });
+    if (observation.kind === 'socket') return Object.freeze({ kind: 'socket' });
     const webhookEndpointId = PluginWebhookEndpointIdV1Schema.safeParse(observation.webhookEndpointId);
     return webhookEndpointId.success
         ? Object.freeze({ kind: 'durablePush', webhookEndpointId: webhookEndpointId.data })
@@ -126,13 +129,15 @@ function buildObservationTransportInput(
 ): AutomationPluginEventObservationTransportInput {
     return draft.observation.kind === 'checkpointedPull'
         ? { kind: 'checkpointedPull', watcherMaterializationRef: origin.materializationRef }
-        : {
-            kind: 'durablePush',
-            webhookEndpointId: draft.observation.webhookEndpointId,
-            endpointMaterializationRef: origin.materializationRef,
-            webhookRoutingSourceInstanceId: draft.source.sourceInstanceId,
-            setup: PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1,
-        };
+        : draft.observation.kind === 'socket'
+            ? { kind: 'socket', watcherMaterializationRef: origin.materializationRef }
+            : {
+                kind: 'durablePush',
+                webhookEndpointId: draft.observation.webhookEndpointId,
+                endpointMaterializationRef: origin.materializationRef,
+                webhookRoutingSourceInstanceId: draft.source.sourceInstanceId,
+                setup: PLUGIN_EVENT_AUTOMATION_WEBHOOK_ENDPOINT_SETUP_V1,
+            };
 }
 
 function parseMaximumObservationAgeMs(value: unknown): number | null {

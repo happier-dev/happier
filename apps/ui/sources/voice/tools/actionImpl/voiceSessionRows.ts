@@ -3,6 +3,7 @@ import {
   listSessionListLookupServerSessions,
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import type { SessionMetadataLike } from '@/sync/domains/session/listing/sessionListLookupState';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 
 import { normalizeNonEmptyString } from './shared';
@@ -145,9 +146,7 @@ function isUserFacingVoiceSession(
   sessionId: string,
 ): boolean {
   const record = session && typeof session === 'object' ? session as Record<string, unknown> : null;
-  const metadataLayoutVersion = typeof record?.metadataLayoutVersion === 'number'
-    ? record.metadataLayoutVersion
-    : undefined;
+  const metadataLayoutVersion = readSessionMetadataLayoutVersion(record?.metadataLayoutVersion);
   const ownerMetadata = readVoiceSessionOwnerMetadataFromState(state, sessionId);
   return isUserFacingSession({
     metadata: metadataLayoutVersion === 1 ? record?.metadata : ownerMetadata,

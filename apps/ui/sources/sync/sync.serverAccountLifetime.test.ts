@@ -183,7 +183,6 @@ function eventDetail(templateVersion: number): AutomationDefinitionDetail {
         createdAt: 1,
         updatedAt: templateVersion,
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: null }],
-        retiredTriggers: [],
         executionRecipe: {
             v: 1,
             templateVersion,
@@ -367,7 +366,6 @@ describe('Sync Server/Account lifetime reset boundary', () => {
             createdAt: 1,
             updatedAt: 1,
             assignments: [],
-            retiredTriggers: [],
             executionRecipe: {
                 v: 1,
                 templateVersion: 1,

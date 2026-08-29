@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { normalizePluginAccountCollectionContractV1, PluginManifestV2Schema } from '@happier-dev/protocol';
+import { derivePluginCollectionIdentityTagV1, normalizePluginAccountCollectionContractV1, PluginManifestV2Schema } from '@happier-dev/protocol';
 import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
+import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
 
 import {
     createPluginAccountAvailabilityReader,
@@ -22,7 +23,7 @@ const collectionDefinition = defineAccountCollection({
         additionalProperties: false,
     },
     rowIdField: 'id',
-    identityFields: [],
+    identityFields: ['id'],
     serverReadable: ['title', 'status'],
     indexes: [{
         id: 'by-status',
@@ -154,6 +155,7 @@ async function loadBridge() {
         },
     };
     const queryResponses = [firstPage, secondPage, firstPage];
+    const accountKvWrites: unknown[] = [];
     const transport = vi.fn(async (path: string, _init?: RequestInit) => {
         if (path === '/v1/account/encryption/currentness') {
             return new Response(JSON.stringify({
@@ -172,6 +174,19 @@ async function loadBridge() {
         }
         if (path === '/v1/plugins/data/ui-query') {
             return new Response(JSON.stringify(queryResponses.shift() ?? secondPage), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            });
+        }
+        if (path === `/v1/account/plugin-storage/${pluginId}`) {
+            if ((_init?.method ?? 'GET') === 'GET') {
+                return new Response(JSON.stringify({ status: 'absent' }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
+            accountKvWrites.push(JSON.parse(String(_init?.body ?? 'null')));
+            return new Response(JSON.stringify({ status: 'updated', revision: 3 }), {
                 status: 200,
                 headers: { 'Content-Type': 'application/json' },
             });
@@ -214,8 +229,8 @@ async function loadBridge() {
             declarationTransport: 'http-header-and-socket-auth-v1',
         },
     });
-    const module: unknown = await import('./hostedWebCollectionUiQueryBridge');
-    const create = Reflect.get(module as object, 'createHostedWebCollectionUiQueryBridge');
+    const module: unknown = await import('./hostedWebAccountDataBridge');
+    const create = Reflect.get(module as object, 'createHostedWebAccountDataBridge');
     expect(create).toEqual(expect.any(Function));
     const changes: unknown[] = [];
     const bridge = (create as (input: Readonly<{
@@ -238,6 +253,7 @@ async function loadBridge() {
         bridge,
         changes,
         transport,
+        accountKvWrites,
         retire: () => {
             current = false;
             for (const callback of [...retireCallbacks]) callback();
@@ -261,7 +277,151 @@ async function loadBridge() {
     };
 }
 
-describe('hosted-web Collection UI-query bridge adapter', () => {
+describe('hosted-web Account Data bridge adapter', () => {
+    it('does not publish a transaction when cancellation wins during begin settlement', async () => {
+        const controller = new AbortController();
+        let executionSettled = false;
+        const accountKv = {
+            async transaction<T>(operation: (transaction: Readonly<{
+                get(key: string): Promise<null>;
+            }>) => Promise<T>): Promise<T> {
+                const pending = operation({
+                    async get() { return null; },
+                });
+                controller.abort();
+                try {
+                    return await pending;
+                } finally {
+                    executionSettled = true;
+                }
+            },
+        };
+        const { createHostedWebAccountDataBridge } = await import('./hostedWebAccountDataBridge');
+        const bridge = createHostedWebAccountDataBridge({
+            dataClient: { accountKv } as unknown as PluginUiDataClient,
+            publish: () => undefined,
+        });
+
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.begin',
+            arguments: [],
+        }, { signal: controller.signal })).resolves.toMatchObject({
+            kind: 'error',
+            error: { code: 'plugin_account_storage_unavailable' },
+        });
+        expect(executionSettled).toBe(true);
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.get',
+            arguments: ['transaction_1', 'cursor'],
+        })).resolves.toMatchObject({
+            kind: 'error',
+            error: { code: 'plugin_account_kv_invalid' },
+        });
+    });
+
+    it('keeps a hosted Account KV callback atomic in the native row owner', async () => {
+        const { bridge, accountKvWrites } = await loadBridge();
+        const begun = await bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.begin',
+            arguments: [],
+        });
+        expect(begun).toMatchObject({ kind: 'data', value: expect.any(String) });
+        const transactionId = (begun as { value: string }).value;
+
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.set',
+            arguments: [transactionId, 'cursor', { value: { page: 2 }, expectedVersion: 'absent' }],
+        })).resolves.toEqual({ kind: 'data', value: { version: 0 } });
+        expect(accountKvWrites).toEqual([]);
+
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.commit',
+            arguments: [transactionId],
+        })).resolves.toEqual({ kind: 'data', value: null });
+        expect(accountKvWrites).toHaveLength(1);
+
+        const second = await bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.begin',
+            arguments: [],
+        });
+        const secondTransactionId = (second as { value: string }).value;
+        await bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.set',
+            arguments: [secondTransactionId, 'discarded', { value: true, expectedVersion: 'absent' }],
+        });
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.rollback',
+            arguments: [secondTransactionId],
+        })).resolves.toEqual({ kind: 'data', value: null });
+        expect(accountKvWrites).toHaveLength(1);
+    });
+
+    it('rolls back an open transaction and fails later Data operations closed when retired', async () => {
+        const { bridge, accountKvWrites } = await loadBridge();
+        const begun = await bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.begin',
+            arguments: [],
+        });
+        const transactionId = (begun as { value: string }).value;
+        await bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.transaction.set',
+            arguments: [transactionId, 'discarded', { value: true, expectedVersion: 'absent' }],
+        });
+
+        bridge.dispose();
+
+        expect(accountKvWrites).toEqual([]);
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'accountKv.get',
+            arguments: ['discarded'],
+        })).resolves.toMatchObject({
+            kind: 'error',
+            error: { code: 'plugin_account_storage_unavailable' },
+        });
+    });
+
+    it('delegates generic Collection identity to the mounted current-Account client without guest authority', async () => {
+        const { bridge } = await loadBridge();
+
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'collection.identityTag',
+            definition: collectionDefinition,
+            arguments: [{ field: 'id', components: ['github', 'task', '1'] }],
+        })).resolves.toEqual({
+            kind: 'data',
+            value: derivePluginCollectionIdentityTagV1({
+                accountEncryptionMode: 'plain',
+                material: null,
+                pluginId,
+                collectionId: 'tasks',
+                field: 'id',
+                components: ['github', 'task', '1'],
+            }),
+        });
+
+        await expect(bridge.handle({
+            kind: 'data',
+            operation: 'collection.identityTag',
+            definition: { ...collectionDefinition, id: 'other' },
+            arguments: [{ field: 'id', components: ['github', 'task', '1'] }],
+        })).resolves.toMatchObject({
+            kind: 'error',
+            error: { code: 'plugin_collection_undeclared' },
+        });
+    });
+
     it('uses the mounted same-plugin Data client for open/page/content-free-wakeup/close without exposing its cursor', async () => {
         const { bridge, changes, transport, invalidate } = await loadBridge();
 

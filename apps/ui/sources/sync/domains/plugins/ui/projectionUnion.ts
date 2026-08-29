@@ -7,7 +7,6 @@ import {
     type PluginUiSettingsGroupProjection,
     type PluginUiSettingsPageProjection,
     type PluginUiSessionHeaderActionProjection,
-    type PluginUiStructuredMessageProjection,
     type PluginUiPhysicalSurfacePlacementProjection,
     type PluginUiTranslationsProjection,
     type PluginVoiceProviderProjection,
@@ -300,7 +299,6 @@ function memberHasAdmittedContribution(input: Readonly<{
     }) !== null;
     const projection = input.member.projection;
     return Object.values(projection.translationsByPluginId).some(owns)
-        || Object.values(projection.structuredMessagesByKind).some(owns)
         || Object.values(projection.sessionHeaderActionsById).some(owns)
         || Object.values(projection.hostedWebById).some(owns)
         || Object.values(projection.reactNativeBundlesById).some(owns)
@@ -395,8 +393,6 @@ export function unionPluginUiProjections(
 
     const translationsByPluginId: Record<string, PluginUiTranslationsProjection> = {};
     const installedPackagesById: Record<string, PluginProjectionInstalledPackageV2> = {};
-    const structuredMessagesByKind: Record<string, PluginUiStructuredMessageProjection> = {};
-    const ambiguousStructuredMessageKinds = new Set<string>();
     const sessionHeaderActionsById: Record<string, PluginUiSessionHeaderActionProjection> = {};
     const hostedWebById: Record<string, PluginUiHostedWebProjection> = {};
     const reactNativeBundlesById: Record<string, PluginUiReactNativeBundleProjection> = {};
@@ -450,23 +446,6 @@ export function unionPluginUiProjections(
         for (const [pluginId, entry] of Object.entries(model.translationsByPluginId)) {
             const origin = originFor(entry);
             if (origin) publishFirstAdmitted(translationsByPluginId, pluginId, stamp(entry, origin));
-        }
-        for (const [kind, entry] of Object.entries(model.structuredMessagesByKind)) {
-            const origin = originFor(entry);
-            if (!origin || ambiguousStructuredMessageKinds.has(kind)) continue;
-            const published = structuredMessagesByKind[kind];
-            if (published !== undefined) {
-                // Another machine's copy of the SAME plugin's descriptor is a
-                // replica, not a competing claim: dropping the kind there would
-                // erase the renderer as soon as a second machine connected.
-                if (published.pluginId === entry.pluginId) continue;
-                // Two plugins claiming one transcript kind is ambiguous, exactly
-                // as it is inside a single machine's normalization.
-                delete structuredMessagesByKind[kind];
-                ambiguousStructuredMessageKinds.add(kind);
-                continue;
-            }
-            structuredMessagesByKind[kind] = stamp(entry, origin);
         }
         for (const [id, entry] of Object.entries(model.sessionHeaderActionsById)) {
             const origin = originFor(entry);
@@ -527,7 +506,6 @@ export function unionPluginUiProjections(
             ? generations[0]!
             : deriveUnionGeneration(admittedContributing);
     const entryCount = Object.keys(translationsByPluginId).length
-        + Object.keys(structuredMessagesByKind).length
         + Object.keys(sessionHeaderActionsById).length
         + Object.keys(hostedWebById).length
         + Object.keys(reactNativeBundlesById).length
@@ -562,7 +540,6 @@ export function unionPluginUiProjections(
         composerControlsById: Object.freeze({}),
         composerRegionsById: Object.freeze({}),
         translationsByPluginId: Object.freeze(translationsByPluginId),
-        structuredMessagesByKind: Object.freeze(structuredMessagesByKind),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
         hostedWebById: Object.freeze(hostedWebById),
         reactNativeBundlesById: Object.freeze(reactNativeBundlesById),

@@ -1,6 +1,7 @@
 import {
   type Metadata,
 } from '@/sync/domains/state/storageTypes';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 type SessionOwnerMetadataViewInput = Readonly<{
   metadataLayoutVersion?: number;
@@ -41,10 +42,11 @@ function readMetadataView(value: unknown): SessionOwnerMetadataViewRead {
 export function resolveSessionOwnerMetadataViewRead(
   session: SessionOwnerMetadataViewInput,
 ): SessionOwnerMetadataViewRead {
-  if ((session.metadataLayoutVersion ?? 0) === 0) {
+  const metadataLayoutVersion = readSessionMetadataLayoutVersion(session.metadataLayoutVersion);
+  if (metadataLayoutVersion === 0) {
     return readMetadataView(session.metadata);
   }
-  if (session.metadataLayoutVersion !== 1) {
+  if (metadataLayoutVersion !== 1) {
     return UNSUPPORTED_LAYOUT_VERSION;
   }
   return readMetadataView(session.ownerMetadataView);

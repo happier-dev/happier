@@ -302,9 +302,9 @@ describe('AutomationPluralEditorScreen', () => {
     });
 
     it('keeps target authoring with the outer Session composer in embedded mode', async () => {
-        const { AutomationPluralEditorScreen } = await import('./AutomationPluralEditorScreen');
+        const { AutomationTriggerEditor } = await import('./AutomationPluralEditorScreen');
         const screen = await renderScreen(
-            <AutomationPluralEditorScreen variant="embedded" value={createDraft()} onChange={() => {}} />,
+            <AutomationTriggerEditor value={createDraft()} onChange={() => {}} />,
         );
 
         expect(screen.findAllByType('AutomationRecipeComposer' as any)).toHaveLength(0);

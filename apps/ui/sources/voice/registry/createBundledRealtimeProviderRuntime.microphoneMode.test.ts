@@ -7,8 +7,12 @@ import { createBundledRealtimeProviderRuntime } from './createBundledRealtimePro
 
 type MicrophoneMode = 'host_webrtc' | 'host_pcm' | 'provider_managed';
 
-function createRuntimeForMode(mode: MicrophoneMode) {
+function createRuntimeForMode(
+  mode: MicrophoneMode,
+  input?: Readonly<{ setInputMuted?: (muted: boolean) => Promise<void> | void }>,
+) {
   let resources: VoiceConversationControllerDeps['resources'] | undefined;
+  let ownedAttemptId = 1;
   const mic = {
     ensurePermission: vi.fn(async () => undefined),
     ensureActive: vi.fn(async () => undefined),
@@ -18,12 +22,12 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     getStream: vi.fn(() => ({}) as MediaStream),
   };
   const acquireAudioMode = vi.fn(async () => ({ release: vi.fn(async () => undefined) }));
-  const setInputMuted = vi.fn(async () => undefined);
+  const setInputMuted = vi.fn(input?.setInputMuted ?? (async () => undefined));
   const controller: VoiceConversationController = {
     async start(input) {
       await resources?.prepare?.({
         controlSessionId: input.controlSessionId,
-        attemptId: 1,
+        attemptId: ownedAttemptId,
         request: {},
         signal: new AbortController().signal,
       });
@@ -35,7 +39,7 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     sendClientControl: vi.fn(async () => ({ status: 'sent' as const })),
     getActiveControlSessionId: vi.fn(() => null),
     getOwnedControlSessionId: vi.fn(() => 'voice-test'),
-    getOwnedAttemptId: vi.fn(() => 1),
+    getOwnedAttemptId: vi.fn(() => ownedAttemptId),
     requestReconnect: vi.fn(async () => false),
     playbackCursorMs: vi.fn(() => null),
     beginOutputInterruptionCandidate: vi.fn(() => 'unsupported' as const),
@@ -128,7 +132,11 @@ function createRuntimeForMode(mode: MicrophoneMode) {
       encodeTurnControl: vi.fn(() => null),
     },
     microphoneMode: mode,
-    ...(mode === 'provider_managed' ? { setInputMuted } : {}),
+    ...(
+      mode === 'provider_managed' || input?.setInputMuted
+        ? { setInputMuted }
+        : {}
+    ),
     createConnection: vi.fn(async () => { throw new Error('unused'); }),
     encodeToolResults: vi.fn(() => []),
     encodeToolContinuation: vi.fn(() => null),
@@ -137,7 +145,17 @@ function createRuntimeForMode(mode: MicrophoneMode) {
     resolveSurfaceCapabilities: vi.fn(() => null),
   } as never);
 
-  return { runtime, mic, acquireAudioMode, setInputMuted };
+  return {
+    runtime,
+    mic,
+    acquireAudioMode,
+    setInputMuted,
+    controller,
+    resources: () => resources,
+    setOwnedAttemptId(attemptId: number) {
+      ownedAttemptId = attemptId;
+    },
+  };
 }
 
 describe('createBundledRealtimeProviderRuntime microphone mode', () => {
@@ -182,5 +200,57 @@ describe('createBundledRealtimeProviderRuntime microphone mode', () => {
     expect(captureOrder).toBeDefined();
     expect(permissionOrder!).toBeLessThan(leaseOrder!);
     expect(leaseOrder!).toBeLessThan(captureOrder!);
+  });
+
+  it('retires host capture when a secondary provider mute hook rejects silence', async () => {
+    const webRtc = createRuntimeForMode('host_webrtc', {
+      setInputMuted: async (muted) => {
+        if (muted) throw new Error('secondary_capture_mute_rejected');
+      },
+    });
+    await webRtc.runtime.adapter.start({ sessionId: 'voice-test' });
+
+    await expect(webRtc.runtime.adapter.setMuted({
+      sessionId: 'voice-test',
+      muted: true,
+    })).rejects.toThrow('secondary_capture_mute_rejected');
+
+    expect(webRtc.mic.setMuted).toHaveBeenCalledWith(true);
+    expect(webRtc.controller.fail).toHaveBeenCalledWith('voice_input_mute_failed');
+  });
+
+  it('does not let a retired attempt mute operation block the fresh attempt', async () => {
+    let releaseOldMute!: () => void;
+    const oldMute = new Promise<void>((resolve) => { releaseOldMute = resolve; });
+    const providerCalls: boolean[] = [];
+    const providerManaged = createRuntimeForMode('provider_managed', {
+      setInputMuted: async (muted) => {
+        providerCalls.push(muted);
+        if (muted && providerCalls.filter(Boolean).length === 1) await oldMute;
+      },
+    });
+    await providerManaged.runtime.adapter.start({ sessionId: 'voice-test' });
+    const staleMute = providerManaged.runtime.adapter.setMuted({
+      sessionId: 'voice-test',
+      muted: true,
+    });
+    await vi.waitFor(() => expect(providerCalls).toEqual([false, true]));
+
+    await providerManaged.resources()?.release({
+      controlSessionId: 'voice-test',
+      attemptId: 1,
+      reason: { code: 'replaced' },
+    });
+    providerManaged.setOwnedAttemptId(2);
+    await providerManaged.runtime.adapter.start({ sessionId: 'voice-test' });
+    const currentMute = providerManaged.runtime.adapter.setMuted({
+      sessionId: 'voice-test',
+      muted: true,
+    });
+
+    await expect(currentMute).resolves.toBeUndefined();
+    expect(providerCalls).toEqual([false, true, false, true]);
+    releaseOldMute();
+    await expect(staleMute).resolves.toBeUndefined();
   });
 });

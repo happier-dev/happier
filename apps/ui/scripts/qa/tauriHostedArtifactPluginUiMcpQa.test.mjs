@@ -28,10 +28,10 @@ test('route probe reads the final router-owned location', () => {
 
 test('MCP envelopes unwrap to the returned Tauri value', () => {
   assert.deepEqual(unwrapTauriMcpValue({
-    content: [{ text: JSON.stringify({ kind: 'unavailable', code: 'desktop_hosted_artifact_platform_frame_unproved' }) }],
+    content: [{ text: JSON.stringify({ kind: 'unavailable', code: 'desktop_hosted_artifact_wayland_gtk_container_unimplemented' }) }],
   }), {
     kind: 'unavailable',
-    code: 'desktop_hosted_artifact_platform_frame_unproved',
+    code: 'desktop_hosted_artifact_wayland_gtk_container_unimplemented',
   });
 });
 

@@ -44,12 +44,11 @@ export function createBundledConversationUi(providerId: string): Readonly<{
 }> | null {
   const entry = getBundledVoiceProviderEntry(providerId);
   if (!entry || entry.kind !== 'voice.conversation-provider.v1') return null;
-  const presentation = entry.presentation;
   const rawSettingsOwner = resolveBundledVoiceProviderSettingsOwner(entry);
   if (!rawSettingsOwner) return null;
 
-  if (typeof presentation?.createSettingsSection !== 'function') return null;
-  const settingsDescriptor = presentation.createSettingsSection();
+  const settingsDescriptor = entry.providerSettings?.presentation;
+  if (!settingsDescriptor) return null;
   if (!isSettingsConfig(rawSettingsOwner.defaultConfig)) return null;
 
   const settingsOwner: GenericSettingsOwner = Object.freeze({

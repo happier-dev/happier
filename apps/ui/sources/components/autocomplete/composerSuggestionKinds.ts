@@ -46,6 +46,7 @@ import {
     type ComposerSuggestionKindId,
     type ComposerSuggestionTrigger,
 } from './composerSuggestionGrammar';
+import { COMPOSER_SUGGESTION_KIND_DEADLINE_MS } from './composerSuggestionDeadlines';
 
 /**
  * Composer suggestion registry — one owner for each kind's candidate resolution,
@@ -500,11 +501,14 @@ async function resolveComposerReferenceSuggestions(
 
     const expectedGeneration = String(host.projection.generation);
     const rowsByReference: Array<readonly AutocompleteSuggestion[] | null> = references.map(() => null);
+    const providerAbort = new AbortController();
+    const onContextAbort = () => providerAbort.abort();
+    context.signal?.addEventListener('abort', onContextAbort, { once: true });
     const publishCurrentRows = () => {
         if (context.signal?.aborted || !isComposerReferenceHostCurrent(host)) return;
         context.publish?.(collectComposerReferenceRows(rowsByReference, context.limit));
     };
-    const results = await Promise.allSettled(references.map(async (contribution, index) => {
+    const providerWork = references.map(async (contribution, index) => {
         const { reference } = contribution;
         if (context.signal?.aborted || !isComposerReferenceHostCurrent(host)) return null;
         const raw = await machineRpcWithServerScope<unknown, Readonly<{
@@ -524,7 +528,7 @@ async function resolveComposerReferenceSuggestions(
                 trigger: context.trigger,
                 query: context.scopedQuery,
             },
-            signal: context.signal,
+            signal: providerAbort.signal,
         });
         if (context.signal?.aborted || !isComposerReferenceHostCurrent(host)) return null;
 
@@ -546,11 +550,40 @@ async function resolveComposerReferenceSuggestions(
         rowsByReference[index] = rows;
         publishCurrentRows();
         return rows;
-    }));
+    });
+    const allProviders = Promise.allSettled(providerWork);
+    let deadlineElapsed = false;
+    const results = await Promise.race([
+        allProviders.then((value) => ({ kind: 'all' as const, value })),
+        new Promise<{ kind: 'partial'; value: readonly AutocompleteSuggestion[] }>((resolve) => {
+            const timer = setTimeout(() => {
+                deadlineElapsed = true;
+                const rows = collectComposerReferenceRows(rowsByReference, context.limit);
+                if (rows.length > 0) {
+                    providerAbort.abort();
+                    resolve({ kind: 'partial', value: rows });
+                }
+            }, COMPOSER_SUGGESTION_KIND_DEADLINE_MS);
+            allProviders.then(() => clearTimeout(timer), () => clearTimeout(timer));
+            providerWork.forEach((work) => {
+                void work.then(() => {
+                    if (!deadlineElapsed) return;
+                    const rows = collectComposerReferenceRows(rowsByReference, context.limit);
+                    if (rows.length > 0) {
+                        providerAbort.abort();
+                        resolve({ kind: 'partial', value: rows });
+                    }
+                }, () => {});
+            });
+        }),
+    ]);
+    context.signal?.removeEventListener('abort', onContextAbort);
+    if (results.kind === 'partial') return results.value;
+    const settledResults = results.value;
     if (context.signal?.aborted || !isComposerReferenceHostCurrent(host)) return [];
 
     let firstFailure: unknown;
-    for (const result of results) {
+    for (const result of settledResults) {
         if (result.status === 'rejected') {
             firstFailure ??= result.reason;
         }

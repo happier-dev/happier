@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { pickAndStageComposerMedia } from '@/sync/domains/transfers/ops/pickAndStageComposerMedia';
 import type {
+    claimComposerContent,
     getComposerMediaContentAvailability,
     inspectComposerContent,
     releaseComposerContent,
@@ -32,6 +33,9 @@ const inspectComposerContentSpy = vi.hoisted(() => (
 const releaseComposerContentSpy = vi.hoisted(() => (
     vi.fn<typeof releaseComposerContent>(async () => ({ success: true } as const))
 ));
+const claimComposerContentSpy = vi.hoisted(() => (
+    vi.fn<typeof claimComposerContent>(async () => ({ status: 'claimed', newlyAcquired: true } as const))
+));
 
 vi.mock('@/sync/domains/transfers/ops/pickAndStageComposerMedia', () => ({
     pickAndStageComposerMedia: pickAndStageComposerMediaSpy,
@@ -41,6 +45,7 @@ vi.mock('@/sync/domains/transfers/runtime/transferRuntime', () => ({
     getComposerMediaContentAvailability: getComposerMediaContentAvailabilitySpy,
     inspectComposerContent: inspectComposerContentSpy,
     releaseComposerContent: releaseComposerContentSpy,
+    claimComposerContent: claimComposerContentSpy,
 }));
 
 import {
@@ -202,6 +207,7 @@ describe('composer presentation host handlers', () => {
         getComposerMediaContentAvailabilitySpy.mockClear();
         inspectComposerContentSpy.mockClear();
         releaseComposerContentSpy.mockClear();
+        claimComposerContentSpy.mockClear();
     });
 
     it('does not advertise Composer observation without this mount’s snapshot publisher', () => {
@@ -289,7 +295,7 @@ describe('composer presentation host handlers', () => {
                 executionTarget: { serverId: 'server-stale', machineId: 'machine-1' },
             },
         ]) {
-            expect(handlers.applyComposer!(request('applyComposer', {
+            await expect(handlers.applyComposer!(request('applyComposer', {
                 ref: sessionRef,
                 transaction: {
                     expectedRevision: 3,
@@ -304,7 +310,7 @@ describe('composer presentation host handlers', () => {
                         content: { kind: 'stagedMedia', handle },
                     }],
                 },
-            }))).toEqual({
+            }))).resolves.toEqual({
                 status: 'invalidOperation',
                 operationIndex: 0,
                 reason: 'staged_media_handle_mismatch',
@@ -317,10 +323,11 @@ describe('composer presentation host handlers', () => {
 
         await Promise.resolve();
         expect(releaseComposerContentSpy).not.toHaveBeenCalled();
+        expect(claimComposerContentSpy).not.toHaveBeenCalled();
         handlers.dispose();
     });
 
-    it('admits a declaration-owned staged handle for the current mounted target through the shared attachment transaction', () => {
+    it('admits a declaration-owned staged handle for the current mounted target through the shared attachment transaction', async () => {
         const target = createTarget(createSnapshot());
         cleanups.push(registerComposerPresentationTarget(sessionRef, target));
         const handlers = createComposerPresentationHostHandlers({
@@ -333,7 +340,7 @@ describe('composer presentation host handlers', () => {
             executionTarget: composerMediaExecutionTarget,
         });
 
-        expect(handlers.applyComposer!(request('applyComposer', {
+        await expect(handlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: {
                 expectedRevision: 3,
@@ -348,10 +355,17 @@ describe('composer presentation host handlers', () => {
                     content: { kind: 'stagedMedia', handle: composerMediaHandle },
                 }],
             },
-        }))).toEqual({
+        }))).resolves.toEqual({
             status: 'applied',
             revision: 4,
             attachmentInstanceIds: ['host-created-issue-42'],
+        });
+        // Publication claimed the handle at the transfer store under the exact
+        // (composer, attachmentInstanceId) the draft recorded — id created
+        // first, claim before commit.
+        expect(claimComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, {
+            composer: sessionRef,
+            attachmentInstanceId: 'host-created-issue-42',
         });
         expect(handlers.readComposer!(request('readComposer', { ref: sessionRef }))).toMatchObject({
             status: 'ready',
@@ -362,6 +376,329 @@ describe('composer presentation host handlers', () => {
                 }],
             },
         });
+        handlers.dispose();
+    });
+
+    it('carries cancellation into delayed staged-media claim and releases only this attempt’s new claim before commit', async () => {
+        const target = createTarget(createSnapshot());
+        cleanups.push(registerComposerPresentationTarget(sessionRef, target));
+        const cancellation = new AbortController();
+        let finishClaim!: () => void;
+        const claimStarted = new Promise<void>((resolve) => {
+            claimComposerContentSpy.mockImplementationOnce(async () => {
+                resolve();
+                await new Promise<void>((finish) => {
+                    finishClaim = finish;
+                });
+                return { status: 'claimed', newlyAcquired: true } as const;
+            });
+        });
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+        });
+
+        const applying = handlers.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 3,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: { kind: 'stagedMedia', handle: composerMediaHandle },
+                }],
+            },
+        }), { signal: cancellation.signal });
+        await claimStarted;
+        expect(claimComposerContentSpy.mock.calls[0]?.[2]).toEqual({ signal: cancellation.signal });
+        cancellation.abort();
+        finishClaim();
+
+        await expect(applying).resolves.toEqual({
+            code: 'unavailable',
+            diagnostics: ['composer_apply_cancelled'],
+        });
+        expect(target.readSnapshot).toBeDefined();
+        expect(target.readSnapshot!().attachments).toEqual([]);
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, {
+            claimant: {
+                composer: sessionRef,
+                attachmentInstanceId: 'host-created-issue-42',
+            },
+        });
+        handlers.dispose();
+    });
+
+    it('refuses late staged-media claim settlement after surface retirement without releasing a rejoined claim', async () => {
+        const target = createTarget(createSnapshot());
+        cleanups.push(registerComposerPresentationTarget(sessionRef, target));
+        let current = true;
+        let finishClaim!: () => void;
+        const claimStarted = new Promise<void>((resolve) => {
+            claimComposerContentSpy.mockImplementationOnce(async () => {
+                resolve();
+                await new Promise<void>((finish) => {
+                    finishClaim = finish;
+                });
+                return { status: 'claimed', newlyAcquired: false } as const;
+            });
+        });
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+            isCurrent: () => current,
+        });
+
+        const applying = handlers.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 3,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: { kind: 'stagedMedia', handle: composerMediaHandle },
+                }],
+            },
+        }));
+        await claimStarted;
+        current = false;
+        finishClaim();
+
+        await expect(applying).resolves.toEqual({
+            code: 'stale_surface',
+            diagnostics: ['plugin_surface_retired'],
+        });
+        expect(target.readSnapshot).toBeDefined();
+        expect(target.readSnapshot!().attachments).toEqual([]);
+        expect(releaseComposerContentSpy).not.toHaveBeenCalled();
+        handlers.dispose();
+    });
+
+    it('rechecks the exact document target immediately before committing a settled staged-media claim', async () => {
+        const target = createTarget(createSnapshot());
+        const unregister = registerComposerPresentationTarget(sessionRef, target);
+        cleanups.push(unregister);
+        const replacement = createTarget(createSnapshot());
+        claimComposerContentSpy.mockImplementationOnce(async () => {
+            unregister();
+            cleanups.push(registerComposerPresentationTarget(sessionRef, replacement));
+            return { status: 'claimed', newlyAcquired: true } as const;
+        });
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+        });
+
+        await expect(handlers.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 3,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: { kind: 'stagedMedia', handle: composerMediaHandle },
+                }],
+            },
+        }))).resolves.toEqual({ status: 'composerUnavailable' });
+        expect(target.readSnapshot).toBeDefined();
+        expect(target.readSnapshot!().attachments).toEqual([]);
+        expect(replacement.readSnapshot).toBeDefined();
+        expect(replacement.readSnapshot!().attachments).toEqual([]);
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, {
+            claimant: {
+                composer: sessionRef,
+                attachmentInstanceId: 'host-created-issue-42',
+            },
+        });
+        handlers.dispose();
+    });
+
+    it('rejects a second document claiming the same staged handle with a typed custody conflict', async () => {
+        // Document A attached the handle first; its publication claimed it at
+        // the transfer store. Document B's publication of the same handle must
+        // refuse typed, leave B's draft unchanged, and never release A's claim.
+        claimComposerContentSpy
+            .mockResolvedValueOnce({ status: 'claimed', newlyAcquired: true })
+            .mockResolvedValueOnce({ status: 'claimedElsewhere' });
+        const targetA = createTarget(createSnapshot());
+        cleanups.push(registerComposerPresentationTarget(sessionRef, targetA));
+        const targetB = createTarget(createSnapshot({ ref: otherSessionRef }));
+        cleanups.push(registerComposerPresentationTarget(otherSessionRef, targetB));
+        const makeHandlers = () => createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+        });
+        const handlersA = makeHandlers();
+        const handlersB = makeHandlers();
+
+        const stagedTransaction = {
+            expectedRevision: 3,
+            operations: [{
+                kind: 'attachment.add' as const,
+                attachmentLocalId: 'issue',
+                value: {
+                    key: '42',
+                    value: { issueId: 42 },
+                    presentation: { label: 'Issue #42' },
+                },
+                content: { kind: 'stagedMedia' as const, handle: composerMediaHandle },
+            }],
+        };
+        await expect(handlersA.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: stagedTransaction,
+        }))).resolves.toEqual({
+            status: 'applied',
+            revision: 4,
+            attachmentInstanceIds: ['host-created-issue-42'],
+        });
+
+        await expect(handlersB.applyComposer!(request('applyComposer', {
+            ref: otherSessionRef,
+            transaction: stagedTransaction,
+        }))).resolves.toEqual({
+            status: 'invalidOperation',
+            operationIndex: 0,
+            reason: 'staged_media_custody_conflict',
+        });
+        expect(targetB.readSnapshot).toBeDefined();
+        expect(targetB.readSnapshot!()).toMatchObject({ revision: 3, attachments: [] });
+        // B's refused publication released nothing: A's custody stands.
+        expect(releaseComposerContentSpy).not.toHaveBeenCalled();
+        // A's removal is the same claimant and releases exactly once.
+        await expect(handlersA.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 4,
+                operations: [{ kind: 'attachment.remove', instanceId: 'host-created-issue-42' }],
+            },
+        }))).resolves.toEqual({ status: 'applied', revision: 5 });
+        await Promise.resolve();
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, {
+            claimant: {
+                composer: sessionRef,
+                attachmentInstanceId: 'host-created-issue-42',
+            },
+        });
+        handlersA.dispose();
+        handlersB.dispose();
+    });
+
+    it('releases a publication claim it created when the document owner rejects the commit', async () => {
+        // A claim admitted but never published must not strand: the losing
+        // side of a revision race gives the custody back instead of blocking
+        // every later document from attaching the same handle.
+        const target = {
+            ...createTarget(createSnapshot()),
+            commitDocument: (): ComposerTransactionResultV1 => ({ status: 'conflict', currentRevision: 9 }),
+        };
+        cleanups.push(registerComposerPresentationTarget(sessionRef, target));
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+        });
+
+        await expect(handlers.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 3,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: { kind: 'stagedMedia', handle: composerMediaHandle },
+                }],
+            },
+        }))).resolves.toEqual({ status: 'conflict', currentRevision: 9 });
+        expect(claimComposerContentSpy).toHaveBeenCalledTimes(1);
+        await Promise.resolve();
+        expect(releaseComposerContentSpy).toHaveBeenCalledWith(composerMediaHandle, {
+            claimant: {
+                composer: sessionRef,
+                attachmentInstanceId: 'host-created-issue-42',
+            },
+        });
+        handlers.dispose();
+    });
+
+    it('does not release restart-rejoined custody when the document owner rejects the commit', async () => {
+        claimComposerContentSpy.mockResolvedValueOnce({ status: 'claimed', newlyAcquired: false });
+        const target = {
+            ...createTarget(createSnapshot()),
+            commitDocument: (): ComposerTransactionResultV1 => ({ status: 'conflict', currentRevision: 9 }),
+        };
+        cleanups.push(registerComposerPresentationTarget(sessionRef, target));
+        const handlers = createComposerPresentationHostHandlers({
+            owner: {
+                identity: { pluginId: 'acme.fixture', localId: 'composer-tools' },
+                immutableGenerationId: 'generation-1',
+                surfaceInstanceKey: 'mounted-1',
+            },
+            transactionApplier: createIssueAttachmentTransactionApplier(),
+            executionTarget: composerMediaExecutionTarget,
+        });
+
+        await expect(handlers.applyComposer!(request('applyComposer', {
+            ref: sessionRef,
+            transaction: {
+                expectedRevision: 3,
+                operations: [{
+                    kind: 'attachment.add',
+                    attachmentLocalId: 'issue',
+                    value: {
+                        key: '42',
+                        value: { issueId: 42 },
+                        presentation: { label: 'Issue #42' },
+                    },
+                    content: { kind: 'stagedMedia', handle: composerMediaHandle },
+                }],
+            },
+        }))).resolves.toEqual({ status: 'conflict', currentRevision: 9 });
+        expect(releaseComposerContentSpy).not.toHaveBeenCalled();
         handlers.dispose();
     });
 
@@ -724,7 +1061,7 @@ describe('composer presentation host handlers', () => {
         handlers.dispose();
     });
 
-    it('serves active, read, watch, and revision-checked apply through the registered semantic document', () => {
+    it('serves active, read, watch, and revision-checked apply through the registered semantic document', async () => {
         const target = createTarget(createSnapshot({
             state: {
                 focused: true,
@@ -756,31 +1093,31 @@ describe('composer presentation host handlers', () => {
             ref: sessionRef,
         }), { signal: subscription.signal })).toBeNull();
 
-        expect(handlers.applyComposer!(request('applyComposer', {
+        await expect(handlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: {
                 expectedRevision: 3,
                 operations: [{ kind: 'text.set', text: 'changed' }],
             },
-        }))).toEqual({ status: 'applied', revision: 4 });
+        }))).resolves.toEqual({ status: 'applied', revision: 4 });
         expect(published).toEqual([{
             subscriptionId: 'watch-1',
             snapshot: expect.objectContaining({ ref: sessionRef, text: 'changed', revision: 4 }),
         }]);
 
         subscription.abort();
-        expect(handlers.applyComposer!(request('applyComposer', {
+        await expect(handlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: {
                 expectedRevision: 4,
                 operations: [{ kind: 'text.set', text: 'after-dispose' }],
             },
-        }))).toEqual({ status: 'applied', revision: 5 });
+        }))).resolves.toEqual({ status: 'applied', revision: 5 });
         expect(published).toHaveLength(1);
         handlers.dispose();
     });
 
-    it('does not let a retired watch cancellation dispose a replacement using the same generic resource id', () => {
+    it('does not let a retired watch cancellation dispose a replacement using the same generic resource id', async () => {
         const target = createTarget(createSnapshot());
         cleanups.push(registerComposerPresentationTarget(sessionRef, target));
         const published: Array<Readonly<{ subscriptionId: string; snapshot: ComposerSnapshotV1 }>> = [];
@@ -808,13 +1145,13 @@ describe('composer presentation host handlers', () => {
         }), { signal: replacementSubscription.signal })).toBeNull();
 
         retiredSubscription.abort();
-        expect(handlers.applyComposer!(request('applyComposer', {
+        await expect(handlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: {
                 expectedRevision: 3,
                 operations: [{ kind: 'text.set', text: 'replacement still live' }],
             },
-        }))).toEqual({ status: 'applied', revision: 4 });
+        }))).resolves.toEqual({ status: 'applied', revision: 4 });
 
         expect(published).toEqual([{
             subscriptionId: 'watch-1',
@@ -823,7 +1160,7 @@ describe('composer presentation host handlers', () => {
         handlers.dispose();
     });
 
-    it('uses only the mount-bound projection to authorize attachment mutations', () => {
+    it('uses only the mount-bound projection to authorize attachment mutations', async () => {
         const target = createTarget(createSnapshot());
         cleanups.push(registerComposerPresentationTarget(sessionRef, target));
         const attachmentTransaction = {
@@ -840,10 +1177,10 @@ describe('composer presentation host handlers', () => {
         };
         const directHandlers = createHandlers();
 
-        expect(directHandlers.applyComposer!(request('applyComposer', {
+        await expect(directHandlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: attachmentTransaction,
-        }))).toMatchObject({
+        }))).resolves.toMatchObject({
             status: 'invalidOperation',
             reason: 'attachment_authority_mismatch',
         });
@@ -856,7 +1193,7 @@ describe('composer presentation host handlers', () => {
             },
             transactionApplier: createIssueAttachmentTransactionApplier(),
         });
-        expect(handlers.applyComposer!(request('applyComposer', {
+        expect(await handlers.applyComposer!(request('applyComposer', {
             ref: sessionRef,
             transaction: attachmentTransaction,
         }))).toEqual({

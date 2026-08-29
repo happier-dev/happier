@@ -3022,7 +3022,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('clears in-flight changed references when the accepted Main Session text clears', async () => {
+    it('retains a reference-only edit made after the accepted Main Session snapshot', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -3147,8 +3147,11 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
-            expect(readComposerPresentationSnapshot(sessionRef)?.references).toEqual([]);
-            expect(agentInput.props.value).toBe('');
+            expect(readComposerPresentationSnapshot(sessionRef)?.references).toEqual(expect.arrayContaining([
+                expect.objectContaining({ ref: 'partner:accepted', token: '@accepted.ts' }),
+                expect.objectContaining({ ref: newerMention.ref, token: newerMention.token }),
+            ]));
+            expect(agentInput.props.value).toBe('Use @accepted.ts and @newer.ts');
         } finally {
             act(() => {
                 tree?.unmount();

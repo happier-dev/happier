@@ -537,6 +537,8 @@ function readCollectionRowCommandPendingState(input: Readonly<{
 export function DeclarativePluginSurface(props: Readonly<{
     /** Complete mounted environment shared by every declarative root family. */
     environment?: HappierUiEnvironment;
+    /** Only dynamic document mounts have the host activity provider. */
+    useSharedSpinner?: boolean;
     pluginId: string;
     model: unknown;
     machineId?: string | null;
@@ -1271,6 +1273,7 @@ export function DeclarativePluginSurface(props: Readonly<{
         direction: props.environment?.localization.direction,
         contrast: props.contrast,
         minimumTouchTarget,
+        useSharedSpinner: props.useSharedSpinner,
         resolveAction,
         renderField,
         renderCollectionList,

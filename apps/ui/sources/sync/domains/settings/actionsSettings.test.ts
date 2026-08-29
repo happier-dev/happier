@@ -23,6 +23,24 @@ describe('actionsSettings', () => {
         expect(isActionEnabledInState(state, 'subagents.plan.start' as any, { surface: 'mcp' } as any)).toBe(false);
     });
 
+    it('preserves valid sibling policy when one Action row is malformed', async () => {
+        const { isActionEnabledInState } = await import('./actionsSettings');
+        const state: any = {
+            settings: {
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'session.message.send': { enabled: false },
+                        'session.stop': { disabledSurfaces: 'api' },
+                    },
+                },
+            },
+        };
+
+        expect(isActionEnabledInState(state, 'session.message.send', { surface: 'ui' } as any)).toBe(false);
+        expect(isActionEnabledInState(state, 'session.stop', { surface: 'cli' } as any)).toBe(false);
+    });
+
     it('treats review.start as an execution-runs-gated action', async () => {
         const { isActionEnabledInState } = await import('./actionsSettings');
 

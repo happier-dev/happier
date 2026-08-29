@@ -8,6 +8,7 @@ import { renderScreen } from '@/dev/testkit';
 import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
 import { VoiceComposerPlanetMount } from '@/components/voice/composer/VoiceComposerPlanetMount';
 import { VoiceOrbAppShellMount } from '@/components/voice/orb/VoiceOrbAppShellMount';
+import type { VoiceAttemptControlProjection } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { VoiceHorizon } from '@/components/voice/surface/presentations/VoiceHorizon';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
 import { tLoose } from '@/text';
@@ -68,7 +69,7 @@ const attemptControl = vi.hoisted(() => ({
         onPrimaryAction: vi.fn(),
         openConversationSessionId: null as string | null,
         onOpenConversation: vi.fn(),
-    },
+    } as VoiceAttemptControlProjection,
 }));
 
 vi.mock('@/components/voice/attempt/useVoiceAttemptControl', () => ({
@@ -199,6 +200,66 @@ describe('one Voice announcer for the whole app shell', () => {
         } finally {
             await screen.unmount();
             resetVoiceDiagnosticsRuntimeStatusForTests();
+        }
+    });
+
+    it('projects microphone, mute, and recovery facts into the one app announcer', async () => {
+        const original = attemptControl.current;
+        const screen = await renderScreen(
+            <VoiceEnergyProvider
+                state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
+                previewTimeMs={1_100}
+            >
+                <VoiceAnnouncer />
+            </VoiceEnergyProvider>,
+        );
+
+        try {
+            attemptControl.current = {
+                ...attemptControl.current,
+                muted: true,
+                capturing: false,
+                micStateLabel: 'Microphone muted',
+            };
+            await screen.update(
+                <VoiceEnergyProvider
+                    state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
+                    previewTimeMs={1_100}
+                >
+                    <VoiceAnnouncer />
+                </VoiceEnergyProvider>,
+            );
+            expect(screen.findByTestId(VOICE_ANNOUNCER_TEST_ID)?.props.accessibilityLabel)
+                .toBe('Microphone muted');
+
+            attemptControl.current = {
+                ...attemptControl.current,
+                availability: 'recoverable',
+                live: false,
+                canStop: false,
+                canMute: false,
+                primaryAction: 'recover',
+                primaryActionLabel: 'Retry',
+                primaryActionHint: 'Retry',
+                recoveryAvailable: true,
+                recoveryLabel: 'Retry',
+                surfaceState: 'error',
+                tone: 'error',
+            };
+            await screen.update(
+                <VoiceEnergyProvider
+                    state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
+                    previewTimeMs={1_100}
+                >
+                    <VoiceAnnouncer />
+                </VoiceEnergyProvider>,
+            );
+            expect(screen.findByTestId(VOICE_ANNOUNCER_TEST_ID)?.props.accessibilityLabel)
+                .toContain('Retry');
+            expect(screen.tree.root.findAllByProps({ accessibilityLiveRegion: 'polite' })).toHaveLength(1);
+        } finally {
+            attemptControl.current = original;
+            await screen.unmount();
         }
     });
 });

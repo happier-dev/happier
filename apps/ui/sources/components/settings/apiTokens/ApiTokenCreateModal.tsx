@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Animated, Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
+import { HappierItemGroupBehavior, useHappierItemGroupItemBehavior } from '@happier-dev/plugin-ui/presentation';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -177,6 +178,71 @@ const stylesheet = StyleSheet.create((theme) => ({
         left: 0,
     },
 }));
+
+type WebKeyboardEvent = Readonly<{
+    key?: string;
+    nativeEvent?: Readonly<{ key?: string }>;
+    preventDefault?(): void;
+    stopPropagation?(): void;
+}>;
+
+type ApiTokenExpiryPresetOptionProps = Readonly<{
+    preset: ApiTokenExpiryPreset;
+    selected: boolean;
+    disabled: boolean;
+    itemGroupRadioIndex?: number;
+    accessibilityRole?: 'radio';
+    onPress(): void;
+}>;
+
+/** Preserves the token modal pill treatment while using ItemGroup's shared radio behavior. */
+function ApiTokenExpiryPresetOption(props: ApiTokenExpiryPresetOptionProps): React.ReactElement {
+    const styles = stylesheet;
+    const isWeb = Platform.OS === 'web';
+    const groupItem = useHappierItemGroupItemBehavior({
+        role: 'radio',
+        itemGroupRadioIndex: props.itemGroupRadioIndex,
+        disabled: props.disabled,
+    });
+    const onKeyDown = React.useCallback((event: WebKeyboardEvent) => {
+        if (!isWeb) return;
+        const key = event.nativeEvent?.key ?? event.key;
+        if (!key || !groupItem.onKeyDown(key)) return;
+        event.preventDefault?.();
+        event.stopPropagation?.();
+    }, [groupItem, isWeb]);
+    const webKeyDownProps = { onKeyDown: isWeb ? onKeyDown : undefined } as Record<string, unknown>;
+
+    return (
+        <Pressable
+            ref={groupItem.grouped ? groupItem.targetRef : undefined}
+            testID={'settings-api-tokens-expiry-' + props.preset}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: props.selected, disabled: props.disabled }}
+            role={isWeb ? 'radio' : undefined}
+            aria-checked={isWeb ? props.selected : undefined}
+            tabIndex={isWeb && groupItem.grouped
+                ? groupItem.tabStopIndex === props.itemGroupRadioIndex ? 0 : -1
+                : undefined}
+            disabled={props.disabled}
+            {...webKeyDownProps}
+            onPress={props.onPress}
+            style={(interactionState) => {
+                const webState = interactionState as typeof interactionState & { focused?: boolean };
+                return [
+                    styles.preset,
+                    props.selected ? styles.presetSelected : null,
+                    webState.focused === true ? styles.webFocusRing : null,
+                    { opacity: interactionState.pressed ? 0.7 : 1 },
+                ];
+            }}
+        >
+            <Text style={[styles.presetText, props.selected ? styles.presetTextSelected : null]}>
+                {t('settingsApiTokens.create.expiryOptions.' + props.preset)}
+            </Text>
+        </Pressable>
+    );
+}
 
 function ApiTokenCopyFeedbackContent(props: Readonly<{
     copied: boolean;
@@ -532,39 +598,33 @@ export function ApiTokenCreateModal(props: Readonly<{
                         </View>
                         <View>
                             <Text style={styles.label}>{t('settingsApiTokens.create.expiry')}</Text>
-                            <View
-                                style={styles.presets}
+                            <HappierItemGroupBehavior
                                 accessibilityRole="radiogroup"
                                 accessibilityLabel={t('settingsApiTokens.create.expiry')}
+                                selectableItemCount={EXPIRY_PRESETS.length}
+                                renderContent={(presets) => (
+                                    <View
+                                        style={styles.presets}
+                                        accessibilityRole={Platform.OS === 'web' ? undefined : 'radiogroup'}
+                                        accessibilityLabel={t('settingsApiTokens.create.expiry')}
+                                        role={Platform.OS === 'web' ? 'radiogroup' : undefined}
+                                        aria-label={Platform.OS === 'web' ? t('settingsApiTokens.create.expiry') : undefined}
+                                    >
+                                        {presets}
+                                    </View>
+                                )}
                             >
-                                {EXPIRY_PRESETS.map((preset) => {
-                                    const selected = state.createDraft.expiryPreset === preset;
-                                    return (
-                                        <Pressable
-                                            key={preset}
-                                            testID={`settings-api-tokens-expiry-${preset}`}
-                                            accessibilityRole="radio"
-                                            accessibilityState={{ checked: selected, disabled: state.createPending }}
-                                            aria-checked={Platform.OS === 'web' ? selected : undefined}
-                                            disabled={state.createPending}
-                                            onPress={() => props.controller.setCreateDraft({ ...state.createDraft, expiryPreset: preset })}
-                                            style={(interactionState) => {
-                                                const webState = interactionState as typeof interactionState & { focused?: boolean };
-                                                return [
-                                                    styles.preset,
-                                                    selected ? styles.presetSelected : null,
-                                                    webState.focused === true ? styles.webFocusRing : null,
-                                                    { opacity: interactionState.pressed ? 0.7 : 1 },
-                                                ];
-                                            }}
-                                        >
-                                            <Text style={[styles.presetText, selected ? styles.presetTextSelected : null]}>
-                                                {t(`settingsApiTokens.create.expiryOptions.${preset}`)}
-                                            </Text>
-                                        </Pressable>
-                                    );
-                                })}
-                            </View>
+                                {EXPIRY_PRESETS.map((preset) => (
+                                    <ApiTokenExpiryPresetOption
+                                        key={preset}
+                                        accessibilityRole="radio"
+                                        preset={preset}
+                                        selected={state.createDraft.expiryPreset === preset}
+                                        disabled={state.createPending}
+                                        onPress={() => props.controller.setCreateDraft({ ...state.createDraft, expiryPreset: preset })}
+                                    />
+                                ))}
+                            </HappierItemGroupBehavior>
                         </View>
                         <View style={styles.guidanceRow}>
                             <Text style={styles.guidanceText}>{t('settingsApiTokens.create.actionSettingsPrefix')}</Text>

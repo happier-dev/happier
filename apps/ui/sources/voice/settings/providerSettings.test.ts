@@ -7,7 +7,6 @@ import {
 import { getBundledVoiceProviderEntry } from '@/voice/registry/internalContributions';
 import {
   BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-  BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
 } from '@/voice/registry/generatedBundledVoiceEntries';
 import { VoiceLocalConversationSchema } from '@/voice/adapters/localConversation/settings';
 import { createVoiceProviderSettingsCatalog } from './providerSettings';
@@ -20,13 +19,11 @@ describe('voice provider settings catalog', () => {
   const elevenLabsProviderId = 'happier.voice.elevenlabs/realtime-elevenlabs';
   const bundledCatalogInput = Object.freeze({
     bundledContributions: BUNDLED_FIRST_PARTY_VOICE_CONTRIBUTIONS,
-    bundledPresentations: BUNDLED_FIRST_PARTY_VOICE_PRESENTATIONS,
   });
   const emptyBundledCatalogInput = Object.freeze({
     bundledContributions: Object.freeze([]),
-    bundledPresentations: Object.freeze([]),
   });
-  it('uses public bundled settings for current parsing while retaining only legacy migration behavior', () => {
+  it('uses public bundled settings for current parsing without granting presentation callbacks persistence authority', () => {
     const catalog = createVoiceProviderSettingsCatalog({
       bundledContributions: [{
         pluginId: 'happier.voice.fixture',
@@ -64,17 +61,6 @@ describe('voice provider settings catalog', () => {
           },
         },
       }],
-      bundledPresentations: [{
-        providerId: 'happier.voice.fixture/public-settings-fixture',
-        settingsSectionId: 'voice.fixture.public-settings-fixture',
-        legacySettingsMigration: {
-            defaultLegacyConfig: { legacy: true },
-            legacyDefaultSelection: true,
-            migrateLegacy: () => ({ config: { billingMode: 'byo' }, root: {} }),
-            projectLegacy: () => null,
-            mergeLegacy: () => null,
-        },
-      }],
     });
     const owner = catalog.get('happier.voice.fixture/public-settings-fixture')!;
 
@@ -82,10 +68,7 @@ describe('voice provider settings catalog', () => {
     expect(owner.parseConfig({ billingMode: 'byo' })).toEqual({ billingMode: 'byo' });
     expect(owner.parseConfig({ mode: 'default', billingMode: 'byo', extra: true })).toBeNull();
     expect(owner.parseConfig({ mode: 'default', billingMode: 'byo' })).toBeNull();
-    expect(owner.migrateLegacy({ legacy: true })).toEqual({
-      config: { billingMode: 'byo' },
-      root: {},
-    });
+    expect(owner.migrateLegacy({ legacy: true })).toBeNull();
   });
 
   it('removes bundled settings behavior when disabled and restores it without retaining stale state', () => {
@@ -100,6 +83,32 @@ describe('voice provider settings catalog', () => {
       enabled.get(elevenLabsProviderId)?.defaultConfig,
     );
     expect(reEnabled.get(elevenLabsProviderId)).not.toBe(enabled.get(elevenLabsProviderId));
+  });
+
+  it('keeps the released ElevenLabs translator at the fixed Account Settings owner', () => {
+    const owner = createVoiceProviderSettingsCatalog(bundledCatalogInput).get(elevenLabsProviderId);
+    if (!owner) throw new Error('expected_released_elevenlabs_compatibility_owner');
+    const migrated = owner.migrateLegacy({
+      assistantLanguage: 'fr',
+      billingMode: 'byo',
+      byo: { agentId: 'agent_1', apiKey: { _isSecretValue: true, value: 'xi_legacy' } },
+      welcome: { enabled: true, mode: 'on_first_turn', templateId: 'hello' },
+      tts: { voiceSettings: { style: 0.35, useSpeakerBoost: true, speed: 0.6 } },
+    });
+
+    expect(owner.defaultLegacyConfig).toMatchObject({
+      tts: { voiceId: 'EST9Ui6982FZPSi7gCHi' },
+    });
+    expect(migrated).toMatchObject({
+      config: { billingMode: 'byo', agentId: 'agent_1', tts: { voiceSettings: { speed: null } } },
+      root: {
+        assistantLanguage: 'fr',
+        welcome: { enabled: true, mode: 'on_first_turn', templateId: 'hello' },
+      },
+    });
+    expect((migrated?.config as any).tts.voiceSettings).not.toHaveProperty('style');
+    expect((migrated?.config as any).tts.voiceSettings).not.toHaveProperty('useSpeakerBoost');
+    expect(JSON.stringify(migrated?.config)).not.toContain('xi_legacy');
   });
 
   it('keeps built-in settings owners available independently of bundled packages', () => {

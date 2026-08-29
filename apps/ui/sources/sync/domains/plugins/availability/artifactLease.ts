@@ -18,7 +18,14 @@ import type {
     PluginAccountAvailabilityArtifactSlot,
     PluginAccountAvailabilityReader,
 } from './reader';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import {
+    areServerAccountScopesEqual,
+    type ServerAccountScope,
+} from '@/sync/domains/scope/serverAccountScope';
+import {
+    derivePluginUiPersistentArtifactAccountKey,
+    derivePluginUiPersistentArtifactKey,
+} from '@/sync/domains/plugins/ui/artifactByteCache';
 import type {
     PluginUiPersistentArtifactFile,
     PluginUiPersistentArtifactIdentity,
@@ -238,6 +245,243 @@ export type PluginArtifactLeasePersistentScope = Readonly<{
     isCurrent: () => boolean;
     removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
 }>;
+
+/**
+ * Account-qualified physical Artifact custody. This is deliberately separate
+ * from the RN executable/materialization cache: it owns only persistent bytes,
+ * Account generations, exact-key deletion ordering, and forget quarantine.
+ */
+export type PluginArtifactPersistentAccountOperation = Readonly<{
+    scope: ServerAccountScope;
+    isCurrent: () => boolean;
+    isCacheCurrent: () => boolean;
+    isOpen: () => boolean;
+    readPersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<PluginUiPersistentArtifactRecord | null>;
+    writePersistentArtifact: (record: PluginUiPersistentArtifactRecord) => Promise<boolean>;
+    awaitPendingPersistentArtifactRemoval: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
+    removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<void>;
+    removePersistentArtifactsForAccount: () => Promise<void>;
+    release: () => void;
+}>;
+
+export type PluginArtifactPersistentCustody = Readonly<{
+    store: PluginUiPersistentArtifactStore | undefined;
+    capturePersistentAccountOperation: (input: Readonly<{
+        scope: ServerAccountScope;
+        isCurrent: () => boolean;
+    }>) => PluginArtifactPersistentAccountOperation | null;
+    readPersistentArtifact: (identity: PluginUiPersistentArtifactIdentity) => Promise<PluginUiPersistentArtifactRecord | null>;
+    writePersistentArtifact: (record: PluginUiPersistentArtifactRecord) => Promise<boolean>;
+    removePersistentArtifact: (identity: PluginUiPersistentArtifactIdentity, isCurrent?: () => boolean) => Promise<void>;
+    removePersistentArtifactsForAccount: (scope: ServerAccountScope) => Promise<void>;
+    bindAccountLifetime: (lifetime: Readonly<{
+        scope: ServerAccountScope;
+        isCurrent: () => boolean;
+        onRetire: (cancel: () => void) => Readonly<{ dispose: () => void }>;
+    }>) => void;
+    isAccountCurrent: (scope: ServerAccountScope) => boolean;
+    retireAccount: (scope: ServerAccountScope) => Promise<void>;
+}>;
+
+function clonePersistentArtifactRecord(record: PluginUiPersistentArtifactRecord): PluginUiPersistentArtifactRecord {
+    return Object.freeze({
+        ...record,
+        persistentIdentity: Object.freeze({
+            ...record.persistentIdentity,
+            accountScope: Object.freeze({ ...record.persistentIdentity.accountScope }),
+        }),
+        bytes: new Uint8Array(record.bytes),
+        files: Object.freeze(record.files.map((file) => Object.freeze({
+            ...file,
+            bytes: new Uint8Array(file.bytes),
+        }))),
+    });
+}
+
+export function createPluginArtifactPersistentCustody(options: Readonly<{
+    store?: PluginUiPersistentArtifactStore;
+    revokeNativeArtifactResourcesForAccount?: (scope: ServerAccountScope) => void;
+    onDiagnostic?: (code: string) => void;
+}> = {}): PluginArtifactPersistentCustody {
+    const store = options.store;
+    const retiredAccounts = new Set<string>();
+    const quarantinedAccounts = new Set<string>();
+    const quarantinedKeys = new Set<string>();
+    const pendingAccountCleanups = new Map<string, Promise<void>>();
+    const pendingRemovals = new Map<string, Promise<void>>();
+    const generations = new Map<string, number>();
+    const activeOperations = new Map<string, number>();
+    const lifetimes = new Map<string, Readonly<{ dispose: () => void }>>();
+
+    const accountKey = (scope: ServerAccountScope) => derivePluginUiPersistentArtifactAccountKey(scope);
+    const artifactKey = derivePluginUiPersistentArtifactKey;
+    const generation = (key: string) => generations.get(key) ?? 0;
+    const activeCount = (key: string) => activeOperations.get(key) ?? 0;
+    const usable = (scope: ServerAccountScope) => {
+        const key = accountKey(scope);
+        return !retiredAccounts.has(key) && !quarantinedAccounts.has(key);
+    };
+    const awaitRemoval = async (key: string) => {
+        while (true) {
+            const pending = pendingRemovals.get(key);
+            if (!pending) return;
+            await pending.catch(() => undefined);
+        }
+    };
+
+    let removeAccount: (scope: ServerAccountScope) => Promise<void> = async () => undefined;
+    const capture = (input: Readonly<{ scope: ServerAccountScope; isCurrent: () => boolean }>): PluginArtifactPersistentAccountOperation | null => {
+        const key = accountKey(input.scope);
+        const capturedGeneration = generation(key);
+        const isCacheCurrent = () => generation(key) === capturedGeneration && usable(input.scope);
+        const isCurrent = () => {
+            try { return input.isCurrent() && isCacheCurrent(); } catch { return false; }
+        };
+        if (!store || !isCurrent()) return null;
+        activeOperations.set(key, activeCount(key) + 1);
+        let open = true;
+        const operation: PluginArtifactPersistentAccountOperation = Object.freeze({
+            scope: input.scope,
+            isCurrent,
+            isCacheCurrent,
+            isOpen: () => open,
+            readPersistentArtifact: async (identity) => {
+                if (!open || !isCurrent() || !areServerAccountScopesEqual(identity.accountScope, input.scope)) return null;
+                const key = artifactKey(identity);
+                if (quarantinedKeys.has(key)) {
+                    void removePersistentArtifact(identity).catch(() => undefined);
+                    return null;
+                }
+                await awaitRemoval(key);
+                if (!open || !isCurrent()) return null;
+                const record = await store.read(identity).catch(() => {
+                    options.onDiagnostic?.('plugin_ui_artifact_cache_read_failed');
+                    return null;
+                });
+                return open && isCurrent() && record ? clonePersistentArtifactRecord(record) : null;
+            },
+            writePersistentArtifact: async (record) => {
+                if (!open || !isCurrent() || !areServerAccountScopesEqual(record.persistentIdentity.accountScope, input.scope)) return false;
+                const key = artifactKey(record.persistentIdentity);
+                await awaitRemoval(key);
+                if (!open || !isCurrent()) return false;
+                try {
+                    await store.write(clonePersistentArtifactRecord(record));
+                    quarantinedKeys.delete(key);
+                } catch {
+                    options.onDiagnostic?.('plugin_ui_artifact_cache_write_failed');
+                    return false;
+                }
+                return open && isCurrent();
+            },
+            awaitPendingPersistentArtifactRemoval: async (identity) => {
+                if (areServerAccountScopesEqual(identity.accountScope, input.scope)) await awaitRemoval(artifactKey(identity));
+            },
+            removePersistentArtifact: (identity) => areServerAccountScopesEqual(identity.accountScope, input.scope)
+                ? removePersistentArtifact(identity, () => open && isCurrent())
+                : Promise.resolve(),
+            removePersistentArtifactsForAccount: () => removeAccount(input.scope),
+            release: () => {
+                if (!open) return;
+                open = false;
+                const remaining = activeCount(key) - 1;
+                if (remaining > 0) activeOperations.set(key, remaining);
+                else {
+                    activeOperations.delete(key);
+                    if (quarantinedAccounts.has(key) && !pendingAccountCleanups.has(key)) void removeAccount(input.scope);
+                }
+            },
+        });
+        return operation;
+    };
+
+    const removePersistentArtifact = async (identity: PluginUiPersistentArtifactIdentity, isCurrent: () => boolean = () => true): Promise<void> => {
+        const operation = capture({ scope: identity.accountScope, isCurrent });
+        if (!store || !operation) return;
+        const key = artifactKey(identity);
+        const preceding = pendingRemovals.get(key);
+        let removal!: Promise<void>;
+        removal = (async () => {
+            try {
+                if (preceding) await preceding.catch(() => undefined);
+                if (!operation.isCurrent()) return;
+                await store.remove(identity);
+                quarantinedKeys.delete(key);
+            } catch {
+                options.onDiagnostic?.('plugin_ui_artifact_cache_delete_failed');
+                quarantinedKeys.add(key);
+            } finally {
+                operation.release();
+            }
+        })().finally(() => {
+            if (pendingRemovals.get(key) === removal) pendingRemovals.delete(key);
+        });
+        pendingRemovals.set(key, removal);
+        await removal;
+    };
+
+    removeAccount = async (scope) => {
+        if (!store) return;
+        const key = accountKey(scope);
+        const existing = pendingAccountCleanups.get(key);
+        if (existing) return existing;
+        quarantinedAccounts.add(key);
+        const startedWithActiveOperations = activeCount(key) > 0;
+        let succeeded = false;
+        let cleanup!: Promise<void>;
+        cleanup = Promise.resolve().then(() => store.removeAccount(scope)).then(() => {
+            succeeded = true;
+            if (!startedWithActiveOperations && activeCount(key) === 0) quarantinedAccounts.delete(key);
+        }).catch(() => {
+            options.onDiagnostic?.('plugin_ui_artifact_account_cache_delete_failed');
+        }).finally(() => {
+            if (pendingAccountCleanups.get(key) === cleanup) pendingAccountCleanups.delete(key);
+            if (succeeded && startedWithActiveOperations && quarantinedAccounts.has(key) && activeCount(key) === 0) void removeAccount(scope);
+        });
+        pendingAccountCleanups.set(key, cleanup);
+        return cleanup;
+    };
+
+    const retireAccount = async (scope: ServerAccountScope): Promise<void> => {
+        const key = accountKey(scope);
+        generations.set(key, generation(key) + 1);
+        retiredAccounts.add(key);
+        lifetimes.get(key)?.dispose();
+        lifetimes.delete(key);
+        options.revokeNativeArtifactResourcesForAccount?.(scope);
+    };
+
+    return Object.freeze({
+        store,
+        capturePersistentAccountOperation: capture,
+        readPersistentArtifact: async (identity) => {
+            const operation = capture({ scope: identity.accountScope, isCurrent: () => true });
+            if (!operation) return null;
+            try { return await operation.readPersistentArtifact(identity); } finally { operation.release(); }
+        },
+        writePersistentArtifact: async (record) => {
+            const operation = capture({ scope: record.persistentIdentity.accountScope, isCurrent: () => true });
+            if (!operation) return false;
+            try { return await operation.writePersistentArtifact(record); } finally { operation.release(); }
+        },
+        removePersistentArtifact,
+        removePersistentArtifactsForAccount: removeAccount,
+        bindAccountLifetime: (lifetime) => {
+            const key = accountKey(lifetime.scope);
+            lifetimes.get(key)?.dispose();
+            if (!lifetime.isCurrent()) {
+                retiredAccounts.add(key);
+                lifetimes.delete(key);
+                return;
+            }
+            retiredAccounts.delete(key);
+            if (quarantinedAccounts.has(key) && !pendingAccountCleanups.has(key) && activeCount(key) === 0) void removeAccount(lifetime.scope);
+            lifetimes.set(key, lifetime.onRetire(() => { void retireAccount(lifetime.scope); }));
+        },
+        isAccountCurrent: (scope) => !retiredAccounts.has(accountKey(scope)),
+        retireAccount,
+    });
+};
 
 function persistentIdentityFor(input: Readonly<{
     scope: ServerAccountScope;

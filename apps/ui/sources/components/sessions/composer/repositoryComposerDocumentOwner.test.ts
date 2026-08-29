@@ -35,6 +35,32 @@ describe('repositoryComposerDocumentOwner', () => {
         expect(after.revision).toBe(before.revision);
         expect(listener).not.toHaveBeenCalled();
     });
+
+    it('converts structured mentions to positional references when replacing a document', () => {
+        const sessionId = 'session-replace-document-mentions';
+        const ref = { kind: 'session', sessionId } as const;
+        const owner = createRepositoryComposerDocumentOwner({ scope, ref });
+        const mention = {
+            kind: 'mention' as const,
+            ref: 'vendor:issue-42',
+            tokenText: '@issue',
+            start: 0,
+            end: 6,
+            label: 'Issue',
+        };
+
+        owner.replaceDocument({
+            text: '@issue',
+            structuredInputMentions: [mention],
+            composerAttachments: [],
+        });
+
+        expect(owner.read().document.structuredInputMentions).toEqual([mention]);
+        expect(getSessionDraftSnapshot(scope, { kind: 'session', sessionId })
+            ?.document.composer.mentions.value).toEqual([
+            expect.objectContaining({ ref: 'vendor:issue-42', tokenText: '@issue', start: 0, end: 6 }),
+        ]);
+    });
 });
 
 describe('repositoryComposerDocumentOwner Session revision', () => {
@@ -107,11 +133,54 @@ describe('repositoryComposerDocumentOwner Session revision', () => {
             patch: { text: 'A', mentions: [], attachments: [] },
         });
 
-        expect(owner.clearAccepted(currentness)).toBe(false);
+        expect(owner.clearAccepted(currentness).changed).toBe(false);
         expect(owner.read().document).toEqual({
             text: 'A',
             structuredInputMentions: [],
             composerAttachments: [],
+        });
+    });
+
+    it('clears current text and mentions while retaining a newer attachment edit', () => {
+        const sessionId = 'session-partial-clear';
+        const ref = { kind: 'session', sessionId } as const;
+        writeExistingSessionDraft({
+            scope,
+            sessionId,
+            patch: {
+                text: '@issue draft',
+                mentions: [{ kind: 'happier.file', ref: 'file:issue-42', tokenText: '@issue', start: 0, end: 6 }],
+                attachments: [],
+            },
+        });
+        const owner = createRepositoryComposerDocumentOwner({ scope, ref });
+        const currentness = owner.captureCurrentness();
+        const attachment = {
+            v: 1 as const,
+            instanceId: 'attachment-42',
+            attachment: { pluginId: 'acme.issues', localId: 'issue' },
+            key: '42',
+            value: { issueId: 42 },
+            presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+        };
+        expect(owner.apply(owner.read().revision, {
+            text: owner.read().document.text,
+            references: [{ kind: 'happier.file', ref: 'file:issue-42', token: '@issue', start: 0, end: 6 }],
+            attachments: [attachment],
+        }).status).toBe('applied');
+
+        expect(owner.clearAccepted(currentness)).toEqual({
+            changed: true,
+            changes: {
+                text: true,
+                structuredInputMentions: true,
+                composerAttachments: false,
+            },
+        });
+        expect(owner.read().document).toEqual({
+            text: '',
+            structuredInputMentions: [],
+            composerAttachments: [attachment],
         });
     });
 

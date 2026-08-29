@@ -22,7 +22,7 @@ import {
   type VoiceHistoryRow,
   type VoiceHistorySnapshot,
 } from './voiceHistoryConsumer';
-import { registerSessionTranscriptRetentionConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
+import { registerSessionRealtimeTranscriptConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { saveVoiceHistoryExportArtifact } from './voiceHistoryExportTarget';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { ExternalSessionOperationAccessibilityStatus } from '@/components/sessions/external/progress/ExternalSessionOperationAccessibilityStatus';
@@ -184,7 +184,7 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
 
   React.useEffect(() => {
     if (!snapshot.sessionId) return;
-    return registerSessionTranscriptRetentionConsumer(snapshot.sessionId);
+    return registerSessionRealtimeTranscriptConsumer(snapshot.sessionId);
   }, [snapshot.sessionId]);
 
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
@@ -283,7 +283,8 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
       );
       if (!confirmed) return;
       setActionMessage(null);
-      await consumer.clear();
+      const result = await consumer.clear();
+      if (!result.cleared) return;
       queryRef.current = '';
       setQuery('');
       setLoadState('ready');

@@ -1,6 +1,7 @@
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { areSessionListRenderableExternalSessionIdentitiesEqual } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 import type {
     SessionListCacheEntryV1,
@@ -92,7 +93,8 @@ function areSessionListCacheEntriesEqual(
 ): boolean {
     return (
         nextEntry.seq === previousEntry.seq
-        && (nextEntry.metadataLayoutVersion ?? 0) === (previousEntry.metadataLayoutVersion ?? 0)
+        && readSessionMetadataLayoutVersion(nextEntry.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(previousEntry.metadataLayoutVersion)
         && nextEntry.metadataVersion === previousEntry.metadataVersion
         && nextEntry.agentStateVersion === previousEntry.agentStateVersion
         && nextEntry.updatedAt === previousEntry.updatedAt
@@ -200,7 +202,8 @@ function shouldPreserveSessionMetadataFromPreviousEntry(
 ): previousEntry is SessionListCacheEntryV1 {
     return session.metadata == null
         && session.metadataUnavailable !== true
-        && (session.metadataLayoutVersion ?? 0) === (previousEntry?.metadataLayoutVersion ?? 0)
+        && readSessionMetadataLayoutVersion(session.metadataLayoutVersion)
+            === readSessionMetadataLayoutVersion(previousEntry?.metadataLayoutVersion)
         && isSessionListCacheEntryMetadataUsable(previousEntry);
 }
 
@@ -233,7 +236,7 @@ export function buildSessionListCacheEntryFromRenderable(
     const preserveMetadata = shouldPreserveSessionMetadataFromPreviousEntry(session, previousEntry);
     const preserveAgentState = shouldPreserveSessionAgentStateFromPreviousEntry(session, previousEntry);
     const preserveReadState = shouldPreserveSessionReadStateFromPreviousEntry(session, previousEntry);
-    const legacyMetadata = (session.metadataLayoutVersion ?? 0) === 0
+    const legacyMetadata = readSessionMetadataLayoutVersion(session.metadataLayoutVersion) === 0
         ? session.metadata
         : null;
     const nextEntry: SessionListCacheEntryV1 = {

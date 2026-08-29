@@ -99,6 +99,8 @@ export type ChatListItem =
         dismissible: boolean;
         actions: readonly Readonly<{ pluginId: string; localId: string; label: string | null }>[];
         freshness: 'current' | 'stale';
+        /** Number of valid Resource rows omitted behind the bounded aggregate tail. */
+        aggregateHiddenCount?: number;
         createdAt: number;
     };
 

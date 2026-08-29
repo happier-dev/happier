@@ -27,17 +27,20 @@ export type SendTranscriptSelectionWriteInitialPromptInput = Readonly<{
     prompt: SessionInitialPromptV1;
 }>;
 
-export type SendTranscriptSelectionAppendNewSessionDraftInput = Readonly<{
+export type SendTranscriptSelectionOpenNewSessionInput = Readonly<{
     promptText: string;
-    createdAtMs: number;
-    sourceMessageIds: ReadonlyArray<string>;
-    sourceSessionId: string;
     sourceServerId: string;
+    placement?: Readonly<{
+        kind: 'exactTarget';
+        serverId: string;
+        machineId: string;
+    }>;
 }>;
 
 export async function sendTranscriptSelectionToSession(params: Readonly<{
     sourceSessionId: string;
     sourceServerId: string;
+    sourceMachineId: string | null;
     sourceSessionName: string | null;
     selectedMessages: ReadonlyArray<TranscriptSelectionToolbarMessage>;
     bulkCopyFormat: TranscriptBulkCopyFormat;
@@ -46,9 +49,9 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     nowMs: () => number;
     chooseDestinationSessionId: (input: SendTranscriptSelectionChooseDestinationInput) => Promise<SendTranscriptSelectionDestination | null>;
     writeInitialPrompt: (input: SendTranscriptSelectionWriteInitialPromptInput) => Promise<void>;
-    appendNewSessionDraft: (input: SendTranscriptSelectionAppendNewSessionDraftInput) => string | null;
+    /** Opens New Session through its canonical seed/hydration owner. */
+    openNewSession: (input: SendTranscriptSelectionOpenNewSessionInput) => Promise<boolean>;
     navigateToSession: (input: Readonly<{ sessionId: string; serverId: string }>) => void;
-    navigateToNewSession: (draftId: string) => void;
 }>): Promise<boolean> {
     if (params.selectedMessages.length === 0) return false;
     const formattedMessages = formatSelectedMessagesForClipboard(params.selectedMessages, {
@@ -80,16 +83,19 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     };
 
     if (destination.kind === 'newSession') {
-        const draftId = params.appendNewSessionDraft({
+        return params.openNewSession({
             promptText,
-            createdAtMs: prompt.createdAtMs,
-            sourceMessageIds: prompt.sourceMessageIds ?? [],
-            sourceSessionId: params.sourceSessionId,
             sourceServerId: params.sourceServerId,
+            ...(params.sourceMachineId === null
+                ? {}
+                : {
+                    placement: {
+                        kind: 'exactTarget' as const,
+                        serverId: params.sourceServerId,
+                        machineId: params.sourceMachineId,
+                    },
+                }),
         });
-        if (!draftId) return false;
-        params.navigateToNewSession(draftId);
-        return true;
     }
 
     await params.writeInitialPrompt({

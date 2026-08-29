@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const token = {
     tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
     label: 'CI deploy',
-    displayPrefix: 'hap_dd03e74b',
+    displayPrefix: 'hap_v1_dd03e74b',
     createdAt: '2026-08-22T12:00:00.000Z',
     lastUsedAt: null,
     expiresAt: '2026-11-20T12:00:00.000Z',

@@ -114,6 +114,7 @@ import {
     useLocalSetting,
 } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { ExternalSessionRuntimePresentation } from '../presentation/externalSessionRuntimePresentation';
 import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
@@ -915,7 +916,7 @@ const SessionItemContent = React.memo(
             const debugSession = fullSession ?? resolvedSession;
             const debugMetadata = fullSession
                 ? readSessionOwnerMetadataView(fullSession)
-                : (resolvedSession.metadataLayoutVersion ?? 0) === 0
+                : readSessionMetadataLayoutVersion(resolvedSession.metadataLayoutVersion) === 0
                     ? resolvedSession.metadata
                     : null;
             const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata) ?? '';

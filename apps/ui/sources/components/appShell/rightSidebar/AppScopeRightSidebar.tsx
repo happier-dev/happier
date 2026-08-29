@@ -141,6 +141,7 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
         selectedDestination: effectiveSelectedDestination,
         tabs,
         projectionPhase,
+        scope: 'app',
     }), [effectiveSelectedDestination, projectionPhase, scopeState?.right.activeTabId, tabs]);
     const resolvedActiveTabId = tabSelection.kind === 'available' ? tabSelection.tab.id : null;
     const activeTab = tabSelection.kind === 'available' ? tabSelection.tab : null;
@@ -219,8 +220,13 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
     // intent merely because no tab entry is presently renderable.
     if (
         tabs.length === 0
-        && tabSelection.kind === 'unavailable'
-        && tabSelection.reason === 'right_sidebar_destination_unavailable'
+        && (
+            tabSelection.kind === 'none'
+            || (
+                tabSelection.kind === 'unavailable'
+                && tabSelection.reason === 'right_sidebar_destination_unavailable'
+            )
+        )
     ) {
         return (
             <View testID={props.testID} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
@@ -240,7 +246,14 @@ function AppScopeRightSidebarContent(props: AppScopeRightSidebarProps): React.Re
                 testIDPrefix="app-scope-right-sidebar-tab"
             />
             <View style={{ flex: 1 }}>
-                {tabSelection.kind === 'unresolved' ? (
+                {tabSelection.kind === 'none' ? (
+                    <View
+                        pointerEvents="none"
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                        style={{ flex: 1 }}
+                    />
+                ) : tabSelection.kind === 'unresolved' ? (
                     <PaneLoadingFallback color={theme.colors.text.secondary} />
                 ) : tabSelection.kind === 'unavailable' ? (
                     <PluginReactNativeUnavailable diagnostics={[tabSelection.reason]} />

@@ -283,6 +283,38 @@ describe('localVoiceTtsController', () => {
         expect(openAiCompatSpeakSpy).not.toHaveBeenCalled();
     });
 
+    it('leaves an unset daemon voice null so the selected pack runtime owns its declared default', async () => {
+        resolveDaemonVoiceInferenceExecutionSpy.mockResolvedValueOnce('daemon');
+        daemonTtsControllerSpeakSpy.mockResolvedValueOnce(undefined);
+        const controller = createLocalVoiceTtsController();
+
+        await controller.speak({
+            sessionId: 'session-default-voice',
+            text: 'use the declared default',
+            settings: {},
+            tts: {
+                provider: 'local_neural',
+                localNeural: {
+                    model: 'kokoro',
+                    assetId: 'acme.voice/tts-pack',
+                    voiceId: null,
+                    speed: 1,
+                    execution: 'daemon',
+                },
+                autoSpeakReplies: true,
+                bargeInEnabled: true,
+            },
+            networkTimeoutMs: 15_000,
+            registerPlaybackStopper: () => () => {},
+            onSpeaking: vi.fn(),
+        });
+
+        expect(daemonTtsControllerSpeakSpy).toHaveBeenCalledWith(expect.objectContaining({
+            packId: 'acme.voice/tts-pack',
+            voiceId: null,
+        }));
+    });
+
   it.each([
     'machine_unreachable',
     'runtime_unavailable',

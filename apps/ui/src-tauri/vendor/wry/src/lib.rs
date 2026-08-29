@@ -699,7 +699,7 @@ struct WebViewAttributes<'a> {
   /// [window.open]: https://developer.mozilla.org/en-US/docs/Web/API/Window/open
   pub new_window_req_handler: Option<Box<dyn Fn(String, NewWindowFeatures) -> NewWindowResponse>>,
 
-  /// Whether this webview may grant WebKit media-capture requests.
+  /// Whether this webview may grant media-capture requests.
   ///
   /// This is enabled by default for backward compatibility. Hosts embedding
   /// arbitrary remote content should disable it for that child view rather
@@ -1337,10 +1337,10 @@ impl<'a> WebViewBuilder<'a> {
     self
   }
 
-  /// Sets whether WebKit media-capture requests may be granted for this view.
+  /// Sets whether camera and microphone capture requests may be granted for
+  /// this view on macOS, iOS, Windows, and Linux.
   ///
-  /// This currently affects macOS and iOS, where Wry owns the `WKUIDelegate`
-  /// permission decision. It defaults to `true` for compatibility.
+  /// It defaults to `true` for compatibility.
   pub fn with_media_capture_enabled(mut self, enabled: bool) -> Self {
     self.attrs.media_capture_enabled = enabled;
     self

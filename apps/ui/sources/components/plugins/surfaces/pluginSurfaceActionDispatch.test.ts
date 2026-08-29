@@ -16,6 +16,11 @@ import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+    defineProtocolLiteral,
+    defineProtocolObject,
+    defineProtocolString,
+} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
+import {
     PluginUiArtifactsManifestEntryV1Schema,
     PluginHostedWebBridgeEnvelopeV1Schema,
     PluginUiExecuteActionRequestV1Schema,
@@ -173,6 +178,8 @@ function createClientTargetAction(input: Readonly<{
     identity: PluginContributionIdentityV1;
     dangerLevel?: 'safe' | 'writesRemote';
     surfaces?: readonly ('ui' | 'voice')[];
+    inputSchema?: object;
+    outputSchema?: object;
 }>): PluginProjectedActionV2 {
     const dangerLevel = input.dangerLevel ?? 'safe';
     return PluginProjectedActionV2Schema.parse({
@@ -194,6 +201,8 @@ function createClientTargetAction(input: Readonly<{
         serverIdentityId: CLIENT_ACTION_ORIGIN.serverIdentityId,
         materializationRef: CLIENT_ACTION_ORIGIN.materializationRef,
         dangerLevel,
+        ...(input.inputSchema ? { inputSchema: input.inputSchema } : {}),
+        ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
         ...(dangerLevel === 'safe'
             ? {}
             : {
@@ -211,6 +220,8 @@ function createClientActionActivation(input: Readonly<{
     localId?: string;
     dangerLevel?: 'safe' | 'writesRemote';
     surfaces?: readonly ('ui' | 'voice')[];
+    inputSchema?: object;
+    outputSchema?: object;
     handler: PluginClientActionHandler;
 }>) {
     const localId = input.localId ?? 'refresh-index';
@@ -218,6 +229,8 @@ function createClientActionActivation(input: Readonly<{
         identity: { pluginId: CALLER_PLUGIN_ID, localId },
         dangerLevel: input.dangerLevel,
         surfaces: input.surfaces,
+        inputSchema: input.inputSchema,
+        outputSchema: input.outputSchema,
     });
     const identity = clientActionIdentity(localId);
     const projectedAction = Object.freeze({
@@ -508,6 +521,58 @@ describe('plugin-surface action branch selection', () => {
             })).not.toBeNull();
             expect(handler).toHaveBeenCalledTimes(1);
             expect(contributed).not.toHaveBeenCalled();
+        } finally {
+            await activation.composition.unload();
+        }
+    });
+
+    it('rehydrates manifest schemas for carrierless client Action dispatch', async () => {
+        const inputSchema = defineProtocolObject({
+            title: defineProtocolString({ minLength: 1 }),
+        }, { policy: 'additive-open/drop' }).jsonSchema;
+        const outputSchema = defineProtocolObject({
+            accepted: defineProtocolLiteral(true),
+        }, { policy: 'additive-open/drop' }).jsonSchema;
+        const handler = vi.fn(async (input: PluginUiJsonValueV1) => ({
+            accepted: true,
+            privateResult: (input as Readonly<{ title?: unknown }>).title,
+        }));
+        const clientHandler: PluginClientActionHandler = async (input, context) => {
+            expect(context).toBeDefined();
+            return handler(input);
+        };
+        const activation = createClientActionActivation({
+            handler: clientHandler,
+            inputSchema,
+            outputSchema,
+        });
+        const action = activation.action;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const registration = resolvePluginUiClientActionRegistration({
+                action,
+                projectionGeneration: CLIENT_ACTION_GENERATION,
+                platform: CLIENT_ACTION_TARGET.platform,
+                reader: activation.composition,
+            });
+            expect(registration).not.toBeNull();
+            if (!registration) throw new Error('client Action registration missing');
+            expect(registration.handler).not.toHaveProperty('inputParser');
+            expect(registration.handler).not.toHaveProperty('resultParser');
+
+            await expect(dispatchPluginSurfaceAction({
+                callerPluginId: CALLER_PLUGIN_ID,
+                action: 'refresh-index',
+                input: { title: 'Release', privateInput: true },
+                resolveContributedAction: resolveExactClientAction(action),
+                clientAction: { projectionGeneration: CLIENT_ACTION_GENERATION },
+            })).resolves.toEqual({
+                ok: true,
+                result: { accepted: true },
+            });
+
+            expect(handler).toHaveBeenCalledWith({ title: 'Release' });
         } finally {
             await activation.composition.unload();
         }

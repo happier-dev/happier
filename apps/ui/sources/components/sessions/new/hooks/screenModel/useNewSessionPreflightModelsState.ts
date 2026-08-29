@@ -53,6 +53,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     capabilityServerId: string;
     cwd?: string | null;
     probeContext?: NewSessionCapabilityProbeContext | null;
+    enabled?: boolean;
 }>): Readonly<{
     preflightModels: PreflightModelList | null;
     preflightModelsTargetKey: string | null;
@@ -158,6 +159,17 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     }, [preflightModels, refreshedAt]);
 
     React.useEffect(() => {
+        if (params.enabled === false) {
+            setPreflightModels(null);
+            preflightModelsRef.current = null;
+            preflightModelsCacheableRef.current = true;
+            setPreflightModelsTargetKey(null);
+            setProbePhase('idle');
+            setRefreshedAt(null);
+            refreshedAtRef.current = null;
+            lastScopeKeyRef.current = probeScopeKey;
+            return;
+        }
         if (!preflightModelsKey) {
             setPreflightModels(null);
             preflightModelsRef.current = null;
@@ -394,7 +406,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             cancelled = true;
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, backendTargetKey, modelSuccessCacheMaxAgeMs, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
+    }, [agentType, backendTargetForProbe, backendTargetKey, modelSuccessCacheMaxAgeMs, params.enabled, preflightModelsKey, probeScopeKey, refreshNonce, probeContextCapabilityParams]);
 
     const modelOptions = React.useMemo(
         () => {

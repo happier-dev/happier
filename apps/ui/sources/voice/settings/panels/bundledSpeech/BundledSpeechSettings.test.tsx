@@ -240,14 +240,24 @@ const credentialPresentation = {
   exists: true,
   credentialIdentity: 'account-secret-a' as string | null,
 };
+const connectedAccountSelection = Object.freeze({
+  kind: 'connectedAccount' as const,
+  target: Object.freeze({
+    kind: 'account' as const,
+    account: Object.freeze({
+      service: Object.freeze({ pluginId: 'acme.speech', localId: 'account' }),
+      accountId: 'account-a',
+    }),
+  }),
+});
 const credentialSourcePresentation: {
   selection:
     | Readonly<{ kind: 'none' }>
     | Readonly<{ kind: 'savedSecret' }>
-    | Readonly<{ kind: 'connectedAccount' }>;
+    | typeof connectedAccountSelection;
   usable: boolean;
 } = {
-  selection: { kind: 'connectedAccount' as const },
+  selection: connectedAccountSelection,
   usable: true,
 };
 
@@ -276,6 +286,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     storage: createLiveStorageStoreMock(() => ({
       settings: { voice: settingsActionState.voice } as never,
       settingsScope: null,
+      settingsVersion: settingsActionState.settingsVersion,
     })),
   });
 });
@@ -322,6 +333,10 @@ vi.mock('@/voice/credentials/CredentialItem', () => ({
   },
 }));
 
+vi.mock('@/voice/credentials/VoiceRawCredentialAccessReview', () => ({
+  VoiceRawCredentialAccessReview: (props: object) => React.createElement('VoiceRawCredentialAccessReview', props),
+}));
+
 vi.mock('../realtime/VoiceCredentialSourceField', () => ({
   VoiceCredentialSourceField: (props: {
     onStatusChanged?: (status: typeof credentialSourcePresentation) => void;
@@ -366,7 +381,7 @@ describe('BundledSpeechSettings', () => {
     executionMachine.machineLabel = 'Machine A';
     credentialPresentation.exists = true;
     credentialPresentation.credentialIdentity = 'account-secret-a';
-    credentialSourcePresentation.selection = { kind: 'connectedAccount' };
+    credentialSourcePresentation.selection = connectedAccountSelection;
     credentialSourcePresentation.usable = true;
     fetchCatalog.mockReset();
     fetchCatalog.mockImplementation(async (_entry: unknown, catalog: string): Promise<CatalogRows> => catalog === 'models'
@@ -849,7 +864,7 @@ describe('BundledSpeechSettings', () => {
     }));
   });
 
-  it('passes the trimmed descriptor-configured model when testing OpenAI-compatible TTS', async () => {
+  it('validates descriptor-configured OpenAI-compatible TTS settings without carrying them over RPC', async () => {
     const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
     const spec = createBundledLocalTtsProviderSpec(openAiCompatTtsEntry);
 
@@ -884,13 +899,13 @@ describe('BundledSpeechSettings', () => {
     expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
       entry: openAiCompatTtsEntry,
       input: 'Hello',
-      model: 'tts-1-hd',
-      voiceName: 'alloy',
     }));
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('voiceName');
     expect(playAudioBytesWithStopper).toHaveBeenCalledTimes(1);
   });
 
-  it('derives TTS test request fields from the contribution catalog correspondence', async () => {
+  it('validates contribution catalog correspondence without carrying it over RPC', async () => {
     const providerId = 'acme.external/catalog-tts';
     const entry = createVoiceProviderRegistry({
       bundledContributions: [{
@@ -969,9 +984,9 @@ describe('BundledSpeechSettings', () => {
     expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
       entry,
       input: 'Hello',
-      model: 'catalog-model',
-      voiceName: 'catalog-voice',
     }));
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('model');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('voiceName');
   });
 
   it('uses the descriptor-owned field as the TTS test prerequisite', async () => {
@@ -1055,7 +1070,7 @@ describe('BundledSpeechSettings', () => {
   });
 
   it.each([
-    ['a definitively selected Connected Account', { kind: 'connectedAccount' } as const, undefined],
+    ['a definitively selected Connected Account', connectedAccountSelection, undefined],
     ['an unresolved source selection', { kind: 'none' } as const, 'voice.speech.transcribe'],
   ])('routes multi-source speech SavedSecret edits through the source owner except for %s', async (
     _caseName,
@@ -1215,7 +1230,8 @@ describe('BundledSpeechSettings', () => {
     expect({
       sourceSelectors: rendered.tree.root.findAllByType('VoiceCredentialSourceField' as never).length,
       savedSecretEditors: rendered.tree.root.findAllByType('VoiceCredentialItem' as never).length,
-    }).toEqual({ sourceSelectors: 1, savedSecretEditors: 0 });
+      rawAccessReviews: rendered.tree.root.findAllByType('VoiceRawCredentialAccessReview' as never).length,
+    }).toEqual({ sourceSelectors: 1, savedSecretEditors: 0, rawAccessReviews: 1 });
   });
 
   it('refreshes the Google catalog for credential and execution-machine changes without publishing stale results', async () => {

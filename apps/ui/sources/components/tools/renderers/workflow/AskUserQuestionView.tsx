@@ -280,7 +280,7 @@ function resolveDeclaredAskUserQuestionSettingMutation(input: Readonly<{
     if (
         !declaredMutation
         || !candidate
-        || candidate.settingId !== declaredMutation.settingId
+        || candidate.settingId !== declaredMutation.settingId.localId
         || !declaredMutation.allowedValues.includes(candidate.value)
     ) {
         return null;
@@ -299,7 +299,7 @@ function resolveDeclaredAskUserQuestionSettingMutation(input: Readonly<{
             && group.target.agent.localId === identity.localId
         ))
         .flatMap((group) => group.fields
-            .filter((field) => field.key === candidate.settingId)
+            .filter((field) => field.key === candidate.settingId && group.scope.kind === declaredMutation.settingId.scope)
             .map((field) => ({ field, scope: group.scope })));
     if (matchingFieldEntries.length !== 1) return null;
     const { field, scope } = matchingFieldEntries[0]!;

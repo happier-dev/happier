@@ -34,6 +34,14 @@ export type PluginEventAutomationEditSeedObservation =
         }>;
     }>
     | Readonly<{
+        kind: 'socket';
+        watcherMaterializationRef: Readonly<{
+            machineId: string;
+            pluginId: string;
+            materializationId: string;
+        }>;
+    }>
+    | Readonly<{
         kind: 'durablePush';
         webhookEndpointId: PluginWebhookEndpointIdV1;
         webhookRoutingSourceInstanceId: string;
@@ -133,11 +141,11 @@ function readEditSeedObservation(
     privateDefinition: AutomationEventTriggerDefinitionStoredPayloadV1,
 ): PluginEventAutomationEditSeedObservation | null {
     const observation = trigger.observation;
-    if (observation.kind === 'checkpointedPull') {
+    if (observation.kind === 'checkpointedPull' || observation.kind === 'socket') {
         const watcher = observation.watcher;
         if (!watcher || watcher.pluginId !== trigger.eventRef.pluginId) return null;
         return Object.freeze({
-            kind: 'checkpointedPull' as const,
+            kind: observation.kind,
             watcherMaterializationRef: Object.freeze({
                 machineId: watcher.machineId,
                 machineInstallationId: watcher.machineInstallationId,
@@ -208,9 +216,9 @@ export function pluginEventAutomationEditSeedFromCurrentInput(
             sourceConfig: value.sourceConfig,
             displayLabel: value.displayLabel,
         }),
-        observation: value.observationTransport.kind === 'checkpointedPull'
+        observation: value.observationTransport.kind !== 'durablePush'
             ? Object.freeze({
-                kind: 'checkpointedPull' as const,
+                kind: value.observationTransport.kind,
                 watcherMaterializationRef: Object.freeze({ ...value.observationTransport.watcherMaterializationRef }),
             })
             : Object.freeze({
@@ -249,9 +257,9 @@ export function pluginEventAutomationEditSeedFromDraftInput(params: Readonly<{
             sourceConfig: params.value.sourceConfig,
             displayLabel: params.value.displayLabel,
         }),
-        observation: params.value.observationTransport.kind === 'checkpointedPull'
+        observation: params.value.observationTransport.kind !== 'durablePush'
             ? Object.freeze({
-                kind: 'checkpointedPull' as const,
+                kind: params.value.observationTransport.kind,
                 watcherMaterializationRef: Object.freeze({
                     ...params.value.observationTransport.watcherMaterializationRef,
                 }),

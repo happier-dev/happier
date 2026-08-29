@@ -1068,6 +1068,7 @@ export const fr = {
       event: ({ eventId }: { eventId: string }) => `Événement : ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `À la fin d’un tour · ${sessionId}`,
       noAutomaticTriggers: 'Aucun déclencheur automatique',
+      moreTriggers: ({ count }: { count: number }) => `+${count} de plus`,
       noNextRun: "Aucune exécution prévue",
       nextRun: ({ time }: { time: string }) => `Prochaine : ${time}`,
       nextRunPending: "Prochaine exécution en attente",
@@ -2954,6 +2955,10 @@ export const fr = {
   connectedServices: {
     accountScopeMismatchTitle: 'Change de compte serveur pour continuer',
     accountScopeMismatchDescription: 'Cette machine appartient au compte d’un autre serveur. Passe à ce compte serveur pour gérer ses comptes connectés.',
+    purposeTargets: {
+      requiredPrompt: 'Choisissez un compte ou un groupe',
+      legacyUnavailable: 'Ce serveur ne peut pas encore afficher les cibles de comptes connectés',
+    },
     fallbackName: "Service connecté",
     serviceNames: {
       claudeSubscription: "Abonnement Claude",
@@ -6549,6 +6554,10 @@ export const fr = {
       captureDurationExceeded: "La dictée a atteint la limite d’écoute de 60 secondes. Relance-la pour continuer.",
       transcriptionDeadlineExceeded: "La transcription a pris plus de 30 secondes. Réessaie avec une dictée plus courte.",
       transcriptLimitExceeded: "Le texte dicté est trop long pour le composeur. Essaie une dictée plus courte.",
+      transcriptionCredentialsRequired: "La dictée nécessite les identifiants du provider vocal sélectionné. Vérifie sa configuration, puis réessaie.",
+      transcriptionMachineUnavailable: "La machine de dictée ou le modèle vocal local est indisponible. Reconnecte-la ou vérifie le modèle sélectionné.",
+      transcriptionTransferFailed: "Happier n’a pas pu envoyer l’enregistrement à la machine de dictée. Vérifie la connexion, puis réessaie.",
+      transcriptionFailed: "Le provider vocal sélectionné n’a pas pu transcrire l’enregistrement. Réessaie ou vérifie sa configuration.",
       recordedAudioSizeUnavailable: "Happier n’a pas pu vérifier la taille de l’enregistrement. Enregistre à nouveau.",
       recordedAudioLimitExceeded: "L’enregistrement dépasse la limite de 8 Mo. Essaie une dictée plus courte.",
       microphoneOwnedByVoice: "Termine Voice avant de démarrer la dictée.",
@@ -11222,6 +11231,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "Historique des réglages",
+      footer: "Restaure les préférences du compte depuis un instantané enregistré. Les données d'application, les secrets et les identifiants conservent leurs valeurs actuelles.",
+      loading: "Chargement de l'historique…",
+      empty: "Aucun instantané enregistré pour le moment",
+      unavailable: "Historique indisponible",
+      entryTitle: ({ version }: { version: string }) => `Restaurer la version ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `Enregistré le ${recordedAt}`,
+      restoreConfirmTitle: "Restaurer les réglages ?",
+      restoreConfirmBody: "Les préférences du compte seront remplacées par les valeurs de l'instantané sélectionné.",
+      restoreConfirmAction: "Restaurer",
+      restoredTitle: "Réglages restaurés",
+      restoredBody: "Les préférences du compte ont été restaurées depuis l'instantané sélectionné.",
+      unchangedBody: "Les préférences actuelles du compte correspondent déjà à l'instantané sélectionné.",
+      conflictTitle: "Les réglages ont changé",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `Les réglages ont changé pendant la restauration (version actuelle ${currentVersion}). Rien n'a été écrit — consultez les réglages actuels puis réessayez.`,
+      outcomeUnknownBody: "Impossible de déterminer si la restauration est terminée. Consultez les réglages actuels avant de réessayer.",
+      invalidBody: "L'instantané sélectionné ne peut pas être restauré sans risque. Rien n'a été écrit.",
+      unavailableBody: "Impossible de restaurer l'instantané sélectionné. Rien n'a été écrit.",
+    },
     // Account settings screen
     accountInformation: "Informations du compte",
     status: "Statut",

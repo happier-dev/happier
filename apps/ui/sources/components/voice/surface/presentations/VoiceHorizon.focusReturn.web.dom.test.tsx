@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { VoiceEnergyProvider } from '@/components/voice/light/useVoiceEnergy';
 import type { VoiceSurfaceViewModel } from '@/components/voice/surface/useVoiceSurfaceModel';
+import { FocusReturnProvider, useFocusReturnFallbackRef } from '@/keyboard/focusReturn';
 
 import { VoiceHorizon } from './VoiceHorizon';
 
@@ -165,6 +166,40 @@ async function render(model: VoiceSurfaceViewModel): Promise<HTMLElement> {
     return container;
 }
 
+function FocusFallback(): React.ReactElement {
+    const fallbackRef = useFocusReturnFallbackRef<HTMLElement | null>();
+    return <button ref={(node) => { fallbackRef.current = node; }}>Outside Voice</button>;
+}
+
+async function renderWithFallback(
+    model: VoiceSurfaceViewModel | null,
+): Promise<HTMLElement> {
+    if (!container) {
+        container = document.createElement('div');
+        document.body.appendChild(container);
+        root = createRoot(container);
+    }
+    const activeRoot = root;
+    if (!activeRoot) throw new Error('root was not created');
+
+    act(() => {
+        activeRoot.render(
+            <FocusReturnProvider>
+                <FocusFallback />
+                {model ? (
+                    <VoiceEnergyProvider
+                        state={{ luminosity: 0.5, energized: true, direction: 'inward' }}
+                        previewTimeMs={1_100}
+                    >
+                        <VoiceHorizon model={model} />
+                    </VoiceEnergyProvider>
+                ) : null}
+            </FocusReturnProvider>,
+        );
+    });
+    return container;
+}
+
 describe('VoiceHorizon web DOM contract', () => {
     afterEach(async () => {
         const activeRoot = root;
@@ -228,6 +263,174 @@ describe('VoiceHorizon web DOM contract', () => {
         expect((statusBlock as HTMLElement).getAttribute('aria-label')).toContain('voiceAssistant.listening');
         expect((statusBlock as HTMLElement).hasAttribute('aria-expanded')).toBe(false);
         expect((statusBlock as HTMLElement).getAttribute('role')).not.toBe('button');
+    });
+
+    it('pins recovery inside the physical vessel and reserves its full first-frame target', async () => {
+        const control = {
+            ...buildAttemptControl(),
+            availability: 'recoverable' as const,
+            live: false,
+            canStart: false,
+            canStop: false,
+            canMute: false,
+            capturing: false,
+            primaryAction: 'recover' as const,
+            primaryActionLabel: 'A deliberately long translated recovery action',
+            primaryActionHint: 'A deliberately long translated recovery action',
+            recoveryAvailable: true,
+            recoveryLabel: 'A deliberately long translated recovery action',
+            surfaceState: 'error' as const,
+        };
+        const host = await render(buildModel({
+            attemptControl: control,
+            isMicCaptureActive: false,
+            startStopLabel: control.primaryActionLabel,
+        }));
+        const actions = host.querySelector<HTMLElement>('[data-testid="voice-surface-actions:sidebar"]');
+        const content = host.querySelector<HTMLElement>('[data-testid="voice-surface-content:sidebar"]');
+        expect(actions).toBeInstanceOf(HTMLElement);
+        expect(content).toBeInstanceOf(HTMLElement);
+
+        const actionsStyle = getComputedStyle(actions!);
+        expect(actionsStyle.position).toBe('absolute');
+        expect(actionsStyle.bottom).toBe('12px');
+        // Before native/web layout reports the wrapped label, recovery reserves
+        // a physical target plus its gap rather than the shorter meter-row floor.
+        expect(Number.parseFloat(getComputedStyle(content!).paddingBottom)).toBeGreaterThanOrEqual(64);
+        expect(host.querySelector('[aria-label="A deliberately long translated recovery action"]'))
+            .toBeInstanceOf(HTMLElement);
+    });
+
+    it('moves focus from a failed Start to recovery, then returns it when recovery retires', async () => {
+        const startControl = {
+            ...buildAttemptControl(),
+            availability: 'ready' as const,
+            live: false,
+            canStart: true,
+            canStop: false,
+            canMute: false,
+            capturing: false,
+            primaryAction: 'start' as const,
+            primaryActionLabel: 'Start Voice',
+            primaryActionHint: 'Start Voice',
+            surfaceState: 'idle' as const,
+        };
+        const host = await render(buildModel({
+            attemptControl: startControl,
+            isMicCaptureActive: false,
+            startStopLabel: 'Start Voice',
+        }));
+        const start = host.querySelector<HTMLElement>('[aria-label="Start Voice"]');
+        expect(start).toBeInstanceOf(HTMLElement);
+        start!.focus();
+        act(() => start!.click());
+
+        const recoverableControl = {
+            ...startControl,
+            availability: 'recoverable' as const,
+            canStart: false,
+            primaryAction: 'recover' as const,
+            primaryActionLabel: 'Retry',
+            primaryActionHint: 'Retry',
+            recoveryAvailable: true,
+            recoveryLabel: 'Retry',
+            surfaceState: 'error' as const,
+        };
+        await render(buildModel({ attemptControl: recoverableControl, startStopLabel: 'Retry' }));
+        const recovery = host.querySelector<HTMLElement>('[data-testid="voice-surface-recovery:sidebar"]');
+        expect(document.activeElement).toBe(recovery);
+
+        await render(buildModel({ attemptControl: startControl, startStopLabel: 'Start Voice' }));
+        expect(document.activeElement?.getAttribute('aria-label')).toBe('Start Voice');
+    });
+
+    it('returns recovery focus to the canonical fallback when Horizon unmounts', async () => {
+        const startControl = {
+            ...buildAttemptControl(),
+            availability: 'ready' as const,
+            live: false,
+            canStart: true,
+            canStop: false,
+            canMute: false,
+            capturing: false,
+            primaryAction: 'start' as const,
+            primaryActionLabel: 'Start Voice',
+            primaryActionHint: 'Start Voice',
+            surfaceState: 'idle' as const,
+        };
+        const host = await renderWithFallback(buildModel({
+            attemptControl: startControl,
+            isMicCaptureActive: false,
+            startStopLabel: 'Start Voice',
+        }));
+        const start = host.querySelector<HTMLElement>('[aria-label="Start Voice"]')!;
+        start.focus();
+        act(() => start.click());
+        await renderWithFallback(buildModel({
+            attemptControl: {
+                ...startControl,
+                availability: 'recoverable',
+                canStart: false,
+                primaryAction: 'recover',
+                primaryActionLabel: 'Retry',
+                primaryActionHint: 'Retry',
+                recoveryAvailable: true,
+                recoveryLabel: 'Retry',
+                surfaceState: 'error',
+            },
+            startStopLabel: 'Retry',
+        }));
+        expect(document.activeElement?.getAttribute('aria-label')).toBe('Retry');
+
+        await renderWithFallback(null);
+        expect(document.activeElement?.textContent).toBe('Outside Voice');
+    });
+
+    it('returns focus before a recovery action is replaced in place', async () => {
+        const startControl = {
+            ...buildAttemptControl(),
+            availability: 'ready' as const,
+            live: false,
+            canStart: true,
+            canStop: false,
+            canMute: false,
+            capturing: false,
+            primaryAction: 'start' as const,
+            primaryActionLabel: 'Start Voice',
+            primaryActionHint: 'Start Voice',
+            surfaceState: 'idle' as const,
+        };
+        const host = await renderWithFallback(buildModel({
+            attemptControl: startControl,
+            startStopLabel: 'Start Voice',
+        }));
+        const start = host.querySelector<HTMLElement>('[aria-label="Start Voice"]')!;
+        start.focus();
+        act(() => start.click());
+        const retryControl = {
+            ...startControl,
+            availability: 'recoverable' as const,
+            canStart: false,
+            primaryAction: 'recover' as const,
+            primaryActionLabel: 'Retry',
+            primaryActionHint: 'Retry',
+            recoveryAvailable: true,
+            recoveryLabel: 'Retry',
+            surfaceState: 'error' as const,
+        };
+        await renderWithFallback(buildModel({ attemptControl: retryControl, startStopLabel: 'Retry' }));
+        expect(document.activeElement?.getAttribute('aria-label')).toBe('Retry');
+
+        await renderWithFallback(buildModel({
+            attemptControl: {
+                ...retryControl,
+                primaryActionLabel: 'Open microphone settings',
+                primaryActionHint: 'Open microphone settings',
+                recoveryLabel: 'Open microphone settings',
+            },
+            startStopLabel: 'Open microphone settings',
+        }));
+        expect(document.activeElement?.textContent).toBe('Outside Voice');
     });
 
 });

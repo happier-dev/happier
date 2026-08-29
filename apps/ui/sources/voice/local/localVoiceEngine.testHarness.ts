@@ -625,6 +625,11 @@ vi.mock(
         };
 
         return {
+            createVoiceFileRecording: () => ({
+                start: async () => {},
+                setMuted: async () => {},
+                stop: async () => recorderUri,
+            }),
             getSharedVoicePcmCapture: () => ({
                 acquire: async (request: any) => {
                     const subscription = addListener('audioFrame', (event: any) => {
@@ -720,6 +725,9 @@ vi.mock('@/sync/domains/state/storage', () => {
                         host: 'test',
                         machineId: 'machine-1',
                         path: `/Users/test/.happier/worktree/${String(id)}`,
+                        agentRuntimeCapabilitiesV1: {
+                            localControl: { supported: true },
+                        },
                         ...((session as any).metadataLayoutVersion === 1 ? ownerMetadataView : metadata),
                     };
                     normalizedSessions[id] = {
@@ -781,6 +789,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         daemonVoiceAgentCancelTurnStream.mockReset();
         daemonVoiceAgentCommit.mockReset();
         daemonVoiceAgentStop.mockReset();
+        sessionExecutionRunList.mockReset();
+        sessionExecutionRunList.mockResolvedValue({ runs: [] });
+        sessionExecutionRunGet.mockReset();
+        sessionExecutionRunGet.mockResolvedValue({ error: 'not-found' });
         sendSessionMessageWithServerScope.mockReset();
         sessionRpcWithServerScope.mockReset();
         machineRpcWithServerScope.mockReset();
@@ -939,6 +951,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
         machineSpawnNewSession.mockImplementation(async (args: any) => {
             const machineId = typeof args?.machineId === 'string' ? args.machineId : 'machine-1';
             const directory = typeof args?.directory === 'string' ? args.directory : '/Users/test/.happier/voice-agent';
+            const spawnedAgentId = args?.backendTarget?.kind === 'builtInAgent'
+                && typeof args.backendTarget.agentId === 'string'
+                ? args.backendTarget.agentId
+                : 'claude';
             const sessionId = 'voice-home-session';
             const storage = await getStorage();
             const current: any = storage.getState();
@@ -954,6 +970,10 @@ export function registerLocalVoiceEngineHarnessHooks(options?: Readonly<{
                             updatedAt: Date.now(),
                             metadata: {
                                 ...buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true }),
+                                flavor: spawnedAgentId,
+                                agentRuntimeCapabilitiesV1: {
+                                    localControl: { supported: true },
+                                },
                                 machineId,
                                 path: directory,
                                 host: 'test',

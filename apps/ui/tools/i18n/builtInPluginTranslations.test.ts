@@ -5,12 +5,13 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { en } from '../../sources/text/translations/en.js';
-
-const SUPPORTED_LOCALES = [
-    'en', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja',
-] as const;
+import {
+    SUPPORTED_LANGUAGE_CODES,
+    type SupportedLanguage,
+} from '../../sources/text/_all.js';
 
 const INLINE_TRANSLATION_BUNDLE_FILES = [
+    'elevenlabs/src/manifest.ts',
     'google/src/voice/declarations.ts',
     'inspector/src/manifest.ts',
     'openai-compat/src/manifest.ts',
@@ -54,6 +55,13 @@ const ADDITIONAL_MODULE_BUNDLES = [
     'triage/src/ui/additionalTranslations.ts',
 ] as const;
 
+// This source deliberately composes most non-English publication copy from
+// reviewed English defaults while localizing every remote-write confirmation.
+// It owns real fallback keys, but is not an exact-locale-parity bundle.
+const ADDITIONAL_CATALOG_SOURCES = [
+    'scm-azure-devops/src/ui/publicationTranslations.ts',
+] as const;
+
 type Bundle = Readonly<{ locale: string; keys: readonly string[]; values: readonly string[] }>;
 
 const INTENTIONALLY_UNTRANSLATED_PLUGIN_VALUES = new Set([
@@ -84,7 +92,7 @@ const INTENTIONALLY_UNTRANSLATED_PLUGIN_VALUES = new Set([
     'minutes',
 ]);
 
-const FORBIDDEN_SCRIPTS_BY_LOCALE: Readonly<Partial<Record<(typeof SUPPORTED_LOCALES)[number], RegExp>>> = {
+const FORBIDDEN_SCRIPTS_BY_LOCALE: Readonly<Partial<Record<SupportedLanguage, RegExp>>> = {
     ru: /[\u3040-\u30ff\u3400-\u9fff]/,
     pl: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
     es: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
@@ -92,6 +100,7 @@ const FORBIDDEN_SCRIPTS_BY_LOCALE: Readonly<Partial<Record<(typeof SUPPORTED_LOC
     it: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
     pt: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
     ca: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
+    de: /[\u0400-\u04ff\u3040-\u30ff\u3400-\u9fff]/,
     'zh-Hans': /[\u0400-\u04ff\u3040-\u30ff]/,
     'zh-Hant': /[\u0400-\u04ff\u3040-\u30ff]/,
     ja: /[\u0400-\u04ff]/,
@@ -106,7 +115,16 @@ function unwrapObject(node: ts.Expression): ts.ObjectLiteralExpression | null {
     if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isParenthesizedExpression(node)) {
         return unwrapObject(node.expression);
     }
-    if (ts.isCallExpression(node) && node.arguments.length === 1) return unwrapObject(node.arguments[0]);
+    if (ts.isCallExpression(node)) {
+        // Catalog helpers may take a locale discriminator before the literal
+        // messages object. The literal remains the author-owned portion this
+        // source validator can inspect; generated/spread keys retain their
+        // package-local parity tests.
+        for (const argument of [...node.arguments].reverse()) {
+            const object = unwrapObject(argument);
+            if (object !== null) return object;
+        }
+    }
     return null;
 }
 
@@ -120,12 +138,17 @@ function stringValue(node: ts.Expression): string | null {
     return null;
 }
 
-function readMessageObject(object: ts.ObjectLiteralExpression, locale: string): Bundle {
+function readMessageObject(
+    object: ts.ObjectLiteralExpression,
+    locale: string,
+    resolveName: (name: ts.PropertyName) => string | null = propertyName,
+    resolveValue: (expression: ts.Expression) => string | null = stringValue,
+): Bundle {
     const entries = object.properties.flatMap((property) => {
         if (ts.isSpreadAssignment(property)) return [];
         if (!ts.isPropertyAssignment(property)) throw new Error(`${locale}: non-literal translation entry`);
-        const key = propertyName(property.name);
-        const value = stringValue(property.initializer);
+        const key = resolveName(property.name);
+        const value = resolveValue(property.initializer);
         if (!key || value === null) throw new Error(`${locale}: non-literal translation entry`);
         return [[key, value] as const];
     });
@@ -135,6 +158,24 @@ function readMessageObject(object: ts.ObjectLiteralExpression, locale: string): 
 function readInlineManifestBundles(file: string): readonly Bundle[] {
     const source = readFileSync(file, 'utf8');
     const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const stringConstants = new Map<string, string>();
+    for (const statement of root.statements) {
+        if (!ts.isVariableStatement(statement)) continue;
+        for (const declaration of statement.declarationList.declarations) {
+            if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+            const value = stringValue(declaration.initializer);
+            if (value !== null) stringConstants.set(declaration.name.text, value);
+        }
+    }
+    const resolveString = (expression: ts.Expression): string | null => (
+        stringValue(expression)
+        ?? (ts.isIdentifier(expression) ? stringConstants.get(expression.text) ?? null : null)
+    );
+    const resolvePropertyName = (name: ts.PropertyName): string | null => (
+        ts.isComputedPropertyName(name)
+            ? resolveString(name.expression)
+            : propertyName(name)
+    );
     let bundles: Bundle[] | null = null;
     function visit(node: ts.Node): void {
         if (bundles || !ts.isPropertyAssignment(node) || propertyName(node.name) !== 'translations'
@@ -148,9 +189,11 @@ function readInlineManifestBundles(file: string): readonly Bundle[] {
             const localeProperty = object.properties.find((property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'locale');
             const messagesProperty = object.properties.find((property) => ts.isPropertyAssignment(property) && propertyName(property.name) === 'messages');
             if (!localeProperty || !messagesProperty || !ts.isPropertyAssignment(localeProperty) || !ts.isPropertyAssignment(messagesProperty)) return null;
-            const locale = stringValue(localeProperty.initializer);
+            const locale = resolveString(localeProperty.initializer);
             const messages = unwrapObject(messagesProperty.initializer);
-            return locale && messages ? readMessageObject(messages, locale) : null;
+            return locale && messages
+                ? readMessageObject(messages, locale, resolvePropertyName, resolveString)
+                : null;
         });
         if (parsed.length > 0 && parsed.every((entry): entry is Bundle => entry !== null)) bundles = parsed;
     }
@@ -213,7 +256,7 @@ function placeholders(value: string): readonly string[] {
 function assertComplete(file: string, bundles: readonly Bundle[]): void {
     const locales = bundles.map(({ locale }) => locale);
     expect(new Set(locales).size, `${file}: duplicate translation locale`).toBe(locales.length);
-    expect(SUPPORTED_LOCALES.every((locale) => locales.includes(locale)), `${file}: missing supported host locale`).toBe(true);
+    expect(SUPPORTED_LANGUAGE_CODES.every((locale) => locales.includes(locale)), `${file}: missing supported host locale`).toBe(true);
     const english = bundles.find(({ locale }) => locale === 'en');
     expect(english, `${file}: missing English translation bundle`).toBeDefined();
     for (const bundle of bundles) {
@@ -227,7 +270,7 @@ function assertComplete(file: string, bundles: readonly Bundle[]): void {
                 : [bundle.keys[index]]
         ));
         expect(placeholderDrift, `${file}:${bundle.locale}: interpolation placeholder drift`).toEqual([]);
-        const forbiddenScript = FORBIDDEN_SCRIPTS_BY_LOCALE[bundle.locale as (typeof SUPPORTED_LOCALES)[number]];
+        const forbiddenScript = FORBIDDEN_SCRIPTS_BY_LOCALE[bundle.locale as SupportedLanguage];
         if (forbiddenScript) {
             const contaminated = bundle.values.flatMap((value, index) => (
                 forbiddenScript.test(value) ? [bundle.keys[index]] : []
@@ -448,6 +491,27 @@ function localizedFallbackKeys(file: string): readonly string[] {
     return keys;
 }
 
+/** Collect catalog-owned keys even when locale records use tuples or spreads. */
+function localizedCatalogKeys(file: string): readonly string[] {
+    const source = readFileSync(file, 'utf8');
+    const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    const keys = new Set<string>();
+    function visit(node: ts.Node): void {
+        if (ts.isPropertyAssignment(node)) {
+            const key = propertyName(node.name);
+            if (key?.includes('.') === true) keys.add(key);
+        }
+        if (ts.isStringLiteralLike(node)
+            && ts.isArrayLiteralExpression(node.parent)
+            && /^[A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+$/u.test(node.text)) {
+            keys.add(node.text);
+        }
+        ts.forEachChild(node, visit);
+    }
+    visit(root);
+    return [...keys];
+}
+
 describe('built-in plugin translation bundles', () => {
     it('covers every supported host locale with exact key parity', () => {
         const root = path.resolve(__dirname, '../../../..');
@@ -493,19 +557,18 @@ describe('built-in plugin translation bundles', () => {
         const declared = new Set<string>(collectTranslationKeys(en));
 
         for (const relativeFile of INLINE_TRANSLATION_BUNDLE_FILES) {
-            for (const key of readInlineManifestBundles(
-                path.join(pluginRoot, relativeFile),
-            )[0]?.keys ?? []) declared.add(key);
+            for (const key of localizedCatalogKeys(path.join(pluginRoot, relativeFile))) declared.add(key);
         }
         for (const plugin of MODULE_BUNDLES) {
-            for (const key of readModuleBundles(
+            for (const key of localizedCatalogKeys(
                 path.join(pluginRoot, plugin, 'src/ui/translations.ts'),
-            )[0]?.keys ?? []) declared.add(key);
+            )) declared.add(key);
         }
         for (const relativeFile of ADDITIONAL_MODULE_BUNDLES) {
-            for (const key of readModuleBundles(
-                path.join(pluginRoot, relativeFile),
-            )[0]?.keys ?? []) declared.add(key);
+            for (const key of localizedCatalogKeys(path.join(pluginRoot, relativeFile))) declared.add(key);
+        }
+        for (const relativeFile of ADDITIONAL_CATALOG_SOURCES) {
+            for (const key of localizedCatalogKeys(path.join(pluginRoot, relativeFile))) declared.add(key);
         }
 
         const missing = readdirSync(pluginRoot, { withFileTypes: true })

@@ -766,6 +766,7 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
             event: ({ eventId }: { eventId: string }) => `事件：${eventId}`,
             sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `當輪次結束時 · ${sessionId}`,
             noAutomaticTriggers: '沒有自動觸發器',
+            moreTriggers: ({ count }: { count: number }) => `另有 ${count} 個`,
             noNextRun: '沒有下次執行',
             nextRun: ({ time }: { time: string }) => `下次：${time}`,
             nextRunPending: '下次執行待定',
@@ -1218,6 +1219,10 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
         captureDurationExceeded: '聽寫已達 60 秒的聆聽上限。請重新開始以繼續。',
         transcriptionDeadlineExceeded: '轉錄花費超過 30 秒。請改用較短的聽寫再試一次。',
         transcriptLimitExceeded: '聽寫的文字對輸入框而言太長。請嘗試較短的聽寫。',
+        transcriptionCredentialsRequired: '聽寫需要所選語音提供者的憑證。請檢查其設定後再試一次。',
+        transcriptionMachineUnavailable: '聽寫裝置或本機語音模型無法使用。請重新連線或檢查所選模型。',
+        transcriptionTransferFailed: 'Happier 無法將錄音傳送到聽寫裝置。請檢查連線後再試一次。',
+        transcriptionFailed: '所選語音提供者無法轉錄此錄音。請再試一次或檢查其設定。',
         recordedAudioSizeUnavailable: 'Happier 無法確認錄音大小。請重新錄製。',
         recordedAudioLimitExceeded: '錄音超過 8 MB 上限。請嘗試較短的聽寫。',
         microphoneOwnedByVoice: '請先結束 Voice，再開始聽寫。',
@@ -1442,6 +1447,10 @@ const zhHantOverrides: DeepPartial<typeof zhHans> = {
     },
 
     connectedServices: {
+        purposeTargets: {
+            requiredPrompt: '選擇帳戶或群組',
+            legacyUnavailable: '此伺服器暫時無法顯示已連線帳戶目標',
+        },
         accountScopeMismatchTitle: '切換伺服器帳戶以繼續',
         accountScopeMismatchDescription: '此機器屬於另一個伺服器帳戶。請切換到該伺服器帳戶以管理其已連線帳戶。',
         fallbackName: '已連線服務',
@@ -8924,6 +8933,26 @@ settingsSession: {
     },
 
     settingsAccount: {
+        history: {
+            title: "設定歷史",
+            footer: "從已儲存的快照還原帳戶偏好。應用程式資料、密鑰與憑證保持目前值不變。",
+            loading: "正在載入歷史…",
+            empty: "尚無已儲存的快照",
+            unavailable: "歷史無法使用",
+            entryTitle: ({ version }: { version: string }) => `還原版本 ${version}`,
+            entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `儲存於 ${recordedAt}`,
+            restoreConfirmTitle: "還原設定？",
+            restoreConfirmBody: "您的帳戶偏好將被所選快照中的值取代。",
+            restoreConfirmAction: "還原",
+            restoredTitle: "設定已還原",
+            restoredBody: "您的帳戶偏好已從所選快照還原。",
+            unchangedBody: "您目前的帳戶偏好已與所選快照一致。",
+            conflictTitle: "設定已變更",
+            conflictBody: ({ currentVersion }: { currentVersion: string }) => `還原期間設定已變更（目前版本 ${currentVersion}）。未寫入任何內容——請檢視目前設定後再試一次。`,
+            outcomeUnknownBody: "無法確定還原是否完成。重試前請先檢視目前設定。",
+            invalidBody: "無法安全地還原所選快照。未寫入任何內容。",
+            unavailableBody: "無法還原所選快照。未寫入任何內容。",
+        },
         // Account settings screen
         accountInformation: '帳戶資訊',
         status: '狀態',

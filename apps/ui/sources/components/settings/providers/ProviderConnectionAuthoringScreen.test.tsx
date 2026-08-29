@@ -47,6 +47,7 @@ const focusField = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn(async () => undefined));
 const modalAlert = vi.hoisted(() => vi.fn());
 const modalShow = vi.hoisted(() => vi.fn((_content: unknown) => 'provider-secret-picker'));
+const modalHide = vi.hoisted(() => vi.fn());
 const savedSecretListeners = vi.hoisted(() => new Set<() => void>());
 const navigationDispatch = vi.hoisted(() => vi.fn());
 const routerPush = vi.hoisted(() => vi.fn());
@@ -54,6 +55,50 @@ const routerReplace = vi.hoisted(() => vi.fn());
 const navigationPreventRemove = vi.hoisted(() => ({
     enabled: false,
     callback: null as null | ((event: { data: { action: unknown } }) => void),
+}));
+// Controllable incumbent Account lifetime. Null by default, which is what the
+// real module resolves to under this harness (no registered profile scope), so
+// existing tests keep their observed behavior.
+const accountLifetimeController = vi.hoisted(() => {
+    type ControllerLifetime = {
+        scope: { serverId: string; accountId: string };
+        isCurrent: () => boolean;
+        onRetire: (cancel: () => void) => Readonly<{ dispose(): void }>;
+    };
+    const controller: {
+        lifetime: ControllerLifetime | null;
+        install(accountId: string): Readonly<{ retire(): void }>;
+    } = {
+        lifetime: null,
+        install(accountId) {
+            let retired = false;
+            const retireCallbacks = new Set<() => void>();
+            controller.lifetime = {
+                scope: { serverId: 'server-a', accountId },
+                isCurrent: () => !retired,
+                onRetire: (cancel) => {
+                    if (retired) {
+                        cancel();
+                        return Object.freeze({ dispose() {} });
+                    }
+                    retireCallbacks.add(cancel);
+                    return Object.freeze({ dispose() { retireCallbacks.delete(cancel); } });
+                },
+            };
+            return Object.freeze({
+                retire() {
+                    if (retired) return;
+                    retired = true;
+                    for (const cancel of [...retireCallbacks]) cancel();
+                    retireCallbacks.clear();
+                },
+            });
+        },
+    };
+    return controller;
+});
+vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
+    captureActiveServerAccountScopeLifetime: () => accountLifetimeController.lifetime,
 }));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
@@ -63,7 +108,7 @@ installMachineAdministrationTargetSelectionBoundary(administrationTarget);
 installSettingsViewCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({ spies: { alert: modalAlert, show: modalShow } }).module;
+        return createModalModuleMock({ spies: { alert: modalAlert, show: modalShow, hide: modalHide } }).module;
     },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -189,12 +234,14 @@ describe('ProviderConnectionAuthoringScreen', () => {
         openUrl.mockResolvedValue(undefined);
         modalAlert.mockReset();
         modalShow.mockClear();
+        modalHide.mockClear();
         state.savedSecrets = [];
         navigationDispatch.mockReset();
         routerPush.mockReset();
         routerReplace.mockReset();
         navigationPreventRemove.enabled = false;
         navigationPreventRemove.callback = null;
+        accountLifetimeController.lifetime = null;
         focusField.mockReset();
         probeProviderDraft.mockReset();
         probeProviderDraft.mockResolvedValue({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:test' });
@@ -338,7 +385,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(run).not.toHaveBeenCalled();
         expect(providerHarness.state.requests.some((request) => (
             request.method === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
-            && (request.payload as { serverId?: string }).serverId === 'server-b'
+            && request.serverId === 'server-b'
         ))).toBe(true);
     });
 
@@ -368,7 +415,7 @@ describe('ProviderConnectionAuthoringScreen', () => {
             <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
         );
         await flushHookEffects();
-        await act(async () => {
+        await React.act(async () => {
             screen.findAllByType('Item').find(
                 (item) => item.props.testID === 'settings-provider-authoring-api-key',
             )?.props.onPress?.();
@@ -376,12 +423,12 @@ describe('ProviderConnectionAuthoringScreen', () => {
         const picker = modalShow.mock.calls.at(-1)?.[0] as {
             props?: { onSelectId?: (id: string | null) => void };
         } | undefined;
-        await act(async () => picker?.props?.onSelectId?.('secret-collision'));
+        await React.act(async () => picker?.props?.onSelectId?.('secret-collision'));
         const accountASave = screen.findAllByType('Item').find(
             (item) => item.props.testID === 'settings-provider-authoring-connect',
         )?.props.onPress;
 
-        await act(async () => {
+        await React.act(async () => {
             administrationTarget.controller.select('machine-a', 'srv_b');
             accountASave?.();
             await Promise.resolve();
@@ -391,6 +438,112 @@ describe('ProviderConnectionAuthoringScreen', () => {
         expect(screen.findAllByType('Item').find(
             (item) => item.props.testID === 'settings-provider-authoring-api-key',
         )?.props.disabled).toBe(true);
+    });
+
+    it('retires Account A authored authoring buffers when the active Account lifetime retires', async () => {
+        const accountA = accountLifetimeController.install('account-a');
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        await flushHookEffects();
+        const nameField = () => screen.findAllByType('MachineSetupTextField')
+            .find((field) => field.props.label === 'settingsProviders.authoring.name');
+        const manualModelsField = () => screen.findAllByType('MachineSetupTextField')
+            .find((field) => field.props.label === 'settingsProviders.models.addFieldLabel');
+        await React.act(async () => {
+            nameField()?.props.onChangeText('Account A gateway');
+            screen.findAllByType('MachineSetupTextField')
+                .find((field) => field.props.label === 'settingsProviders.authoring.baseUrl')
+                ?.props.onChangeText('https://account-a.example/v1');
+            manualModelsField()?.props.onChangeText('a/account-only-model');
+        });
+        expect(navigationPreventRemove.enabled).toBe(true);
+        await React.act(async () => {
+            screen.findAllByType('Item').find(
+                (item) => item.props.title === 'settingsProviders.authoring.apiKey')?.props.onPress?.();
+        });
+        expect(modalShow).toHaveBeenCalledTimes(1);
+        // Captured while Account A is still current: even this stale callback
+        // must never be able to save Account A's buffers into Account B.
+        const accountASave = screen.findAllByType('Item')
+            .find((item) => item.props.title === 'settingsProviders.authoring.save')?.props.onPress;
+
+        await React.act(async () => { accountA.retire(); });
+
+        expect(modalHide).toHaveBeenCalledWith('provider-secret-picker');
+        expect(nameField()?.props.value).toBe('');
+        expect(screen.findAllByType('MachineSetupTextField')
+            .find((field) => field.props.label === 'settingsProviders.authoring.baseUrl')?.props.value).toBe('');
+        expect(manualModelsField()?.props.value).toBe('');
+        // The guard stays truthful: retirement left no unsaved Account A work.
+        expect(navigationPreventRemove.enabled).toBe(false);
+        await React.act(async () => { await accountASave?.(); });
+        expect(run).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
+    });
+
+    it('keeps an Account authored draft while the same Account lifetime stays current', async () => {
+        accountLifetimeController.install('account-a');
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
+        await flushHookEffects();
+        await React.act(async () => {
+            screen.findAllByType('MachineSetupTextField')
+                .find((field) => field.props.label === 'settingsProviders.authoring.name')
+                ?.props.onChangeText('Same Account gateway');
+        });
+
+        // Changed displayName props force the memoized screen to re-run while
+        // the same Account lifetime stays captured.
+        await screen.update(<ProviderConnectionAuthoringScreen displayName="continuity-render-1" />);
+        await screen.update(<ProviderConnectionAuthoringScreen displayName="continuity-render-2" />);
+
+        expect(screen.findAllByType('MachineSetupTextField')
+            .find((field) => field.props.label === 'settingsProviders.authoring.name')?.props.value)
+            .toBe('Same Account gateway');
+        expect(navigationPreventRemove.enabled).toBe(true);
+    });
+
+    it('rebuilds built-in contribution buffers under the successor Account after a lifetime retires', async () => {
+        const accountA = accountLifetimeController.install('account-a');
+        const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
+        const screen = await renderScreen(
+            <ProviderConnectionAuthoringScreen contributionKey="acme.plugin/ollama" />,
+        );
+        await flushHookEffects();
+        await React.act(async () => {
+            screen.findAllByType('MachineSetupTextField')
+                .find((field) => field.props.testID === 'settings-provider-authoring-endpoint-chat')
+                ?.props.onChangeText('https://account-a.example/v1');
+            await flushHookEffects({ cycles: 1, turns: 2 });
+        });
+        expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({
+                endpointOverrides: [{ endpointTemplateId: 'chat', baseUrl: 'https://account-a.example/v1' }],
+            }),
+        }));
+
+        // The incumbent reset retires Account A's lifetime, then Account B
+        // mounts on the same route. The changed displayName prop forces the
+        // memoized screen to re-run under B's freshly captured lifetime.
+        await React.act(async () => { accountA.retire(); });
+        accountLifetimeController.install('account-b');
+        await screen.update(
+            <ProviderConnectionAuthoringScreen
+                contributionKey="acme.plugin/ollama"
+                displayName="account-b-render"
+            />,
+        );
+        await flushHookEffects({ cycles: 1, turns: 2 });
+
+        // B's preview request is rebuilt from reset state: it carries none of
+        // Account A's endpoint buffer, candidate, or display name.
+        expect(describeProviderConnections).toHaveBeenLastCalledWith(expect.objectContaining({
+            authoringPreview: expect.objectContaining({
+                selectedCandidateId: null,
+                displayName: null,
+                endpointOverrides: [],
+            }),
+        }));
     });
 
     it('shows the Provider website independently from credential metadata', async () => {
@@ -1323,8 +1476,6 @@ describe('ProviderConnectionAuthoringScreen', () => {
             .mockResolvedValueOnce({ status: 'success', models: [], requestFingerprint: 'probe-request:v1:retry' });
         const { ProviderConnectionAuthoringScreen } = await import('./ProviderConnectionAuthoringScreen');
         const screen = await renderScreen(<ProviderConnectionAuthoringScreen />);
-        const test = screen.findAllByType('Item')
-            .find((item) => item.props.title === 'settingsProviders.detail.testConnection');
 
         await React.act(async () => {
             screen.findAllByType('MachineSetupTextField')
@@ -1333,10 +1484,16 @@ describe('ProviderConnectionAuthoringScreen', () => {
             screen.findAllByType('MachineSetupTextField')
                 .find((field) => field.props.label === 'settingsProviders.authoring.baseUrl')
                 ?.props.onChangeText('https://models.example/v1');
+            await new Promise((resolve) => setTimeout(resolve, 0));
         });
-        await React.act(async () => { await test?.props.onPress?.(); });
+        const test = screen.findAllByType('Item')
+            .find((item) => item.props.title === 'settingsProviders.detail.testConnection');
+        await React.act(async () => {
+            test?.props.onPress?.();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
         expect(screen.findAllByType('Item').map((item) => item.props.title))
-            .toContain('settingsProviders.errors.unreachableTitle');
+            .toContain('settingsProviders.errors.machineUnavailableTitle');
         expect(screen.findAllByType('Item').map((item) => item.props.title))
             .toContain('settingsProviders.errors.actions.retry');
         expect(run).not.toHaveBeenCalled();

@@ -67,5 +67,10 @@ describe('hasAuthoritativeSessionRouteData', () => {
             metadata: { path: '/future/repo' },
             ownerMetadataView: { path: '/future/owner/repo' },
         })).toBe(false);
+        expect(hasAuthoritativeSessionRouteData({
+            metadataLayoutVersion: null as never,
+            metadata: { path: '/must-not-become-legacy' },
+            ownerMetadataView: { path: '/must-not-become-owner' },
+        })).toBe(false);
     });
 });

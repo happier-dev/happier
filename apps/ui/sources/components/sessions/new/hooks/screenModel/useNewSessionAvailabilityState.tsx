@@ -37,6 +37,10 @@ import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSet
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type {
+    AgentPluginSettingsReadiness,
+    AgentPluginSettingsSnapshot,
+} from '@/agents/registry/registryUiBehavior';
 import type { PersistedBackendTargetRefV2, PluginProjectionV2 } from '@happier-dev/protocol';
 import type { BackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
@@ -62,6 +66,11 @@ export function resolveNewSessionDeclarationAvailabilityFacts(params: Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     selectedMachineId: string | null;
     settings: Settings;
+    pluginSettings?: AgentPluginSettingsSnapshot | null;
+    /** Qualified/runtime identity whose declaration owns pluginSettings. */
+    pluginSettingsAgentId?: string | null;
+    /** Readiness of the exact selected Agent Settings record, when declared. */
+    pluginSettingsReadiness?: AgentPluginSettingsReadiness | null;
     resumeSessionId: string | null;
     externalSessionsFeatureEnabled: boolean;
     backendNewSessionOptionStateByTargetKey: Readonly<BackendNewSessionOptionStateByTargetKey>;
@@ -75,10 +84,14 @@ export function resolveNewSessionDeclarationAvailabilityFacts(params: Readonly<{
         if (entry.kind === 'configuredBackend') continue;
         const id = entry.agentId;
         if (!id || Object.prototype.hasOwnProperty.call(installableDepKeyCountByAgentId, id)) continue;
-        const experiments = getAgentResumeExperimentsFromSettings(id, params.settings, params.selectedMachineId);
+        const agentPluginSettings = params.pluginSettingsAgentId === id
+            ? params.pluginSettings
+            : null;
+        const experiments = getAgentResumeExperimentsFromSettings(id, params.settings, params.selectedMachineId, agentPluginSettings);
         installableDepKeyCountByAgentId[id] = getNewSessionRelevantInstallableDepKeys({
             agentId: id,
             settings: params.settings,
+            pluginSettings: agentPluginSettings,
             experiments,
             resumeSessionId: params.resumeSessionId ?? '',
             machineId: params.selectedMachineId,
@@ -90,6 +103,7 @@ export function resolveNewSessionDeclarationAvailabilityFacts(params: Readonly<{
         selectableWithoutCliByAgentId[id] = supportsExternalSessionBrowse || canSelectAgentWithoutDetectedCli({
             agentId: id,
             settings: params.settings,
+            pluginSettings: agentPluginSettings,
             machineId: params.selectedMachineId,
             agentOptionState: params.backendNewSessionOptionStateByTargetKey[entry.backendTargetKey] ?? null,
         });
@@ -130,6 +144,9 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         staticAgentId,
         agentType: params.agentType,
     });
+    const selectedAgentSettingsReady = params.pluginSettingsReadiness === null
+        || params.pluginSettingsReadiness === undefined
+        || params.pluginSettingsReadiness.ready;
     const cliAgentIds = React.useMemo(() => {
         const out: string[] = [];
         for (const entry of params.resolvedBackendEntries) {
@@ -197,6 +214,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         machineId: params.selectedMachineId,
         serverId: params.capabilityServerId,
         settings: params.settings,
+        pluginSettings: params.pluginSettings,
     });
 
     const showResumePicker = React.useMemo(() => {
@@ -206,11 +224,12 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const wizardInstallableDeps = React.useMemo(() => {
         if (!params.selectedMachineId || !behaviorAgentId) return [];
 
-        const experiments = getAgentResumeExperimentsFromSettings(behaviorAgentId, params.settings, params.selectedMachineId);
+        const experiments = getAgentResumeExperimentsFromSettings(behaviorAgentId, params.settings, params.selectedMachineId, params.pluginSettings);
         const relevantKeys = getNewSessionRelevantInstallableDepKeys({
             agentId: behaviorAgentId,
             settings: params.settings,
             experiments,
+            pluginSettings: params.pluginSettings,
             resumeSessionId: params.resumeSessionId ?? '',
             machineId: params.selectedMachineId,
         });
@@ -229,6 +248,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         params.resumeSessionId,
         params.pluginProjectionV2,
         params.selectedMachineId,
+        params.pluginSettings,
         params.settings,
         selectedMachineCapabilitiesSnapshot,
         behaviorAgentId,
@@ -238,6 +258,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         resolvedBackendEntries: params.resolvedBackendEntries,
         selectedMachineId: params.selectedMachineId,
         settings: params.settings,
+        pluginSettings: params.pluginSettings,
         resumeSessionId: params.resumeSessionId,
         externalSessionsFeatureEnabled: params.externalSessionsFeatureEnabled,
         backendNewSessionOptionStateByTargetKey: params.backendNewSessionOptionStateByTargetKey,
@@ -247,6 +268,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         params.resolvedBackendEntries,
         params.resumeSessionId,
         params.selectedMachineId,
+        params.pluginSettings,
         params.settings,
     ]);
     const { installableDepKeyCountByAgentId, selectableWithoutCliByAgentId } = declarationAvailabilityFacts;
@@ -436,6 +458,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         selectedMachineCapabilities,
         selectedMachineCapabilitiesSnapshot,
         selectedMachineSpawnReadiness,
+        selectedAgentSettingsReady,
         tmuxRequested,
         showResumePicker,
         wizardInstallableDeps,

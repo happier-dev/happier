@@ -161,7 +161,11 @@ describe('hosted Artifact native-frame Expo module config', () => {
         expect(viewSource).toContain('catch (error: IllegalStateException)');
         expect(viewSource).toContain('pendingProfileNames.add(profileName)');
         expect(viewSource).toContain('pendingProfileNames.remove(profileName)');
-        expect(viewSource).toContain('onLoadError(mapOf("code" to "hosted_web_profile_cleanup_pending"))');
+        // A failed retired-profile delete is pending cleanup, not a failure of
+        // the current frame. It must remain observable through logging and the
+        // next natural lifecycle retry without entering the active load-error
+        // channel that would tear down a healthy frame.
+        expect(viewSource).not.toContain('onLoadError(mapOf("code" to "hosted_web_profile_cleanup_pending"))');
         expect(viewSource).toContain('Log.w(HOSTED_WEB_LOG_TAG');
         expect(clearCurrentFrameState.indexOf('currentWebView.destroy()')).toBeLessThan(
             clearCurrentFrameState.indexOf('deleteRetiredProfile(profileName)'),

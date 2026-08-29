@@ -1094,6 +1094,7 @@ export const ru = {
       event: ({ eventId }: { eventId: string }) => `Событие: ${eventId}`,
       sessionLifecycleParentTurn: ({ sessionId }: { sessionId: string }) => `Когда завершится ход · ${sessionId}`,
       noAutomaticTriggers: 'Нет автоматических триггеров',
+      moreTriggers: ({ count }: { count: number }) => `Ещё ${count}`,
       noNextRun: "Следующий запуск не запланирован",
       nextRun: ({ time }: { time: string }) => `Следующий запуск: ${time}`,
       nextRunPending: "Следующий запуск ожидается",
@@ -2907,6 +2908,10 @@ export const ru = {
   connectedServices: {
     accountScopeMismatchTitle: 'Переключите учётную запись сервера, чтобы продолжить',
     accountScopeMismatchDescription: 'Эта машина принадлежит учётной записи другого сервера. Переключитесь на неё, чтобы управлять подключёнными учётными записями.',
+    purposeTargets: {
+      requiredPrompt: 'Выберите учётную запись или группу',
+      legacyUnavailable: 'Этот сервер пока не может показать цели подключённых учётных записей',
+    },
     fallbackName: "Подключённый сервис",
     serviceNames: {
       claudeSubscription: "Подписка Claude",
@@ -7046,6 +7051,10 @@ export const ru = {
             captureDurationExceeded: "Диктовка достигла предела прослушивания в 60 секунд. Начните заново, чтобы продолжить.",
             transcriptionDeadlineExceeded: "Расшифровка заняла больше 30 секунд. Попробуйте более короткую диктовку.",
             transcriptLimitExceeded: "Продиктованный текст слишком длинный для поля ввода. Попробуйте более короткую диктовку.",
+            transcriptionCredentialsRequired: "Для диктовки нужны учётные данные выбранного речевого провайдера. Проверьте настройку и попробуйте ещё раз.",
+            transcriptionMachineUnavailable: "Компьютер для диктовки или локальная речевая модель недоступны. Восстановите подключение или проверьте выбранную модель.",
+            transcriptionTransferFailed: "Happier не смог отправить запись на компьютер для диктовки. Проверьте подключение и попробуйте ещё раз.",
+            transcriptionFailed: "Выбранный речевой провайдер не смог расшифровать запись. Попробуйте ещё раз или проверьте его настройку.",
             recordedAudioSizeUnavailable: "Happier не смог проверить размер записи. Запишите ещё раз.",
             recordedAudioLimitExceeded: "Запись превышает лимит в 8 МБ. Попробуйте более короткую диктовку.",
             microphoneOwnedByVoice: "Завершите Voice, прежде чем начать диктовку.",
@@ -11201,6 +11210,26 @@ settingsSession: {
   },
 
   settingsAccount: {
+    history: {
+      title: "История настроек",
+      footer: "Восстанавливает предпочтения аккаунта из сохранённого снимка. Данные приложения, секреты и учётные данные остаются с текущими значениями.",
+      loading: "Загрузка истории…",
+      empty: "Сохранённых снимков пока нет",
+      unavailable: "История недоступна",
+      entryTitle: ({ version }: { version: string }) => `Восстановить версию ${version}`,
+      entrySubtitle: ({ recordedAt }: { recordedAt: string }) => `Сохранено ${recordedAt}`,
+      restoreConfirmTitle: "Восстановить настройки?",
+      restoreConfirmBody: "Предпочтения аккаунта будут заменены значениями из выбранного снимка.",
+      restoreConfirmAction: "Восстановить",
+      restoredTitle: "Настройки восстановлены",
+      restoredBody: "Предпочтения аккаунта восстановлены из выбранного снимка.",
+      unchangedBody: "Текущие предпочтения аккаунта уже соответствуют выбранному снимку.",
+      conflictTitle: "Настройки изменились",
+      conflictBody: ({ currentVersion }: { currentVersion: string }) => `Во время восстановления настройки изменились (текущая версия ${currentVersion}). Ничего не записано — проверьте текущие настройки и повторите попытку.`,
+      outcomeUnknownBody: "Не удалось определить, завершено ли восстановление. Проверьте текущие настройки перед повторной попыткой.",
+      invalidBody: "Выбранный снимок нельзя безопасно восстановить. Ничего не записано.",
+      unavailableBody: "Не удалось восстановить выбранный снимок. Ничего не записано.",
+    },
     // Account settings screen
     accountInformation: "Информация об аккаунте",
     status: "Статус",

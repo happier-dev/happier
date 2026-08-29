@@ -12,6 +12,10 @@ import type {
     ExecutionRunStopRequest,
     ExecutionRunStopResponse,
 } from '@happier-dev/protocol';
+import {
+    ExecutionRunGetResponseSchema,
+    ExecutionRunListResponseSchema,
+} from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
@@ -222,7 +226,7 @@ export async function sessionExecutionRunList(
 ): Promise<SessionExecutionRunListResult> {
     try {
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
-        const response = await sessionRpcWithServerScope<ExecutionRunListResponse, ExecutionRunListRequest>({
+        const response = await sessionRpcWithServerScope<unknown, ExecutionRunListRequest>({
             sessionId,
             serverId,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_LIST,
@@ -230,14 +234,11 @@ export async function sessionExecutionRunList(
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
-        if (
-            !response
-            || typeof response !== 'object'
-            || !Array.isArray((response as any).runs)
-        ) {
+        const parsed = ExecutionRunListResponseSchema.safeParse(response);
+        if (!parsed.success) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
-        return response;
+        return parsed.data;
     } catch (error) {
         return {
             ok: false,
@@ -254,7 +255,7 @@ export async function sessionExecutionRunGet(
 ): Promise<SessionExecutionRunGetResult> {
     try {
         const serverId = opts?.serverId ?? resolvePreferredServerIdForSessionId(sessionId);
-        const response = await sessionRpcWithServerScope<ExecutionRunGetResponse, ExecutionRunGetRequest>({
+        const response = await sessionRpcWithServerScope<unknown, ExecutionRunGetRequest>({
             sessionId,
             serverId,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_GET,
@@ -262,15 +263,11 @@ export async function sessionExecutionRunGet(
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
-        if (
-            !response
-            || typeof response !== 'object'
-            || !(response as any).run
-            || typeof (response as any).run?.runId !== 'string'
-        ) {
+        const parsed = ExecutionRunGetResponseSchema.safeParse(response);
+        if (!parsed.success) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
-        return response;
+        return parsed.data;
     } catch (error) {
         return {
             ok: false,

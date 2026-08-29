@@ -167,37 +167,19 @@ export function composerReferencesFromStructuredMentions(input: Readonly<{
     mentions: readonly ComposerStructuredInputMention[];
 }>): readonly ComposerMentionRef[] {
     const references = input.mentions.flatMap((mention) => {
-        // Admission mirrors the canonical Protocol owner (`admitMentionRefsV1ForText`):
-        // a reference survives while its exact token occurs in the current text.
-        // Stale recorded offsets (a draft replaced outside a structured edit) are
-        // re-anchored to the occurrence nearest the previous position; a token
-        // that no longer occurs drops the reference.
-        const anchored = resolveMentionTokenOccurrence(input.text, mention);
-        if (!anchored) return [];
+        // Editable Composer references have exact occurrence custody. A stale
+        // range is not permission to search/rebind another equal token: doing
+        // so can send provider context for text the user never selected.
+        if (
+            mention.start < 0
+            || mention.end < mention.start
+            || mention.end > input.text.length
+            || input.text.slice(mention.start, mention.end) !== mention.tokenText
+        ) return [];
         const reference = readReferenceFromMention(mention);
-        return reference ? [{ ...reference, start: anchored.start, end: anchored.end }] : [];
+        return reference ? [{ ...reference, start: mention.start, end: mention.end }] : [];
     });
     return references.sort((left, right) => left.start - right.start || left.end - right.end);
-}
-
-function resolveMentionTokenOccurrence(text: string, mention: ComposerStructuredInputMention): Readonly<{ start: number; end: number }> | null {
-    if (!text.includes(mention.tokenText)) return null;
-    if (text.slice(mention.start, mention.end) === mention.tokenText) {
-        return { start: mention.start, end: mention.end };
-    }
-    let nearest: Readonly<{ start: number; end: number }> | null = null;
-    let searchFrom = 0;
-    while (searchFrom <= text.length) {
-        const start = text.indexOf(mention.tokenText, searchFrom);
-        if (start === -1) break;
-        const end = start + mention.tokenText.length;
-        if (nearest === null
-            || Math.abs(start - mention.start) < Math.abs(nearest.start - mention.start)) {
-            nearest = { start, end };
-        }
-        searchFrom = start + 1;
-    }
-    return nearest;
 }
 
 function rebaseStoredMention(

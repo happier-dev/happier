@@ -12,7 +12,6 @@ const EXPECTED_DICTATION_LIMITS = {
     captureDurationMs: 60_000,
     transcriptionDeadlineMs: 30_000,
     transcriptCharacters: 8_000,
-    transcriptUtf8Bytes: 16_000,
     recordedAudioBytes: 8 * 1024 * 1024,
 } as const;
 
@@ -573,7 +572,7 @@ describe('createVoiceDictationController', () => {
     it.each([
         ['native recording', 'file:///dictation-cancel-before-finish.m4a'],
         ['web Blob recording', 'blob:dictation-cancel-before-finish'],
-    ] as const)('stops and cleans a %s before cancellation tears its recorder down', async (_surface, uri) => {
+    ] as const)('releases a cancelled %s session while retaining exact-once late artifact cleanup', async (_surface, uri) => {
         if (uri.startsWith('blob:')) {
             (Platform as unknown as { OS: string }).OS = 'web';
         }
@@ -620,13 +619,13 @@ describe('createVoiceDictationController', () => {
         await vi.waitFor(() => {
             expect(cancellationSettled).toBe(true);
         });
-        expect(captureOwner.stopSession).not.toHaveBeenCalled();
+        expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
 
         resolveStoppedCapture({ provider: 'recorded_audio', uri });
         await cancellation;
         await vi.waitFor(() => {
             expect(deleteRecordedAudio).toHaveBeenCalledWith(uri);
-            expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
+            expect(captureOwner.stopSession).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -1333,7 +1332,7 @@ describe('createVoiceDictationController', () => {
                 },
             });
             expect(deleteRecordedAudio).not.toHaveBeenCalled();
-            expect(captureOwner.stopSession).not.toHaveBeenCalled();
+            expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
             expect(transcribeRecordedAudio).not.toHaveBeenCalled();
         } finally {
             resolveStoppedCapture({
@@ -1347,7 +1346,76 @@ describe('createVoiceDictationController', () => {
         expect(deleteRecordedAudio).toHaveBeenCalledWith(
             'file:///late-dictation-after-deadline.m4a',
         );
-        expect(captureOwner.stopSession).toHaveBeenCalledWith('session-1');
+        expect(captureOwner.stopSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not project a stale late-artifact cleanup failure into a same-session retry', async () => {
+        vi.useFakeTimers();
+        let resolveFirstStop!: (result: Readonly<{
+            provider: 'recorded_audio';
+            uri: string;
+        }>) => void;
+        const firstStop = new Promise<Readonly<{
+            provider: 'recorded_audio';
+            uri: string;
+        }>>((resolve) => {
+            resolveFirstStop = resolve;
+        });
+        const captureOwner = {
+            startCapture: vi.fn(async () => {}),
+            stopCapture: vi.fn()
+                .mockImplementationOnce(() => firstStop)
+                .mockResolvedValueOnce({
+                    provider: 'recorded_audio' as const,
+                    uri: null,
+                }),
+            stopSession: vi.fn(async () => {}),
+        };
+        const deleteRecordedAudio = vi.fn(async () => {
+            throw new Error('stale_recording_delete_failed');
+        });
+        const controller = createVoiceDictationController({
+            captureOwner,
+            getSettings: () => ({
+                voice: {
+                    providerId: 'local_conversation',
+                    providers: {
+                        local_conversation: {
+                            schemaVersion: 1,
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
+                        },
+                    },
+                },
+            }),
+            measureRecordedAudioBytes: vi.fn(async () => 4),
+            deleteRecordedAudio,
+            transcribeRecordedAudio: vi.fn(async () => 'stale transcript'),
+        });
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        const staleCompletion = controller.toggle('session-1');
+        await vi.advanceTimersByTimeAsync(
+            EXPECTED_DICTATION_LIMITS.transcriptionDeadlineMs + 1,
+        );
+        await expect(staleCompletion).resolves.toEqual({ kind: 'cancelled' });
+
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        await controller.cancel('session-1');
+        await vi.waitFor(() => {
+            expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
+        });
+
+        resolveFirstStop({
+            provider: 'recorded_audio',
+            uri: 'file:///stale-dictation.m4a',
+        });
+        await vi.waitFor(() => {
+            expect(deleteRecordedAudio).toHaveBeenCalledTimes(1);
+        });
+        expect(controller.getSnapshot()).toEqual({
+            sessionId: null,
+            status: 'idle',
+        });
     });
 
     it('reports a typed transcription deadline when the provider remains pending', async () => {
@@ -1405,23 +1473,13 @@ describe('createVoiceDictationController', () => {
     });
 
     it.each([
-        {
-            label: 'character',
-            exact: 'a'.repeat(EXPECTED_DICTATION_LIMITS.transcriptCharacters),
-            over: 'a'.repeat(EXPECTED_DICTATION_LIMITS.transcriptCharacters + 1),
-            reason: 'transcript_character_limit_exceeded',
-        },
-        {
-            label: 'UTF-8 byte',
-            exact: '😀'.repeat(EXPECTED_DICTATION_LIMITS.transcriptUtf8Bytes / 4),
-            over: `${'😀'.repeat(EXPECTED_DICTATION_LIMITS.transcriptUtf8Bytes / 4)}a`,
-            reason: 'transcript_utf8_limit_exceeded',
-        },
-    ])('accepts the exact $label transcript limit and rejects limit + 1', async ({
-        exact,
-        over,
-        reason,
+        { label: 'ASCII', scalar: 'a' },
+        { label: 'four-byte Unicode', scalar: '😀' },
+    ])('accepts exactly 8,000 $label code points and rejects code point 8,001', async ({
+        scalar,
     }) => {
+        const exact = scalar.repeat(EXPECTED_DICTATION_LIMITS.transcriptCharacters);
+        const over = `${exact}${scalar}`;
         const transcripts = [exact, over];
         const captureOwner = {
             startCapture: vi.fn(async () => {}),
@@ -1463,10 +1521,57 @@ describe('createVoiceDictationController', () => {
             status: 'idle',
             failure: {
                 kind: 'provider_error',
-                reason,
+                reason: 'transcript_character_limit_exceeded',
             },
         });
         expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+        { code: 'credential_unavailable', reason: 'transcription_credentials_required' },
+        { code: 'machine_unavailable', reason: 'transcription_machine_unavailable' },
+        { code: 'transfer_failed', reason: 'transcription_transfer_failed' },
+        { code: 'provider_secret_raw_error', reason: 'transcription_failed' },
+    ] as const)('projects recorded-audio $code into bounded Dictation recovery', async ({ code, reason }) => {
+        const captureOwner = {
+            startCapture: vi.fn(async () => {}),
+            stopCapture: vi.fn(async () => ({
+                provider: 'recorded_audio' as const,
+                uri: 'file:///dictation.m4a',
+                continueHandsFree: false,
+            })),
+            stopSession: vi.fn(async () => {}),
+        };
+        const controller = createVoiceDictationController({
+            captureOwner,
+            getSettings: () => ({
+                voice: {
+                    providerId: 'local_conversation',
+                    providers: {
+                        local_conversation: {
+                            schemaVersion: 1,
+                            config: { stt: { provider: 'happier.voice.openai-compat/stt' } },
+                        },
+                    },
+                },
+            }),
+            measureRecordedAudioBytes: vi.fn(async () => 4),
+            deleteRecordedAudio: vi.fn(async () => {}),
+            transcribeRecordedAudio: vi.fn(async () => {
+                throw Object.assign(new Error('private provider detail'), { code });
+            }),
+        });
+
+        await controller.toggle('session-1');
+        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'cancelled' });
+        expect(controller.getSnapshot()).toMatchObject({
+            sessionId: null,
+            status: 'idle',
+            failure: {
+                kind: 'provider_error',
+                reason,
+            },
+        });
     });
 
     it('accepts the exact recorded-payload limit, rejects limit + 1, and removes both temporary recordings', async () => {

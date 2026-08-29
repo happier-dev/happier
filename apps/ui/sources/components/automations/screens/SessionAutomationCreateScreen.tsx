@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AutomationPluralEditorScreen } from '@/components/automations/editor/AutomationPluralEditorScreen';
+import { AutomationTriggerEditor } from '@/components/automations/editor/AutomationPluralEditorScreen';
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { readExactActiveParentTurn } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { ExistingSessionAutomationAuthoringSurface } from '@/components/automations/shared/ExistingSessionAutomationAuthoringSurface';
@@ -15,15 +15,16 @@ import { useSessionAuthoringDraftState } from '@/components/sessions/authoring/d
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
-import { materializeNewSessionAutomationEditorDraft } from '@/sync/domains/automations/automationDraft';
 import {
+    createAutomationEditorAutomationId,
     createAutomationEditorLifetimeIdentity,
     isAutomationEditorLifetimeIdentityCurrent,
-    requireAutomationEditorDraftIdentity,
     type AutomationEditorDraft,
+    type AutomationTriggerEditorValue,
 } from '@/sync/domains/automations/automationEditorDraft';
 import { buildAutomationRecipeFromSessionAuthoring } from '@/sync/domains/automations/automationRecipeAuthoring';
 import { captureSessionAutomationAuthority } from '@/sync/domains/automations/sessionAutomationAuthority';
+import { isAutomationSessionCandidate } from '@/sync/domains/automations/isAutomationSessionCandidate';
 import { resolveExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -46,24 +47,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     container: { flex: 1, backgroundColor: theme.colors.background.canvas },
 }));
 
-function initialEditorDraft(sessionId: string): AutomationEditorDraft {
-    return materializeNewSessionAutomationEditorDraft({
-        draft: { enabled: true, name: t('automations.create.defaultName'), description: '', triggers: [] },
-        executionRecipe: {
-            v: 1,
-            templateVersion: 1,
-            template: { t: 'plain', v: { v: 1, prompt: '' } },
-            triggerEvidence: null,
-            target: { kind: 'existingSession', sessionId },
-        },
-        assignments: [],
-    });
+type SessionAutomationTriggerDraft = AutomationTriggerEditorValue & Readonly<{
+    /** Stable definition identity shared by plugin setup and response-loss rejoin. */
+    pendingAutomationId: string;
+}>;
+
+function initialEditorDraft(): SessionAutomationTriggerDraft {
+    return {
+        pendingAutomationId: createAutomationEditorAutomationId(),
+        removedTriggers: [],
+        enabled: true,
+        name: t('automations.create.defaultName'),
+        description: null,
+        triggers: [],
+    };
 }
 
 function replaceWithCurrentExactTurns(
-    draft: AutomationEditorDraft,
+    draft: SessionAutomationTriggerDraft,
     targetSessionId: string,
-): AutomationEditorDraft | null {
+): SessionAutomationTriggerDraft | null {
     let changed = false;
     let available = true;
     const triggers = draft.triggers.map((trigger) => {
@@ -115,7 +118,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
     const supportRef = React.useRef(support.enabled);
     supportRef.current = support.enabled;
     const { draft, setDraft, latestDraftRef } = useSessionAuthoringDraftState();
-    const [editorDraft, setEditorDraft] = React.useState<AutomationEditorDraft>(() => initialEditorDraft(props.sessionId));
+    const [editorDraft, setEditorDraft] = React.useState<SessionAutomationTriggerDraft>(initialEditorDraft);
     const [editorDraftLifetimeIdentity, setEditorDraftLifetimeIdentity] = React.useState<string | null>(
         () => editorLifetimeIdentity,
     );
@@ -126,7 +129,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
 
     React.useEffect(() => {
         if (editorDraftLifetimeIdentity === editorLifetimeIdentity) return;
-        setEditorDraft(initialEditorDraft(props.sessionId));
+        setEditorDraft(initialEditorDraft());
         setEditorDraftLifetimeIdentity(editorLifetimeIdentity);
     }, [editorDraftLifetimeIdentity, editorLifetimeIdentity, props.sessionId]);
 
@@ -161,12 +164,16 @@ export function SessionAutomationCreateScreen(props: Readonly<{
     }, [session, sessionDekBase64, setDraft]);
 
     const sessionOptions = React.useMemo(() => sessions
-        .filter((candidate) => candidate.serverId === session?.serverId && candidate.id !== props.sessionId)
+        .filter((candidate) => (
+            candidate.serverId === session?.serverId
+            && candidate.id !== props.sessionId
+            && isAutomationSessionCandidate(candidate, settings)
+        ))
         .map((candidate) => ({
             sessionId: candidate.id,
             label: getSessionName(candidate),
             currentParentTurnId: readExactActiveParentTurn(candidate)?.sourceTurnId ?? null,
-        })), [props.sessionId, session?.serverId, sessions]);
+        })), [props.sessionId, session?.serverId, sessions, settings]);
     const isValid = support.enabled
         && availability.kind === 'ready'
         && editorDraftLifetimeIdentity === editorLifetimeIdentity
@@ -183,6 +190,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
             routeServerId: props.hydrationOptions?.serverId ?? null,
             activeServerId: getActiveServerSnapshot().serverId,
             automationsEnabled: supportRef.current,
+            accountSettings: storage.getState().settings,
             accountLifetime,
             readCurrent: () => ({
                 session: storage.getState().sessions[props.sessionId] ?? null,
@@ -190,6 +198,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                 routeServerId: props.hydrationOptions?.serverId ?? null,
                 activeServerId: getActiveServerSnapshot().serverId,
                 automationsEnabled: supportRef.current,
+                accountSettings: storage.getState().settings,
             }),
         });
         const currentDraft = latestDraftRef.current;
@@ -224,6 +233,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                 routeServerId: session?.serverId ?? null,
                 activeServerId: getActiveServerSnapshot().serverId,
                 automationsEnabled: supportRef.current,
+                accountSettings: storage.getState().settings,
                 accountLifetime,
                 readCurrent: () => ({
                     session: storage.getState().sessions[sourceSessionId] ?? null,
@@ -231,6 +241,7 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                     routeServerId: session?.serverId ?? null,
                     activeServerId: getActiveServerSnapshot().serverId,
                     automationsEnabled: supportRef.current,
+                    accountSettings: storage.getState().settings,
                 }),
             });
             return sourceAuthority ? [{
@@ -279,11 +290,15 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                     : {}),
                 isCurrent,
             });
-            const saved = await sync.saveAutomationEditorDraft({
+            const saveDraft: AutomationEditorDraft = {
                 ...currentEditor,
+                automationId: null,
+                expectedTemplateVersion: null,
+                recipeDirty: true,
                 executionRecipe: recipe,
                 assignments: [{ machineId, enabled: true, priority: 100 }],
-            }, { isCurrent });
+            };
+            const saved = await sync.saveAutomationEditorDraft(saveDraft, { isCurrent });
             if (isCurrent()) navigateWithBlurOnWeb(() => router.replace(`/automations/${saved.id}` as any));
         } catch (error) {
             const exactTurnStale = isAutomationApiErrorCode(error, 'sourceTurnNotCurrent')
@@ -335,20 +350,26 @@ export function SessionAutomationCreateScreen(props: Readonly<{
                         isSubmitDisabled={!isValid || submitting}
                         editable={!submitting}
                         automationEditor={editorDraftLifetimeIdentity === editorLifetimeIdentity && editorLifetimeIdentity !== null ? (
-                            <AutomationPluralEditorScreen
-                                variant="embedded"
+                            <AutomationTriggerEditor
                                 value={editorDraft}
-                                onChange={setEditorDraft}
+                                onChange={(next) => setEditorDraft((current) => ({
+                                    ...(current.pendingAutomationId === editorDraft.pendingAutomationId
+                                        ? next
+                                        : current),
+                                    pendingAutomationId: current.pendingAutomationId,
+                                }))}
                                 sessionOptions={sessionOptions}
                                 resolveCurrentSessionTurn={(sessionId) => {
-                                    const exact = readExactActiveParentTurn(storage.getState().sessions[sessionId]);
+                                    const candidate = storage.getState().sessions[sessionId];
+                                    if (!candidate || !isAutomationSessionCandidate(candidate, storage.getState().settings)) return null;
+                                    const exact = readExactActiveParentTurn(candidate);
                                     return exact ? { sourceSessionId: exact.sourceSessionId, sourceTurnId: exact.sourceTurnId } : null;
                                 }}
                                 onSessionSelectionStale={() => { void sync.refreshSessions(); }}
                                 renderPluginEventEditor={(editorProps) => (
                                     <PluginEventAutomationEditor
                                         key={editorProps.clientId}
-                                        automationId={requireAutomationEditorDraftIdentity(editorDraft)}
+                                        automationId={editorDraft.pendingAutomationId}
                                         clientId={editorProps.clientId}
                                         value={editorProps.value}
                                         seed={null}

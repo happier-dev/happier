@@ -417,6 +417,11 @@ export async function playAudioBytesWithStopper(opts: {
             settle();
             return;
           }
+          if (event.status === 'replaced') {
+            qaOutputTap.markCancelled();
+            settle();
+            return;
+          }
           qaOutputTap.markFailed(event.reason ?? 'audio_playback_failed');
           settle(new Error(event.reason ?? 'audio_playback_failed'));
         });

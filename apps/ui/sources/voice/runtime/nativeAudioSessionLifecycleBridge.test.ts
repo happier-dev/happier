@@ -484,6 +484,19 @@ describe('createNativeAudioSessionLifecycleBridge', () => {
     await vi.waitFor(() => expect(second.controller.stop).toHaveBeenCalledWith('voice-global'));
   });
 
+  it('releases suspension leases even when terminal session stop fails', async () => {
+    const { controller, emit } = createHarness();
+    controller.stop.mockRejectedValueOnce(new Error('session_stop_failed'));
+
+    emit({ generation: 1, kind: 'interruption_began' });
+    await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', true));
+
+    emit({ generation: 1, kind: 'interruption_ended', shouldResume: false });
+
+    await vi.waitFor(() => expect(controller.stop).toHaveBeenCalledWith('voice-global'));
+    await vi.waitFor(() => expect(controller.setMuted).toHaveBeenLastCalledWith('voice-global', false));
+  });
+
   it('stops when required echo cancellation is lost at runtime', async () => {
     const { controller, emit } = createHarness(false, 'required');
     emit({ generation: 1, kind: 'capabilities_changed', aecAvailable: true, aecActive: false });

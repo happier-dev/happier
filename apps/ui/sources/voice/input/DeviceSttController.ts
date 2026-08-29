@@ -1,4 +1,8 @@
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
+import {
+  isPermissionDeniedMicrophoneError,
+  requestMicrophonePermission,
+  showMicrophonePermissionDeniedAlert,
+} from '@/utils/platform/microphonePermissions';
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/voice/adapters/local/settings';
 import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { normalizeTurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
@@ -218,6 +222,12 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       reservation.cancel();
     };
     signal?.addEventListener('abort', onSetupAbort, { once: true });
+    let permissionDeniedAlertPresented = false;
+    const presentPermissionDenied = (canAskAgain = false): void => {
+      if (permissionDeniedAlertPresented) return;
+      permissionDeniedAlertPresented = true;
+      showMicrophonePermissionDeniedAlert(canAskAgain);
+    };
 
     const recordSetupCancellation = () => {
       if (!signal?.aborted) return;
@@ -294,7 +304,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     }
     const microphonePermission = microphonePermissionStage.value;
     if (!microphonePermission.granted) {
-      showMicrophonePermissionDeniedAlert(microphonePermission.canAskAgain);
+      presentPermissionDenied(microphonePermission.canAskAgain);
       throw new Error('mic_permission_denied');
     }
 
@@ -311,11 +321,17 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         }
         const permissionsResponse = permissionsStage.value;
         if (permissionsResponse && permissionsResponse.granted === false) {
+          presentPermissionDenied(permissionsResponse.canAskAgain === true);
           throw new Error('mic_permission_denied');
         }
       } catch (error) {
         if (error instanceof Error && error.message === 'mic_permission_denied') {
+          presentPermissionDenied(false);
           throw error;
+        }
+        if (isPermissionDeniedMicrophoneError(error)) {
+          presentPermissionDenied(false);
+          throw new Error('mic_permission_denied');
         }
         // Permission request best-effort otherwise.
       }

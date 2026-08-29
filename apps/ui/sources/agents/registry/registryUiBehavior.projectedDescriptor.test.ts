@@ -75,7 +75,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
             machineId: 'machine-b',
             descriptorsByAgentId: {
                 [EXTERNAL_AGENT_ID]: {
-                    resume: { experimentSwitches: [{ id: 'acpResume', settingKey: 'codexAcpEnabled' }] },
+                    resume: { experimentSwitches: [{ id: 'acpResume', settingKey: { scope: 'account', localId: 'codexAcpEnabled' } }] },
                 },
             },
         });
@@ -83,7 +83,7 @@ describe('daemon-projected agent UI behavior descriptors', () => {
             machineId: 'machine-a',
             descriptorsByAgentId: {
                 [EXTERNAL_AGENT_ID]: {
-                    resume: { experimentSwitches: [{ id: 'legacyResume', settingKey: 'agentResumePaneEnabled' }] },
+                    resume: { experimentSwitches: [{ id: 'legacyResume', settingKey: { scope: 'account', localId: 'agentResumePaneEnabled' } }] },
                 },
             },
         });
@@ -102,6 +102,32 @@ describe('daemon-projected agent UI behavior descriptors', () => {
         expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-c')).toEqual({
             enabled: true,
             switches: {},
+        });
+    });
+
+    it('resolves Account, Daemon, and host Agent setting refs without cross-scope key dedupe', () => {
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'machine-a',
+            descriptorsByAgentId: {
+                [EXTERNAL_AGENT_ID]: {
+                    resume: {
+                        experimentSwitches: [
+                            { id: 'account', settingKey: { scope: 'account', localId: 'shared' } },
+                            { id: 'daemon', settingKey: { scope: 'daemon', localId: 'shared' } },
+                            { id: 'host', settingKey: { scope: 'host', localId: 'hostFlag' } },
+                        ],
+                    },
+                },
+            },
+        });
+        const settings = makeSettings({ shared: false, hostFlag: true });
+
+        expect(getAgentResumeExperimentsFromSettings(EXTERNAL_AGENT_ID, settings, 'machine-a', {
+            account: { shared: true },
+            daemon: { shared: false },
+        })).toEqual({
+            enabled: true,
+            switches: { account: true, daemon: false, host: true },
         });
     });
 

@@ -275,6 +275,122 @@ describe('React Native bundle cache', () => {
         expect(persistent.records.has(derivePluginReactNativePersistentArtifactKey(persistentIdentity))).toBe(false);
     });
 
+    it('orders captured Artifact reads behind an exact-key removal', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// captured read ordering');
+        const identity = {
+            ...persistentIdentity,
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
+        };
+        const key = derivePluginReactNativePersistentArtifactKey(identity);
+        persistent.records.set(key, singleFileRecord(identity, 'index.bundle', bytes));
+        let beginRemoval!: () => void;
+        const removalBegan = new Promise<void>((resolve) => {
+            beginRemoval = resolve;
+        });
+        let allowRemoval!: () => void;
+        const removalGate = new Promise<void>((resolve) => {
+            allowRemoval = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async (requestedIdentity) => {
+                    beginRemoval();
+                    await removalGate;
+                    await persistent.store.remove(requestedIdentity);
+                },
+            },
+        });
+        const lifetime = {
+            scope: identity.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        };
+        const scope = createPluginReactNativeArtifactLeasePersistentScope({ cache, lifetime });
+
+        const removal = cache.removePersistentArtifact(identity);
+        await removalBegan;
+        const read = scope.store.read(identity);
+        expect(persistent.reads).toEqual([]);
+
+        allowRemoval();
+        await removal;
+        await expect(read).resolves.toBeNull();
+        scope.release();
+    });
+
+    it('orders captured Artifact writes behind an exact-key removal', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const bytes = new TextEncoder().encode('// captured write ordering');
+        const identity = {
+            ...persistentIdentity,
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
+        };
+        let beginRemoval!: () => void;
+        const removalBegan = new Promise<void>((resolve) => {
+            beginRemoval = resolve;
+        });
+        let allowRemoval!: () => void;
+        const removalGate = new Promise<void>((resolve) => {
+            allowRemoval = resolve;
+        });
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                remove: async (requestedIdentity) => {
+                    beginRemoval();
+                    await removalGate;
+                    await persistent.store.remove(requestedIdentity);
+                },
+            },
+        });
+        const lifetime = {
+            scope: identity.accountScope,
+            isCurrent: () => true,
+            onRetire: () => ({ dispose: () => undefined }),
+        };
+        const scope = createPluginReactNativeArtifactLeasePersistentScope({ cache, lifetime });
+
+        const removal = cache.removePersistentArtifact(identity);
+        await removalBegan;
+        const write = scope.store.write(singleFileRecord(identity, 'index.bundle', bytes));
+        expect(persistent.writes).toEqual([]);
+
+        allowRemoval();
+        await removal;
+        await expect(write).resolves.toBeUndefined();
+        expect(persistent.records.get(derivePluginReactNativePersistentArtifactKey(identity))).toMatchObject({ bytes });
+        scope.release();
+    });
+
+    it('reports a persistent write failure instead of claiming bytes were stored', async () => {
+        const persistent = createMemoryPersistentArtifactStore();
+        const diagnostics: string[] = [];
+        const bytes = new TextEncoder().encode('// failed persistent write');
+        const writeIdentity = {
+            ...persistentIdentity,
+            artifactDigest: fileSetDigestFor('index.bundle', bytes),
+        };
+        const cache = createPluginReactNativeBundleCache({
+            persistentStore: {
+                ...persistent.store,
+                write: async () => {
+                    throw new Error('storage unavailable');
+                },
+            },
+            onPersistentCacheDiagnostic: (code) => diagnostics.push(code),
+        });
+
+        await expect(cache.writePersistentArtifact(
+            singleFileRecord(writeIdentity, 'index.bundle', bytes),
+        )).resolves.toBe(false);
+        expect(diagnostics).toEqual(['plugin_ui_artifact_cache_write_failed']);
+        expect(persistent.records.has(
+            derivePluginReactNativePersistentArtifactKey(writeIdentity),
+        )).toBe(false);
+    });
+
     it('retains verified persistent Artifact bytes through an A-to-B-to-A Account lifetime transition', async () => {
         const persistent = createMemoryPersistentArtifactStore();
         const bytes = new TextEncoder().encode('// retained Account cache bytes');

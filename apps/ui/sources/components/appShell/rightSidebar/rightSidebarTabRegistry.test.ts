@@ -203,6 +203,20 @@ describe('rightSidebarTabRegistry', () => {
         });
     });
 
+    it('returns no app-scope plugin selection until a user or qualified opener selects one', () => {
+        const tabs = resolveRightSidebarTabs({
+            scope: 'app',
+            pluginPlacements: [appSidebarPlacement],
+        });
+
+        expect(resolveRightSidebarTabSelection({
+            activeTabId: null,
+            tabs,
+            projectionPhase: 'current',
+            scope: 'app',
+        })).toEqual({ kind: 'none' });
+    });
+
     it('keeps an already-published app tab available while another app member is establishing', () => {
         const tabs = resolveRightSidebarTabs({
             scope: 'app',

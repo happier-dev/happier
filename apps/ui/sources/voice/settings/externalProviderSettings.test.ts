@@ -3,6 +3,7 @@ import { VoiceProviderSettingsSchema } from '@happier-dev/protocol';
 
 import {
   createExternalVoiceProviderSettingsDescriptor,
+  isExternalVoiceProviderConnectedServicesBindingReady,
   projectExternalVoiceProviderSettings,
 } from './externalProviderSettings';
 
@@ -46,5 +47,60 @@ describe('externalProviderSettings', () => {
       profile: 'balanced',
       enableProvisioning: true,
     })).toBeNull();
+  });
+
+  it('checks Voice Connected Services binding from the exact declared config field without whole-config parsing', () => {
+    const descriptor = createExternalVoiceProviderSettingsDescriptor(VoiceProviderSettingsSchema.parse({
+      schemaVersion: 2,
+      fields: [{
+        id: 'requiredMode',
+        title: 'Required mode',
+        schema: { type: 'string', enum: ['strict'] },
+        default: 'strict',
+        presentation: { control: 'text' },
+      }],
+      connectedServicesBinding: {
+        id: 'globalConnectedServices',
+        title: 'Codex account',
+        agent: 'codex',
+        serviceIds: ['openai-codex'],
+      },
+    }));
+    const selectedBinding = {
+      v: 1,
+      bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': {
+          source: 'connected',
+          selection: 'profile',
+          profileId: 'codex-profile',
+        },
+      },
+    };
+
+    expect(isExternalVoiceProviderConnectedServicesBindingReady({
+      schemaVersion: 2,
+      config: {
+        requiredMode: 'wrong-decoy-that-would-fail-parseConfig',
+        decoyConnectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'decoy-profile',
+            },
+          },
+        },
+        globalConnectedServices: selectedBinding,
+      },
+    }, descriptor)).toBe(true);
+
+    expect(isExternalVoiceProviderConnectedServicesBindingReady({
+      schemaVersion: 2,
+      config: {
+        requiredMode: 'strict',
+        decoyConnectedServices: selectedBinding,
+      },
+    }, descriptor)).toBe(false);
   });
 });

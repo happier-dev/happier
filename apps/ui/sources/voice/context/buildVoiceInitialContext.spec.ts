@@ -6,7 +6,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
-import { buildVoiceInitialContext } from './buildVoiceInitialContext';
+import { buildVoiceInitialContext, resolveVoiceInitialContext } from './buildVoiceInitialContext';
 
 function createSession(summaryText: string): Session {
   return {
@@ -65,6 +65,33 @@ describe('buildVoiceInitialContext', () => {
       concurrentSessionListCacheByServerId: {},
     }));
     useVoiceTargetStore.getState().setTrackedSessionIds([]);
+  });
+
+  it('resolves current-UI-only, targetless, missing, and scoped session startup outcomes canonically', () => {
+    expect(resolveVoiceInitialContext('s1', { scope: 'current_ui_only' })).toEqual({
+      kind: 'current_ui_only',
+      initialContext: '',
+    });
+
+    expect(resolveVoiceInitialContext('', { scope: 'session_context' })).toEqual({
+      kind: 'targetless',
+      initialContext: expect.stringContaining('<session_context>none</session_context>'),
+    });
+    expect(buildVoiceInitialContext('')).toBe('');
+
+    expect(resolveVoiceInitialContext('missing_session', { scope: 'session_context' })).toEqual({
+      kind: 'missing_session',
+      sessionId: 'missing_session',
+      initialContext: expect.stringContaining('<session_not_found>true</session_not_found>'),
+    });
+    expect(buildVoiceInitialContext('missing_session')).toBe('');
+
+    const scoped = resolveVoiceInitialContext('s1', { scope: 'session_context' });
+    expect(scoped).toEqual({
+      kind: 'session',
+      sessionId: 's1',
+      initialContext: expect.stringContaining('THIS IS AN ACTIVE SESSION:'),
+    });
   });
 
   it('respects other-session policy when the session is not tracked', () => {

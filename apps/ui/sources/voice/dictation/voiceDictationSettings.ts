@@ -21,6 +21,17 @@ export const voiceDictationSettingsDefaults: VoiceDictationSettings =
   VoiceDictationSettingsSchema.parse({});
 
 export function voiceDictationSettingsParse(input: unknown): VoiceDictationSettings {
-  const parsed = VoiceDictationSettingsSchema.safeParse(input);
-  return parsed.success ? parsed.data : VoiceDictationSettingsSchema.parse({});
+  const defaults = VoiceDictationSettingsSchema.parse({});
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return defaults;
+
+  const raw = input as Record<string, unknown>;
+  const sttBinding = VoiceDictationSettingsSchema.shape.sttBinding.safeParse(raw.sttBinding);
+  const language = VoiceDictationLanguageSchema.safeParse(raw.language);
+  const stt = VoiceLocalSttSchema.safeParse(raw.stt);
+
+  return {
+    sttBinding: sttBinding.success ? sttBinding.data : defaults.sttBinding,
+    language: language.success ? language.data : defaults.language,
+    stt: stt.success ? stt.data : defaults.stt,
+  };
 }
