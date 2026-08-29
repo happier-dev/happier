@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   PACKED_MANAGED_PROVIDER_CANDIDATE_HANDOFF_STAGE_IDS,
   parsePackedManagedProviderArgs,
+  runPackedChannelProviderVertical,
   type PackedManagedProviderPreparedInput,
   type PackedManagedProviderPreparation,
 } from '../../scripts/plugin-platform/run-packed-managed-provider.mjs';
@@ -457,6 +458,38 @@ async function runPackedCurrentSourceManagedProviderContinuity(): Promise<
 }
 
 /**
+ * The Channel vertical consumes the same moving-source package archives as the
+ * ordinary current-source proof, but it exercises the separate real daemon,
+ * socket, custody, disable/re-enable, restart, and generation lifecycle.
+ * These ephemeral archives are a transport into that loaded process, not a
+ * release-candidate input or a frozen test representation.
+ */
+async function runPackedCurrentSourceChannelProviderContinuity(): Promise<
+  Readonly<{
+    prepared: PackedManagedProviderPreparation;
+    result: Awaited<ReturnType<typeof runPackedChannelProviderVertical>>;
+  }>
+> {
+  const source = await prepareCurrentSourceManagedProvider();
+  const composed = await startPackedManagedProviderComposedRuntime();
+  try {
+    const result = await runPackedChannelProviderVertical(
+      { enableOpenCodeLive: false } as Parameters<typeof runPackedChannelProviderVertical>[0],
+      {
+        prepareCandidate: async () => source.prepared,
+        runPackedChannelProviderLifecycle: async (input) =>
+          await composed.probePackedChannelProviderLifecycle(input),
+        cleanup: async () => await composed.cleanup(),
+      },
+    );
+    return { prepared: source.prepared, result };
+  } finally {
+    await composed.cleanup().catch(() => {});
+    await source.cleanup();
+  }
+}
+
+/**
  * Process-level seams this command owns. The composed runtime launches a real
  * server/daemon pair and the artifact owners read, verify, and extract real
  * candidate archives, so a candidate-shaped test supplies its own.
@@ -504,6 +537,35 @@ export async function main(
         arch: process.arch,
       },
       contract: current.candidateHandoff.contract,
+    })}\n`);
+    return;
+  }
+  // The command parser is a JavaScript module. Keep this runtime dispatch
+  // tolerant of a newly-added parser arm while its generated TypeScript view
+  // is refreshed by the package boundary.
+  if (String(parsed.mode) === 'current-source-channel') {
+    const current = await runPackedCurrentSourceChannelProviderContinuity();
+    const channelsProtocol = current.prepared.candidate.channelsProtocol;
+    if (!channelsProtocol) {
+      throw new Error('packed_current_source_channels_protocol_missing');
+    }
+    writeStdout(`${JSON.stringify({
+      ...current.result,
+      source: {
+        kind: 'current-source',
+        sdk: {
+          packageName: current.prepared.candidate.sdk.packageName,
+          version: current.prepared.candidate.sdk.version,
+        },
+        channelsProtocol: {
+          packageName: channelsProtocol.packageName,
+          version: channelsProtocol.version,
+        },
+        cli: {
+          packageName: current.prepared.candidate.cli.packageName,
+          version: current.prepared.candidate.cli.version,
+        },
+      },
     })}\n`);
     return;
   }

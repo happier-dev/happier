@@ -252,6 +252,24 @@ test('disabled dev targets cannot turn persisted remote server placement into a 
   );
 });
 
+test('remote server placement canonicalizes legacy local fallback to fail closed', () => {
+  const config = parseDevTargetsConfig({
+    version: 2,
+    targets: [
+      { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo', cliHomeDir: '/home' },
+    ],
+    runtimePlacement: {
+      server: { mode: 'prefer-target', target: 'mac', fallback: 'local' },
+    },
+  });
+
+  assert.deepEqual(config.runtimePlacement.server, {
+    mode: 'prefer-target',
+    target: 'mac',
+    fallback: 'error',
+  });
+});
+
 test('configured targets default bounded commands to automatic least-load execution', () => {
   const targets = [
     { name: 'mac', platform: 'posix', ssh: 'mac', repoDir: '/repo-mac', cliHomeDir: '/home-mac' },

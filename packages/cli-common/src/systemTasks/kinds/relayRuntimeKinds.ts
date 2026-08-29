@@ -3,6 +3,12 @@ import { normalizePublicReleaseRingLabel } from '@happier-dev/release-runtime/re
 
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { type InteractiveSystemTaskKind } from '../interactiveTaskKinds.js';
+import {
+  assertPersonalHomeEnvironmentKeys,
+  parsePersonalHomeRuntimePurpose,
+  type ManagedRelayPurpose,
+} from '../../firstPartyRuntime/personalHome/personalHomeRuntimeSpec.js';
+import type { PersonalHomeRuntimeLayout } from '../../firstPartyRuntime/personalHome/layout.js';
 
 export interface SystemTaskSshConnectionConfig {
   target: string;
@@ -21,6 +27,10 @@ export interface RelayRuntimeTaskParams {
   mode?: 'user' | 'system';
   env?: Record<string, string>;
   selfHostRelayBinaryOverride?: string;
+  purpose?: ManagedRelayPurpose;
+  operation?: 'backup' | 'verify_backup' | 'restore' | 'erase' | 'relocate' | 'uninstall';
+  confirmErase?: boolean;
+  archivePath?: string;
 }
 
 export interface RelayRuntimeStatusSnapshot {
@@ -33,6 +43,10 @@ export interface RelayRuntimeStatusSnapshot {
   baseUrl: string;
   healthy?: boolean | null;
   warnings?: readonly string[];
+  purpose?: ManagedRelayPurpose;
+  canonicalServerUrl?: string;
+  layout?: PersonalHomeRuntimeLayout;
+  dataPresent?: boolean;
 }
 
 type RelayRuntimeStatusResult = Readonly<{
@@ -49,7 +63,12 @@ export type RelayRuntimeKindDeps = Readonly<{
   checkHealth: (params: Readonly<{ baseUrl: string }>) => Promise<boolean>;
   installOrUpdate: (params: RelayRuntimeTaskParams) => Promise<Readonly<{ relayUrl: string; mode: 'user' | 'system' }>>;
   control: (params: RelayRuntimeTaskParams & Readonly<{ action: 'start' | 'stop' | 'restart' }>) => Promise<void>;
+  personalHomeOperation?: (params: RelayRuntimeTaskParams) => Promise<SystemTaskJsonValue>;
 }>;
+
+export function createPersonalHomeOperationTaskKind(deps: Pick<RelayRuntimeKindDeps, 'personalHomeOperation'>): InteractiveSystemTaskKind<SystemTaskJsonValue> {
+  return { async run(ctx) { const parsed = parseRelayRuntimeTaskParams(ctx.params); if (!parsed.operation || parsed.operation === 'verify_backup' && !parsed.archivePath) throw new SystemTaskExecutionError('invalid_params', 'Personal Home operation and archivePath are required.'); ctx.emit({ type: 'progress', stepId: `personal_home.${parsed.operation}`, message: `Running Personal Home ${parsed.operation ?? 'operation'}` }); if (!deps.personalHomeOperation) throw new SystemTaskExecutionError('unsupported', 'Personal Home operations are unavailable.'); return deps.personalHomeOperation(parsed); } };
+}
 
 export function createRelayRuntimeStatusTaskKind(deps: Pick<RelayRuntimeKindDeps, 'readStatus' | 'checkHealth'>): InteractiveSystemTaskKind<RelayRuntimeStatusResult> {
   return {
@@ -126,6 +145,19 @@ export function createRelayRuntimeStartTaskKind(deps: Pick<RelayRuntimeKindDeps,
   };
 }
 
+export function createRelayRuntimeRestartTaskKind(deps: Pick<RelayRuntimeKindDeps, 'control' | 'readStatus' | 'checkHealth'>): InteractiveSystemTaskKind<RelayRuntimeStatusResult> {
+  return {
+    async run(ctx) {
+      const parsed = parseRelayRuntimeTaskParams(ctx.params);
+      ctx.emit({ type: 'progress', stepId: 'relay.restart', message: 'Restarting relay runtime' });
+      await deps.control({ ...parsed, action: 'restart' });
+      const snapshot = await deps.readStatus(parsed);
+      ctx.emit({ type: 'progress', stepId: 'relay.status.health', message: 'Checking relay runtime health' });
+      return await buildRelayRuntimeStatusResult(snapshot, deps.checkHealth);
+    },
+  };
+}
+
 export function createRelayRuntimeStopTaskKind(deps: Pick<RelayRuntimeKindDeps, 'control'>): InteractiveSystemTaskKind<Readonly<{ stopped: true }>> {
   return {
     async run(ctx) {
@@ -187,6 +219,18 @@ export function parseRelayRuntimeTaskParams(params: unknown): RelayRuntimeTaskPa
   const selfHostRelayBinaryOverride = typeof value.selfHostRelayBinaryOverride === 'string'
     ? value.selfHostRelayBinaryOverride
     : undefined;
+  const operation = ['backup', 'verify_backup', 'restore', 'erase', 'relocate', 'uninstall'].includes(String(value.operation)) ? value.operation as RelayRuntimeTaskParams['operation'] : undefined;
+  const confirmErase = value.confirmErase === true;
+  const archivePath = typeof value.archivePath === 'string' ? value.archivePath : undefined;
+  const purpose = value.purpose === undefined
+    ? undefined
+    : (() => {
+        const spec = parsePersonalHomeRuntimePurpose(value.purpose);
+        return { kind: 'personal-home' as const, canonicalServerUrl: spec.canonicalServerUrl };
+      })();
+  if (purpose?.kind === 'personal-home') {
+    assertPersonalHomeEnvironmentKeys(env ?? {});
+  }
 
   return {
     target: kind === 'local'
@@ -199,6 +243,10 @@ export function parseRelayRuntimeTaskParams(params: unknown): RelayRuntimeTaskPa
     mode,
     ...(env ? { env } : {}),
     ...(selfHostRelayBinaryOverride ? { selfHostRelayBinaryOverride } : {}),
+    ...(purpose ? { purpose } : {}),
+    ...(operation ? { operation } : {}),
+    ...(confirmErase ? { confirmErase } : {}),
+    ...(archivePath ? { archivePath } : {}),
   };
 }
 

@@ -129,4 +129,58 @@ export {
   resolveServerRuntimePayloadRootFromBinaryPath,
 } from './serverRuntimeArtifactLayout.js';
 
-export { installOrUpdateRelayRuntimeLocal } from './relayRuntimeInstall.js';
+export { installOrUpdateRelayRuntimeLocal, uninstallRelayRuntimePayloadLocal } from './relayRuntimeInstall.js';
+
+export {
+  PERSONAL_HOME_SIGNUP_POLICY_ENV_KEY,
+  PERSONAL_HOME_SIGNUP_CLOSURE_ENV,
+  PersonalHomeSignupClosureError,
+  readEffectivePersonalHomeSignupPolicy,
+  applyPersonalHomeSignupClosure,
+  assertPersonalHomeSignupClosed,
+  applyAndVerifyPersonalHomeSignupClosure,
+} from './personalHomeSignupPolicy.js';
+export type { PersonalHomeSignupPolicyState } from './personalHomeSignupPolicy.js';
+
+export { resolvePersonalHomeRuntimeLayout, assertLayoutPath } from './personalHome/layout.js';
+export type { PersonalHomeRuntimeLayout } from './personalHome/layout.js';
+export {
+  assertPersonalHomeEnvironmentKeys,
+  createPersonalHomeRuntimeSpec,
+  parsePersonalHomeRuntimePurpose,
+  renderPersonalHomeRuntimeEnv,
+  resolvePersonalHomeRuntimeSpec,
+} from './personalHome/personalHomeRuntimeSpec.js';
+export type {
+  ManagedRelayPurpose,
+  PersonalHomeRuntimeEnvironment,
+  PersonalHomeRuntimeLayoutFacts,
+  PersonalHomeRuntimeSpec,
+} from './personalHome/personalHomeRuntimeSpec.js';
+export { acquirePersonalHomeOperationLock, withPersonalHomeOperationLock, normalizePersonalHomeLockOrder, PersonalHomeOperationError } from './personalHome/lock.js';
+export type { PersonalHomeOperationKind } from './personalHome/lock.js';
+export {
+  assertAllowedPersonalHomeBackupPath,
+  fingerprintMasterSecret,
+  isAllowedPersonalHomeBackupPath,
+  parsePersonalHomeBackupManifest,
+  serializePersonalHomeManifest,
+} from './personalHome/manifest.js';
+export type { PersonalHomeBackupManifestV1, PersonalHomeBackupEntry } from './personalHome/manifest.js';
+export { createPersonalHomeArchive, extractVerifiedPersonalHomeArchive, verifyPersonalHomeArchive } from './personalHome/archive.js';
+export { assertStablePersonalHomeSqliteSnapshot, PersonalHomeSqliteSnapshotError } from './personalHome/sqliteSnapshot.js';
+export { createPersonalHomeBackup, rotatePersonalHomeBackups } from './personalHome/backup.js';
+export type { PersonalHomeBackupResult, PersonalHomeBackupRotationResult, PersonalHomeSqliteMaintenance } from './personalHome/backup.js';
+export { erasePersonalHomeData, PersonalHomeEraseError } from './personalHome/erase.js';
+export type { PersonalHomeEraseResult } from './personalHome/erase.js';
+export { PersonalHomeRestoreError, restorePersonalHomeBackup } from './personalHome/restore.js';
+export type { PersonalHomeRestoreHooks, PersonalHomeRestoreResult } from './personalHome/restore.js';
+export { relocatePersonalHome, readPersonalHomeRelocationMarker } from './personalHome/relocation.js';
+export type {
+  PersonalHomeBundleTransfer,
+  PersonalHomeRelocationMarker,
+  PersonalHomeRelocationPhase,
+  PersonalHomeRelocationResult,
+} from './personalHome/relocation.js';
+export { runPersonalHomeBootstrap } from './personalHome/bootstrap.js';
+export type { PersonalHomeBootstrapDeps, PersonalHomeBootstrapResult } from './personalHome/bootstrap.js';

@@ -47,3 +47,16 @@ test('still discovers ordinary dot-directories that are not transient staging tr
     rmSync(rootDir, { recursive: true, force: true });
   }
 });
+
+test('discovers Lane 09 scenario modules alongside test and spec files', () => {
+  const rootDir = fixture();
+  try {
+    writeTest(rootDir, 'packages/tests/src/scenarios/accountDirectory.registerDiscoverEnroll.scenario.ts');
+
+    assert.deepEqual(discoverTestFiles({ rootDir, searchRoots: ['packages'] }), [
+      'packages/tests/src/scenarios/accountDirectory.registerDiscoverEnroll.scenario.ts',
+    ]);
+  } finally {
+    rmSync(rootDir, { recursive: true, force: true });
+  }
+});

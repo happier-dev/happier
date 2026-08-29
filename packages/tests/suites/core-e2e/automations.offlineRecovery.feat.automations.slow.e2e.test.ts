@@ -2,6 +2,12 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import {
+  AutomationDefinitionDetailSchema,
+  AutomationV3RunListResponseSchema,
+  buildAccountStoredContentCompatibilityHttpHeadersV1,
+  CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+} from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
@@ -25,6 +31,9 @@ async function requestJson<T>(params: {
     method: params.method ?? 'GET',
     headers: {
       Authorization: `Bearer ${params.token}`,
+      ...buildAccountStoredContentCompatibilityHttpHeadersV1(
+        CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+      ),
       ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     },
     ...(hasBody ? { body: JSON.stringify(params.body) } : {}),
@@ -124,37 +133,58 @@ describe('core e2e: automation daemon restart recovery', () => {
     await initialDaemon.stop();
     daemon = null;
 
-    const automation = await requestJson<{ id: string }>({
+    const automationId = 'e2e-v3-triggerless-manual-offline-recovery';
+    const prompt = 'AUTOMATION_V3_OFFLINE_RECOVERY';
+    const automation = AutomationDefinitionDetailSchema.parse(await requestJson<unknown>({
       baseUrl: serverBaseUrl,
       token: auth.token,
-      path: '/v2/automations',
+      path: '/v3/automations',
       method: 'POST',
       body: {
+        automationId,
         name: 'Offline recovery automation',
         enabled: true,
-        schedule: { kind: 'interval', everyMs: 86_400_000 },
-        targetType: 'new_session',
-        templateCiphertext: JSON.stringify({
-          kind: 'happier_automation_template_plain_v1',
-          payload: {
-            directory: workspaceDir,
-            agent: 'claude',
-            prompt: 'AUTOMATION_OFFLINE_RECOVERY',
-            terminal: { mode: 'plain' },
-            sessionEncryptionMode: 'plain',
+        // A triggerless Automation remains runnable manually. This is the
+        // current V3 shape: manual invocation is a Run cause, never a fake
+        // persisted trigger.
+        triggers: [],
+        executionRecipe: {
+          v: 1,
+          templateVersion: 1,
+          template: { t: 'plain', v: { v: 1, prompt } },
+          triggerEvidence: null,
+          target: {
+            kind: 'newSession',
+            spawn: {
+              executionTarget: {
+                serverId: seeded.serverId,
+                machineId: seeded.machineId,
+              },
+              directory: workspaceDir,
+              agentTarget: {
+                kind: 'agent',
+                identity: {
+                  pluginId: 'happier.agent.claude',
+                  localId: 'claude',
+                },
+              },
+            },
           },
-        }),
+        },
         assignments: [{ machineId: seeded.machineId, enabled: true, priority: 1 }],
       },
-    });
+    }));
+    expect(automation.id).toBe(automationId);
+    expect(automation.triggers).toEqual([]);
 
-    const runNow = await requestJson<{ run: { id: string; state: string } }>({
+    const runNow = await requestJson<{ run: { id: string; state: string; cause: { kind: string } } }>({
       baseUrl: serverBaseUrl,
       token: auth.token,
-      path: `/v2/automations/${encodeURIComponent(automation.id)}/run-now`,
+      path: `/v3/automations/${encodeURIComponent(automation.id)}/run-now`,
       method: 'POST',
     });
     expect(runNow.run.state).toBe('queued');
+    expect(runNow.run.cause.kind).toBe('manual');
 
     daemon = await startTestDaemon({
       testDir: resolve(join(testDir, 'daemon-after-restart')),
@@ -170,22 +200,16 @@ describe('core e2e: automation daemon restart recovery', () => {
       { timeoutMs: 60_000 },
     );
     await waitFor(async () => {
-      const history = await requestJson<{
-        runs: Array<{
-          id: string;
-          state: string;
-          claimedByMachineId: string | null;
-          producedSessionId: string | null;
-        }>;
-      }>({
+      const history = AutomationV3RunListResponseSchema.parse(await requestJson<unknown>({
         baseUrl: serverBaseUrl,
         token: auth.token,
-        path: `/v2/automations/${encodeURIComponent(automation.id)}/runs`,
-      });
+        path: `/v3/automations/${encodeURIComponent(automation.id)}/runs?limit=20`,
+      }));
       const recoveredRun = history.runs.find((entry) => entry.id === runNow.run.id);
       expect(recoveredRun?.state).toBe('succeeded');
       expect(recoveredRun?.claimedByMachineId).toBe(seeded.machineId);
       expect(recoveredRun?.producedSessionId).toBeTruthy();
+      expect(recoveredRun?.cause).toMatchObject({ kind: 'manual' });
       return true;
     }, { timeoutMs: 120_000, context: 'automation daemon restart recovery' });
   }, 240_000);

@@ -11,6 +11,67 @@ import {
 } from './manifest';
 
 describe('writeTestManifest', () => {
+  it('persists Lane 09 failure context without requiring a parallel manifest schema', () => {
+    const testDir = mkdtempSync(join(tmpdir(), 'happier-manifest-lane09-'));
+    const manifestPath = writeTestManifest(testDir, {
+      startedAt: '2026-08-30T12:00:00.000Z',
+      lane: 'test:e2e:core:fast',
+      commit: 'abc1234',
+      scenario: { name: 'F-AD-04 assertionFailures' },
+      configuration: {
+        homeMode: 'personal',
+        carrier: 'iroh',
+        databaseProvider: 'sqlite',
+        directoryMode: 'approval-required',
+      },
+      principals: [
+        {
+          role: 'accountService',
+          id: 'directory-1',
+          serverIdentityId: 'server-directory-1',
+          baseUrl: 'http://127.0.0.1:41001',
+        },
+        {
+          role: 'home',
+          id: 'home-1',
+          serverIdentityId: 'server-home-1',
+        },
+      ],
+      phase: 'assertion-verification',
+      expected: { result: 'reject', reason: 'wrong-audience' },
+      observed: { result: 'reject', code: 'invalid_assertion' },
+      logs: { client: '/tmp/client.log', server: '/tmp/home.log' },
+      versions: { client: '0.3.0-dev', server: '0.3.0-dev', iroh: '0.1.0' },
+      artifacts: {
+        client: '/tmp/client.log',
+        server: '/tmp/home.log',
+        iroh: '/tmp/iroh.json',
+      },
+      results: {
+        status: 'failed',
+        startedAt: '2026-08-30T12:00:00.000Z',
+        failureClassification: 'deterministic',
+      },
+    });
+
+    const written = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    expect(written).toMatchObject({
+      lane: 'test:e2e:core:fast',
+      commit: 'abc1234',
+      phase: 'assertion-verification',
+      configuration: { carrier: 'iroh', directoryMode: 'approval-required' },
+      expected: { result: 'reject', reason: 'wrong-audience' },
+      observed: { result: 'reject', code: 'invalid_assertion' },
+      versions: { client: '0.3.0-dev', server: '0.3.0-dev', iroh: '0.1.0' },
+      artifacts: { client: '/tmp/client.log', iroh: '/tmp/iroh.json' },
+      logs: { client: '/tmp/client.log', server: '/tmp/home.log' },
+    });
+    expect(written.principals).toEqual([
+      expect.objectContaining({ role: 'accountService', serverIdentityId: 'server-directory-1' }),
+      expect.objectContaining({ role: 'home', serverIdentityId: 'server-home-1' }),
+    ]);
+  });
+
   it('persists extended stress topology and scenario metadata in the canonical manifest', () => {
     const testDir = mkdtempSync(join(tmpdir(), 'happier-manifest-'));
     const daemonRunnerContinuity = {

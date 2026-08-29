@@ -111,6 +111,42 @@ describe('discoverHappierInstallations', () => {
         }
     });
 
+    it('discovers an installed mutagen engine through the managed first-party catalog', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-runtime-installations-mutagen-'));
+        try {
+            const processEnv = {
+                HAPPIER_HOME_DIR: join(root, '.happier'),
+                PATH: '',
+            } as NodeJS.ProcessEnv;
+            const paths = resolveInstalledFirstPartyComponentPaths({
+                componentId: 'mutagen-engine',
+                processEnv,
+            });
+
+            await mkdir(paths.currentPath, { recursive: true });
+            await writeFile(join(paths.currentPath, 'package.json'), JSON.stringify({ version: '0.18.1-happier.1' }), 'utf8');
+            await mkdir(dirname(paths.binaryPath), { recursive: true });
+            await writeFile(paths.binaryPath, '#!/bin/sh\n', 'utf8');
+            await chmod(paths.binaryPath, 0o755);
+
+            const inventory = await discoverHappierInstallations({ processEnv });
+
+            expect(inventory.installations).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    source: 'firstPartyManaged',
+                    components: ['mutagen-engine'],
+                    ring: 'stable',
+                    version: '0.18.1-happier.1',
+                    path: paths.currentPath,
+                    shimName: null,
+                    onPath: false,
+                }),
+            ]));
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('records every Happier CLI shim found on PATH instead of only the first match', async () => {
         const root = mkdtempSync(join(tmpdir(), 'happier-runtime-installations-path-'));
         try {

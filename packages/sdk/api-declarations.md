@@ -341,7 +341,7 @@ class HappierSessionSpawnError extends Error {
 Declared by `dist/fluent/sessions.d.ts` as `HappierSessionSpawnInput`.
 
 ```ts
-type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput' | 'environmentVariables'> & Readonly<{
+type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
     agent: string;
     initialMessage?: string;
 }>>;
@@ -11626,6 +11626,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                             }, z.core.$strict>;
                         }, z.core.$strict>>>;
                     }, z.core.$strict>>;
+                    environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
                         id: z.ZodString;
@@ -11891,6 +11892,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                             }, z.core.$strict>;
                         }, z.core.$strict>>>;
                     }, z.core.$strict>>;
+                    environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
                         id: z.ZodString;
@@ -12326,6 +12328,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     }, z.core.$strict>;
                 }, z.core.$strict>>>;
             }, z.core.$strict>>;
+            environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
             agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                 v: z.ZodLiteral<1>;
                 id: z.ZodString;
@@ -12788,8 +12791,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 z.ZodString
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
+            serverId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
-        }, z.core.$strict>;
+        }, z.core.$loose>;
     },
     {
         readonly id: 'agents.config_options.list';
@@ -12867,7 +12871,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             modelId: z.ZodOptional<z.ZodString>;
-        }, z.core.$strict>;
+            serverId: z.ZodOptional<z.ZodString>;
+        }, z.core.$loose>;
     },
     {
         readonly id: 'agents.session_modes.list';
@@ -12939,7 +12944,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
-        }, z.core.$strict>;
+            serverId: z.ZodOptional<z.ZodString>;
+        }, z.core.$loose>;
     },
     {
         readonly id: 'sessions.spawn.profiles.list';
@@ -13074,7 +13080,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             includeUnavailable: z.ZodOptional<z.ZodBoolean>;
-        }, z.core.$strict>;
+            serverId: z.ZodOptional<z.ZodString>;
+        }, z.core.$loose>;
     },
     {
         readonly id: 'sessions.spawn.mcp_servers.preview';
@@ -75025,8 +75032,8 @@ const AutomationEventActionInputSchemasV1: Readonly<{
                 rateLimited: "rateLimited";
                 sourceContractIncompatible: "sourceContractIncompatible";
             }>;
-            lastObservedAt: z.ZodNullable<z.ZodNumber>;
-            lastDispositionAt: z.ZodNullable<z.ZodNumber>;
+            lastObservedAt: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            lastDispositionAt: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
             nextRetryAt: z.ZodNullable<z.ZodNumber>;
             observedDelta: z.ZodNumber;
             admittedDelta: z.ZodNumber;
@@ -76682,7 +76689,7 @@ const PluginWebhookActionInputSchemasV1: Readonly<{
         sourceInstanceId: z.ZodString;
         setup: z.ZodDiscriminatedUnion<[
             z.ZodObject<{
-                kind: z.ZodLiteral<"githubAccountEndpointV1">;
+                kind: z.ZodLiteral<"accountEndpointV1">;
                 credential: z.ZodLiteral<"serverGenerated">;
             }, z.core.$strict>,
             z.ZodObject<{
@@ -76734,7 +76741,7 @@ const PluginWebhookActionInputSchemasV1: Readonly<{
         sourceInstanceId: z.ZodString;
         setup: z.ZodDiscriminatedUnion<[
             z.ZodObject<{
-                kind: z.ZodLiteral<"githubAccountEndpointV1">;
+                kind: z.ZodLiteral<"accountEndpointV1">;
                 credential: z.ZodLiteral<"serverGenerated">;
             }, z.core.$strict>,
             z.ZodObject<{

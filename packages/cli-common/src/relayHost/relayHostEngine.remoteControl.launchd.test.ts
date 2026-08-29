@@ -1,6 +1,45 @@
 import { describe, expect, it } from 'vitest';
 
 describe('RelayHostEngine (remote launchd control)', () => {
+  it('preserves remote Personal Home data during uninstall', async () => {
+    const remoteCommands: string[] = [];
+    const { createRelayHostEngine } = await import('./relayHostEngine.js');
+
+    const engine = createRelayHostEngine({
+      resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+      runRemoteText: async ({ remoteCommand }) => {
+        remoteCommands.push(remoteCommand);
+        if (remoteCommand.startsWith("printf '%s")) {
+          return { status: 0, stdout: '/home/tester\n', stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      },
+      copyLocalDirectoryToRemote: async () => {},
+      installRemoteComponent: async () => ({
+        binaryPath: '$HOME/.happier/happier-server/current/happier-server',
+        versionId: 'stable-1',
+      }),
+    });
+
+    await expect(engine.control({
+      target: {
+        kind: 'ssh',
+        ssh: { target: 'dev@example.test', auth: 'agent' },
+      },
+      mode: 'user',
+      channel: 'stable',
+      purpose: { kind: 'personal-home', canonicalServerUrl: 'http://127.0.0.1:43123' },
+      action: 'uninstall',
+    })).resolves.toBeUndefined();
+
+    const cleanupCommand = remoteCommands.find((command) => command.includes('set -eu')) ?? '';
+    expect(remoteCommands.length).toBeGreaterThan(0);
+    expect(cleanupCommand).toContain('data');
+    expect(cleanupCommand).toContain('rm -rf');
+    expect(cleanupCommand).not.toContain('rm -rf $HOME/.happier/self-host/data');
+    expect(cleanupCommand).not.toMatch(/rm -rf \$HOME\/\.happier\/self-host(?:;|$)/u);
+  });
+
   it('uses the remote uid when restarting a user launchd relay over ssh', async () => {
     const remoteCommands: string[] = [];
     const { createRelayHostEngine } = await import('./relayHostEngine.js');

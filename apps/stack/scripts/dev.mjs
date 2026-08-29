@@ -799,6 +799,7 @@ async function main() {
         runtimeStatePath,
         restart,
         startLastGreen: watchEnabled,
+        keepServerRunningOnFailure: baseEnv.HAPPIER_STACK_TUI === '1',
         isShuttingDown: () => shuttingDown,
         env: baseEnv,
         stackName,

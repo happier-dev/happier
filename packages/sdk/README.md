@@ -2,10 +2,11 @@
 
 Typed Node.js client for Happier's authenticated Action API.
 
-The current Developer Preview supports server-side Node.js use. Public Action
-routes do not enable CORS, so this is not a browser client for arbitrary web
-origins; same-origin browser delivery has not been proven as a supported
-environment. Do not put an API Token in browser code.
+The current Developer Preview requires Node.js 18.17 or newer and supports
+server-side Node.js use. Public Action routes do not enable CORS, so this is not
+a browser client for arbitrary web origins; same-origin browser delivery has
+not been proven as a supported environment. Do not put an API Token in browser
+code.
 
 ## Choose the interface
 

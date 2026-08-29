@@ -102,6 +102,10 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile(LANE_CONTEXT, 'packages/tests/scripts/wsrepl-lima-matrix.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
   assert.equal(classifyTestFile(LANE_CONTEXT, 'packages/tests/scripts/lima-vm.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
   assert.equal(classifyTestFile(LANE_CONTEXT, 'packages/tests/suites/agents/auth.test.ts'), 'test:agents');
+  assert.equal(
+    classifyTestFile(LANE_CONTEXT, 'packages/tests/src/scenarios/accountDirectory.registerDiscoverEnroll.scenario.ts'),
+    'test:e2e:core:fast',
+  );
   assert.equal(classifyTestFile(LANE_CONTEXT, 'packages/tests/suites/stress/retry.test.ts'), 'test:stress');
   assert.equal(classifyTestFile(LANE_CONTEXT, 'apps/stack/scripts/runtime.test.mjs'), 'stack:test:unit');
   assert.equal(classifyTestFile(LANE_CONTEXT, 'apps/stack/scripts/runtime.integration.test.mjs'), 'stack:test:integration');

@@ -9,6 +9,7 @@
 export {
   readTriageSourceAccountListingV1,
   type TriageSourceAccountListerV1,
+  type TriageSourceAccountListingFailureReasonV1,
   type TriageSourceAccountListingOutcomeV1,
 } from './authorization/triageSourceAccountListing.js';
 export {
@@ -32,6 +33,7 @@ export {
   type ProviderWriteConfirmation,
 } from './invocation/writeSettlement.js';
 export { parseForgeLinkHeader, readForgeLinkHeaderValue } from './http/linkHeader.js';
+export { parseRetryAfterNotBeforeMsV1 } from './http/retryAfter.js';
 export {
   advanceCursorCycleWalkV1,
   readCursorCycleProbeV1,
@@ -39,3 +41,6 @@ export {
   type CursorCycleProbeV1,
   type CursorCycleWalkV1,
 } from './paging/cursorCycle.js';
+export {
+  fitComposerReferenceResolutionPrefixV1,
+} from './projection/composerReferenceResolution.js';

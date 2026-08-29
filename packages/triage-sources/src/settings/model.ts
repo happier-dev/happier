@@ -433,50 +433,88 @@ export function advanceTriageSourceSettingsRowLifecycle(
 function describeTriageSourceConfiguration(
   outcome: TriageSourceSettingsConfigurationV1,
   sourceDisplayName: string,
+  text: PluginTranslate,
 ): Readonly<{ text: string; tone: TriageSourceSettingsRowToneV1 }> | null {
   switch (outcome.kind) {
     case 'idle':
     case 'submitting':
       return null;
     case 'configured':
-      return { text: `Added to ${PRODUCT_NAME}.`, tone: 'success' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.added', `Added to ${PRODUCT_NAME}.`, { product: PRODUCT_NAME }),
+        tone: 'success',
+      };
     case 'alreadyConfigured':
-      return { text: `Already in ${PRODUCT_NAME}.`, tone: 'neutral' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.alreadyConfigured', `Already in ${PRODUCT_NAME}.`, { product: PRODUCT_NAME }),
+        tone: 'neutral',
+      };
     case 'reconfigured':
-      return { text: 'Configuration updated.', tone: 'success' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.updated', 'Configuration updated.'),
+        tone: 'success',
+      };
     case 'restored':
-      return { text: `Restored to ${PRODUCT_NAME}.`, tone: 'success' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.restored', `Restored to ${PRODUCT_NAME}.`, { product: PRODUCT_NAME }),
+        tone: 'success',
+      };
     case 'removed':
       // Removal is stated with its exact blast radius. Entries are a projection
       // of what the source can still see, so they go; a pin and a Session link
       // are the user's own state with their own lifetime, and a page that
       // implied removal discarded them would stop people from removing at all.
       return {
-        text: `Removed from ${PRODUCT_NAME}. Its entries leave the list; the pins and Session links you made stay.`,
+        text: text(
+          'plugins.triage.sourceSettings.configuration.removed',
+          `Removed from ${PRODUCT_NAME}. Its entries leave the list; the pins and Session links you made stay.`,
+          { product: PRODUCT_NAME },
+        ),
         tone: 'neutral',
       };
     case 'conflict':
       return {
-        text: 'You removed this earlier. This page cannot bring it back yet.',
+        text: text(
+          'plugins.triage.sourceSettings.configuration.conflict',
+          'You removed this earlier. This page cannot bring it back yet.',
+        ),
         tone: 'warning',
       };
     case 'atMaximum':
       return {
-        text: `You have configured as many sources as ${PRODUCT_NAME} holds. Remove one you no longer use.`,
+        text: text(
+          'plugins.triage.sourceSettings.configuration.atMaximum',
+          `You have configured as many sources as ${PRODUCT_NAME} holds. Remove one you no longer use.`,
+          { product: PRODUCT_NAME },
+        ),
         tone: 'warning',
       };
     case 'sourceNotAdmitted':
       return {
-        text: `${sourceDisplayName} is no longer an admitted ${PRODUCT_NAME} source on this account.`,
+        text: text(
+          'plugins.triage.sourceSettings.configuration.sourceNotAdmitted',
+          `${sourceDisplayName} is no longer an admitted ${PRODUCT_NAME} source on this account.`,
+          { source: sourceDisplayName, product: PRODUCT_NAME },
+        ),
         tone: 'danger',
       };
     case 'raced':
-      return { text: 'Something changed while this was saving. Try again.', tone: 'warning' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.raced', 'Something changed while this was saving. Try again.'),
+        tone: 'warning',
+      };
     case 'unreadable':
-      return { text: 'The response could not be read by this version.', tone: 'danger' };
+      return {
+        text: text('plugins.triage.sourceSettings.configuration.unreadable', 'The response could not be read by this version.'),
+        tone: 'danger',
+      };
     case 'outcomeUnknown':
       return {
-        text: `${outcome.message} It may already have been applied; refresh before trying again.`,
+        text: text(
+          'plugins.triage.sourceSettings.configuration.outcomeUnknown',
+          `${outcome.message} It may already have been applied; refresh before trying again.`,
+          { message: outcome.message },
+        ),
         tone: 'warning',
       };
     case 'failed':
@@ -498,24 +536,39 @@ function describeLifecycle(
   lifecycle: TriageSourceSettingsRowLifecycleV1,
   presence: TriageSourceSettingsRowSubjectV1['presence'],
   sourceDisplayName: string,
+  text: PluginTranslate,
 ): Readonly<{ text: string; tone: TriageSourceSettingsRowToneV1 }> | null {
   switch (lifecycle.kind) {
     case 'configured':
       if (presence === 'missing') {
         return {
-          text: `In ${PRODUCT_NAME}, but ${sourceDisplayName} can no longer reach it. Its entries stop arriving until the account or scope comes back.`,
+          text: text(
+            'plugins.triage.sourceSettings.lifecycle.missing',
+            `In ${PRODUCT_NAME}, but ${sourceDisplayName} can no longer reach it. Its entries stop arriving until the account or scope comes back.`,
+            { product: PRODUCT_NAME, source: sourceDisplayName },
+          ),
           tone: 'warning',
         };
       }
       if (presence === 'unlisted') {
         return {
-          text: `In ${PRODUCT_NAME}. This page could not list it just now, so it may still be working.`,
+          text: text(
+            'plugins.triage.sourceSettings.lifecycle.unlisted',
+            `In ${PRODUCT_NAME}. This page could not list it just now, so it may still be working.`,
+            { product: PRODUCT_NAME },
+          ),
           tone: 'neutral',
         };
       }
-      return { text: `In ${PRODUCT_NAME}.`, tone: 'neutral' };
+      return {
+        text: text('plugins.triage.sourceSettings.lifecycle.configured', `In ${PRODUCT_NAME}.`, { product: PRODUCT_NAME }),
+        tone: 'neutral',
+      };
     case 'retired':
-      return { text: `Removed from ${PRODUCT_NAME}.`, tone: 'neutral' };
+      return {
+        text: text('plugins.triage.sourceSettings.lifecycle.retired', `Removed from ${PRODUCT_NAME}.`, { product: PRODUCT_NAME }),
+        tone: 'neutral',
+      };
     case 'unknown':
       // Not "not added": a read that could not be completed leaves a configured
       // row unknown, so silence is the only true answer.
@@ -528,6 +581,7 @@ function controlsFor(
   presence: TriageSourceSettingsRowSubjectV1['presence'],
   title: string,
   outcome: TriageSourceSettingsConfigurationV1 | undefined,
+  text: PluginTranslate,
 ): readonly TriageSourceSettingsRowControlV1[] {
   // An unknown write may already have committed. Until Refresh replaces that
   // ambiguity with the target's configured-instance read, repeating any row
@@ -543,8 +597,8 @@ function controlsFor(
       return hasDraft
         ? [{
           id: 'add',
-          label: 'Add',
-          accessibilityLabel: `Add ${title} to ${PRODUCT_NAME}`,
+          label: text('plugins.triage.sourceSettings.control.add', 'Add'),
+          accessibilityLabel: text('plugins.triage.sourceSettings.control.addLabel', 'Add {title} to PRs & Issues', { title }),
           variant: 'primary',
         }]
         : [];
@@ -555,8 +609,8 @@ function controlsFor(
       return hasDraft
         ? [{
           id: 'restore',
-          label: 'Restore',
-          accessibilityLabel: `Restore ${title} to ${PRODUCT_NAME}`,
+          label: text('plugins.triage.sourceSettings.control.restore', 'Restore'),
+          accessibilityLabel: text('plugins.triage.sourceSettings.control.restoreLabel', 'Restore {title} to PRs & Issues', { title }),
           variant: 'primary',
         }]
         : [];
@@ -565,15 +619,15 @@ function controlsFor(
         ...(hasDraft
           ? [{
             id: 'reconfigure' as const,
-            label: 'Update',
-            accessibilityLabel: `Update ${title} from the provider`,
+            label: text('plugins.triage.sourceSettings.control.update', 'Update'),
+            accessibilityLabel: text('plugins.triage.sourceSettings.control.updateLabel', 'Update {title} from the provider', { title }),
             variant: 'secondary' as const,
           }]
           : []),
         {
           id: 'remove',
-          label: 'Remove',
-          accessibilityLabel: `Remove ${title} from ${PRODUCT_NAME}`,
+          label: text('plugins.triage.sourceSettings.control.remove', 'Remove'),
+          accessibilityLabel: text('plugins.triage.sourceSettings.control.removeLabel', 'Remove {title} from PRs & Issues', { title }),
           variant: 'secondary',
         },
       ];
@@ -595,19 +649,20 @@ function projectTriageSourceSettingsRow(input: Readonly<{
   /** `undefined` is spelled out: a row with no settled answer is the common case. */
   outcome?: TriageSourceSettingsConfigurationV1 | undefined;
   sourceDisplayName: string;
+  text: PluginTranslate;
 }>): TriageSourceSettingsRowV1 {
   const { subject, lifecycle } = input;
   const settled = input.outcome === undefined
     ? null
-    : describeTriageSourceConfiguration(input.outcome, input.sourceDisplayName);
-  const standing = describeLifecycle(lifecycle, subject.presence, input.sourceDisplayName);
+    : describeTriageSourceConfiguration(input.outcome, input.sourceDisplayName, input.text);
+  const standing = describeLifecycle(lifecycle, subject.presence, input.sourceDisplayName, input.text);
   return {
     key: subject.key,
     title: subject.label,
     status: settled?.text ?? standing?.text ?? null,
     locator: subject.locator === subject.label ? null : subject.locator,
     tone: settled?.tone ?? standing?.tone ?? 'neutral',
-    controls: controlsFor(lifecycle, subject.presence, subject.label, input.outcome),
+    controls: controlsFor(lifecycle, subject.presence, subject.label, input.outcome, input.text),
     sourceInstanceId: lifecycle.kind === 'unknown' ? null : lifecycle.sourceInstanceId,
     draft: subject.presence === 'discovered' ? subject.draft : null,
     keyFollowsProviderName: subject.keyFollowsProviderName,
@@ -682,8 +737,9 @@ export function projectTriageSourceSettingsRows(input: Readonly<{
   /** What a successful press taught this page, keyed by row key. */
   learned: Readonly<Record<string, TriageSourceSettingsRowLifecycleV1>>;
   sourceDisplayName: string;
+  text?: PluginTranslate;
 }>): readonly TriageSourceSettingsRowV1[] {
-  const { configured, discovery, learned, outcomes, sourceDisplayName } = input;
+  const { configured, discovery, learned, outcomes, sourceDisplayName, text = ENGLISH_TEXT } = input;
   const candidates = discovery.kind === 'listed' ? discovery.candidates : [];
   const instances = configured.kind === 'read' ? configured.instances : [];
   const byKey = new Map(instances.map((instance) => [instance.key, instance]));
@@ -703,6 +759,7 @@ export function projectTriageSourceSettingsRows(input: Readonly<{
       lifecycle: lifecycleFor(subject.key),
       ...(outcomes[subject.key] === undefined ? {} : { outcome: outcomes[subject.key] }),
       sourceDisplayName,
+      text,
     });
   }
 
@@ -733,6 +790,7 @@ export function projectTriageSourceSettingsRows(input: Readonly<{
 export function describeTriageSourceConfiguredRead(
   configured: TriageSourceSettingsConfiguredV1,
   sourceDisplayName: string,
+  text: PluginTranslate = ENGLISH_TEXT,
 ): Readonly<{ title: string; description: string; tone: 'warning' | 'danger' }> | null {
   switch (configured.kind) {
     case 'loading':
@@ -743,38 +801,58 @@ export function describeTriageSourceConfiguredRead(
       return configured.complete
         ? null
         : {
-          title: 'Not everything you configured is listed here',
-          description: `${PRODUCT_NAME} holds more ${sourceDisplayName} configurations than this page can list, so one you already added may still offer Add.`,
+          title: text('plugins.triage.sourceSettings.configuredRead.incomplete.title', 'Not everything you configured is listed here'),
+          description: text(
+            'plugins.triage.sourceSettings.configuredRead.incomplete.description',
+            `${PRODUCT_NAME} holds more ${sourceDisplayName} configurations than this page can list, so one you already added may still offer Add.`,
+            { product: PRODUCT_NAME, source: sourceDisplayName },
+          ),
           tone: 'warning',
         };
     case 'unreadable':
       return {
-        title: 'This version cannot read what is configured',
-        description: `${PRODUCT_NAME} answered outside the published contract, so this page cannot say which of these are already added.`,
+        title: text('plugins.triage.sourceSettings.configuredRead.unreadable.title', 'This version cannot read what is configured'),
+        description: text(
+          'plugins.triage.sourceSettings.configuredRead.unreadable.description',
+          `${PRODUCT_NAME} answered outside the published contract, so this page cannot say which of these are already added.`,
+          { product: PRODUCT_NAME },
+        ),
         tone: 'danger',
       };
     case 'unreachable':
       return {
-        title: 'What is already configured could not be read',
-        description: `${configured.message} A row may offer Add for something you already added.`,
+        title: text('plugins.triage.sourceSettings.configuredRead.unreachable.title', 'What is already configured could not be read'),
+        description: text(
+          'plugins.triage.sourceSettings.configuredRead.unreachable.description',
+          `${configured.message} A row may offer Add for something you already added.`,
+          { message: configured.message },
+        ),
         tone: 'warning',
       };
     case 'outcomeUnknown':
       return {
-        title: 'This page does not know what is already configured',
-        description: 'That read did not finish. Refresh to ask again before adding anything.',
+        title: text('plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title', 'This page does not know what is already configured'),
+        description: text('plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description', 'That read did not finish. Refresh to ask again before adding anything.'),
         tone: 'warning',
       };
     case 'sourceNotAdmitted':
       return {
-        title: `${sourceDisplayName} is no longer an admitted ${PRODUCT_NAME} source on this account.`,
-        description: `Nothing here can be added to ${PRODUCT_NAME} until it is admitted again.`,
+        title: text(
+          'plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title',
+          `${sourceDisplayName} is no longer an admitted ${PRODUCT_NAME} source on this account.`,
+          { source: sourceDisplayName, product: PRODUCT_NAME },
+        ),
+        description: text(
+          'plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description',
+          `Nothing here can be added to ${PRODUCT_NAME} until it is admitted again.`,
+          { product: PRODUCT_NAME },
+        ),
         tone: 'danger',
       };
     case 'raced':
       return {
-        title: 'This page read while something was changing',
-        description: 'Refresh to see what is configured now.',
+        title: text('plugins.triage.sourceSettings.configuredRead.raced.title', 'This page read while something was changing'),
+        description: text('plugins.triage.sourceSettings.configuredRead.raced.description', 'Refresh to see what is configured now.'),
         tone: 'warning',
       };
   }

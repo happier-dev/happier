@@ -133,6 +133,12 @@ async function getJson<T>(params: Readonly<{
 
 type PersistedAutomationListItem = AutomationDefinitionListItem;
 type PersistedAutomationRunRow = AutomationV3RunListItem;
+type SessionMessagesResponse = Readonly<{
+    messages: ReadonlyArray<Readonly<{
+        localId: string | null;
+        content: unknown;
+    }>>;
+}>;
 
 async function listPersistedAutomations(params: Readonly<{
     baseUrl: string;
@@ -157,6 +163,18 @@ async function listPersistedAutomationRuns(params: Readonly<{
         path: `/v3/automations/${params.automationId}/runs?limit=20`,
     });
     return response.runs;
+}
+
+async function listSessionMessages(params: Readonly<{
+    baseUrl: string;
+    token: string;
+    sessionId: string;
+}>): Promise<SessionMessagesResponse> {
+    return await getJson<SessionMessagesResponse>({
+        baseUrl: params.baseUrl,
+        token: params.token,
+        path: `/v1/sessions/${encodeURIComponent(params.sessionId)}/messages?limit=100`,
+    });
 }
 
 async function expectPersistedAutomation(params: Readonly<{
@@ -435,6 +453,7 @@ test.describe('ui e2e: automations authoring', () => {
         const { sessionId } = session;
 
         const existingSessionAutomationName = `Existing automation ${run.runId}`;
+        const existingSessionAutomationPrompt = `existing-session automation prompt ${run.runId}`;
         const automationAuthoringUrl = new URL(session.sessionHref);
         automationAuthoringUrl.pathname = `${automationAuthoringUrl.pathname}/automations/new`;
         automationAuthoringUrl.searchParams.set('happier_hmr', '0');
@@ -444,7 +463,7 @@ test.describe('ui e2e: automations authoring', () => {
         await page.getByTestId('new-session-automation-chip').click();
         await expect(page.getByTestId('automation-name')).toHaveCount(1, { timeout: 60_000 });
         await page.getByTestId('automation-name').fill(existingSessionAutomationName);
-        await getVisibleSessionComposer(page).fill(`existing-session automation prompt ${run.runId}`);
+        await getVisibleSessionComposer(page).fill(existingSessionAutomationPrompt);
         await submitAutomationViaComposer({
             page,
             testId: 'session-composer-send',
@@ -611,6 +630,43 @@ test.describe('ui e2e: automations authoring', () => {
         }
         expect(lifecycleRun.triggerId).toBe(savedLifecycleTriggerId);
         expect(lifecycleRun.triggerRetired).toBe(false);
+
+        // Admission alone is not the composed user outcome. The same loaded
+        // daemon must claim the exact-turn Run and deliver its Run-owned input
+        // into the selected target Session.
+        await expect.poll(async () => {
+            const runs = await listPersistedAutomationRuns({
+                baseUrl: server.baseUrl,
+                token: authToken,
+                automationId: existingAutomationId,
+            });
+            return runs.find((candidate) => candidate.id === lifecycleRun?.id)?.state ?? null;
+        }, { timeout: 180_000 }).toBe('succeeded');
+        const expectedLifecycleInputId = `automation:run:${lifecycleRun.id}`;
+        await expect.poll(async () => {
+            const messages = await listSessionMessages({
+                baseUrl: server.baseUrl,
+                token: authToken,
+                sessionId,
+            });
+            return messages.messages.some((message) => message.localId === expectedLifecycleInputId);
+        }, { timeout: 120_000 }).toBe(true);
+        const targetMessages = await listSessionMessages({
+            baseUrl: server.baseUrl,
+            token: authToken,
+            sessionId,
+        });
+        const lifecycleInput = targetMessages.messages.find((message) => message.localId === expectedLifecycleInputId);
+        expect(lifecycleInput?.content).toEqual(expect.objectContaining({
+            t: 'plain',
+            v: expect.objectContaining({
+                role: 'user',
+                content: expect.objectContaining({
+                    type: 'text',
+                    text: existingSessionAutomationPrompt,
+                }),
+            }),
+        }));
         // The owning trigger's projected status follows its admitted Run.
         await expect.poll(async () => {
             const found = (await listPersistedAutomations({

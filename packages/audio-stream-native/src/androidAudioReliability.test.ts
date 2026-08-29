@@ -59,6 +59,12 @@ describe('Android Voice audio reliability contract', () => {
     expect(serviceSource).toContain('if (pendingStart?.first == requestId) pendingStart = null');
   });
 
+  it('makes the persistent Voice notification reopen Happier', () => {
+    expect(serviceSource).toContain('packageManager.getLaunchIntentForPackage(packageName)');
+    expect(serviceSource).toContain('PendingIntent.getActivity');
+    expect(serviceSource).toContain('notificationBuilder.setContentIntent(contentIntent)');
+  });
+
   it('ships localized build-owned foreground notification resources', () => {
     for (const directory of localizedResourceDirectories) {
       const resource = fs.readFileSync(

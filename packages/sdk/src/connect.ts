@@ -13,6 +13,7 @@ import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { Agent, request as requestWithUndici } from 'undici';
 
 import { createGeneratedActions, MUTATING_PUBLIC_ACTION_IDS } from './actions/generated.js';
+import { waitForClientCleanupGrace } from './cleanupGrace.js';
 import { HappierActionError, HappierClientClosedError, HappierTransportError } from './errors.js';
 import {
   createMachineSessions,
@@ -101,21 +102,6 @@ function combinedSignal(signal: AbortSignal | undefined, closeSignal: AbortSigna
   return signal === undefined ? closeSignal : AbortSignal.any([signal, closeSignal]);
 }
 
-const CLIENT_CLOSE_CLEANUP_GRACE_MS = 1_000;
-
-async function waitForCloseCleanup(cleanup: Promise<unknown>): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      cleanup,
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, CLIENT_CLOSE_CLEANUP_GRACE_MS);
-      }),
-    ]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
-}
 
 class ExternalActionResponseBodyTooLargeError extends Error {
   constructor() {
@@ -333,8 +319,11 @@ function createClientLifecycle(): ClientLifecycle {
     controller.abort(new HappierClientClosedError());
     void (async () => {
       try {
-        await waitForCloseCleanup(Promise.allSettled([...cleanup].map((finalizer) => finalizer())));
-        await dispatcher.destroy();
+        await waitForClientCleanupGrace(Promise.allSettled([...cleanup].map((finalizer) => finalizer())));
+        const destroy = Reflect.get(dispatcher, 'destroy') as unknown;
+        if (typeof destroy === 'function') {
+          await destroy.call(dispatcher);
+        }
         resolveClose?.();
       } catch (error) {
         rejectClose?.(error);
@@ -383,7 +372,7 @@ function createActions(execute: RawActionExecute): HappierActions {
     search: (input: PublicActionInputById['action.spec.search'], options?: ActionExecutionOptions) => (
       execute('action.spec.search', input, options)
     ),
-    invoke: (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => {
+    invoke: async (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => {
       const identity = typeof action === 'string' ? parseQualifiedPluginActionId(action) : action;
       if (identity === null) {
         throw new TypeError(

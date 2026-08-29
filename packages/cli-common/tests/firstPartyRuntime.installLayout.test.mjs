@@ -51,6 +51,23 @@ test('installed component paths resolve binary, shim, and node entrypoint locati
   assert.equal(paths.shimPaths[0], '/Users/tester/.happier-custom/bin/happier');
 });
 
+test('mutagen engine resolves its nested managed binary and no shim paths', () => {
+  const env = {
+    HOME: '/Users/tester',
+    HAPPIER_HOME_DIR: '/Users/tester/.happier-custom',
+  };
+
+  const paths = resolveInstalledFirstPartyComponentPaths({
+    componentId: 'mutagen-engine',
+    processEnv: env,
+  });
+
+  assert.equal(paths.installRoot, '/Users/tester/.happier-custom/mutagen');
+  assert.equal(paths.binaryPath, '/Users/tester/.happier-custom/mutagen/current/bin/happier-mutagen');
+  assert.equal(paths.nodeEntrypointPath, null);
+  assert.deepEqual(paths.shimPaths, []);
+});
+
 test('public release rings resolve to distinct install roots and public shims', () => {
   const env = {
     HOME: '/Users/tester',

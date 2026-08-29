@@ -181,7 +181,15 @@ const LOCAL_PLACEMENT = Object.freeze({ mode: 'local' });
 const DEFAULT_LOAD_PROBE_TTL_MS = 15_000;
 const DEFAULT_UNAVAILABLE_PROBE_TTL_MS = 120_000;
 
-function normalizePlacement(raw, { label, targetNames }) {
+function normalizePlacement(
+  raw,
+  {
+    label,
+    targetNames,
+    canonicalFallback = 'local',
+    acceptedFallbacks = new Set(['local']),
+  },
+) {
   if (raw == null) return { ...LOCAL_PLACEMENT };
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`[dev-targets] ${label} must be an object`);
@@ -195,11 +203,13 @@ function normalizePlacement(raw, { label, targetNames }) {
   if (!targetNames.has(target)) {
     throw new Error(`[dev-targets] ${label} references unknown target: ${target}`);
   }
-  const fallback = String(raw.fallback ?? 'local').trim().toLowerCase();
-  if (fallback !== 'local') {
-    throw new Error(`[dev-targets] ${label} fallback must be "local"`);
+  const fallback = String(raw.fallback ?? canonicalFallback).trim().toLowerCase();
+  if (!acceptedFallbacks.has(fallback)) {
+    throw new Error(
+      `[dev-targets] ${label} fallback must be ${[...acceptedFallbacks].map((value) => `"${value}"`).join(' or ')}`,
+    );
   }
-  return { mode, target, fallback };
+  return { mode, target, fallback: canonicalFallback };
 }
 
 function normalizeDaemonPlacement(raw, { targetNames }) {
@@ -306,6 +316,8 @@ function normalizePlacedConfig(raw, targets) {
     server: normalizePlacement(runtimePlacementRaw?.server, {
       label: 'runtimePlacement.server',
       targetNames,
+      canonicalFallback: 'error',
+      acceptedFallbacks: new Set(['error', 'local']),
     }),
     expo: normalizePlacement(runtimePlacementRaw?.expo, {
       label: 'runtimePlacement.expo',

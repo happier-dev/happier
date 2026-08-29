@@ -6,6 +6,9 @@
   "license": "MIT",
   "repository": "happier-dev/happier",
   "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
   "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

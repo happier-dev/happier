@@ -42,12 +42,14 @@ import {
 const PLUGIN_ID = 'example.tracker';
 const LIST_INSTANCES_LOCAL_ACTION_ID = 'triage-list-instances-v1';
 const SOURCE_DISPLAY_NAME = 'Example Tracker';
+const CONNECTED_ACCOUNT_SERVICE_LOCAL_ID = 'tracker-account';
 const PURPOSE = 'tracker-connected-account';
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 
 const renderSurface = createTriageSourceSettingsSurface({
   pluginId: PLUGIN_ID,
   listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+  connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
   sourceDisplayName: SOURCE_DISPLAY_NAME,
 });
 
@@ -174,6 +176,7 @@ function createHarness(options: Readonly<{
   }
 
   const confirmations: Confirmation[] = [];
+  const connectedAccountsRequests: unknown[] = [];
   const confirm = options.confirm ?? true;
   const confirmHandler = confirm === 'unavailable'
     ? undefined
@@ -185,7 +188,14 @@ function createHarness(options: Readonly<{
       return confirm;
     };
 
-  return { recorded, executeAction, administrations, confirmations, confirmHandler };
+  return {
+    recorded,
+    executeAction,
+    administrations,
+    confirmations,
+    confirmHandler,
+    connectedAccountsRequests,
+  };
 }
 
 const mounted: PluginUiTestkit[] = [];
@@ -209,6 +219,10 @@ async function mountSettings(
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         executeAction: async ({ action, input, signal }) => await harness.executeAction({ action, input, signal }),
+        openConnectedAccounts: async ({ request }) => {
+          harness.connectedAccountsRequests.push(request);
+          return null;
+        },
         // Installed only when the case wants a host that advertises `confirm`.
         // The testkit advertises exactly the methods it was given a handler for,
         // so omitting it is the real "this host cannot ask" mount.
@@ -231,6 +245,17 @@ afterEach(async () => {
 });
 
 describe('the mounted PRs & Issues source settings page', () => {
+  it('opens the canonical Connected Accounts destination for this source', async () => {
+    const harness = createHarness({ discovery: { kind: 'complete', candidates: [], failures: [] } });
+    const page = await mountSettings(harness);
+
+    await pressControl(page, 'Connect account');
+
+    expect(harness.connectedAccountsRequests).toEqual([{
+      service: { pluginId: PLUGIN_ID, localId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID },
+    }]);
+  });
+
   it('lets a source refine a discovered draft before the canonical page submits it', async () => {
     const original = candidate('acme/api');
     const configured = candidate('acme/api-configured');
@@ -241,6 +266,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const configurableSurface = createTriageSourceSettingsSurface({
       pluginId: PLUGIN_ID,
       listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       sourceDisplayName: SOURCE_DISPLAY_NAME,
       DraftEditor: Editor,
     });
@@ -755,6 +781,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     const deadlineSurface = createTriageSourceSettingsSurfaceForTesting({
       pluginId: PLUGIN_ID,
       listInstancesLocalActionId: LIST_INSTANCES_LOCAL_ACTION_ID,
+      connectedAccountServiceLocalId: CONNECTED_ACCOUNT_SERVICE_LOCAL_ID,
       sourceDisplayName: SOURCE_DISPLAY_NAME,
     }, {
       discoveryDeadlineMs: 5,

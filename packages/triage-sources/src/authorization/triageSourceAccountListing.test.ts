@@ -98,7 +98,7 @@ describe('readTriageSourceAccountListingV1', () => {
       purpose: PURPOSE,
     });
 
-    expect(outcome).toEqual({ kind: 'failed', error });
+    expect(outcome).toEqual({ kind: 'failed', reason: 'failed', error });
   });
 
   it('keeps the original listing error when the binding read itself fails', async () => {
@@ -112,7 +112,7 @@ describe('readTriageSourceAccountListingV1', () => {
       purpose: PURPOSE,
     });
 
-    expect(outcome).toEqual({ kind: 'failed', error });
+    expect(outcome).toEqual({ kind: 'failed', reason: 'failed', error });
   });
 
   it('never converts a cancelled listing into an unbound claim', async () => {
@@ -125,8 +125,38 @@ describe('readTriageSourceAccountListingV1', () => {
       signal: abortedSignal(),
     });
 
-    expect(outcome).toEqual({ kind: 'failed', error: abort });
+    expect(outcome).toEqual({ kind: 'failed', reason: 'cancelled', error: abort });
     expect(getBinding).not.toHaveBeenCalled();
+  });
+
+  it('preserves a deadline separately from caller cancellation', async () => {
+    const timeout = new DOMException('Timed out', 'TimeoutError');
+    const getBinding = vi.fn<TriageSourceAccountListerV1['getBinding']>(async () => null);
+
+    const outcome = await readTriageSourceAccountListingV1({
+      connectedAccounts: lister(async () => { throw timeout; }, getBinding),
+      purpose: PURPOSE,
+    });
+
+    expect(outcome).toEqual({ kind: 'failed', reason: 'deadline', error: timeout });
+    expect(getBinding).not.toHaveBeenCalled();
+  });
+
+  it('uses the aborted signal reason when the host rejects with a generic transport error', async () => {
+    const controller = new AbortController();
+    controller.abort(new DOMException('Timed out', 'TimeoutError'));
+    const error = new Error('request stopped');
+
+    const outcome = await readTriageSourceAccountListingV1({
+      connectedAccounts: lister(
+        async () => { throw error; },
+        async () => null,
+      ),
+      purpose: PURPOSE,
+      signal: controller.signal,
+    });
+
+    expect(outcome).toEqual({ kind: 'failed', reason: 'deadline', error });
   });
 
   it('forwards the invocation signal to both host reads', async () => {

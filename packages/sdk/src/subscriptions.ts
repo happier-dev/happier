@@ -1,6 +1,7 @@
 import { followTranscriptSourceWithFiniteActions } from '@happier-dev/agents/runtime/facets/transcriptSource';
 
 import type { PublicActionInputById, PublicActionResultById } from './actions/generated.js';
+import { waitForClientCleanupGrace } from './cleanupGrace.js';
 import { HappierTransportError } from './errors.js';
 import type { ActionExecute, ActionExecutionOptions } from './types.js';
 
@@ -151,7 +152,7 @@ export async function startExecutionRunStream(params: Readonly<{
       return result;
     },
     async return(): Promise<IteratorResult<HappierExecutionRunStreamEvent>> {
-      await cancel();
+      await waitForClientCleanupGrace(cancel());
       return { done: true, value: undefined };
     },
   };
@@ -310,7 +311,7 @@ export function createTranscriptIterable(params: Readonly<{
         },
         async return(): Promise<IteratorResult<HappierTranscriptItem>> {
           iteratorController.abort();
-          await start();
+          await waitForClientCleanupGrace(start());
           return { done: true, value: undefined };
         },
       };

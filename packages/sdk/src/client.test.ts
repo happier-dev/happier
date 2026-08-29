@@ -150,6 +150,13 @@ describe('Happier SDK client', () => {
     expect(undiciAgent.destroy).toHaveBeenCalledTimes(1);
   });
 
+  it('closes cleanly when the runtime Agent exposes no destroy method', async () => {
+    undiciAgent.Agent.mockImplementationOnce(() => ({} as never));
+
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
+    await expect(client.close()).resolves.toBeUndefined();
+  });
+
   it('finishes active transcript and execution-run cleanup before disposing its dispatcher', async () => {
     const order: string[] = [];
     undiciAgent.destroy.mockImplementation(async () => {
@@ -657,7 +664,9 @@ describe('Happier SDK client', () => {
     expectTypeOf<HappierSessionSpawnInput['agentModeId']>().toEqualTypeOf<
       PublicActionInputById['session.spawn_new']['agentModeId']
     >();
-    expectTypeOf<HappierSessionSpawnInput>().not.toHaveProperty('environmentVariables');
+    expectTypeOf<HappierSessionSpawnInput['environmentVariables']>().toEqualTypeOf<
+      PublicActionInputById['session.spawn_new']['environmentVariables']
+    >();
     expectTypeOf<HappierSessionSpawnInput['agent']>().toEqualTypeOf<string>();
 
     const input = {
@@ -1385,7 +1394,7 @@ describe('Happier SDK client', () => {
       },
     }]);
 
-    expect(() => actions.invoke('happier.channels/provider/connections-list-v1', {})).toThrow(
+    await expect(actions.invoke('happier.channels/provider/connections-list-v1', {})).rejects.toThrow(
       new TypeError('Contributed Action id must use the canonical <pluginId>/actions/<localId> spelling.'),
     );
     expect(fetch).toHaveBeenCalledTimes(1);

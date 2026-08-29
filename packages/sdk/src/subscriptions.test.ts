@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { startExecutionRunStream } from './subscriptions.js';
+import { createTranscriptIterable, startExecutionRunStream } from './subscriptions.js';
+import type { ActionExecute } from './types.js';
 
 type StreamEvent = Readonly<{ t: 'delta'; textDelta: string }>;
 
@@ -236,5 +237,88 @@ describe('execution-run subscriptions', () => {
     await expect(second).resolves.toEqual({ done: true, value: undefined });
     expect(reads).toBe(1);
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds iterator return while execution-run cancellation continues', async () => {
+    vi.useFakeTimers();
+    const cancellation = deferred<void>();
+    let cancellationCompleted = false;
+    const cancel = vi.fn(async () => {
+      await cancellation.promise;
+      cancellationCompleted = true;
+    });
+    const stream = await startExecutionRunStream({
+      runId: 'run-1',
+      start: async () => ({ streamId: 'stream-1' }),
+      read: async () => ({
+        streamId: 'stream-1',
+        events: [],
+        nextCursor: 0,
+        done: false,
+      }),
+      cancel,
+      closeSignal: new AbortController().signal,
+    });
+
+    const returning = stream[Symbol.asyncIterator]().return!();
+    let returnSettled = false;
+    void returning.then(() => {
+      returnSettled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const settledAtGrace = returnSettled;
+    const cleanupCompletedAtGrace = cancellationCompleted;
+    cancellation.resolve();
+    await returning;
+
+    expect(settledAtGrace).toBe(true);
+    expect(cleanupCompletedAtGrace).toBe(false);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it('bounds transcript iterator return while lease release continues', async () => {
+    vi.useFakeTimers();
+    const releaseCompletion = deferred<void>();
+    let releaseCompleted = false;
+    const release = vi.fn(async () => {
+      await releaseCompletion.promise;
+      releaseCompleted = true;
+    });
+    const execute = vi.fn(async (actionId: string) => {
+      if (actionId === 'transcript.follow') {
+        return {
+          items: [{ role: 'assistant', text: 'ready' }],
+          nextCursor: '1',
+          truncated: false,
+        };
+      }
+      throw new Error(`Unexpected Action: ${actionId}`);
+    }) as unknown as ActionExecute;
+    const transcript = createTranscriptIterable({
+      execute,
+      release,
+      sessionId: 'session-1',
+      closeSignal: new AbortController().signal,
+    });
+    const iterator = transcript[Symbol.asyncIterator]();
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { role: 'assistant', text: 'ready' },
+    });
+
+    const returning = iterator.return!();
+    let returnSettled = false;
+    void returning.then(() => {
+      returnSettled = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const settledAtGrace = returnSettled;
+    const cleanupCompletedAtGrace = releaseCompleted;
+    releaseCompletion.resolve();
+    await returning;
+
+    expect(settledAtGrace).toBe(true);
+    expect(cleanupCompletedAtGrace).toBe(false);
+    expect(release).toHaveBeenCalledOnce();
   });
 });

@@ -125,6 +125,17 @@ test('dev-targets placement upgrades v1 safely, preserves policy while editing t
     });
     assert.deepEqual(placed.config.runtimePlacement.server, { mode: 'local' });
 
+    const serverPlaced = await run(
+      ['placement', 'set', 'server', 'mac', '--stack=repo-test'],
+      root,
+    );
+    assert.deepEqual(serverPlaced.config.runtimePlacement.server, {
+      mode: 'prefer-target',
+      target: 'mac',
+      fallback: 'error',
+    });
+    await run(['placement', 'set', 'server', 'local', '--stack=repo-test'], root);
+
     const commands = await run(
       ['placement', 'set', 'commands', 'mac', '--stack=repo-test'],
       root,

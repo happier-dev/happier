@@ -1,7 +1,75 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('RelayHostEngine (local uninstall cleanup)', () => {
-  it('retries removing the install root when the first removal fails', async () => {
+  it('preserves Personal Home data while removing only runtime-owned files', async () => {
+    const originalPlatform = process.platform;
+    const originalGetuid = (process as unknown as { getuid?: (() => number) | undefined }).getuid;
+
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    (process as unknown as { getuid?: (() => number) | undefined }).getuid = () => 501;
+
+    const rmCalls: Array<{ path: string; recursive?: boolean; force?: boolean }> = [];
+    const installRoot = '/tmp/happy-home/.happier/self-host';
+    const dataDir = `${installRoot}/data`;
+    const configDir = `${installRoot}/config`;
+    const logDir = `${installRoot}/logs`;
+
+    try {
+      vi.doMock('node:os', async () => {
+        const actual = await vi.importActual<typeof import('node:os')>('node:os');
+        return { ...actual, homedir: () => '/tmp/happy-home' };
+      });
+      vi.doMock('node:child_process', async () => {
+        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        return { ...actual, spawnSync: () => ({ status: 0, stdout: '', stderr: '' }) };
+      });
+      vi.doMock('node:fs', async () => {
+        const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+        return { ...actual, existsSync: (path: string) => path === installRoot };
+      });
+      vi.doMock('node:fs/promises', async () => {
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        return {
+          ...actual,
+          rm: async (path: string, options?: { recursive?: boolean; force?: boolean }) => {
+            rmCalls.push({ path, recursive: options?.recursive, force: options?.force });
+          },
+        };
+      });
+
+      const { createRelayHostEngine } = await import('./relayHostEngine.js');
+      const engine = createRelayHostEngine({
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async () => ({ status: 0, stdout: '', stderr: '' }),
+        copyLocalDirectoryToRemote: async () => {},
+        installRemoteComponent: async () => ({
+          binaryPath: '$HOME/.happier/happier-server/current/happier-server',
+          versionId: 'stable-1',
+        }),
+      });
+
+      await engine.control({
+        target: { kind: 'local' },
+        mode: 'user',
+        channel: 'stable',
+        purpose: { kind: 'personal-home', canonicalServerUrl: 'http://127.0.0.1:43123' },
+        action: 'uninstall',
+      });
+
+      expect(rmCalls.some((call) => call.path === dataDir)).toBe(false);
+      expect(rmCalls.some((call) => call.path === configDir)).toBe(false);
+      expect(rmCalls.some((call) => call.path === installRoot && call.recursive === true)).toBe(false);
+      expect(rmCalls.some((call) => call.path === logDir && call.recursive === true)).toBe(true);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+      if (originalGetuid) (process as unknown as { getuid?: (() => number) | undefined }).getuid = originalGetuid;
+      else delete (process as unknown as { getuid?: (() => number) | undefined }).getuid;
+      vi.resetModules();
+      vi.clearAllMocks();
+    }
+  });
+
+  it('does not recursively remove the install root after safe runtime cleanup', async () => {
     const originalPlatform = process.platform;
     const originalGetuid = (process as unknown as { getuid?: (() => number) | undefined }).getuid;
 
@@ -10,7 +78,6 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
 
     const rmCalls: Array<{ path: string; recursive?: boolean; force?: boolean }> = [];
     const installRoot = '/tmp/happy-home/.happier/self-host-dev';
-    let installRootRmAttempts = 0;
 
     try {
       vi.doMock('node:os', async () => {
@@ -33,12 +100,7 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
         const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
         return {
           ...actual,
-          existsSync: (path: string) => {
-            if (path === installRoot) {
-              return installRootRmAttempts < 2;
-            }
-            return false;
-          },
+          existsSync: (path: string) => path === installRoot,
         };
       });
 
@@ -48,12 +110,6 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
           ...actual,
           rm: async (path: string, options?: { recursive?: boolean; force?: boolean }) => {
             rmCalls.push({ path, recursive: options?.recursive, force: options?.force });
-            if (path === installRoot) {
-              installRootRmAttempts += 1;
-              if (installRootRmAttempts === 1) {
-                throw new Error('rm failed');
-              }
-            }
           },
         };
       });
@@ -74,9 +130,9 @@ describe('RelayHostEngine (local uninstall cleanup)', () => {
         action: 'uninstall',
       });
 
-      const installRootDeletes = rmCalls.filter((call) => call.path === installRoot);
-      expect(installRootDeletes.length).toBeGreaterThanOrEqual(2);
-      expect(installRootDeletes.every((call) => call.force === true && call.recursive === true)).toBe(true);
+      const installRootDeletes = rmCalls.filter((call) => call.path === installRoot && call.recursive === true);
+      expect(installRootDeletes).toEqual([]);
+      expect(rmCalls.some((call) => call.path === `${installRoot}/logs` && call.recursive === true)).toBe(true);
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
       if (originalGetuid) (process as unknown as { getuid?: (() => number) | undefined }).getuid = originalGetuid;

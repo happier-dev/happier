@@ -242,6 +242,13 @@ test('collectV2ZeroInventory reports Voice V3-F V2 media residue by semantic own
       ].join('\n'),
     },
     {
+      filePath: 'packages/protocol/src/machines/peer/mediation/renamedMixedCoverage.test.ts',
+      content: [
+        'expect(VoiceMediaAgentRealtimeFrameV1Schema.parse({})).toBeDefined();',
+        "expect(VoiceMediaApplicationKindV1Schema.safeParse('agent_realtime').success).toBe(false);",
+      ].join('\n'),
+    },
+    {
       filePath: 'packages/protocol/src/machines/peer/mediation/retainedSpeech.ts',
       content: "export const retainedApplicationKind = z.literal('speech_transcription');",
     },
@@ -253,6 +260,31 @@ test('collectV2ZeroInventory reports Voice V3-F V2 media residue by semantic own
       filePath: 'apps/cli/src/daemon/machine/negativeAbsence.test.ts',
       content: "expect(source).not.toContain('voiceMediaAgentRealtimeConsumer');",
     },
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/negativeSchemaRejection.test.ts',
+      content: [
+        "expect(VoiceMediaApplicationKindV1Schema.safeParse('agent_realtime').success).toBe(false);",
+        'expect(VoiceMediaApplicationAuthorityV1Schema.safeParse({',
+        "  applicationKind: 'agent_realtime',",
+        '}).success).toBe(false);',
+      ].join('\n'),
+    },
+    {
+      filePath: 'packages/protocol/src/machines/peer/mediation/negativeThrowRejection.test.ts',
+      content: [
+        'expect(() => createPeerApplicationEncryptionAadV1({',
+        "  applicationKind: 'agent_realtime' as never,",
+        '})).toThrow();',
+      ].join('\n'),
+    },
+    {
+      filePath: 'apps/cli/src/daemon/machine/negativeResultRejection.test.ts',
+      content: [
+        'await expect(manager.start({',
+        "  applicationKind: 'agent_realtime' as never,",
+        "})).resolves.toMatchObject({ ok: false, error: 'invalid' });",
+      ].join('\n'),
+    },
   ]);
 
   const residue = report.categories.find((category) => category.id === 'voice-v3-f-v2-media-residue');
@@ -262,6 +294,7 @@ test('collectV2ZeroInventory reports Voice V3-F V2 media residue by semantic own
     'apps/cli/src/daemon/voiceMedia/renamedDispatcher.ts',
     'apps/cli/src/daemon/voiceMedia/renamedEncryption.ts',
     'packages/protocol/src/machines/peer/mediation/renamedApplicationKinds.ts',
+    'packages/protocol/src/machines/peer/mediation/renamedMixedCoverage.test.ts',
     'packages/protocol/src/machines/peer/mediation/renamedPcmFrames.ts',
     'packages/protocol/src/machines/peer/mediation/renamedPositiveCoverage.test.ts',
   ]);

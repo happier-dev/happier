@@ -173,6 +173,13 @@ function readFlagValue(argv, index, flag) {
   return value;
 }
 
+/**
+ * @param {readonly string[]} argv
+ * @returns {
+ *   | { mode: 'recipe' | 'current-source' | 'current-source-channel', candidateManifestPath: null }
+ *   | { mode: 'run' | 'channel', candidateManifestPath: string, enableOpenCodeLive: false, workRoot?: string }
+ * }
+ */
 export function parsePackedManagedProviderArgs(argv) {
   let recipe = false;
   let currentSource = false;
@@ -227,10 +234,13 @@ export function parsePackedManagedProviderArgs(argv) {
     return { mode: 'recipe', candidateManifestPath: null };
   }
   if (currentSource) {
-    if (channel || candidateManifestPath || workRoot || enableOpenCodeLive) {
+    if (candidateManifestPath || workRoot || enableOpenCodeLive) {
       fail('packed_managed_provider_current_source_must_be_candidate_free');
     }
-    return { mode: 'current-source', candidateManifestPath: null };
+    return {
+      mode: channel ? 'current-source-channel' : 'current-source',
+      candidateManifestPath: null,
+    };
   }
   if (!candidateManifestPath) fail('packed_managed_provider_candidate_required');
   return {
@@ -287,10 +297,15 @@ export function buildPackedManagedProviderEntrypointInvocation({
     parsed?.mode !== 'run'
     && parsed?.mode !== 'channel'
     && parsed?.mode !== 'current-source'
+    && parsed?.mode !== 'current-source-channel'
   ) {
     fail('packed_managed_provider_continuity_requires_candidate');
   }
-  if (parsed.mode !== 'current-source' && !parsed.candidateManifestPath) {
+  if (
+    parsed.mode !== 'current-source'
+    && parsed.mode !== 'current-source-channel'
+    && !parsed.candidateManifestPath
+  ) {
     fail('packed_managed_provider_continuity_requires_candidate');
   }
   const resolvedPackageRoot = resolve(packageRoot);
@@ -299,8 +314,8 @@ export function buildPackedManagedProviderEntrypointInvocation({
     args: Object.freeze([
       resolve(resolvedPackageRoot, 'scripts/runTsxEntrypoint.mjs'),
       'src/plugin-platform/runPackedManagedProviderContinuity.ts',
-      ...(parsed.mode === 'current-source'
-        ? ['--current-source']
+      ...(parsed.mode === 'current-source' || parsed.mode === 'current-source-channel'
+        ? ['--current-source', ...(parsed.mode === 'current-source-channel' ? ['--channel'] : [])]
         : [
           ...(parsed.mode === 'channel' ? ['--channel'] : []),
           '--candidate',

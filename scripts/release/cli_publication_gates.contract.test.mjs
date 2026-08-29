@@ -115,6 +115,16 @@ function createGateSandbox() {
   writeFile(resolve(packageRoot, 'package.json'), `${JSON.stringify({
     name: '@happier-dev/cli',
     version: '0.0.0',
+    happier: {
+      managedRuntimePublication: {
+        v: 1,
+        mode: 'source-only',
+        unavailableProviderRefs: [{
+          pluginId: 'happier.provider.cliproxyapi',
+          providerId: 'cliproxyapi',
+        }],
+      },
+    },
     files: ['package.json', 'dist', 'package-dist'],
     dependencies: { [PLUGIN_PACKAGE_NAME]: '0.0.0' },
     bundledDependencies: [PLUGIN_PACKAGE_NAME],

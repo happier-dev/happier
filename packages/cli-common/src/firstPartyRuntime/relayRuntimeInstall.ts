@@ -32,6 +32,12 @@ import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservi
 import { resolveNonCollidingRelayPort } from './resolveNonCollidingRelayPort.js';
 import { computeUiDeploymentDigest, resolveUiDeploymentIdentity } from './uiDeploymentIdentity.js';
 import { isPidPresent } from '../process/processLiveness.js';
+import {
+    assertPersonalHomeEnvironmentKeys,
+    createPersonalHomeRuntimeSpec,
+    renderPersonalHomeRuntimeEnv,
+    type ManagedRelayPurpose,
+} from './personalHome/personalHomeRuntimeSpec.js';
 
 const RELAY_RUNTIME_PERSISTENT_ROOT_ENTRIES = new Set([
     'config',
@@ -573,12 +579,35 @@ async function copyNamedRootEntries(params: Readonly<{
 }
 
 async function clearNamedRootEntries(params: Readonly<{
-    rootDir: string;
-    entryNames: readonly string[];
+  rootDir: string;
+  entryNames: readonly string[];
 }>): Promise<void> {
-    for (const entryName of params.entryNames) {
-        await removeRuntimePayloadPath(join(params.rootDir, entryName));
-    }
+  for (const entryName of params.entryNames) {
+    await removeRuntimePayloadPath(join(params.rootDir, entryName));
+  }
+}
+
+/**
+ * Remove only the executable payload from a relay install.
+ *
+ * The config and data roots intentionally live below installRoot for user-mode
+ * relays, so uninstall must never recursively remove that root. The persistent
+ * root allowlist is shared with install/update state handling above.
+ */
+export async function uninstallRelayRuntimePayloadLocal(params: Readonly<{
+  installRoot: string;
+  shimPath: string;
+  statePath: string;
+  logDir: string;
+}>): Promise<void> {
+  const entryNames = await listRelayRuntimeManagedRootEntries(params.installRoot);
+  await clearNamedRootEntries({
+    rootDir: params.installRoot,
+    entryNames,
+  });
+  await removeRuntimePayloadPath(params.shimPath);
+  await rm(params.statePath, { force: true });
+  await rm(params.logDir, { recursive: true, force: true });
 }
 
 async function installPersistentPayload(params: Readonly<{
@@ -780,12 +809,15 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
     serviceNameOverride?: string;
     runServiceCommands?: boolean;
     skipHealthCheck?: boolean;
+    purpose?: ManagedRelayPurpose;
     runMigrationCommand?: (params: Readonly<{
         command: string;
         args: readonly string[];
         cwd: string;
         env: Record<string, string>;
     }>) => Promise<void>;
+    /** Optional verified Personal Home data restore point before migrations. */
+    createPersonalHomeRestorePoint?: () => Promise<void>;
 }>): Promise<Readonly<{ baseUrl: string; version: string | null }>> {
     const platform = (String(params.platform ?? '').trim() || process.platform) as NodeJS.Platform;
     const homeDir = String(params.homeDir ?? '').trim() || homedir();
@@ -801,6 +833,9 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
         channel: params.channel,
         homeDir,
     });
+    if (params.purpose?.kind === 'personal-home') {
+        assertPersonalHomeEnvironmentKeys(params.env ?? {});
+    }
     const serviceName = String(params.serviceNameOverride ?? '').trim() || defaults.serviceName;
     const installServerBinaryPath = join(defaults.installRoot, 'bin', serverBinaryName);
     const statePath = join(defaults.installRoot, 'self-host-state.json');
@@ -970,11 +1005,19 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
             arch,
             platform,
         });
+        const personalHomeEnv = params.purpose?.kind === 'personal-home'
+            ? renderPersonalHomeRuntimeEnv({
+                spec: createPersonalHomeRuntimeSpec({ canonicalServerUrl: params.purpose.canonicalServerUrl }),
+                port: resolvedPort,
+                overrides: params.env,
+            })
+            : null;
         const envText = mergeSelfHostServerEnvText({
             baseEnvText,
             existingEnvText,
             overrides: {
                 ...(params.env ?? {}),
+                ...(personalHomeEnv ?? {}),
                 PORT: String(resolvedPort),
             },
         });
@@ -986,6 +1029,9 @@ export async function installOrUpdateRelayRuntimeLocal(params: Readonly<{
             platform,
         });
         if (migrationPlan) {
+            if (params.createPersonalHomeRestorePoint) {
+                await params.createPersonalHomeRestorePoint();
+            }
             if (params.runMigrationCommand) {
                 await params.runMigrationCommand({
                     ...migrationPlan,

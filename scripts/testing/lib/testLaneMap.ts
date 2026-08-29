@@ -455,6 +455,7 @@ export function classifyTestFile(context: TestLaneContext, relativePath: string)
     if (relativePath.includes('/suites/core-layer/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     if (relativePath.includes('/suites/runtime-unification/')) return /\.test\.ts$/.test(relativePath) ? 'test:e2e:core:fast' : null;
     if (relativePath.includes('/src/testkit/') && /\.(?:test|spec)\.ts$/.test(relativePath)) return 'test:e2e:core:fast';
+    if (relativePath.includes('/src/scenarios/') && /\.scenario\.ts$/.test(relativePath)) return 'test:e2e:core:fast';
     // Everything else in the workspace (`pluginSdkConsumers`, `fixtures/**`,
     // `src/testkit/**/*.test.mjs`) runs through the @happier-dev/tests workspace `test` script, so
     // it resolves through the derived workspace lane.

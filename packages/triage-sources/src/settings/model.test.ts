@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1 } from './translations.js';
+import {
+  TRIAGE_SOURCE_SETTINGS_ENGLISH_V1,
+  TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1,
+  withTriageSourceSettingsTranslationsV1,
+} from './translations.js';
 
 import {
   TRIAGE_SOURCE_REMOVAL_CONFIRMATION_TRANSLATION_KEYS_V1,
@@ -257,6 +261,7 @@ describe('the candidate row projection', () => {
     overrides: Readonly<{
       displayPath?: string;
       outcome?: TriageSourceSettingsConfigurationV1;
+      text?: (key: string, fallback?: string, values?: Readonly<Record<string, string>>) => string;
     }> = {},
   ) {
     const discovery = readTriageSourceDiscovery({
@@ -278,6 +283,7 @@ describe('the candidate row projection', () => {
       outcomes,
       learned,
       sourceDisplayName: 'Example Tracker',
+      ...(overrides.text === undefined ? {} : { text: overrides.text }),
     });
     const [bare] = compose({}, {});
     if (bare === undefined) throw new Error('expected one discovered row');
@@ -319,6 +325,14 @@ describe('the candidate row projection', () => {
     // must not also offer Add: that would ask for a second row for one intent.
     const retired = project({ kind: 'retired', sourceInstanceId: INSTANCE_ID });
     expect(retired.controls.map((control) => control.id)).toEqual(['restore']);
+  });
+
+  it('routes row state sentences through the shared translation owner', () => {
+    const row = project(
+      { kind: 'configured', sourceInstanceId: INSTANCE_ID },
+      { text: (key) => `translated:${key}` },
+    );
+    expect(row.status).toBe('translated:plugins.triage.sourceSettings.lifecycle.configured');
   });
 
   it('lets the answer the user just caused win over the standing state', () => {
@@ -617,6 +631,19 @@ describe('the configured-instance read', () => {
     });
   });
 
+  it('routes configured-read notices through the shared translation owner', () => {
+    const notice = describeTriageSourceConfiguredRead(
+      { kind: 'raced' },
+      'Example Tracker',
+      (key) => `translated:${key}`,
+    );
+    expect(notice).toEqual({
+      title: 'translated:plugins.triage.sourceSettings.configuredRead.raced.title',
+      description: 'translated:plugins.triage.sourceSettings.configuredRead.raced.description',
+      tone: 'warning',
+    });
+  });
+
   it('says nothing when it knows exactly what is configured, and says what it cannot', () => {
     expect(describeTriageSourceConfiguredRead(configuredFrom(), 'Example Tracker')).toBeNull();
     // A mount that is still reading is already showing that it is reading.
@@ -751,15 +778,28 @@ describe('the source failure sentence', () => {
     const locales = Object.keys(TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1);
 
     expect(locales).toEqual([
-      'en', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja',
+      'en', 'ru', 'pl', 'es', 'fr', 'it', 'pt', 'ca', 'zh-Hans', 'zh-Hant', 'ja', 'de',
     ]);
     for (const locale of locales) {
       const bundle = TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1[
         locale as keyof typeof TRIAGE_SOURCE_SETTINGS_TRANSLATIONS_V1
       ];
-      expect(Object.keys(bundle).sort()).toEqual(keys);
+      expect(Object.keys(bundle)).toEqual(expect.arrayContaining(keys));
       expect(Object.values(bundle).every((sentence) => sentence.trim().length > 0)).toBe(true);
     }
+  });
+
+  it('merges the complete shared settings catalogue into provider manifest locale rows', () => {
+    const rows = withTriageSourceSettingsTranslationsV1([{
+      locale: 'de',
+      messages: { 'plugins.example.own': 'Eigene Nachricht' },
+    }]);
+
+    expect(rows[0]?.messages['plugins.example.own']).toBe('Eigene Nachricht');
+    for (const key of Object.keys(TRIAGE_SOURCE_SETTINGS_ENGLISH_V1)) {
+      expect(rows[0]?.messages[key]).toBeTypeOf('string');
+    }
+    expect(rows[0]?.messages['plugins.triage.sourceSettings.connectAccount']).toBe('Konto verbinden');
   });
 
   it('gives each class its own remedy rather than one generic line', () => {

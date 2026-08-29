@@ -59,6 +59,20 @@
     },
     {
       "specifier": ".",
+      "exportName": "ActionFormFieldHint",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ActionFormFieldHint"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ActionFormHints",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ActionFormHints"
+    },
+    {
+      "specifier": ".",
       "exportName": "ActionOpenExternalProps",
       "kind": "type",
       "declarationModule": "dist/index.d.ts",
@@ -332,6 +346,20 @@
     },
     {
       "specifier": ".",
+      "exportName": "DiffViewer",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "DiffViewer"
+    },
+    {
+      "specifier": ".",
+      "exportName": "DiffViewerProps",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "DiffViewerProps"
+    },
+    {
+      "specifier": ".",
       "exportName": "Divider",
       "kind": "value",
       "declarationModule": "dist/index.d.ts",
@@ -553,6 +581,13 @@
       "kind": "value",
       "declarationModule": "dist/index.d.ts",
       "declarationExport": "List"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ListAccessibilityPattern",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ListAccessibilityPattern"
     },
     {
       "specifier": ".",
@@ -1536,6 +1571,20 @@
     },
     {
       "specifier": "./components",
+      "exportName": "ActionFormFieldHint",
+      "kind": "type",
+      "declarationModule": "dist/components/index.d.ts",
+      "declarationExport": "ActionFormFieldHint"
+    },
+    {
+      "specifier": "./components",
+      "exportName": "ActionFormHints",
+      "kind": "type",
+      "declarationModule": "dist/components/index.d.ts",
+      "declarationExport": "ActionFormHints"
+    },
+    {
+      "specifier": "./components",
       "exportName": "ActionOpenExternalProps",
       "kind": "type",
       "declarationModule": "dist/components/index.d.ts",
@@ -1673,6 +1722,20 @@
       "kind": "value",
       "declarationModule": "dist/components/index.d.ts",
       "declarationExport": "ContextMenu"
+    },
+    {
+      "specifier": "./components",
+      "exportName": "DiffViewer",
+      "kind": "value",
+      "declarationModule": "dist/components/index.d.ts",
+      "declarationExport": "DiffViewer"
+    },
+    {
+      "specifier": "./components",
+      "exportName": "DiffViewerProps",
+      "kind": "type",
+      "declarationModule": "dist/components/index.d.ts",
+      "declarationExport": "DiffViewerProps"
     },
     {
       "specifier": "./components",
@@ -1897,6 +1960,13 @@
       "kind": "value",
       "declarationModule": "dist/components/index.d.ts",
       "declarationExport": "List"
+    },
+    {
+      "specifier": "./components",
+      "exportName": "ListAccessibilityPattern",
+      "kind": "type",
+      "declarationModule": "dist/components/index.d.ts",
+      "declarationExport": "ListAccessibilityPattern"
     },
     {
       "specifier": "./components",
@@ -2565,13 +2635,6 @@
     },
     {
       "specifier": "./data",
-      "exportName": "PluginUiAccountSettings",
-      "kind": "type",
-      "declarationModule": "dist/data/index.d.ts",
-      "declarationExport": "PluginUiAccountSettings"
-    },
-    {
-      "specifier": "./data",
       "exportName": "PluginUiCollectionQueryFailure",
       "kind": "type",
       "declarationModule": "dist/data/index.d.ts",
@@ -2618,13 +2681,6 @@
       "kind": "value",
       "declarationModule": "dist/data/index.d.ts",
       "declarationExport": "usePluginAccountKv"
-    },
-    {
-      "specifier": "./data",
-      "exportName": "usePluginAccountSettings",
-      "kind": "value",
-      "declarationModule": "dist/data/index.d.ts",
-      "declarationExport": "usePluginAccountSettings"
     },
     {
       "specifier": "./data",
@@ -3248,6 +3304,13 @@
       "kind": "type",
       "declarationModule": "dist/presentation/index.d.ts",
       "declarationExport": "HappierCodeBlockBehaviorInput"
+    },
+    {
+      "specifier": "./presentation",
+      "exportName": "HappierDiffViewerRequest",
+      "kind": "type",
+      "declarationModule": "dist/presentation/index.d.ts",
+      "declarationExport": "HappierDiffViewerRequest"
     },
     {
       "specifier": "./presentation",
@@ -4214,6 +4277,13 @@
       "kind": "value",
       "declarationModule": "dist/presentation/index.d.ts",
       "declarationExport": "resolveHappierCodeBlockLayout"
+    },
+    {
+      "specifier": "./presentation",
+      "exportName": "resolveHappierDiffViewerRequest",
+      "kind": "value",
+      "declarationModule": "dist/presentation/index.d.ts",
+      "declarationExport": "resolveHappierDiffViewerRequest"
     },
     {
       "specifier": "./presentation",

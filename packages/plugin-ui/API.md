@@ -12,6 +12,8 @@ Declaration: `dist/index.d.ts`
 - value `Action` from `dist/index.d.ts`
 - type `ActionCopyProps` from `dist/index.d.ts`
 - type `ActionExecuteProps` from `dist/index.d.ts`
+- type `ActionFormFieldHint` from `dist/index.d.ts`
+- type `ActionFormHints` from `dist/index.d.ts`
 - type `ActionOpenExternalProps` from `dist/index.d.ts`
 - type `ActionOpenSurfaceProps` from `dist/index.d.ts`
 - value `ActionPanel` from `dist/index.d.ts`
@@ -51,6 +53,8 @@ Declaration: `dist/index.d.ts`
 - type `ComposerViewStateV1` from `dist/index.d.ts`
 - type `ComposersService` from `dist/index.d.ts`
 - value `ContextMenu` from `dist/index.d.ts`
+- value `DiffViewer` from `dist/index.d.ts`
+- type `DiffViewerProps` from `dist/index.d.ts`
 - value `Divider` from `dist/index.d.ts`
 - type `DividerProps` from `dist/index.d.ts`
 - value `Dropdown` from `dist/index.d.ts`
@@ -83,6 +87,7 @@ Declaration: `dist/index.d.ts`
 - value `Link` from `dist/index.d.ts`
 - type `LinkProps` from `dist/index.d.ts`
 - value `List` from `dist/index.d.ts`
+- type `ListAccessibilityPattern` from `dist/index.d.ts`
 - type `ListBulkAction` from `dist/index.d.ts`
 - type `ListHeaderContext` from `dist/index.d.ts`
 - type `ListItemProps` from `dist/index.d.ts`
@@ -233,6 +238,8 @@ Declaration: `dist/components/index.d.ts`
 - value `Action` from `dist/components/index.d.ts`
 - type `ActionCopyProps` from `dist/components/index.d.ts`
 - type `ActionExecuteProps` from `dist/components/index.d.ts`
+- type `ActionFormFieldHint` from `dist/components/index.d.ts`
+- type `ActionFormHints` from `dist/components/index.d.ts`
 - type `ActionOpenExternalProps` from `dist/components/index.d.ts`
 - type `ActionOpenSurfaceProps` from `dist/components/index.d.ts`
 - value `ActionPanel` from `dist/components/index.d.ts`
@@ -253,6 +260,8 @@ Declaration: `dist/components/index.d.ts`
 - value `CodeBlock` from `dist/components/index.d.ts`
 - type `CodeBlockProps` from `dist/components/index.d.ts`
 - value `ContextMenu` from `dist/components/index.d.ts`
+- value `DiffViewer` from `dist/components/index.d.ts`
+- type `DiffViewerProps` from `dist/components/index.d.ts`
 - value `Divider` from `dist/components/index.d.ts`
 - type `DividerProps` from `dist/components/index.d.ts`
 - value `Dropdown` from `dist/components/index.d.ts`
@@ -285,6 +294,7 @@ Declaration: `dist/components/index.d.ts`
 - value `Link` from `dist/components/index.d.ts`
 - type `LinkProps` from `dist/components/index.d.ts`
 - value `List` from `dist/components/index.d.ts`
+- type `ListAccessibilityPattern` from `dist/components/index.d.ts`
 - type `ListBulkAction` from `dist/components/index.d.ts`
 - type `ListHeaderContext` from `dist/components/index.d.ts`
 - type `ListItemProps` from `dist/components/index.d.ts`
@@ -385,7 +395,6 @@ Declaration: `dist/data/index.d.ts`
 
 - type `PluginUiAccountCollectionForDefinition` from `dist/data/index.d.ts`
 - type `PluginUiAccountKv` from `dist/data/index.d.ts`
-- type `PluginUiAccountSettings` from `dist/data/index.d.ts`
 - type `PluginUiCollectionQueryFailure` from `dist/data/index.d.ts`
 - type `PluginUiCollectionQueryInput` from `dist/data/index.d.ts`
 - type `PluginUiCollectionQueryPager` from `dist/data/index.d.ts`
@@ -393,7 +402,6 @@ Declaration: `dist/data/index.d.ts`
 - type `PluginUiCollectionQuerySnapshot` from `dist/data/index.d.ts`
 - type `PluginUiDataClient` from `dist/data/index.d.ts`
 - value `usePluginAccountKv` from `dist/data/index.d.ts`
-- value `usePluginAccountSettings` from `dist/data/index.d.ts`
 - value `usePluginCollectionQuery` from `dist/data/index.d.ts`
 - value `usePluginUiDataClient` from `dist/data/index.d.ts`
 - value `usePluginUiDataClientOrNull` from `dist/data/index.d.ts`
@@ -498,6 +506,7 @@ Declaration: `dist/presentation/index.d.ts`
 - value `HappierBrandMark` from `dist/presentation/index.d.ts`
 - type `HappierBrandMarkProps` from `dist/presentation/index.d.ts`
 - type `HappierCodeBlockBehaviorInput` from `dist/presentation/index.d.ts`
+- type `HappierDiffViewerRequest` from `dist/presentation/index.d.ts`
 - value `HappierDivider` from `dist/presentation/index.d.ts`
 - value `HappierField` from `dist/presentation/index.d.ts`
 - type `HappierFieldProps` from `dist/presentation/index.d.ts`
@@ -636,6 +645,7 @@ Declaration: `dist/presentation/index.d.ts`
 - value `resolveHappierActionFieldPresentation` from `dist/presentation/index.d.ts`
 - value `resolveHappierBrandFallback` from `dist/presentation/index.d.ts`
 - value `resolveHappierCodeBlockLayout` from `dist/presentation/index.d.ts`
+- value `resolveHappierDiffViewerRequest` from `dist/presentation/index.d.ts`
 - value `resolveHappierFormPending` from `dist/presentation/index.d.ts`
 - value `resolveHappierIconSize` from `dist/presentation/index.d.ts`
 - value `resolveHappierImagePixels` from `dist/presentation/index.d.ts`

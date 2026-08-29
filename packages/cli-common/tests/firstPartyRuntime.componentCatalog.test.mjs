@@ -9,7 +9,26 @@ import {
 
 test('first-party runtime catalog exposes the expected component identities', () => {
   const ids = listFirstPartyComponentCatalogEntries().map((entry) => entry.id);
-  assert.deepEqual(ids, ['happier-cli', 'happier-daemon', 'happier-server', 'hstack']);
+  assert.deepEqual(ids, ['happier-cli', 'happier-daemon', 'happier-server', 'hstack', 'mutagen-engine']);
+});
+
+test('mutagen engine uses the managed binary layout without a user-facing shim', () => {
+  const engine = getFirstPartyComponentCatalogEntry('mutagen-engine');
+
+  assert.deepEqual(engine, {
+    id: 'mutagen-engine',
+    runtimeKind: 'binary',
+    executableBaseName: 'happier-mutagen',
+    releaseProductName: 'happier-mutagen',
+    rollingReleasePrefix: 'mutagen',
+    installRootName: 'mutagen',
+    retainVersions: 2,
+    nodeEntrypointRelativePath: null,
+    binaryRelativePath: 'bin/happier-mutagen',
+    installShims: [],
+    installShimOverrides: { preview: [], publicdev: [] },
+    prefersManagedNodeFallback: false,
+  });
 });
 
 test('happier daemon shares the cli install root but uses node-runtime-payload', () => {

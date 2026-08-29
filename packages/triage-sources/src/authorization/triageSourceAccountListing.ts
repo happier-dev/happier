@@ -27,8 +27,11 @@ import type {
  * 1. **The happy path costs nothing.** `getBinding()` is asked only after a throw.
  * 2. **Cancellation is never absence.** An aborted read is `failed`; the binding is
  *    not re-asked, because a cancelled invocation has no standing to conclude.
- * 3. **The original error survives.** `failed` carries the listing's own throw, never
- *    the binding read's, so each source classifies what actually refused it.
+ * 3. **Shared lifecycle facts are classified once.** `failed.reason` distinguishes
+ *    caller cancellation, an explicit deadline, and an ordinary listing failure.
+ * 4. **The original error survives.** `failed.error` carries the listing's own throw,
+ *    never the binding read's, so provider-specific detail can still be derived from
+ *    what actually refused it.
  *
  * How each outcome is worded remains source-specific: this module maps no failure into
  * any source's published vocabulary.
@@ -45,14 +48,31 @@ export type TriageSourceAccountListingOutcomeV1 =
   | Readonly<{ kind: 'listed'; listing: ConnectedAccountMetadataList }>
   /** Confirmed: this purpose has no selected account. Not a failure — an empty set. */
   | Readonly<{ kind: 'unbound' }>
-  /** The listing refused for any other reason, carrying its own throw. */
-  | Readonly<{ kind: 'failed'; error: unknown }>;
+  /** The listing refused, carrying both the shared classification and its original throw. */
+  | Readonly<{
+    kind: 'failed';
+    reason: TriageSourceAccountListingFailureReasonV1;
+    error: unknown;
+  }>;
 
-function isAbortLike(error: unknown, signal: AbortSignal | undefined): boolean {
-  if (signal !== undefined && signal.aborted) return true;
-  if (typeof error !== 'object' || error === null) return false;
-  const name = (error as { name?: unknown }).name;
-  return name === 'AbortError' || name === 'TimeoutError';
+export type TriageSourceAccountListingFailureReasonV1 = 'cancelled' | 'deadline' | 'failed';
+
+function errorName(error: unknown): unknown {
+  return typeof error === 'object' && error !== null
+    ? (error as Readonly<{ name?: unknown }>).name
+    : undefined;
+}
+
+function classifyListingFailure(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): TriageSourceAccountListingFailureReasonV1 {
+  if (signal?.aborted === true) {
+    return errorName(signal.reason) === 'TimeoutError' ? 'deadline' : 'cancelled';
+  }
+  if (errorName(error) === 'TimeoutError') return 'deadline';
+  if (errorName(error) === 'AbortError') return 'cancelled';
+  return 'failed';
 }
 
 export async function readTriageSourceAccountListingV1(input: Readonly<{
@@ -69,18 +89,19 @@ export async function readTriageSourceAccountListingV1(input: Readonly<{
       options,
     );
   } catch (error) {
-    if (isAbortLike(error, input.signal)) {
-      return Object.freeze({ kind: 'failed' as const, error });
+    const reason = classifyListingFailure(error, input.signal);
+    if (reason !== 'failed') {
+      return Object.freeze({ kind: 'failed' as const, reason, error });
     }
     let binding;
     try {
       binding = await input.connectedAccounts.getBinding(input.purpose, options);
     } catch {
-      return Object.freeze({ kind: 'failed' as const, error });
+      return Object.freeze({ kind: 'failed' as const, reason, error });
     }
     return binding === null
       ? Object.freeze({ kind: 'unbound' as const })
-      : Object.freeze({ kind: 'failed' as const, error });
+      : Object.freeze({ kind: 'failed' as const, reason, error });
   }
   return Object.freeze({ kind: 'listed' as const, listing });
 }

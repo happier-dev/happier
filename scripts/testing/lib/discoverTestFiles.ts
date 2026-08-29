@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const TEST_FILE_RE = /\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/;
+const TEST_FILE_RE = /\.(?:test|spec|scenario)\.(?:[cm]?[jt]sx?)$/;
 const IGNORED_DIRS = new Set([
   '.git',
   '.next',

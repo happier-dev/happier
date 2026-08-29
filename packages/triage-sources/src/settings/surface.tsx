@@ -115,6 +115,8 @@ export type TriageSourceSettingsSurfaceIdentityV1 = Readonly<{
   pluginId: string;
   /** That plugin's local id for its own read-only `listInstances` Action. */
   listInstancesLocalActionId: string;
+  /** That plugin's Connected Account service contribution local id. */
+  connectedAccountServiceLocalId: string;
   /** The source's display name, exactly as its own descriptor spells it. */
   sourceDisplayName: string;
   /**
@@ -177,6 +179,10 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
     pluginId: identity.pluginId,
     localId: identity.listInstancesLocalActionId,
   });
+  const connectedAccountService = Object.freeze({
+    pluginId: identity.pluginId,
+    localId: identity.connectedAccountServiceLocalId,
+  });
 
   function TriageSourceSettingsSurface(): React.ReactElement {
     // The page's own resolver. A failure sentence is the one piece of copy here
@@ -192,6 +198,17 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
     const [learned, setLearned] = React.useState<RowLifecycles>({});
     const [submitting, setSubmitting] = React.useState<string | null>(null);
     const [draftEdit, setDraftEdit] = React.useState<DraftEdit | null>(null);
+    const [navigationError, setNavigationError] = React.useState(false);
+
+    const openConnectedAccounts = React.useCallback((accountId?: string) => {
+      setNavigationError(false);
+      void hostApi.openConnectedAccounts({
+        service: connectedAccountService,
+        ...(accountId === undefined ? {} : { accountId }),
+      }).catch(() => {
+        setNavigationError(true);
+      });
+    }, [hostApi]);
 
     const runDiscovery = discovery.execute;
     const runConfiguredRead = configuredRead.execute;
@@ -380,13 +397,14 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
 
     const state = readTriageSourceDiscovery(discovery.execution);
     const configured = readTriageSourceConfiguredInstances(configuredRead.execution);
-    const configuredNotice = describeTriageSourceConfiguredRead(configured, sourceDisplayName);
+    const configuredNotice = describeTriageSourceConfiguredRead(configured, sourceDisplayName, text);
     const rows = projectTriageSourceSettingsRows({
       discovery: state,
       configured,
       outcomes,
       learned,
       sourceDisplayName,
+      text,
     });
 
     return (
@@ -394,43 +412,68 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
         <ScrollArea>
           <Stack gap="large">
             <Stack gap="small">
-              <Heading level={2} value={`${sourceDisplayName} in PRs & Issues`} />
+              <Heading level={2} value={text(
+                'plugins.triage.sourceSettings.heading',
+                '{source} in PRs & Issues',
+                { source: sourceDisplayName },
+              )} />
               <Text
                 tone="secondary"
-                value={`Choose which ${sourceDisplayName} accounts and scopes appear in PRs & Issues. Accounts come from Connected Accounts; nothing here sees a token.`}
+                value={text(
+                  'plugins.triage.sourceSettings.intro',
+                  'Choose which {source} accounts and scopes appear in PRs & Issues.',
+                  { source: sourceDisplayName },
+                )}
               />
+              <Row gap="small">
+                <Button
+                  title={text('plugins.triage.sourceSettings.manageAccounts', 'Manage connected accounts')}
+                  variant="secondary"
+                  onPress={() => openConnectedAccounts()}
+                />
+              </Row>
             </Stack>
+
+            {navigationError ? (
+              <Banner
+                tone="danger"
+                title={text(
+                  'plugins.triage.sourceSettings.navigationUnavailable',
+                  'Connected Accounts could not be opened.',
+                )}
+              />
+            ) : null}
 
             {state.kind === 'loading' ? (
               <LoadingState
-                title={`Reading ${sourceDisplayName} accounts`}
-                description="Asking this machine's authorized connection what it can reach."
+                title={text('plugins.triage.sourceSettings.loading.title', 'Reading {source} accounts', { source: sourceDisplayName })}
+                description={text('plugins.triage.sourceSettings.loading.description', 'Checking what this authorized connection can reach.')}
               />
             ) : null}
 
             {state.kind === 'outcomeUnknown' ? (
               <ErrorState
-                title="This read did not finish"
-                description="It may still be running. Refresh to ask again."
-                action={<Button title="Refresh" variant="secondary" onPress={refresh} />}
+                title={text('plugins.triage.sourceSettings.outcomeUnknown.title', 'This read did not finish')}
+                description={text('plugins.triage.sourceSettings.outcomeUnknown.description', 'It may still be running. Refresh to ask again.')}
+                action={<Button title={text('plugins.triage.sourceSettings.refresh', 'Refresh')} variant="secondary" onPress={refresh} />}
               />
             ) : null}
 
             {state.kind === 'unreadable' ? (
               <ErrorState
-                title="This version cannot read the response"
-                description={`The ${sourceDisplayName} source returned a result outside the published contract.`}
-                action={<Button title="Refresh" variant="secondary" onPress={refresh} />}
+                title={text('plugins.triage.sourceSettings.unreadable.title', 'This version cannot read the response')}
+                description={text('plugins.triage.sourceSettings.unreadable.description', 'The {source} source returned a result outside the published contract.', { source: sourceDisplayName })}
+                action={<Button title={text('plugins.triage.sourceSettings.refresh', 'Refresh')} variant="secondary" onPress={refresh} />}
               />
             ) : null}
 
             {state.kind === 'unreachable' ? (
               <ErrorState
-                title={`${sourceDisplayName} could not be read`}
+                title={text('plugins.triage.sourceSettings.unreachable.title', '{source} could not be read', { source: sourceDisplayName })}
                 description={state.failure === null
-                  ? state.message ?? 'No machine answered this read.'
+                  ? state.message ?? text('plugins.triage.sourceSettings.unreachable.noMachine', 'No machine answered this read.')
                   : describeTriageSourceFailure(state.failure, text)}
-                action={<Button title="Try again" variant="secondary" onPress={refresh} />}
+                action={<Button title={text('plugins.triage.sourceSettings.tryAgain', 'Try again')} variant="secondary" onPress={refresh} />}
               />
             ) : null}
 
@@ -460,9 +503,9 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
               {state.kind === 'listed' && !state.complete ? (
                 <Banner
                   tone="warning"
-                  title="This list may be incomplete"
+                  title={text('plugins.triage.sourceSettings.incomplete.title', 'This list may be incomplete')}
                   description={state.listingFailure === null
-                    ? 'Some accounts or scopes could not be enumerated, so one you expect may be missing.'
+                    ? text('plugins.triage.sourceSettings.incomplete.description', 'Some accounts or scopes could not be enumerated, so one you expect may be missing.')
                     : describeTriageSourceFailure(state.listingFailure, text)}
                 />
               ) : null}
@@ -476,13 +519,13 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
               {rows.length === 0 ? (
                 state.kind === 'listed' ? (
                   <EmptyState
-                    title={`No ${sourceDisplayName} scopes to add`}
-                    description={`Connect a ${sourceDisplayName} account in Connected Accounts, then refresh.`}
-                    action={<Button title="Refresh" variant="secondary" onPress={refresh} />}
+                    title={text('plugins.triage.sourceSettings.empty.title', 'No {source} scopes to add', { source: sourceDisplayName })}
+                    description={text('plugins.triage.sourceSettings.empty.description', 'Connect a {source} account, then refresh.', { source: sourceDisplayName })}
+                    action={<Button title={text('plugins.triage.sourceSettings.connectAccount', 'Connect account')} variant="primary" onPress={() => openConnectedAccounts()} />}
                   />
                 ) : null
               ) : (
-                <ItemGroup accessibilityLabel={`${sourceDisplayName} scopes`}>
+                <ItemGroup accessibilityLabel={text('plugins.triage.sourceSettings.scopesLabel', '{source} scopes', { source: sourceDisplayName })}>
                   {rows.map((row) => {
                     const busy = submitting === row.key;
                     return (
@@ -496,7 +539,7 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
                         accessory={(
                           <Row gap="small">
                             {row.keyFollowsProviderName ? (
-                              <Badge tone="warning" value="Follows the provider name" />
+                              <Badge tone="warning" value={text('plugins.triage.sourceSettings.followsProviderName', 'Follows the provider name')} />
                             ) : null}
                             {row.controls.map((control) => (
                               <Button
@@ -521,14 +564,24 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
 
               {state.kind !== 'listed' || state.failures.length === 0 ? null : (
                 <Stack gap="small">
-                  <Heading level={3} value="Accounts that could not be read" />
-                  <ItemGroup accessibilityLabel="Accounts that could not be read">
+                  <Heading level={3} value={text('plugins.triage.sourceSettings.failures.title', 'Accounts that could not be read')} />
+                  <ItemGroup accessibilityLabel={text('plugins.triage.sourceSettings.failures.title', 'Accounts that could not be read')}>
                     {state.failures.map((entry) => (
                       <Item
                         key={entry.key}
                         title={entry.localInstanceKey ?? entry.accountId}
                         subtitle={describeTriageSourceFailure(entry.failure, text)}
                         tone="danger"
+                        accessoryOutsidePressable
+                        accessory={entry.failure.class === 'authentication'
+                          ? (
+                              <Button
+                                title={text('plugins.triage.sourceSettings.reconnectAccount', 'Reconnect')}
+                                variant="secondary"
+                                onPress={() => openConnectedAccounts(entry.accountId)}
+                              />
+                            )
+                          : undefined}
                       />
                     ))}
                   </ItemGroup>
@@ -537,7 +590,7 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
 
               {state.kind === 'listed' ? (
                 <Row gap="small">
-                  <Button title="Refresh" variant="secondary" onPress={refresh} />
+                  <Button title={text('plugins.triage.sourceSettings.refresh', 'Refresh')} variant="secondary" onPress={refresh} />
                 </Row>
               ) : null}
             </Stack>

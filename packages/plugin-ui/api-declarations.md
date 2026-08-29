@@ -55,6 +55,24 @@ type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiAction
 ```
 
 
+### `.` — `ActionFormFieldHint` (type)
+
+Re-exported from another package as `ActionFormFieldHint`; that package owns the declaration.
+
+```ts
+// declared by another package — see its own declaration report
+```
+
+
+### `.` — `ActionFormHints` (type)
+
+Re-exported from another package as `ActionFormHints`; that package owns the declaration.
+
+```ts
+// declared by another package — see its own declaration report
+```
+
+
 ### `.` — `ActionOpenExternalProps` (type)
 
 Declared by `dist/components/Action.d.ts` as `ActionOpenExternalProps`.
@@ -464,6 +482,29 @@ function ContextMenu(props: MenuProps): ReactElement;
 ```
 
 
+### `.` — `DiffViewer` (value)
+
+Declared by `dist/components/Content.d.ts` as `DiffViewer`.
+
+```ts
+function DiffViewer({ unifiedDiff, filePath, label, testID, }: DiffViewerProps): ReactElement;
+```
+
+
+### `.` — `DiffViewerProps` (type)
+
+Declared by `dist/components/Content.d.ts` as `DiffViewerProps`.
+
+```ts
+type DiffViewerProps = Readonly<{
+    unifiedDiff: string;
+    filePath?: string;
+    label: string;
+    testID?: string;
+}>;
+```
+
+
 ### `.` — `Divider` (value)
 
 Declared by `dist/components/Foundation.d.ts` as `Divider`.
@@ -590,7 +631,7 @@ Declared by `dist/components/Form.d.ts` as `FormProps`.
 
 ```ts
 type FormProps = Readonly<{
-    hints: FormHints;
+    hints: ActionFormHints;
     value: Readonly<Record<string, unknown>>;
     onChange: (value: Record<string, unknown>) => void;
     onSubmit: (value: Record<string, unknown>) => unknown;
@@ -857,6 +898,15 @@ const List: typeof ListRoot & {
     Item: typeof ListItem;
     SelectionActionBar: typeof ListSelectionActionBar;
 };
+```
+
+
+### `.` — `ListAccessibilityPattern` (type)
+
+Declared by `dist/components/List.d.ts` as `ListAccessibilityPattern`.
+
+```ts
+type ListAccessibilityPattern = 'listbox' | 'grid';
 ```
 
 
@@ -2514,6 +2564,24 @@ type ActionExecuteProps<TAction extends PluginUiActionReference = PluginUiAction
 ```
 
 
+### `./components` — `ActionFormFieldHint` (type)
+
+Re-exported from another package as `ActionFormFieldHint`; that package owns the declaration.
+
+```ts
+// declared by another package — see its own declaration report
+```
+
+
+### `./components` — `ActionFormHints` (type)
+
+Re-exported from another package as `ActionFormHints`; that package owns the declaration.
+
+```ts
+// declared by another package — see its own declaration report
+```
+
+
 ### `./components` — `ActionOpenExternalProps` (type)
 
 Declared by `dist/components/Action.d.ts` as `ActionOpenExternalProps`.
@@ -2728,6 +2796,29 @@ function ContextMenu(props: MenuProps): ReactElement;
 ```
 
 
+### `./components` — `DiffViewer` (value)
+
+Declared by `dist/components/Content.d.ts` as `DiffViewer`.
+
+```ts
+function DiffViewer({ unifiedDiff, filePath, label, testID, }: DiffViewerProps): ReactElement;
+```
+
+
+### `./components` — `DiffViewerProps` (type)
+
+Declared by `dist/components/Content.d.ts` as `DiffViewerProps`.
+
+```ts
+type DiffViewerProps = Readonly<{
+    unifiedDiff: string;
+    filePath?: string;
+    label: string;
+    testID?: string;
+}>;
+```
+
+
 ### `./components` — `Divider` (value)
 
 Declared by `dist/components/Foundation.d.ts` as `Divider`.
@@ -2854,7 +2945,7 @@ Declared by `dist/components/Form.d.ts` as `FormProps`.
 
 ```ts
 type FormProps = Readonly<{
-    hints: FormHints;
+    hints: ActionFormHints;
     value: Readonly<Record<string, unknown>>;
     onChange: (value: Record<string, unknown>) => void;
     onSubmit: (value: Record<string, unknown>) => unknown;
@@ -3121,6 +3212,15 @@ const List: typeof ListRoot & {
     Item: typeof ListItem;
     SelectionActionBar: typeof ListSelectionActionBar;
 };
+```
+
+
+### `./components` — `ListAccessibilityPattern` (type)
+
+Declared by `dist/components/List.d.ts` as `ListAccessibilityPattern`.
+
+```ts
+type ListAccessibilityPattern = 'listbox' | 'grid';
 ```
 
 
@@ -4258,15 +4358,6 @@ type PluginUiAccountKv = AccountKvService;
 ```
 
 
-### `./data` — `PluginUiAccountSettings` (type)
-
-Declared by `dist/data/types.d.ts` as `PluginUiAccountSettings`.
-
-```ts
-type PluginUiAccountSettings = Pick<ScopedSettingsService, 'snapshot' | 'get' | 'set' | 'reset'>;
-```
-
-
 ### `./data` — `PluginUiCollectionQueryFailure` (type)
 
 Declared by `dist/data/index.d.ts` as `PluginUiCollectionQueryFailure`.
@@ -4344,7 +4435,6 @@ type PluginUiDataClient = Readonly<{
     collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition): PluginUiAccountCollectionForDefinition<TDefinition>;
     openCollectionQuery(input: PluginUiCollectionQueryInput): Promise<PluginUiCollectionQueryPager>;
     readonly accountKv: PluginUiAccountKv;
-    readonly accountSettings: PluginUiAccountSettings;
 }>;
 ```
 
@@ -4355,15 +4445,6 @@ Declared by `dist/data/index.d.ts` as `usePluginAccountKv`.
 
 ```ts
 function usePluginAccountKv(): PluginUiAccountKv;
-```
-
-
-### `./data` — `usePluginAccountSettings` (value)
-
-Declared by `dist/data/index.d.ts` as `usePluginAccountSettings`.
-
-```ts
-function usePluginAccountSettings(): PluginUiAccountSettings | null;
 ```
 
 
@@ -5360,6 +5441,19 @@ type HappierCodeBlockBehaviorInput = Readonly<{
 ```
 
 
+### `./presentation` — `HappierDiffViewerRequest` (type)
+
+Declared by `dist/presentation/content/DiffViewer.d.ts` as `HappierDiffViewerRequest`.
+
+```ts
+type HappierDiffViewerRequest = Readonly<{
+    unifiedDiff: string;
+    filePath?: string;
+    testID?: string;
+}>;
+```
+
+
 ### `./presentation` — `HappierDivider` (value)
 
 Declared by `dist/presentation/content/Foundation.d.ts` as `HappierDivider`.
@@ -5857,7 +5951,7 @@ function HappierList({ children, accessibilityLabel, testID, style, }: HappierLi
 Declared by `dist/presentation/collection/List.d.ts` as `HappierListItem`.
 
 ```ts
-function HappierListItem({ children, title, subtitle, detail, titleNumberOfLines, subtitleNumberOfLines, detailNumberOfLines, icon, accessory, accessoryWraps, accessoryOutsidePressable, tone, onPress, onContextMenu, disabled, busy, selected, accessibilityRole, accessibilityExpanded, accessibilityPositionInSet, accessibilitySetSize, theme, minimumTouchTarget, density, showDivider, hasSecondaryActions, accessibilityLabel, accessibilityHint, testID, style, itemGroupRadioIndex, rovingCollectionItem, suppressListItemRole, }: HappierListItemProps): import("react/jsx-runtime").JSX.Element;
+function HappierListItem({ children, title, subtitle, detail, titleNumberOfLines, subtitleNumberOfLines, detailNumberOfLines, icon, accessory, accessoryWraps, accessoryOutsidePressable, tone, onPress, onContextMenu, disabled, busy, selected, accessibilityRole, accessibilityExpanded, accessibilityPositionInSet, accessibilitySetSize, theme, minimumTouchTarget, density, showDivider, hasSecondaryActions, accessibilityLabel, accessibilityHint, testID, style, itemGroupRadioIndex, rovingCollectionItem, suppressListItemRole, accessibilityRowIndex, accessibilityRowCount, }: HappierListItemProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
@@ -5900,6 +5994,8 @@ type HappierListItemProps = Readonly<{
     itemGroupRadioIndex?: number;
     rovingCollectionItem?: HappierRovingCollectionItem;
     suppressListItemRole?: boolean;
+    accessibilityRowIndex?: number;
+    accessibilityRowCount?: number;
 }>;
 ```
 
@@ -6141,7 +6237,7 @@ type HappierListProps = Readonly<{
 Declared by `dist/presentation/collection/List.d.ts` as `HappierListSection`.
 
 ```ts
-function HappierListSection({ children, title, virtualizedCollectionRole, testID, style, }: HappierListSectionProps): import("react/jsx-runtime").JSX.Element;
+function HappierListSection({ children, title, virtualizedCollectionRole, accessibilityRowIndex, accessibilityRowCount, testID, style, }: HappierListSectionProps): import("react/jsx-runtime").JSX.Element;
 ```
 
 
@@ -6153,7 +6249,9 @@ Declared by `dist/presentation/collection/List.d.ts` as `HappierListSectionProps
 type HappierListSectionProps = Readonly<{
     children?: ReactNode;
     title: string;
-    virtualizedCollectionRole?: 'list' | 'listbox';
+    virtualizedCollectionRole?: 'list' | 'listbox' | 'grid';
+    accessibilityRowIndex?: number;
+    accessibilityRowCount?: number;
     testID?: string;
     style?: HappierStyleProp;
 }>;
@@ -7255,6 +7353,15 @@ function resolveHappierCodeBlockLayout(input: Pick<HappierCodeBlockBehaviorInput
 ```
 
 
+### `./presentation` — `resolveHappierDiffViewerRequest` (value)
+
+Declared by `dist/presentation/content/DiffViewer.d.ts` as `resolveHappierDiffViewerRequest`.
+
+```ts
+function resolveHappierDiffViewerRequest(input: HappierDiffViewerRequest): HappierDiffViewerRequest;
+```
+
+
 ### `./presentation` — `resolveHappierFormPending` (value)
 
 Declared by `dist/presentation/form/Fields.d.ts` as `resolveHappierFormPending`.
@@ -7760,57 +7867,6 @@ function FormActions({ children }: FormActionsProps): ReactElement;
 ```
 
 
-### `dist/components/Form.d.ts` — `FormFieldHints`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type FormFieldHints = Readonly<{
-    path: string;
-    title: string;
-    description?: string;
-    placeholder?: string;
-    widget: 'text' | 'url' | 'secret' | 'textarea' | 'number' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'boolean' | 'json';
-    required?: boolean;
-    requireExplicitSelection?: boolean;
-    listSeparator?: 'comma' | 'newline';
-    maxSelections?: number;
-    options?: readonly FormHintOption[];
-    visibleWhen?: FormPredicate;
-    requiredWhen?: FormPredicate;
-    disabledWhen?: FormPredicate;
-}>;
-```
-
-
-### `dist/components/Form.d.ts` — `FormHintOption`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type FormHintOption = Readonly<{
-    value: FormOptionValue;
-    label: string;
-    description?: string;
-    disabled?: boolean;
-}>;
-```
-
-
-### `dist/components/Form.d.ts` — `FormHints`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type FormHints = Readonly<{
-    title?: string;
-    description?: string;
-    submitLabel?: string;
-    fields: readonly FormFieldHints[];
-}>;
-```
-
-
 ### `dist/components/Form.d.ts` — `FormOption`
 
 Reached from a published signature; not itself a published export.
@@ -7832,51 +7888,7 @@ type FormOption = Readonly<{
 Reached from a published signature; not itself a published export.
 
 ```ts
-type FormOptionValue = string | Readonly<{
-    service: Readonly<{
-        pluginId: string;
-        localId: string;
-    }>;
-    accountId: string;
-}>;
-```
-
-
-### `dist/components/Form.d.ts` — `FormPredicate`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type FormPredicate = Readonly<{
-    op: 'truthy';
-    path: string;
-}> | Readonly<{
-    op: 'eq';
-    path: string;
-    value: FormPrimitive;
-}> | Readonly<{
-    op: 'includes';
-    path: string;
-    value: string;
-}> | Readonly<{
-    op: 'not';
-    predicate: FormPredicate;
-}> | Readonly<{
-    op: 'and';
-    all: readonly FormPredicate[];
-}> | Readonly<{
-    op: 'or';
-    any: readonly FormPredicate[];
-}>;
-```
-
-
-### `dist/components/Form.d.ts` — `FormPrimitive`
-
-Reached from a published signature; not itself a published export.
-
-```ts
-type FormPrimitive = string | number | boolean | null;
+type FormOptionValue = ActionInputOptionValue;
 ```
 
 
@@ -8023,6 +8035,7 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type ListSelectionBaseProps<Item> = Readonly<{
+    isItemActivatable?: (item: Item, index: number) => boolean;
     isItemDisabled?: (item: Item, index: number) => boolean;
     onFocusedKeyChange?: (key: string) => void;
     focusRequest?: Readonly<{
@@ -8063,6 +8076,7 @@ Reached from a published signature; not itself a published export.
 ```ts
 type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> & ListAccessibleNameProps & Readonly<{
     selection: ListSelectionProps<Item>;
+    accessibilityPattern?: ListAccessibilityPattern;
 }>;
 ```
 
@@ -8568,6 +8582,9 @@ type ScaledTextStyleArray<T extends readonly unknown[]> = number extends T['leng
 ## Referenced declarations owned by other packages
 
 - `@happier-dev/plugin-sdk#AccountKvService`
+- `@happier-dev/plugin-sdk#ActionFormFieldHint`
+- `@happier-dev/plugin-sdk#ActionFormHints`
+- `@happier-dev/plugin-sdk#ActionInputOptionValue`
 - `@happier-dev/plugin-sdk#ComposerDecorationSetV1`
 - `@happier-dev/plugin-sdk#ContributionSurfaceHandle`
 - `@happier-dev/plugin-sdk#Disposable`
@@ -8589,7 +8606,6 @@ type ScaledTextStyleArray<T extends readonly unknown[]> = number extends T['leng
 - `@happier-dev/plugin-sdk#RenderContext`
 - `@happier-dev/plugin-sdk#RenderSurface`
 - `@happier-dev/plugin-sdk#ResourceContent`
-- `@happier-dev/plugin-sdk#ScopedSettingsService`
 - `@happier-dev/plugin-sdk#SurfaceContext`
 - `@happier-dev/protocol#PluginCollectionUiQueryErrorV1`
 - `@happier-dev/protocol#PluginCollectionUiQueryRequestV1`

@@ -15,6 +15,7 @@ export default mergeConfig(createUiProductionHooksVitestConfig(), defineConfig({
       'suites/core-e2e/**/*.test.ts',
       'suites/runtime-unification/**/*.test.ts',
       'src/testkit/**/*.{test,spec}.ts',
+      'src/scenarios/**/*.scenario.ts',
     ],
     globalSetup: ['src/testkit/vitest/globalSetup.coreFast.ts'],
     exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts', ...resolveVitestFeatureTestExcludeGlobs()],

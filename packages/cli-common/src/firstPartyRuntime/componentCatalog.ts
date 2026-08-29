@@ -10,6 +10,7 @@ export const FIRST_PARTY_COMPONENT_IDS = [
   'happier-daemon',
   'happier-server',
   'hstack',
+  'mutagen-engine',
 ] as const;
 
 export type FirstPartyComponentId = (typeof FIRST_PARTY_COMPONENT_IDS)[number];
@@ -97,6 +98,20 @@ export const firstPartyComponentCatalog = {
     nodeEntrypointRelativePath: null,
     binaryRelativePath: 'hstack',
     installShims: ['hstack'],
+    prefersManagedNodeFallback: false,
+  },
+  'mutagen-engine': {
+    id: 'mutagen-engine',
+    runtimeKind: 'binary',
+    executableBaseName: 'happier-mutagen',
+    releaseProductName: 'happier-mutagen',
+    rollingReleasePrefix: 'mutagen',
+    installRootName: 'mutagen',
+    retainVersions: SHARED_VERSION_RETENTION,
+    nodeEntrypointRelativePath: null,
+    binaryRelativePath: 'bin/happier-mutagen',
+    installShims: [],
+    installShimOverrides: { preview: [], publicdev: [] },
     prefersManagedNodeFallback: false,
   },
 } as const satisfies Record<FirstPartyComponentId, FirstPartyComponentCatalogEntry>;

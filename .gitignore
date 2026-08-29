@@ -248,3 +248,6 @@ _.env.pipeline.production.local
 # postinstall; its bytes and generated checksum inventory are never committed.
 /apps/cli/tools/archives/happier-cliproxyapi-managed-*.tar.gz
 /apps/cli/tools/archives/checksums.runtime-assets.sha256
+
+# Rust build output (iroh-native relay crate)
+/packages/iroh-native/rust/target/

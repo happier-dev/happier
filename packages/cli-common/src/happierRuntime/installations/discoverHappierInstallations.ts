@@ -123,7 +123,7 @@ async function discoverManagedInstallationEntries(params: Readonly<{
   fsApi: DiscoverFs;
 }>): Promise<HappierInstallation[]> {
   const entries: HappierInstallation[] = [];
-  const componentIds: FirstPartyComponentId[] = ['happier-cli', 'hstack', 'happier-server'];
+  const componentIds: FirstPartyComponentId[] = ['happier-cli', 'hstack', 'happier-server', 'mutagen-engine'];
   for (const componentId of componentIds) {
     for (const channel of PUBLIC_RELEASE_RING_IDS) {
       const paths = resolveInstalledFirstPartyComponentPaths({

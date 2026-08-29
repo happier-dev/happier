@@ -202,7 +202,7 @@ test('prints a moving-source recipe with the normal development command and isol
   );
 });
 
-test('dispatches the current-source External Sessions packed proof without candidate or native archive inputs', () => {
+test('dispatches the candidate-free current-source packed proofs without native archive inputs', () => {
   const parsed = parsePackedManagedProviderArgs(['--current-source']);
 
   assert.deepEqual(parsed, {
@@ -230,6 +230,25 @@ test('dispatches the current-source External Sessions packed proof without candi
     ]),
     /packed_managed_provider_current_source_must_be_candidate_free/u,
   );
+
+  const channelParsed = parsePackedManagedProviderArgs([
+    '--current-source',
+    '--channel',
+  ]);
+  assert.deepEqual(channelParsed, {
+    mode: 'current-source-channel',
+    candidateManifestPath: null,
+  });
+  const channelInvocation = buildPackedManagedProviderEntrypointInvocation({
+    packageRoot: '/repo/packages/tests',
+    parsed: channelParsed,
+  });
+  assert.deepEqual(channelInvocation.args, [
+    '/repo/packages/tests/scripts/runTsxEntrypoint.mjs',
+    'src/plugin-platform/runPackedManagedProviderContinuity.ts',
+    '--current-source',
+    '--channel',
+  ]);
 });
 
 test('current-source external packaged runtime owns non-CPX bytes without a Go build', () => {
@@ -263,7 +282,7 @@ test('current-source external packaged runtime owns non-CPX bytes without a Go b
   );
 });
 
-test('dispatches the packed Channel provider vertical as its own executable candidate mode', () => {
+test('dispatches the packed Channel provider vertical as candidate or current-source executable mode', () => {
   const parsed = parsePackedManagedProviderArgs([
     '--channel',
     '--candidate',
@@ -304,15 +323,19 @@ test('dispatches the packed Channel provider vertical as its own executable cand
     },
   );
 
-  // The Channel vertical reverifies a candidate channels-protocol archive, so it
-  // can never run from the candidate-free recipe or current-source modes.
+  // The channel vertical always verifies the public package archives it loads.
+  // Current-source mode produces those archives from the current checkout in a
+  // private disposable root; it must not require a release candidate manifest.
   assert.throws(
     () => parsePackedManagedProviderArgs(['--channel']),
     /packed_managed_provider_candidate_required/u,
   );
-  assert.throws(
-    () => parsePackedManagedProviderArgs(['--channel', '--current-source']),
-    /packed_managed_provider_current_source_must_be_candidate_free/u,
+  assert.deepEqual(
+    parsePackedManagedProviderArgs(['--channel', '--current-source']),
+    {
+      mode: 'current-source-channel',
+      candidateManifestPath: null,
+    },
   );
   assert.throws(
     () => parsePackedManagedProviderArgs(['--recipe', '--channel']),
@@ -597,11 +620,8 @@ test('keeps one canonical package command wired to the daemon continuity entrypo
     'node scripts/plugin-platform/run-packed-managed-provider.mjs --current-source',
   );
   assert.equal(
-    Object.hasOwn(
-      packageManifest.scripts,
-      'test:plugin-platform:packed-channel-provider',
-    ),
-    false,
+    packageManifest.scripts['test:plugin-platform:packed-channel-provider'],
+    'node scripts/plugin-platform/run-packed-managed-provider.mjs --current-source --channel',
   );
   // Candidate QA is reachable through its own explicit package entrypoint into the
   // SAME canonical runner: no mode flag is hardcoded, so an appended --candidate

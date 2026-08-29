@@ -1,8 +1,10 @@
 export {
   createRelayRuntimeInstallOrUpdateTaskKind,
   createRelayRuntimeStartTaskKind,
+  createRelayRuntimeRestartTaskKind,
   createRelayRuntimeStatusTaskKind,
   createRelayRuntimeStopTaskKind,
+  createPersonalHomeOperationTaskKind,
   parseRelayRuntimeTaskParams,
   parseSystemTaskSshConfig,
   type RelayRuntimeKindDeps,

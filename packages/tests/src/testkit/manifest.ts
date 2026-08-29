@@ -583,6 +583,10 @@ export type TestManifest = {
   startedAt: string;
   runId?: string;
   testName?: string;
+  /** Root CI lane that executed the scenario (for failure-artifact triage). */
+  lane?: string;
+  /** Source revision used by the test process; never a credential or runtime secret. */
+  commit?: string;
   seed?: number;
   ports?: { server?: number };
   baseUrl?: string;
@@ -604,7 +608,37 @@ export type TestManifest = {
     name: string;
     resolvedConfig?: Record<string, unknown>;
   };
+  configuration?: {
+    homeMode?: string;
+    carrier?: string;
+    databaseProvider?: string;
+    directoryMode?: string;
+  };
+  principals?: readonly {
+    role: 'accountService' | 'home' | 'client' | 'daemon' | 'oldClient';
+    id: string;
+    serverIdentityId: string;
+    baseUrl?: string;
+  }[];
+  phase?: string;
+  expected?: unknown;
+  observed?: unknown;
+  logs?: Readonly<Record<string, string>>;
+  versions?: Readonly<{
+    client?: string;
+    server?: string;
+    cli?: string;
+    mobile?: string;
+    iroh?: string;
+    mutagen?: string;
+  }>;
   artifacts?: {
+    client?: string;
+    server?: string;
+    cli?: string;
+    mobile?: string;
+    iroh?: string;
+    mutagen?: string;
     composeFile?: string;
     gatewayConfigFile?: string;
     summaryFile?: string;

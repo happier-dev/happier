@@ -141,7 +141,15 @@ function stripCommentsOnly(content: string): string {
 
 function stripVoiceV3FNegativeTestAssertions(content: string): string {
   return content
-    .replace(/\.\s*not\s*\.\s*toContain\s*\([^)]*\)/g, ' ')
+    // The contraction tests intentionally retain the retired literal as an
+    // input and prove that the current schema/runtime refuses it. Inventory
+    // only positive coverage: an assertion whose settlement is explicitly
+    // false, throwing/rejecting, or otherwise negative is absence evidence.
+    .replace(/(?:await\s+)?expect\s*\([^;]*?\)\s*\.\s*not\s*\.\s*[A-Za-z][A-Za-z0-9_]*\s*\([^;]*?\)\s*;?/g, ' ')
+    .replace(/(?:await\s+)?expect\s*\([^;]*?\)\s*\.\s*toBe\s*\(\s*false\s*\)\s*;?/g, ' ')
+    .replace(/(?:await\s+)?expect\s*\([^;]*?\)\s*\.\s*toThrow(?:Error)?\s*\([^;]*?\)\s*;?/g, ' ')
+    .replace(/(?:await\s+)?expect\s*\([^;]*?\)\s*\.\s*rejects\s*\.\s*[A-Za-z][A-Za-z0-9_]*\s*\([^;]*?\)\s*;?/g, ' ')
+    .replace(/(?:await\s+)?expect\s*\([^;]*?\)\s*\.\s*resolves\s*\.\s*(?:toMatchObject|toEqual|toStrictEqual)\s*\(\s*\{[^;]*?\b(?:ok|success|allowed|valid)\s*:\s*false[^;]*?\}\s*\)\s*;?/g, ' ')
     .replace(/\bassert\.doesNotMatch\s*\([^;]*;?/g, ' ');
 }
 

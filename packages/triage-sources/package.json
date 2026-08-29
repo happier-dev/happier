@@ -23,6 +23,10 @@
       "types": "./dist/projection/actionResultSequence.d.ts",
       "default": "./dist/projection/actionResultSequence.js"
     },
+    "./translations": {
+      "types": "./dist/translations.d.ts",
+      "default": "./dist/translations.js"
+    },
     "./ui": {
       "types": "./dist/ui.d.ts",
       "default": "./dist/ui.js"

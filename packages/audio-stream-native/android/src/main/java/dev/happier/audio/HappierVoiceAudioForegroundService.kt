@@ -3,6 +3,7 @@ package dev.happier.audio
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -31,6 +32,18 @@ internal class HappierVoiceAudioForegroundService : Service() {
       } else {
         @Suppress("DEPRECATION")
         Notification.Builder(this)
+      }
+      val contentIntent = packageManager.getLaunchIntentForPackage(packageName)?.let { launchIntent ->
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        PendingIntent.getActivity(
+          this,
+          0,
+          launchIntent,
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+      }
+      if (contentIntent != null) {
+        notificationBuilder.setContentIntent(contentIntent)
       }
       val notification = notificationBuilder
         .setSmallIcon(android.R.drawable.ic_btn_speak_now)

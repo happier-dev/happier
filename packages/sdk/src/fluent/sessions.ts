@@ -24,7 +24,7 @@ type AgentIdentity = SessionSpawnActionInput['agentTarget']['identity'];
  * Machine inventory resolves the friendly Agent id to the canonical target.
  */
 export type HappierSessionSpawnInput = Readonly<
-  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput' | 'environmentVariables'> & Readonly<{
+  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
     agent: string;
     initialMessage?: string;
   }>
