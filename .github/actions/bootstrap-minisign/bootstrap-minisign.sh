@@ -44,7 +44,14 @@ case "${os}" in
 esac
 
 archive_path="${work_dir}/${asset}"
-curl -fsSL "${url_base}/${asset}" -o "${archive_path}"
+curl -fsSL \
+  --retry 4 \
+  --retry-delay 2 \
+  --retry-all-errors \
+  --connect-timeout 30 \
+  --max-time 300 \
+  "${url_base}/${asset}" \
+  -o "${archive_path}"
 
 actual_sha=""
 if command -v sha256sum >/dev/null 2>&1; then
