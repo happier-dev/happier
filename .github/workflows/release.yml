@@ -59,6 +59,11 @@ on:
         required: true
         default: false
         type: boolean
+      approve_public_sdk_release:
+        description: "Public SDK — unsupported on this release line; must remain false"
+        required: true
+        default: false
+        type: boolean
       include_validation_suites:
         description: "Validation — additional suite IDs to require (comma-separated)"
         required: false
@@ -317,6 +322,7 @@ jobs:
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
           BUMP: none
           QUALIFIED_V4_ACTIVATION_APPROVAL: ${{ inputs.qualified_v4_activation_approval }}
+          APPROVE_PUBLIC_SDK_RELEASE: ${{ inputs.approve_public_sdk_release }}
           CONFIRM: ${{ inputs.confirm }}
           DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           ENVIRONMENT: ${{ inputs.environment }}

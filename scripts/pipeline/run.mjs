@@ -4310,6 +4310,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               'deploy-targets': { type: 'string', default: 'ui,server,website,docs' },
               'force-deploy': { type: 'string', default: 'false' },
               'waive-ci': { type: 'string', default: 'false' },
+              'approve-public-sdk-release': { type: 'string', default: 'false' },
               'include-validation-suites': { type: 'string', default: '' },
               'waive-validation-suites': { type: 'string', default: '' },
               'override-reason': { type: 'string', default: '' },
@@ -4379,6 +4380,13 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
           const bumpPreset = 'none';
           const waiveCi = parseBoolString(values['waive-ci'], '--waive-ci');
+          const approvePublicSdkRelease = parseBoolString(
+            values['approve-public-sdk-release'],
+            '--approve-public-sdk-release',
+          );
+          if (approvePublicSdkRelease) {
+            fail('--approve-public-sdk-release is not supported by this release line because it has no externally published public SDK surface.');
+          }
           const includeValidationSuites = parseCsvList(String(values['include-validation-suites'] ?? ''));
           const waiveValidationSuites = parseCsvList(String(values['waive-validation-suites'] ?? ''));
           const overrideReason = String(values['override-reason'] ?? '').trim();
@@ -4478,6 +4486,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 approvals: { qualifiedV4Activation: qualifiedV4ActivationApproval },
                 overrides: {
                   waiveCi,
+                  approvePublicSdkRelease,
                   includeValidationSuiteIds: includeValidationSuites,
                   waiveValidationSuiteIds: waiveValidationSuites,
                   reason: overrideReason,
@@ -4517,6 +4526,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
               '-f', `ui_expo_action=${uiExpoAction}`,
               '-f', `desktop_mode=${desktopMode}`,
               '-f', `waive_ci=${waiveCi}`,
+              '-f', `approve_public_sdk_release=${approvePublicSdkRelease}`,
               '-f', `include_validation_suites=${includeValidationSuites.join(',')}`,
               '-f', `waive_validation_suites=${waiveValidationSuites.join(',')}`,
               '-f', `override_reason=${overrideReason}`,

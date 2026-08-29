@@ -30,7 +30,7 @@ function csv(value, label) {
  * attemptId?: string; releaseNotesId?: string; confirm?: string;
  * deployTargets?: string; environment?: string; dryRun?: boolean; eventName?: string; refName?: string;
  * qualifiedV4ActivationApproval?: boolean; waiveCi?: boolean; includeValidationSuites?: string;
- * waiveValidationSuites?: string; overrideReason?: string }} input
+ * approvePublicSdkRelease?: boolean; waiveValidationSuites?: string; overrideReason?: string }} input
  */
 export function validateReleaseDispatch(input) {
   const authorizedSha = text(input.authorizedPromotionSourceSha);
@@ -46,6 +46,10 @@ export function validateReleaseDispatch(input) {
     waiveSuiteIds: csv(input.waiveValidationSuites, 'waive_validation_suites'),
   });
   const waiveCi = input.waiveCi === true;
+  const approvePublicSdkRelease = input.approvePublicSdkRelease === true;
+  if (approvePublicSdkRelease) {
+    throw new Error('Public SDK release approval is not supported on this release line.');
+  }
   const overrideReason = text(input.overrideReason);
   if ((waiveCi || refinements.waiveSuiteIds.length > 0) && !overrideReason) {
     throw new Error('override_reason is required when CI or validation evidence is waived.');
@@ -98,6 +102,7 @@ export function validateReleaseDispatch(input) {
     mode, sourceRef, baseRef, compareLabel, deployTargets,
     overrides: {
       waiveCi,
+      approvePublicSdkRelease,
       includeValidationSuiteIds: refinements.includeSuiteIds,
       waiveValidationSuiteIds: refinements.waiveSuiteIds,
       reason: overrideReason,
@@ -121,6 +126,7 @@ export function validateReleaseDispatchFromEnvironment(env) {
     refName: env.GITHUB_REF_NAME,
     qualifiedV4ActivationApproval: env.QUALIFIED_V4_ACTIVATION_APPROVAL === 'true',
     waiveCi: env.WAIVE_CI === 'true',
+    approvePublicSdkRelease: env.APPROVE_PUBLIC_SDK_RELEASE === 'true',
     includeValidationSuites: env.INCLUDE_VALIDATION_SUITES,
     waiveValidationSuites: env.WAIVE_VALIDATION_SUITES,
     overrideReason: env.OVERRIDE_REASON,

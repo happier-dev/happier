@@ -17,6 +17,7 @@ const base = {
   eventName: 'workflow_dispatch',
   refName: 'dev',
   qualifiedV4ActivationApproval: false,
+  approvePublicSdkRelease: false,
   waiveCi: false,
   includeValidationSuites: '',
   waiveValidationSuites: '',
@@ -30,7 +31,7 @@ test('resolves preview source and comparison refs', () => {
     baseRef: 'preview',
     compareLabel: 'preview..dev',
     deployTargets: ['ui', 'server'],
-    overrides: { waiveCi: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
+    overrides: { waiveCi: false, approvePublicSdkRelease: false, includeValidationSuiteIds: [], waiveValidationSuiteIds: [], reason: '' },
   });
 });
 
@@ -45,6 +46,7 @@ test('accepts an exact resume run identifier', () => {
 test('rejects untrusted refs and unsupported irreversible activation', () => {
   assert.throws(() => validateReleaseDispatch({ ...base, refName: 'feature/release' }), /untrusted ref/u);
   assert.throws(() => validateReleaseDispatch({ ...base, qualifiedV4ActivationApproval: true }), /not implemented/u);
+  assert.throws(() => validateReleaseDispatch({ ...base, approvePublicSdkRelease: true }), /public SDK release approval is not supported/iu);
 });
 
 test('accepts explicit reasoned waivers and rejects unknown or identity-critical suite waivers', () => {
@@ -56,6 +58,7 @@ test('accepts explicit reasoned waivers and rejects unknown or identity-critical
     overrideReason: 'Maintainer accepted the bounded release risk.',
   }).overrides, {
     waiveCi: true,
+    approvePublicSdkRelease: false,
     includeValidationSuiteIds: ['installers-smoke'],
     waiveValidationSuiteIds: ['docker-release-assets'],
     reason: 'Maintainer accepted the bounded release risk.',
