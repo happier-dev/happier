@@ -17,7 +17,6 @@ import {
 } from './externalSessionOperationProgressPresentation';
 import { presentExternalSessionOperationShared } from './externalSessionOperationSharedPresentation';
 import { ExternalSessionOperationAccessibilityStatus } from './ExternalSessionOperationAccessibilityStatus';
-import { useExternalSessionOperationActionFocusReturn } from './useExternalSessionOperationActionFocusReturn';
 
 export const ExternalSessionOperationSharedCard = React.memo(
     function ExternalSessionOperationSharedCard(props: Readonly<{
@@ -47,13 +46,12 @@ export const ExternalSessionOperationSharedCard = React.memo(
         const readFailedSubtitle = onCheckAgain
             ? t('externalSessions.operationStatusOwnerReadFailed')
             : null;
-        const availableActionKinds = [
-            ...(onCheckAgain ? ['check_again' as const] : []),
-            ...(canDismiss ? ['dismiss' as const] : []),
-        ];
-        const { actionNodeRef, armActionFocusReturn } = useExternalSessionOperationActionFocusReturn({
-            availableActionKinds,
-        });
+        // This card deliberately keeps no card-local focus-return owner: its two
+        // actions are owned by the transcript row host, which arms the focus
+        // transition on activation and settles it (viewport return on the exact
+        // action-caused card replacement, disarm on a settled attempt that
+        // leaves the control in place). A second armed owner here could fire on
+        // a later unrelated revision.
         const accessibilityAnnouncement = [
             t(presentation.titleKey),
             t(presentation.statusKey),
@@ -91,11 +89,14 @@ export const ExternalSessionOperationSharedCard = React.memo(
                     {onCheckAgain && checkAgainTitle && readFailedSubtitle ? (
                         <Item
                             testID="external-session-operation-action-check-again"
-                            pressableRef={actionNodeRef('check_again')}
                             title={checkAgainTitle}
                             subtitle={readFailedSubtitle}
                             onPress={() => {
-                                armActionFocusReturn('check_again');
+                                // The transcript row host owns this activation's focus
+                                // transition (arm, settle, and disarm on a settled attempt
+                                // that leaves the control in place). Arming a second,
+                                // card-local transition here would create duplicate focus
+                                // ownership for one activation.
                                 props.onTranscriptOperationActionTransition?.('check_again');
                                 onCheckAgain();
                             }}
@@ -107,7 +108,6 @@ export const ExternalSessionOperationSharedCard = React.memo(
                     {canDismiss && dismissTitle ? (
                         <Item
                             testID="external-session-operation-action-dismiss"
-                            pressableRef={actionNodeRef('dismiss')}
                             title={dismissTitle}
                             onPress={() => {
                                 props.onTranscriptOperationActionTransition?.('dismiss');

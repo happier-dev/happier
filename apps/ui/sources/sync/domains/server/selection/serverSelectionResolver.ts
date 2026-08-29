@@ -172,7 +172,6 @@ export function resolveActiveServerSelection(params: Readonly<{
         explicitKind === 'server'
         && explicitId
         && availableSet.has(explicitId)
-        && (!activeServerIdIsAvailable || explicitId === normalizedActiveServerId)
     ) {
         return {
             activeTarget: toServerTarget(explicitId),

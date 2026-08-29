@@ -72,7 +72,7 @@ describe('serverSelectionResolver', () => {
         });
     });
 
-    it('falls back to active server when an explicit server target is stale', () => {
+    it('honors an explicit server target even when a different Home is focused', () => {
         const resolved = resolveActiveServerSelection({
             activeServerId: 'server-b',
             availableServerIds: ['server-a', 'server-b'],
@@ -83,10 +83,10 @@ describe('serverSelectionResolver', () => {
             },
         });
 
-        expect(resolved.activeTarget).toEqual({ kind: 'server', id: 'server-b', serverId: 'server-b' });
-        expect(resolved.activeServerId).toBe('server-b');
-        expect(resolved.allowedServerIds).toEqual(['server-b']);
-        expect(resolved.explicit).toBe(false);
+        expect(resolved.activeTarget).toEqual({ kind: 'server', id: 'server-a', serverId: 'server-a' });
+        expect(resolved.activeServerId).toBe('server-a');
+        expect(resolved.allowedServerIds).toEqual(['server-a']);
+        expect(resolved.explicit).toBe(true);
     });
 
     it('preserves the active server when no server profiles are available yet', () => {

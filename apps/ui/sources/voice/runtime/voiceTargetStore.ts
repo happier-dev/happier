@@ -20,6 +20,24 @@ function normalizeSessionId(value: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * Resolves the one action target shared by Voice tools and presentation.
+ * Session-scoped Voice is bound to its admitted Session and must never fall
+ * through to a retained global target.
+ */
+export function resolveVoiceActionTargetSessionId(input: Readonly<{
+  scope: VoiceAssistantScope;
+  currentSessionId?: string | null;
+  primaryActionSessionId?: string | null;
+  lastFocusedSessionId?: string | null;
+}>): string | null {
+  const currentSessionId = normalizeSessionId(input.currentSessionId ?? null);
+  if (currentSessionId) return currentSessionId;
+  if (input.scope !== 'global') return null;
+  return normalizeSessionId(input.primaryActionSessionId ?? null)
+    ?? normalizeSessionId(input.lastFocusedSessionId ?? null);
+}
+
 function normalizeTrackedSessionIds(values: ReadonlyArray<string> | null | undefined): ReadonlyArray<string> {
   if (!Array.isArray(values)) return [];
   const out: string[] = [];

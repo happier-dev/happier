@@ -21,6 +21,7 @@ export function createSyncSocketTransport(params: Readonly<{
     endpoint: string;
     token: string;
     transports?: string[];
+    carrier?: 'https' | 'iroh';
 }>): Readonly<{
     socket: SyncSocket;
     transport: ManagedConnectionTransport;
@@ -39,7 +40,7 @@ export function createSyncSocketTransport(params: Readonly<{
                 CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
             ),
         },
-        ...(params.transports ? { transports: params.transports } : null),
+        ...(params.carrier === 'iroh' ? { transports: ['websocket'] } : (params.transports ? { transports: params.transports } : null)),
         // Explicitly disable cookies/credentialed requests for cross-origin polling transport.
         // Our server authenticates via the token in the Socket.IO handshake, and sets
         // `credentials: false` for CORS, so a credentialed polling request is blocked by

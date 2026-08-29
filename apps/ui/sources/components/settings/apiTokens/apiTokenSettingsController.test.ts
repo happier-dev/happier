@@ -131,6 +131,19 @@ describe('createApiTokenSettingsController', () => {
         });
     });
 
+    it('preserves the canonical invalid-request failure for presentation', async () => {
+        const harness = createHarness([
+            { ok: false, errorCode: 'invalid_request', error: 'invalid_request' },
+        ]);
+
+        await harness.controller.refresh();
+
+        expect(harness.controller.getState()).toMatchObject({
+            phase: 'error',
+            listError: 'invalid_request',
+        });
+    });
+
     it('preserves the active operation projection when another request is attempted while it is busy', async () => {
         let finishRevoke!: (value: ActionExecuteResult) => void;
         const pendingRevoke = new Promise<ActionExecuteResult>((resolve) => { finishRevoke = resolve; });

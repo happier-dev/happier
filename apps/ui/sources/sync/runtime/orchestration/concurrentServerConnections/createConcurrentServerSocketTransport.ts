@@ -9,18 +9,22 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolveSocketIoTransports } from '@/sync/runtime/socketIoTransports';
+import { resolveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 
 export type ConcurrentServerSocket = Socket;
 
 export function createConcurrentServerSocketTransport(params: Readonly<{
     serverUrl: string;
     token: string;
+    carrier?: 'https' | 'iroh';
+    runtimeOrigin?: string;
 }>): Readonly<{
     socket: ConcurrentServerSocket;
     transport: ManagedConnectionTransport;
 }> {
     const transports = resolveSocketIoTransports();
-    const socket = io(params.serverUrl, {
+    const endpoint = resolveServerRuntimeOrigin(params);
+    const socket = io(endpoint, {
         path: '/v1/updates/',
         auth: {
             token: params.token,
@@ -30,7 +34,7 @@ export function createConcurrentServerSocketTransport(params: Readonly<{
                 CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
             ),
         },
-        ...(transports ? { transports } : null),
+        ...(params.carrier === 'iroh' ? { transports: ['websocket'] } : (transports ? { transports } : null)),
         withCredentials: false,
         // Avoid the socket.io global Manager cache. This transport is frequently created/destroyed as
         // servers enter/exit the concurrent session cache, and cached Managers can retain listeners.

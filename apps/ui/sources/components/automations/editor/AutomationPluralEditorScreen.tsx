@@ -494,10 +494,17 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
     const styles = stylesheet;
     const [editor, setEditor] = React.useState<EditorState>({ kind: 'none' });
     const [lifecycleSelectionStale, setLifecycleSelectionStale] = React.useState(false);
+    // A save commits the captured draft under CAS. Ignore late editor events
+    // while that request is in flight so the mounted draft cannot diverge
+    // from the bytes whose witnesses are being submitted.
+    const emitChange = React.useCallback((next: AutomationTriggerEditorValue) => {
+        if (props.submitting === true) return;
+        props.onChange(next);
+    }, [props.onChange, props.submitting]);
 
     const updateMetadata = React.useCallback((patch: Partial<AutomationTriggerEditorValue>) => {
-        props.onChange({ ...props.value, ...patch });
-    }, [props]);
+        emitChange({ ...props.value, ...patch });
+    }, [emitChange, props.value]);
 
     const removeTrigger = React.useCallback(async (clientId: string) => {
         const trigger = props.value.triggers.find((candidate) => candidate.clientId === clientId);
@@ -508,7 +515,7 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
             { destructive: true, confirmText: t('common.remove'), cancelText: t('common.cancel') },
         );
         if (!confirmed) return;
-        props.onChange({
+        emitChange({
             ...props.value,
             triggers: props.value.triggers.filter((candidate) => candidate.clientId !== clientId),
             removedTriggers: trigger.persisted
@@ -516,7 +523,7 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
                 : props.value.removedTriggers,
         });
         setEditor({ kind: 'none' });
-    }, [props]);
+    }, [emitChange, props.value]);
 
     const lifecycleOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(() => (
         (props.sessionOptions ?? []).map((option) => ({
@@ -559,16 +566,16 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
         if (editor.kind !== 'pluginEvent') return;
         if (editor.clientId) {
             const current = props.value.triggers.find((trigger) => trigger.clientId === editor.clientId);
-            props.onChange(replaceTrigger(props.value, editor.clientId, {
+            emitChange(replaceTrigger(props.value, editor.clientId, {
                 ...definition,
                 // Setup edits do not own independent trigger enablement.
                 enabled: current ? getAutomationEditorTriggerEnabled(current) : definition.enabled,
             }));
         } else {
-            props.onChange(appendTrigger(props.value, definition).draft);
+            emitChange(appendTrigger(props.value, definition).draft);
         }
         setEditor({ kind: 'none' });
-    }, [editor, props]);
+    }, [editor, emitChange, props.value]);
 
     const selectLifecycleSession = React.useCallback((sessionId: string) => {
         if (editor.kind !== 'sessionLifecycle') return;
@@ -597,16 +604,16 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
         };
         if (editor.clientId) {
             const current = props.value.triggers.find((trigger) => trigger.clientId === editor.clientId);
-            props.onChange(replaceTrigger(props.value, editor.clientId, {
+            emitChange(replaceTrigger(props.value, editor.clientId, {
                 ...definition,
                 enabled: current ? getAutomationEditorTriggerEnabled(current) : true,
             }));
         } else {
-            props.onChange(appendTrigger(props.value, definition).draft);
+            emitChange(appendTrigger(props.value, definition).draft);
         }
         setLifecycleSelectionStale(false);
         setEditor({ kind: 'none' });
-    }, [editor, props]);
+    }, [editor, emitChange, props.resolveCurrentSessionTurn, props.sessionOptions, props.value, props.onSessionSelectionStale]);
 
     return (
         <View testID="automation-plural-editor" style={styles.root}>
@@ -700,7 +707,7 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
                             <Switch
                                 testID={`automation-trigger-enabled-${trigger.clientId}`}
                                 value={getAutomationEditorTriggerEnabled(trigger)}
-                                onValueChange={(enabled) => props.onChange(trigger.definition
+                                onValueChange={(enabled) => emitChange(trigger.definition
                                     ? replaceTrigger(props.value, trigger.clientId, {
                                         ...trigger.definition,
                                         enabled,
@@ -753,7 +760,7 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
                                 setLifecycleSelectionStale(false);
                                 if (kind === 'schedule') {
                                     const appended = appendTrigger(props.value, createDefaultSchedule());
-                                    props.onChange(appended.draft);
+                                    emitChange(appended.draft);
                                     setEditor({ kind: 'schedule', clientId: appended.clientId });
                                     return;
                                 }
@@ -772,7 +779,7 @@ const AutomationTriggerEditorContents = React.memo(function AutomationTriggerEdi
                 <>
                     <ScheduleEditor
                         value={selectedSchedule.definition}
-                        onChange={(definition) => props.onChange(replaceTrigger(
+                        onChange={(definition) => emitChange(replaceTrigger(
                             props.value,
                             selectedSchedule.clientId,
                             definition,
@@ -915,11 +922,15 @@ export const AutomationTriggerEditor = React.memo(function AutomationTriggerEdit
 export const AutomationPluralEditorScreen = React.memo(function AutomationPluralEditorScreen(
     props: AutomationPluralEditorScreenProps,
 ): React.ReactElement {
+    const emitChange = React.useCallback((next: AutomationEditorDraft) => {
+        if (props.submitting === true) return;
+        props.onChange(next);
+    }, [props.onChange, props.submitting]);
     return (
         <AutomationTriggerEditorContents
             {...props}
-            onChange={(next) => props.onChange({ ...props.value, ...next })}
-            recipeEditor={<AutomationRecipeComposer value={props.value} onChange={props.onChange} />}
+            onChange={(next) => emitChange({ ...props.value, ...next })}
+            recipeEditor={<AutomationRecipeComposer value={props.value} onChange={emitChange} />}
         />
     );
 });

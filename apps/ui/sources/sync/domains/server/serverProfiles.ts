@@ -6,8 +6,38 @@ import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serve
 import { sanitizeServerUrlForShareableLink } from './url/shareableServerUrl';
 import { readConfiguredServerUrlEnv, readConfiguredServerUrlEnvRaw } from './readConfiguredServerUrlEnv';
 import { resolveSetupSurfacePolicy } from './setup/setupSurfacePolicy';
+import { normalizeStoredServerSelectionGroups } from './selection/serverSelectionMutations';
+import type { ServerSelectionGroup } from './selection/serverSelectionTypes';
 
-export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification' | 'preconfigured';
+export type ServerProfileSource =
+    | 'manual' | 'qr' | 'account-directory' | 'desktop-personal-home' | 'legacy'
+    | 'url' | 'stack-env' | 'notification' | 'preconfigured';
+
+export type AccountServiceEndpointV1 = Readonly<{
+    url: string;
+    serverIdentityId?: string;
+    displayName?: string;
+    source: 'default' | 'configured' | 'user';
+}>;
+
+export type HomeConnectionDescriptorV1 = Readonly<{
+    v: 1;
+    homeServerIdentityId: string;
+    canonicalServerUrl: string;
+    revision: number;
+    endpoints: ReadonlyArray<
+        | Readonly<{ kind: 'https'; url: string }>
+        | Readonly<{ kind: 'iroh'; endpointId: string; relayUrls?: readonly string[]; directAddresses?: readonly string[] }>
+    >;
+}>;
+
+type LegacyManualHomeDescriptor = Readonly<{
+    serverUrl: string;
+    canonicalServerUrl?: string;
+    publicServerUrl?: string | null;
+    homeServerIdentityId?: string;
+    displayName?: string;
+}>;
 
 export const HAPPIER_CLOUD_SERVER_URL = 'https://api.happier.dev' as const;
 
@@ -23,6 +53,10 @@ export type ServerProfile = Readonly<{
     updatedAt: number;
     lastUsedAt: number;
     source?: ServerProfileSource;
+    /** Original unknown persisted source retained for lossless downgrade/round-trip. */
+    legacySource?: string;
+    canonicalServerUrl?: string;
+    publicServerUrl?: string | null;
 }>;
 
 export type PortableServerIdentityProfileResolution =
@@ -47,6 +81,8 @@ export type ActiveServerSnapshot = Readonly<{
     activeShareableServerUrl?: string | null;
     activeShareableServerUrlValidatedAgainstServerUrl?: string | null;
     activeLocalRelayUrl?: string | null;
+    runtimeOrigin?: string;
+    carrier?: 'https' | 'iroh';
     isSelectionExplicit?: boolean;
     generation: number;
 }>;
@@ -55,7 +91,16 @@ type PersistedServerState = {
     activeServerIdIsExplicit?: boolean;
     activeServerId?: string;
     servers?: Record<string, ServerProfile>;
+    accountServiceEndpoint?: AccountServiceEndpointV1 | null;
+    homeViewState?: HomeViewStateV1 | null;
 };
+
+export type HomeViewStateV1 = Readonly<{
+    version: 1;
+    groups: readonly ServerSelectionGroup[];
+    activeTargetKind: 'server' | 'group' | null;
+    activeTargetId: string | null;
+}>;
 
 type PreconfiguredServer = Readonly<{
     name: string;
@@ -70,6 +115,9 @@ const STATE_KEY = 'server-state-v1';
 let activeServerGeneration = 0;
 const activeServerListeners = new Set<(snapshot: ActiveServerSnapshot) => void>();
 let activeServerSnapshotCache: ActiveServerSnapshot | null = null;
+let activeRuntimeOrigin: string | undefined;
+let activeCarrier: 'https' | 'iroh' | undefined;
+const runtimeOriginListeners = new Set<(snapshot: ActiveServerSnapshot) => void>();
 
 let serverProfilesGeneration = 0;
 const serverProfilesListeners = new Set<(generation: number) => void>();
@@ -334,7 +382,7 @@ function parsePreconfiguredServersFromEnv(): PreconfiguredServer[] {
 function findProfileByEquivalentUrl(servers: Record<string, ServerProfile>, serverUrl: string): ServerProfile | null {
     const targetKey = comparableUrlKey(serverUrl);
     for (const profile of Object.values(servers)) {
-        if (comparableUrlKey(profile.serverUrl) === targetKey) return profile;
+        if (comparableUrlKey(profile.canonicalServerUrl ?? profile.serverUrl) === targetKey) return profile;
     }
     return null;
 }
@@ -440,13 +488,26 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
             || rawSource === 'stack-env'
             || rawSource === 'notification'
             || rawSource === 'preconfigured'
+            || rawSource === 'qr'
+            || rawSource === 'account-directory'
+            || rawSource === 'desktop-personal-home'
+            || rawSource === 'legacy'
             ? rawSource
-            : undefined;
+            : rawSource ? 'legacy' : undefined;
+    const legacySource = source === 'legacy' && rawSource ? rawSource : undefined;
+
+    const canonicalServerUrl = typeof record.canonicalServerUrl === 'string'
+        ? normalizeUrl(record.canonicalServerUrl) : '';
+    const publicServerUrl = record.publicServerUrl === null
+        ? null
+        : typeof record.publicServerUrl === 'string' ? normalizeUrl(record.publicServerUrl) : undefined;
 
     return {
         id: sid,
         name,
         serverUrl,
+        ...(canonicalServerUrl ? { canonicalServerUrl } : {}),
+        ...(publicServerUrl !== undefined ? { publicServerUrl } : {}),
         ...(typeof record.shareableServerUrl === 'string'
             ? { shareableServerUrl: sanitizeServerUrlForShareableLink(record.shareableServerUrl) }
             : {}),
@@ -463,6 +524,7 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         updatedAt: Number(record.updatedAt ?? 0) || 0,
         lastUsedAt: Number(record.lastUsedAt ?? 0) || 0,
         source,
+        ...(legacySource ? { legacySource } : {}),
     };
 }
 
@@ -490,6 +552,10 @@ function pickPreferredEquivalentProfile(
         url: 2,
         notification: 3,
         manual: 4,
+        qr: 2,
+        'account-directory': 2,
+        'desktop-personal-home': 1,
+        legacy: 10,
     };
 
     return [...profiles].sort((a, b) => {
@@ -539,11 +605,29 @@ function dedupeEquivalentProfiles(params: Readonly<{
     changed: boolean;
 }> {
     const groupsByKey = new Map<string, ServerProfile[]>();
+    const profilesByUrl = new Map<string, ServerProfile[]>();
     for (const profile of Object.values(params.servers)) {
-        const key = comparableUrlKey(profile.serverUrl) || `id:${profile.id}`;
-        const group = groupsByKey.get(key);
+        const key = comparableUrlKey(profile.canonicalServerUrl ?? profile.serverUrl) || `id:${profile.id}`;
+        const group = profilesByUrl.get(key);
         if (group) group.push(profile);
-        else groupsByKey.set(key, [profile]);
+        else profilesByUrl.set(key, [profile]);
+    }
+    for (const [urlKey, profiles] of profilesByUrl) {
+        const identities = new Set(profiles.map((profile) => profile.serverIdentityId).filter(Boolean));
+        if (identities.size <= 1) {
+            groupsByKey.set(urlKey, profiles);
+            continue;
+        }
+        // Stable identities outrank URL equality. Keep conflicting Homes
+        // separate; identity-less legacy entries may only join when there is
+        // no ambiguity (handled by the <=1 branch above).
+        for (const profile of profiles) {
+            const identityKey = profile.serverIdentityId ?? `legacy:${profile.id}`;
+            const key = `${urlKey}|identity:${identityKey}`;
+            const group = groupsByKey.get(key);
+            if (group) group.push(profile);
+            else groupsByKey.set(key, [profile]);
+        }
     }
 
     let changed = false;
@@ -580,6 +664,9 @@ function dedupeEquivalentProfiles(params: Readonly<{
                             ?? null,
                     }
                     : {}),
+                ...(acc.canonicalServerUrl ?? current.canonicalServerUrl ? { canonicalServerUrl: acc.canonicalServerUrl ?? current.canonicalServerUrl } : {}),
+                ...(acc.publicServerUrl !== undefined || current.publicServerUrl !== undefined
+                    ? { publicServerUrl: acc.publicServerUrl ?? current.publicServerUrl ?? null } : {}),
             };
         }, preferred);
 
@@ -644,6 +731,9 @@ function dedupeIdentityProfiles(params: Readonly<{
                             ?? null,
                     }
                     : {}),
+                ...(acc.canonicalServerUrl ?? current.canonicalServerUrl ? { canonicalServerUrl: acc.canonicalServerUrl ?? current.canonicalServerUrl } : {}),
+                ...(acc.publicServerUrl !== undefined || current.publicServerUrl !== undefined
+                    ? { publicServerUrl: acc.publicServerUrl ?? current.publicServerUrl ?? null } : {}),
             };
         }, preferred);
         const identityMetadata = mergeProfileIdentityMetadata(group, merged);
@@ -666,6 +756,53 @@ function dedupeIdentityProfiles(params: Readonly<{
 // writes without invalidation wiring; local writes clear it explicitly.
 let persistedStateParseCache: { raw: string; state: Required<PersistedServerState> } | null = null;
 
+function parseAccountServiceEndpoint(value: unknown): AccountServiceEndpointV1 | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    const url = typeof record.url === 'string' ? normalizeUrl(record.url) : '';
+    const source = record.source;
+    if (!url || source !== 'default' && source !== 'configured' && source !== 'user') return null;
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return null; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    const identity = normalizeServerIdentityId(record.serverIdentityId);
+    return {
+        url,
+        ...(identity ? { serverIdentityId: identity } : {}),
+        ...(typeof record.displayName === 'string' && record.displayName.trim() ? { displayName: record.displayName.trim() } : {}),
+        source,
+    };
+}
+
+function parseHomeViewState(value: unknown): HomeViewStateV1 | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (record.version !== 1) return null;
+    const kind = record.activeTargetKind === 'server' || record.activeTargetKind === 'group'
+        ? record.activeTargetKind : null;
+    const id = typeof record.activeTargetId === 'string' && record.activeTargetId.trim()
+        ? record.activeTargetId.trim() : null;
+    return {
+        version: 1,
+        groups: normalizeStoredServerSelectionGroups(record.groups).map((group) => ({ ...group })),
+        activeTargetKind: kind,
+        activeTargetId: id,
+    };
+}
+
+function rewriteHomeViewStateIdentity(state: HomeViewStateV1 | null, rewrites: ReadonlyMap<string, string>): HomeViewStateV1 | null {
+    if (!state || rewrites.size === 0) return state;
+    const rewrite = (id: string | null): string | null => id ? (rewrites.get(id) ?? id) : null;
+    return {
+        ...state,
+        groups: state.groups.map((group) => ({
+            ...group,
+            serverIds: group.serverIds.map((id) => rewrites.get(id) ?? id),
+        })),
+        activeTargetId: rewrite(state.activeTargetId),
+    };
+}
+
 function readPersistedState(): Required<PersistedServerState> {
     const raw = getPersistedStateStorage().getString(STATE_KEY);
     if (!raw) {
@@ -674,6 +811,8 @@ function readPersistedState(): Required<PersistedServerState> {
             activeServerIdIsExplicit: false,
             activeServerId: resolvePrimaryActiveServerId(seeded, null),
             servers: seeded,
+            accountServiceEndpoint: null,
+            homeViewState: null,
         };
     }
     if (persistedStateParseCache && persistedStateParseCache.raw === raw) {
@@ -692,17 +831,19 @@ function readPersistedState(): Required<PersistedServerState> {
         const desiredActive = normalizeServerId(parsed.activeServerId);
         const activeServerIdIsExplicit = parsed.activeServerIdIsExplicit === true;
 
-        const dedupedEquivalent = dedupeEquivalentProfiles({
+        // Stable Home identity is authoritative. Deduplicate by identity first,
+        // then use canonical URL only for remaining compatible legacy entries.
+        const dedupedIdentity = dedupeIdentityProfiles({
             servers,
             sameOriginServerUrl: getWebSameOriginServerUrl(),
             preferredServerId: desiredActive,
         });
         const rewrittenAfterEquivalent =
-            desiredActive && dedupedEquivalent.idRewrite.has(desiredActive)
-                ? dedupedEquivalent.idRewrite.get(desiredActive)!
+            desiredActive && dedupedIdentity.idRewrite.has(desiredActive)
+                ? dedupedIdentity.idRewrite.get(desiredActive)!
                 : desiredActive;
-        const deduped = dedupeIdentityProfiles({
-            servers: dedupedEquivalent.servers,
+        const deduped = dedupeEquivalentProfiles({
+            servers: dedupedIdentity.servers,
             sameOriginServerUrl: getWebSameOriginServerUrl(),
             preferredServerId: rewrittenAfterEquivalent,
         });
@@ -712,14 +853,18 @@ function readPersistedState(): Required<PersistedServerState> {
                 ? deduped.idRewrite.get(rewrittenAfterEquivalent)!
                 : rewrittenAfterEquivalent;
         const activeServerId = resolvePrimaryActiveServerId(deduped.servers, rewrittenDesiredActive);
+        const accountServiceEndpoint = parseAccountServiceEndpoint(parsed.accountServiceEndpoint);
+        const homeViewState = rewriteHomeViewStateIdentity(parseHomeViewState(parsed.homeViewState), deduped.idRewrite);
 
         const state: Required<PersistedServerState> = {
             activeServerIdIsExplicit,
             activeServerId,
             servers: deduped.servers,
+            accountServiceEndpoint,
+            homeViewState,
         };
 
-        if (dedupedEquivalent.changed || deduped.changed) {
+        if (dedupedIdentity.changed || deduped.changed) {
             writePersistedState(state);
         }
 
@@ -731,6 +876,8 @@ function readPersistedState(): Required<PersistedServerState> {
             activeServerIdIsExplicit: false,
             activeServerId: resolvePrimaryActiveServerId(seeded, null),
             servers: seeded,
+            accountServiceEndpoint: null,
+            homeViewState: null,
         };
     }
 }
@@ -740,6 +887,33 @@ function writePersistedState(state: Required<PersistedServerState>): void {
     // Invalidate rather than prime: the next read re-parses so the parse path stays the
     // single canonicalization owner for cached state shapes.
     persistedStateParseCache = null;
+}
+
+export function loadHomeViewState(): HomeViewStateV1 | null {
+    return readPersistedState().homeViewState;
+}
+
+export function saveHomeViewState(state: HomeViewStateV1): void {
+    const current = readPersistedState();
+    writePersistedState({ ...current, homeViewState: state });
+}
+
+/** One-time migration from focused account settings into device-global server state. */
+export function migrateHomeViewStateFromSettings(settings: Readonly<Record<string, unknown>>): HomeViewStateV1 | null {
+    const existing = loadHomeViewState();
+    if (existing) return existing;
+    const state: HomeViewStateV1 = {
+        version: 1,
+        groups: normalizeStoredServerSelectionGroups(settings.serverSelectionGroups),
+        activeTargetKind:
+            settings.serverSelectionActiveTargetKind === 'server' || settings.serverSelectionActiveTargetKind === 'group'
+                ? settings.serverSelectionActiveTargetKind : null,
+        activeTargetId:
+            typeof settings.serverSelectionActiveTargetId === 'string' && settings.serverSelectionActiveTargetId.trim()
+                ? settings.serverSelectionActiveTargetId.trim() : null,
+    };
+    saveHomeViewState(state);
+    return state;
 }
 
 function readTabActiveServerId(): string | null {
@@ -808,13 +982,15 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
     if (selected) {
         return {
             serverId: resolveServerProfileScopeId(selected),
-            serverUrl: selected.serverUrl,
+            serverUrl: selected.canonicalServerUrl ?? selected.serverUrl,
             activeShareableServerUrl: selected.shareableServerUrl ?? null,
             activeShareableServerUrlValidatedAgainstServerUrl: selected.shareableServerUrlValidatedAgainstServerUrl ?? null,
             activeLocalRelayUrl: sameOriginUrl && comparableUrlKey(sameOriginUrl) !== comparableUrlKey(selected.serverUrl)
                 ? sameOriginUrl
                 : null,
             isSelectionExplicit,
+            ...(activeRuntimeOrigin ? { runtimeOrigin: activeRuntimeOrigin } : {}),
+            ...(activeCarrier ? { carrier: activeCarrier } : {}),
             generation: activeServerGeneration,
         };
     }
@@ -825,9 +1001,27 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
         activeShareableServerUrl: null,
         activeShareableServerUrlValidatedAgainstServerUrl: null,
         activeLocalRelayUrl: sameOriginUrl,
+        ...(activeRuntimeOrigin ? { runtimeOrigin: activeRuntimeOrigin } : {}),
+        ...(activeCarrier ? { carrier: activeCarrier } : {}),
         isSelectionExplicit,
         generation: activeServerGeneration,
     };
+}
+
+/** Update transient request origin/carrier without mutating stable profile identity fields. */
+export function updateActiveServerRuntimeOrigin(params: Readonly<{ runtimeOrigin?: string; carrier?: 'https' | 'iroh' }>): void {
+    const previous = getActiveServerSnapshot();
+    activeRuntimeOrigin = params.runtimeOrigin?.trim() || undefined;
+    activeCarrier = params.carrier;
+    activeServerSnapshotCache = null;
+    emitActiveServerChanged(previous, { force: true });
+    const snapshot = getActiveServerSnapshot();
+    for (const listener of runtimeOriginListeners) listener(snapshot);
+}
+
+export function subscribeActiveServerRuntimeOrigin(listener: (snapshot: ActiveServerSnapshot) => void): () => void {
+    runtimeOriginListeners.add(listener);
+    return () => runtimeOriginListeners.delete(listener);
 }
 
 function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServerSnapshot {
@@ -839,6 +1033,8 @@ function getStableActiveServerSnapshot(next: ActiveServerSnapshot): ActiveServer
         && (cached.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
         && (cached.activeShareableServerUrlValidatedAgainstServerUrl ?? null) === (next.activeShareableServerUrlValidatedAgainstServerUrl ?? null)
         && (cached.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && (cached.runtimeOrigin ?? null) === (next.runtimeOrigin ?? null)
+        && (cached.carrier ?? null) === (next.carrier ?? null)
         && (cached.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
         && cached.generation === next.generation
     ) {
@@ -852,7 +1048,16 @@ function emitActiveServerChanged(
     previous: ActiveServerSnapshot | null,
     options: Readonly<{ force?: boolean }> = {},
 ): void {
-    const next = getActiveServerSnapshot();
+    let next = getActiveServerSnapshot();
+    // A runtime origin belongs to one focused Home generation. Never carry an ephemeral
+    // loopback listener across an active-profile switch; the native lease will be reacquired
+    // for the new Home and publish a fresh origin through updateActiveServerRuntimeOrigin().
+    if (previous && previous.serverId !== next.serverId) {
+        activeRuntimeOrigin = undefined;
+        activeCarrier = undefined;
+        activeServerSnapshotCache = null;
+        next = getActiveServerSnapshot();
+    }
     if (
         !options.force
         && previous
@@ -861,6 +1066,8 @@ function emitActiveServerChanged(
         && (previous.activeShareableServerUrl ?? null) === (next.activeShareableServerUrl ?? null)
         && (previous.activeShareableServerUrlValidatedAgainstServerUrl ?? null) === (next.activeShareableServerUrlValidatedAgainstServerUrl ?? null)
         && (previous.activeLocalRelayUrl ?? null) === (next.activeLocalRelayUrl ?? null)
+        && (previous.runtimeOrigin ?? null) === (next.runtimeOrigin ?? null)
+        && (previous.carrier ?? null) === (next.carrier ?? null)
         && (previous.isSelectionExplicit ?? null) === (next.isSelectionExplicit ?? null)
     ) return;
     activeServerGeneration += 1;
@@ -881,6 +1088,80 @@ export function subscribeServerProfiles(listener: (generation: number) => void):
     return () => {
         serverProfilesListeners.delete(listener);
     };
+}
+
+const accountServiceEndpointListeners = new Set<(endpoint: AccountServiceEndpointV1 | null) => void>();
+
+export function getAccountServiceEndpointSnapshot(): AccountServiceEndpointV1 | null {
+    return readPersistedState().accountServiceEndpoint ?? null;
+}
+
+export function subscribeAccountServiceEndpoint(listener: (endpoint: AccountServiceEndpointV1 | null) => void): () => void {
+    accountServiceEndpointListeners.add(listener);
+    return () => accountServiceEndpointListeners.delete(listener);
+}
+
+export function setAccountServiceEndpoint(endpoint: AccountServiceEndpointV1): void {
+    const parsed = parseAccountServiceEndpoint(endpoint);
+    if (!parsed) throw new Error('Invalid Account Service endpoint');
+    const state = readPersistedState();
+    writePersistedState({ ...state, accountServiceEndpoint: parsed });
+    for (const listener of accountServiceEndpointListeners) listener(parsed);
+}
+
+export function resetAccountServiceToDefault(): void {
+    const state = readPersistedState();
+    const endpoint: AccountServiceEndpointV1 = { url: HAPPIER_CLOUD_SERVER_URL, source: 'default', displayName: 'Happier Cloud' };
+    writePersistedState({ ...state, accountServiceEndpoint: endpoint });
+    for (const listener of accountServiceEndpointListeners) listener(endpoint);
+}
+
+export async function adoptHomeProfile(params: Readonly<{
+    descriptor: HomeConnectionDescriptorV1 | LegacyManualHomeDescriptor;
+    source: ServerProfileSource;
+    preserveUserLabel?: boolean;
+}>): Promise<ServerProfile> {
+    const descriptor = params.descriptor;
+    if (!descriptor || typeof descriptor !== 'object') {
+        throw new Error('Invalid Home connection descriptor');
+    }
+    const strictDescriptor = params.source === 'qr' || params.source === 'account-directory';
+    if (strictDescriptor && (!('v' in descriptor) || descriptor.v !== 1 || !Number.isInteger(descriptor.revision) || !Array.isArray(descriptor.endpoints))) {
+        throw new Error('Invalid Home connection descriptor');
+    }
+    const endpointUrl = 'endpoints' in descriptor
+        ? descriptor.endpoints.find((endpoint) => endpoint.kind === 'https')?.url
+        : undefined;
+    // canonicalServerUrl is the stable auth/profile origin; serverUrl is retained
+    // only as a legacy/manual alias when no canonical value is supplied.
+    const url = normalizeUrl(descriptor.canonicalServerUrl ?? ('serverUrl' in descriptor ? descriptor.serverUrl : undefined) ?? endpointUrl ?? '');
+    if (!url) throw new Error('Invalid Home connection URL');
+    const identity = normalizeServerIdentityId(descriptor.homeServerIdentityId);
+    if (strictDescriptor && (!identity || !normalizeUrl(descriptor.canonicalServerUrl ?? ''))) {
+        throw new Error('Home identity is required for strict adoption');
+    }
+    const state = readPersistedState();
+    const byIdentity = identity ? Object.values(state.servers).filter((p) => p.serverIdentityId === identity || (p.legacyServerIds ?? []).includes(identity)) : [];
+    const byUrl = findProfileByEquivalentUrl(state.servers, normalizeUrl(descriptor.canonicalServerUrl ?? url));
+    if (identity && byIdentity.length > 1) throw new Error('Ambiguous Home identity');
+    if (identity && byIdentity.length === 1 && byUrl && byUrl.id !== byIdentity[0]!.id) throw new Error('Home identity conflicts with URL');
+    const existing = byIdentity[0] ?? byUrl;
+    const displayName = 'displayName' in descriptor ? descriptor.displayName : undefined;
+    const profile = existing ?? upsertServerProfile({ serverUrl: url, name: displayName, source: params.source, replaceEquivalentStoredUrl: true });
+    const updated: ServerProfile = {
+        ...profile,
+        ...(existing ? { serverUrl: url } : {}),
+        ...(!params.preserveUserLabel && displayName ? { name: displayName.trim() } : {}),
+        ...(identity ? { serverIdentityId: identity } : {}),
+        ...(descriptor.canonicalServerUrl ? { canonicalServerUrl: normalizeUrl(descriptor.canonicalServerUrl) } : {}),
+        ...('publicServerUrl' in descriptor && descriptor.publicServerUrl === null ? { publicServerUrl: null } : 'publicServerUrl' in descriptor && descriptor.publicServerUrl ? { publicServerUrl: normalizeUrl(descriptor.publicServerUrl) } : {}),
+    };
+    if (JSON.stringify(updated) !== JSON.stringify(profile)) {
+        const next = { ...state, servers: { ...state.servers, [updated.id]: updated } };
+        writePersistedState(next);
+        emitServerProfilesChanged();
+    }
+    return updated;
 }
 
 export function getServerProfileById(idRaw: string): ServerProfile | null {
@@ -991,6 +1272,12 @@ export function upsertServerProfile(
         ...(existingEquivalent?.serverIdentityId ?? existing?.serverIdentityId
             ? { serverIdentityId: existingEquivalent?.serverIdentityId ?? existing?.serverIdentityId ?? null }
             : {}),
+        ...(existingEquivalent?.canonicalServerUrl ?? existing?.canonicalServerUrl
+            ? { canonicalServerUrl: existingEquivalent?.canonicalServerUrl ?? existing?.canonicalServerUrl }
+            : {}),
+        ...(existingEquivalent?.publicServerUrl !== undefined || existing?.publicServerUrl !== undefined
+            ? { publicServerUrl: existingEquivalent?.publicServerUrl ?? existing?.publicServerUrl ?? null }
+            : {}),
         ...((existingEquivalent?.legacyServerIds ?? existing?.legacyServerIds)?.length
             ? { legacyServerIds: existingEquivalent?.legacyServerIds ?? existing?.legacyServerIds ?? [] }
             : {}),
@@ -998,6 +1285,7 @@ export function upsertServerProfile(
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
         source: params.source ?? existing?.source ?? 'manual',
+        ...(existing?.legacySource ? { legacySource: existing.legacySource } : {}),
     };
 
     const previousSnapshot = getActiveServerSnapshot();
@@ -1063,6 +1351,7 @@ export function setServerProfileIdentityForUrl(serverUrlRaw: string, identityRaw
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
         source: existing?.source ?? 'url',
+        ...(existing?.legacySource ? { legacySource: existing.legacySource } : {}),
     };
 
     const previousSnapshot = getActiveServerSnapshot();
@@ -1126,6 +1415,10 @@ export function setActiveServerId(
     const previousSnapshot = getActiveServerSnapshot();
     if (opts.scope === 'tab') {
         writeTabActiveServerId(profile.id);
+        if (previousSnapshot.serverId !== resolveServerProfileScopeId(profile)) {
+            activeRuntimeOrigin = undefined;
+            activeCarrier = undefined;
+        }
         emitActiveServerChanged(previousSnapshot, { force: true });
         return;
     }
@@ -1141,6 +1434,10 @@ export function setActiveServerId(
             [profile.id]: { ...existing, lastUsedAt: now, updatedAt: now },
         },
     });
+    if (previousSnapshot.serverId !== resolveServerProfileScopeId(profile)) {
+        activeRuntimeOrigin = undefined;
+        activeCarrier = undefined;
+    }
     emitServerProfilesChanged();
     emitActiveServerChanged(previousSnapshot, { force: true });
 }
@@ -1190,15 +1487,15 @@ export function getActiveServerUrl(): string {
     const state = readPersistedState();
     const tab = readTabActiveServerId();
     const tabProfile = findProfileByServerIdentifier(state.servers, tab);
-    if (tabProfile) return tabProfile.serverUrl;
+    if (tabProfile) return tabProfile.canonicalServerUrl ?? tabProfile.serverUrl;
 
     const explicit = findProfileByServerIdentifier(state.servers, state.activeServerId);
     if (state.activeServerIdIsExplicit && explicit) {
-        return explicit.serverUrl;
+        return explicit.canonicalServerUrl ?? explicit.serverUrl;
     }
 
     const fallbackId = resolvePrimaryActiveServerId(state.servers, state.activeServerId);
-    if (fallbackId && state.servers[fallbackId]) return state.servers[fallbackId]!.serverUrl;
+    if (fallbackId && state.servers[fallbackId]) return state.servers[fallbackId]!.canonicalServerUrl ?? state.servers[fallbackId]!.serverUrl;
 
     const sameOrigin = getWebSameOriginServerUrl();
     if (sameOrigin) return sameOrigin;

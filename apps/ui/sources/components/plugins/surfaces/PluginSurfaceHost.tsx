@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { StyleSheet, View } from 'react-native';
+import { router } from 'expo-router';
 
 import {
     BrowserViewTargetV1Schema,
@@ -32,6 +33,7 @@ import {
     type PluginUiSurfaceBindingV1,
     type PluginUiJsonValueV1,
     type PluginUiLaunchInputV1,
+    type PluginUiOpenConnectedAccountsRequestV1,
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSubPathV1,
     type PluginUiPlatformV1,
@@ -228,6 +230,7 @@ import {
 } from '@/sync/domains/plugins/ui/reactNativeCrashReports';
 import { resolvePluginUiRuntimeFormFactor } from '@/components/appShell/panes/layout/resolveMultiPaneDeviceType';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { buildConnectedAccountsSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 
 type PluginSurfaceHostDescriptor = PluginUiPhysicalSurfacePlacementProjection | PluginUiSettingsPageProjection;
 
@@ -2788,7 +2791,14 @@ export function PluginSurfaceHost(props: Readonly<(
             ? ephemeralMount?.binding
         : mountedComposerBinding
             ?? (targetedBinding ? undefined : props.binding);
-    const baseCreateMountedHostApiHandlers = controllerBinding?.createMountedHostApiHandlers;
+    const openConnectedAccounts = React.useCallback((request: PluginUiOpenConnectedAccountsRequestV1): void => {
+        router.push(buildConnectedAccountsSettingsRoute(request));
+    }, []);
+    const controllerBindingWithConnectedAccounts = React.useMemo<BoundPluginSurfaceBinding>(() => Object.freeze({
+        ...(controllerBinding ?? {}),
+        openConnectedAccounts,
+    }), [controllerBinding, openConnectedAccounts]);
+    const baseCreateMountedHostApiHandlers = controllerBindingWithConnectedAccounts.createMountedHostApiHandlers;
     const createMountedHostApiHandlers = React.useCallback<BoundPluginSurfaceMountedHostApiHandlersFactory>((input) => {
         const mountedBundle = baseCreateMountedHostApiHandlers?.(input);
         // Factory construction happens during render. Creating this small
@@ -2865,14 +2875,16 @@ export function PluginSurfaceHost(props: Readonly<(
         });
     }, [baseCreateMountedHostApiHandlers, currentUiContextMountPublisher]);
     const effectiveControllerBinding = React.useMemo<BoundPluginSurfaceBinding | undefined>(() => {
-        if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher) return controllerBinding;
+        if (!baseCreateMountedHostApiHandlers && !currentUiContextMountPublisher) {
+            return controllerBindingWithConnectedAccounts;
+        }
         return Object.freeze({
-            ...(controllerBinding ?? {}),
+            ...controllerBindingWithConnectedAccounts,
             createMountedHostApiHandlers,
         });
     }, [
         baseCreateMountedHostApiHandlers,
-        controllerBinding,
+        controllerBindingWithConnectedAccounts,
         createMountedHostApiHandlers,
         currentUiContextMountPublisher,
     ]);

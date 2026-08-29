@@ -635,6 +635,7 @@ export function createVoiceDictationController(deps: Readonly<{
             const captureStart = deps.captureOwner.startCapture({
                 sessionId,
                 provider: plan.provider,
+                capturePurpose: 'dictation',
                 handsFree: false,
                 ...(plan.localNeuralExecution
                     ? { localNeuralExecution: plan.localNeuralExecution }

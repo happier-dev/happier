@@ -548,6 +548,7 @@ describe('createLocalVoiceCaptureOwner', () => {
         const observedSettings: unknown[] = [];
         const deviceController = {
             start: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
             stop: vi.fn(async () => ({ finalText: '' })),
         };
         const liveMicSession = {
@@ -923,6 +924,7 @@ describe('createLocalVoiceCaptureOwner', () => {
         };
         const deviceController = {
             start: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
             stop: vi.fn(async () => ({ finalText: '' })),
         };
 
@@ -957,6 +959,10 @@ describe('createLocalVoiceCaptureOwner', () => {
             sessionId: 'session-1',
         });
         await owner.setMuted({ muted: true, sessionId: 'session-1' });
+        deviceController.setMuted.mockRejectedValueOnce(new Error('device_mute_failed'));
+        await expect(owner.setMuted({ muted: false, sessionId: 'session-1' }))
+            .rejects.toThrow('device_mute_failed');
+        expect(setMuted).toHaveBeenLastCalledWith(true);
         await owner.stopCapture({
             provider: 'device',
             sessionId: 'session-1',
@@ -971,6 +977,7 @@ describe('createLocalVoiceCaptureOwner', () => {
         expect(deviceController.start).toHaveBeenNthCalledWith(2, expect.objectContaining({ micSession: liveMicSession }));
         expect(setMuted).toHaveBeenCalledWith(true);
         expect(setMuted).toHaveBeenLastCalledWith(true);
+        expect(deviceController.setMuted).toHaveBeenCalledWith(true);
     });
 
     it('surfaces live web mic failures through the runtime capture owner instead of leaving browser track loss local-only', async () => {

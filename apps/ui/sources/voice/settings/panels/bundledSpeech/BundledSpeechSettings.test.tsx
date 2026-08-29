@@ -934,6 +934,13 @@ describe('BundledSpeechSettings', () => {
                 default: 'voice-default',
                 presentation: { control: 'select' },
               },
+              {
+                id: 'format',
+                title: 'Format',
+                schema: { type: 'string', enum: ['wav'] },
+                default: 'wav',
+                presentation: { control: 'select', options: [{ value: 'wav', title: 'WAV' }] },
+              },
             ],
           },
           catalogs: [
@@ -961,6 +968,11 @@ describe('BundledSpeechSettings', () => {
               titleKey: 'settingsVoice.local.ttsVoice',
               subtitleKey: 'settingsVoice.local.ttsVoiceSubtitle',
             },
+            {
+              fieldId: 'format',
+              titleKey: 'Format',
+              subtitleKey: 'Format',
+            },
           ],
           test: { missingValueMessageKey: 'settingsVoice.local.testTtsMissingVoice' },
         }),
@@ -972,6 +984,7 @@ describe('BundledSpeechSettings', () => {
     const voice = voiceWithRootProviderConfig(providerId, {
       selectedModel: '  catalog-model  ',
       selectedVoice: '  catalog-voice  ',
+      format: 'wav',
     });
 
     await spec!.test({
@@ -1067,6 +1080,41 @@ describe('BundledSpeechSettings', () => {
     });
     expect(credential.props).toHaveProperty('machineId');
     expect(credential.props).not.toHaveProperty('operations');
+  });
+
+  it('passes an admitted mediated speech recipient contract to the canonical credential approval surface', async () => {
+    const recipientContract = Object.freeze({ marker: 'exact admitted recipient contract' });
+    const entry = Object.freeze({
+      ...openAiCompatTtsEntry,
+      accountCredentialSlot: Object.freeze({
+        id: 'api_key',
+        scope: 'account' as const,
+        kind: 'apiKey' as const,
+        recipientContract: recipientContract as never,
+        recipientContractDigest: `sha256:${'a'.repeat(64)}`,
+      }),
+    });
+    const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
+    const spec = createBundledLocalTtsProviderSpec(entry);
+    const rendered = await renderScreen(React.createElement(spec!.Settings, {
+      cfgTts: VoiceLocalTtsSchema.parse({ provider: OPENAI_COMPAT_TTS_ID }),
+      setTts: vi.fn(),
+      voice: voiceWithRootProviderConfig(OPENAI_COMPAT_TTS_ID, {
+        baseUrl: 'https://speech.example/v1',
+        insecureLocalOriginConsent: '',
+        insecureLocalConsentMachineId: '',
+        model: 'tts-1',
+        voiceName: 'alloy',
+        format: 'mp3',
+      }),
+      setVoice: vi.fn(),
+      popoverBoundaryRef: null,
+    }));
+
+    expect(rendered.tree.root.findByType('VoiceCredentialItem' as never).props).toMatchObject({
+      recipientContract,
+      recipientContractDigest: `sha256:${'a'.repeat(64)}`,
+    });
   });
 
   it.each([
@@ -1232,6 +1280,37 @@ describe('BundledSpeechSettings', () => {
       savedSecretEditors: rendered.tree.root.findAllByType('VoiceCredentialItem' as never).length,
       rawAccessReviews: rendered.tree.root.findAllByType('VoiceRawCredentialAccessReview' as never).length,
     }).toEqual({ sourceSelectors: 1, savedSecretEditors: 0, rawAccessReviews: 1 });
+  });
+
+  it('passes the exact selected SavedSecret speech grant through the canonical credential item', async () => {
+    credentialSourcePresentation.selection = { kind: 'savedSecret' };
+    const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
+    const spec = createBundledLocalTtsProviderSpec(openAiCompatTtsEntry);
+    const rendered = await renderScreen(React.createElement(spec!.Settings, {
+      cfgTts: VoiceLocalTtsSchema.parse({ provider: OPENAI_COMPAT_TTS_ID }),
+      setTts: vi.fn(),
+      voice: voiceWithRootProviderConfig(OPENAI_COMPAT_TTS_ID, {
+        baseUrl: 'https://speech.example/v1',
+        insecureLocalOriginConsent: '',
+        insecureLocalConsentMachineId: '',
+        model: 'tts-1',
+        voiceName: 'alloy',
+        format: 'mp3',
+      }),
+      setVoice: vi.fn(),
+      popoverBoundaryRef: null,
+    }));
+
+    expect(rendered.tree.root.findByType('VoiceCredentialItem' as never).props)
+      .toMatchObject({
+        rawCredentialReviewGrants: [{
+          realm: 'daemon',
+          phase: 'speech',
+          request: { kind: 'environment', keys: ['VOICE_API_KEY'] },
+        }],
+      });
+    expect(rendered.tree.root.findAllByType('VoiceRawCredentialAccessReview' as never))
+      .toHaveLength(0);
   });
 
   it('refreshes the Google catalog for credential and execution-machine changes without publishing stale results', async () => {

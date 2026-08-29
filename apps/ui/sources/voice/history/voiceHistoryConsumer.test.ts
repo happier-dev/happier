@@ -82,7 +82,6 @@ function createDeps(overrides: Partial<VoiceHistoryConsumerDeps> = {}): VoiceHis
         ? 'Grok Realtime'
         : 'Voice provider',
     deleteSession: vi.fn(async () => ({ success: true })),
-    canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
     runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
@@ -748,24 +747,24 @@ describe('createVoiceHistoryConsumer', () => {
     await expect(consumer.exportHistory({ range: 'all' })).rejects.toThrow(/older/iu);
   });
 
-  it('refuses whole-session deletion while the carrier belongs to an active targetless attempt', async () => {
+  it('deletes the carrier while an active targetless attempt retains its exact old binding', async () => {
     const deleteSession = vi.fn(async () => ({ success: true }));
     const retireLocalSession = vi.fn();
     const consumer = createVoiceHistoryConsumer(createDeps({
       deleteSession,
-      canDeleteSession: () => false,
       retireLocalSession,
     }));
     await consumer.open();
 
-    await expect(consumer.clear()).rejects.toMatchObject({
-      name: 'VoiceHistoryClearActiveCallError',
-      code: 'voice_history_clear_active_call',
-    });
-    expect(deleteSession).not.toHaveBeenCalled();
-    expect(retireLocalSession).not.toHaveBeenCalled();
+    await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+    expect(deleteSession).toHaveBeenCalledWith(
+      'voice-history-session',
+      expect.objectContaining({ key: 'server-a/account-a' }),
+    );
+    expect(retireLocalSession).toHaveBeenCalledWith('voice-history-session');
     expect(consumer.read()).toMatchObject({
-      sessionId: 'voice-history-session',
+      sessionId: null,
+      rows: [],
     });
   });
 

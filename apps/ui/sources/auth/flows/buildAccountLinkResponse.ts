@@ -8,9 +8,14 @@ function resolveAccountLinkSecretBytes(credentials: AuthCredentials): Uint8Array
         return decodeBase64(credentials.secret, 'base64url');
     }
     if (isDataKeyAuthCredentials(credentials)) {
-        return decodeBase64(credentials.encryption.machineKey, 'base64');
+        const payload = JSON.stringify({
+            type: 'dataKey',
+            publicKey: credentials.encryption.publicKey,
+            machineKey: credentials.encryption.machineKey,
+        });
+        return new TextEncoder().encode(payload);
     }
-    throw new Error('Account linking requires E2EE credentials');
+    return new TextEncoder().encode(JSON.stringify({ type: 'tokenOnly' }));
 }
 
 export function buildAccountLinkResponse(credentials: AuthCredentials, recipientPublicKey: Uint8Array): Uint8Array {

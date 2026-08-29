@@ -11,7 +11,7 @@ import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plu
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';
 import { useProfile } from '@/sync/store/hooks';
-import type { AgentCore, ConnectedServiceId } from '@happier-dev/agents';
+import type { AgentCore } from '@happier-dev/agents';
 import {
   buildQualifiedPluginContributionKey,
   parseQualifiedPluginContributionKey,
@@ -24,7 +24,6 @@ import {
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
 import {
-  resolveConnectedServiceDisplayName,
   resolveQualifiedConnectedServiceRegistryDisplayName,
 } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import {
@@ -262,7 +261,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     const service = parseQualifiedPluginContributionKey(serviceId);
     return service
       ? resolveQualifiedConnectedServiceRegistryDisplayName(connectedServicesRegistry, service, t)
-      : resolveConnectedServiceDisplayName(serviceId as ConnectedServiceId, t);
+      : serviceId;
   }, [connectedServicesRegistry]);
 
   const authLabel = React.useMemo(() => resolveConnectedServicesAuthLabel({

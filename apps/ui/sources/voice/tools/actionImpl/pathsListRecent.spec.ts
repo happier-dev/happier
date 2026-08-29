@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installVoiceToolActionImplCommonModuleMocks } from './voiceToolActionImplTestHelpers';
 
 const voiceTargetState = {
+    scope: 'global' as 'global' | 'session',
     primaryActionSessionId: null as string | null,
     lastFocusedSessionId: null as string | null,
 };
@@ -50,7 +51,8 @@ installVoiceToolActionImplCommonModuleMocks({
     },
 });
 
-vi.mock('@/voice/runtime/voiceTargetStore', () => ({
+vi.mock('@/voice/runtime/voiceTargetStore', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/voice/runtime/voiceTargetStore')>()),
     useVoiceTargetStore: {
         getState: () => voiceTargetState,
     },
@@ -58,6 +60,7 @@ vi.mock('@/voice/runtime/voiceTargetStore', () => ({
 
 describe('listRecentPathsForVoiceTool', () => {
     beforeEach(() => {
+        voiceTargetState.scope = 'global';
         voiceTargetState.primaryActionSessionId = null;
         voiceTargetState.lastFocusedSessionId = null;
         state.sessions = {
@@ -168,6 +171,38 @@ describe('listRecentPathsForVoiceTool', () => {
         });
         expect(result.items[0]).not.toHaveProperty('machineId');
         expect(result.items[0]).not.toHaveProperty('path');
+    });
+
+    it('does not route a session-scoped inventory read through a stale global target', async () => {
+        voiceTargetState.scope = 'session';
+        voiceTargetState.primaryActionSessionId = 'stale-global-session';
+        state.sessions = {
+            'stale-global-session': {
+                id: 'stale-global-session',
+                active: true,
+                presence: 'online',
+                updatedAt: 2000,
+                metadata: {
+                    machineId: 'm-stale-target',
+                    path: '/Users/leeroy/projects/stale',
+                },
+            },
+        };
+        state.machines = {
+            'm-stale-target': { id: 'm-stale-target', metadata: { displayName: 'Stale target' } },
+            m1: { id: 'm1', metadata: { displayName: 'Recent machine' } },
+        };
+        state.settings.recentMachinePaths = [{ machineId: 'm1', path: '/Users/leeroy/projects/recent' }];
+
+        const { listRecentPathsForVoiceTool } = await import('./pathsListRecent');
+        const result: any = await listRecentPathsForVoiceTool({ limit: 10 });
+
+        expect(result.items).toEqual([
+            expect.objectContaining({ label: expect.stringContaining('recent') }),
+        ]);
+        expect(result.items).not.toEqual([
+            expect.objectContaining({ label: expect.stringContaining('stale') }),
+        ]);
     });
 
     it('canonicalizes the default machine from recent path entries before listing paths', async () => {

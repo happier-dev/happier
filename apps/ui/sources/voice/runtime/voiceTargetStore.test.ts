@@ -38,4 +38,38 @@ describe('voiceTargetStore', () => {
     useVoiceTargetStore.getState().setTrackedSessionIds(null as unknown as ReadonlyArray<string>);
     expect(useVoiceTargetStore.getState().trackedSessionIds).toEqual([]);
   });
+
+  it('never falls through from Session scope to a retained global target', async () => {
+    vi.resetModules();
+    const { resolveVoiceActionTargetSessionId } = await import('./voiceTargetStore');
+
+    expect(resolveVoiceActionTargetSessionId({
+      scope: 'session',
+      currentSessionId: ' current ',
+      primaryActionSessionId: 'stale-global',
+      lastFocusedSessionId: 'stale-focused',
+    })).toBe('current');
+    expect(resolveVoiceActionTargetSessionId({
+      scope: 'session',
+      currentSessionId: null,
+      primaryActionSessionId: 'stale-global',
+      lastFocusedSessionId: 'stale-focused',
+    })).toBeNull();
+  });
+
+  it('uses the primary then focused target for Global scope', async () => {
+    vi.resetModules();
+    const { resolveVoiceActionTargetSessionId } = await import('./voiceTargetStore');
+
+    expect(resolveVoiceActionTargetSessionId({
+      scope: 'global',
+      primaryActionSessionId: ' primary ',
+      lastFocusedSessionId: 'focused',
+    })).toBe('primary');
+    expect(resolveVoiceActionTargetSessionId({
+      scope: 'global',
+      primaryActionSessionId: null,
+      lastFocusedSessionId: ' focused ',
+    })).toBe('focused');
+  });
 });

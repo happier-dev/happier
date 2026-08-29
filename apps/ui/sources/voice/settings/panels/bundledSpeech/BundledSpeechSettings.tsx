@@ -19,7 +19,10 @@ import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { VoiceRawCredentialAccessReview } from '@/voice/credentials/VoiceRawCredentialAccessReview';
 import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
-import { shouldUseVoiceCredentialSourceMutationForSavedSecret } from '@/voice/credentials/accountVoiceCredential';
+import {
+  resolveSelectedVoiceCredentialRawGrants,
+  shouldUseVoiceCredentialSourceMutationForSavedSecret,
+} from '@/voice/credentials/accountVoiceCredential';
 import {
   readVoiceProviderSettingsConfig,
   writeVoiceProviderSettingsConfig,
@@ -219,32 +222,29 @@ function BundledSpeechSettings(props: Readonly<{
   const credentialHasSavedSecret = credentialDeclaration?.sources.some(
     (source) => source.kind === 'savedSecret',
   ) === true;
-  const selectedConnectedService = credentialSourceStatus?.selection.kind === 'connectedAccount'
-    ? credentialSourceStatus.selection.target.kind === 'account'
-      ? credentialSourceStatus.selection.target.account.service
-      : credentialSourceStatus.selection.target.service
-    : null;
-  const selectedRawSpeechGrants = credentialDeclaration?.sources.flatMap((source) => {
-      if (credentialSourceStatus?.selection.kind === 'savedSecret') {
-        return source.kind === 'savedSecret'
-          ? source.rawGrants?.filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech') ?? []
-          : [];
-      }
-      if (source.kind !== 'connectedAccount' || selectedConnectedService === null) return [];
-      const service = typeof source.service === 'string'
-        ? { pluginId: props.descriptor.contribution.pluginId, localId: source.service }
-        : source.service;
-      if (
-        service.pluginId !== selectedConnectedService.pluginId
-        || service.localId !== selectedConnectedService.localId
-      ) return [];
-      return source.rawGrants?.filter((grant) => (
-          grant.realm === 'daemon' && grant.phase === 'speech'
-        )) ?? [];
-    }) ?? [];
   const credentialSourceVisible = credentialDeclaration?.sources.some(
     (source) => source.kind === 'connectedAccount',
   ) === true;
+  const selectedCredentialSource = credentialSourceVisible
+    ? credentialSourceStatus?.selection ?? null
+    : credentialHasSavedSecret
+      ? ({ kind: 'savedSecret' } as const)
+      : null;
+  const selectedRawSpeechGrants = speechDeclaration
+    && selectedCredentialSource
+    ? resolveSelectedVoiceCredentialRawGrants({
+        declaration: speechDeclaration,
+        contribution: props.descriptor.contribution,
+        selection: selectedCredentialSource,
+        access: { realm: 'daemon', phase: 'speech' },
+      })
+    : [];
+  const selectedSavedSecretRawSpeechGrants = selectedCredentialSource?.kind === 'savedSecret'
+    ? selectedRawSpeechGrants
+    : [];
+  const selectedConnectedAccountRawSpeechGrants = selectedCredentialSource?.kind === 'connectedAccount'
+    ? selectedRawSpeechGrants
+    : [];
   const onCredentialStatusChanged = React.useCallback((status: Readonly<{
     exists: boolean;
     credentialIdentity: string | null;
@@ -314,13 +314,16 @@ function BundledSpeechSettings(props: Readonly<{
         credentialSourceDeclaration={props.entry.kind === 'voice.speech-engine.v1'
           ? props.entry.declaration
           : undefined}
+        recipientContract={props.entry.accountCredentialSlot?.recipientContract ?? null}
+        recipientContractDigest={props.entry.accountCredentialSlot?.recipientContractDigest ?? null}
         machineId={machine.machineId}
         machineLabel={machine.machineLabel}
         disclosePlainStorage={true}
+        rawCredentialReviewGrants={selectedSavedSecretRawSpeechGrants}
         onStatusChanged={onCredentialStatusChanged}
         onChanged={() => setCatalogRefreshRevision((current) => current + 1)}
       /> : null}
-      {selectedRawSpeechGrants.map((rawGrant, index) => (
+      {selectedConnectedAccountRawSpeechGrants.map((rawGrant, index) => (
         <VoiceRawCredentialAccessReview
           key={JSON.stringify(rawGrant)}
           contribution={props.descriptor.contribution}

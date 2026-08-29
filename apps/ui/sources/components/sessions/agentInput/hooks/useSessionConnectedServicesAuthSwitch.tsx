@@ -164,6 +164,17 @@ function readDiagnosticProfileId(diagnostic: ConnectedServiceUxDiagnosticV1 | nu
     return typeof profileId === 'string' && profileId.trim() ? profileId.trim() : null;
 }
 
+function buildPassiveProviderRecoveryDiagnostic(serviceId: ConnectedAccountServiceKey): ConnectedServiceUxDiagnosticV1 {
+    return {
+        code: 'provider_session_state_unavailable_for_resume',
+        failurePhase: 'runtime_auth_recovery',
+        source: 'runtime_auth_recovery',
+        serviceId,
+        retryable: true,
+        suggestedActions: ['retry', 'start_fresh_under_selected_account', 'resume_current_account'],
+    };
+}
+
 function resolveSessionConnectedServiceAuthSwitchErrorMessageKey(
     errorCode: SessionConnectedServiceAuthSwitchErrorCode | undefined,
 ): TranslationKey {
@@ -391,6 +402,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     switchingDisabledReason: SessionConnectedServicesAuthSwitchDisabledReason | null;
     sessionActive?: boolean;
     intentionalRestartSignals?: ReadonlyArray<SessionIntentionalRestartSignal>;
+    /** Passive Provider runtime failures enter the existing generic recovery owner. */
+    passiveProviderRecoveryServiceId?: ConnectedAccountServiceKey | null;
 }>): SessionConnectedServicesAuthSwitchResult {
     const accountProfile = useProfile();
     const router = useRouter();
@@ -442,6 +455,33 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     ), [params.agentId, params.sessionMetadata]);
     const [optimisticBindingsByServiceId, setOptimisticBindingsByServiceId] = React.useState(metadataBindingsByServiceId);
     const lastMetadataBindingsByServiceIdRef = React.useRef(metadataBindingsByServiceId);
+    // Metadata objects may be recreated by the session projection on each render;
+    // publish a passive failure once per binding identity to avoid an effect loop.
+    const passiveRecoveryKeyRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        const serviceId = params.passiveProviderRecoveryServiceId ?? null;
+        const binding = serviceId ? metadataBindingsByServiceId[serviceId] : undefined;
+        if (!serviceId || !binding || binding.source !== 'connected') {
+            passiveRecoveryKeyRef.current = null;
+            return;
+        }
+        const recoveryKey = `${serviceId}\0${binding.profileId ?? ''}\0${binding.groupId ?? ''}`;
+        if (passiveRecoveryKeyRef.current === recoveryKey) return;
+        passiveRecoveryKeyRef.current = recoveryKey;
+        const diagnostic = buildPassiveProviderRecoveryDiagnostic(serviceId);
+        setActionableState({
+            kind: 'provider_session_state_unavailable_for_resume',
+            recovery: 'retry_required',
+            diagnostic,
+        });
+        setProviderSessionDiagnosticActionState({
+            diagnostic,
+            serviceId,
+            binding,
+            failureServiceId: serviceId,
+        });
+    }, [metadataBindingsByServiceId, params.passiveProviderRecoveryServiceId]);
 
     React.useEffect(() => {
         if (areBindingsEqual(lastMetadataBindingsByServiceIdRef.current, metadataBindingsByServiceId)) return;

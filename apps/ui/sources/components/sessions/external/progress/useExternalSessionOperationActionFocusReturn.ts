@@ -11,14 +11,18 @@ import {
  * card when the control a reader activated is replaced by its own result.
  *
  * These cards render the operation's currently available actions, so a committed
- * action can rewrite that set: Resume disappears once it is running, Check Again
- * disappears once the read succeeds. The activated control then unmounts under
- * the reader and focus falls to the document root, losing their place in the
- * transcript. This returns focus to a control that survived, through the shared
- * focus-return owner, and does nothing while the activated control is still
- * there — pulling focus off a control the reader is still on would be its own
- * regression. When the card itself is retired there is no successor to move to
- * and the shared fallback owns where focus lands.
+ * action can rewrite that set: Resume disappears once it is running, Retry
+ * disappears once the retry is accepted. The activated control then unmounts
+ * under the reader and focus falls to the document root, losing their place in
+ * the transcript. This returns focus to a control that survived, through the
+ * shared focus-return owner, and does nothing while the activated control is
+ * still there — pulling focus off a control the reader is still on would be its
+ * own regression. When the card itself is retired there is no successor to move
+ * to and the shared fallback owns where focus lands.
+ *
+ * The read-only shared card (Check Again/Dismiss) deliberately does NOT use
+ * this hook: its activations are owned by the transcript row host, which
+ * settles the transition explicitly.
  */
 export function useExternalSessionOperationActionFocusReturn<TKind extends string>(params: Readonly<{
     availableActionKinds: readonly TKind[];

@@ -148,11 +148,28 @@ export function useExternalSessionTakeover(params: UseExternalSessionTakeoverPar
             return false;
         }
 
-        const latestStatus = await readLatestStatus();
+        let latestStatus: Awaited<ReturnType<typeof readLatestStatus>>;
+        try {
+            latestStatus = await readLatestStatus();
+        } catch (error) {
+            if (!isRequestCurrent()) {
+                return false;
+            }
+            if (isTerminalAuthError(error)) {
+                throw error;
+            }
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
+            return false;
+        }
         if (!isRequestCurrent()) {
             return false;
         }
         if (!latestStatus) {
+            // The user already confirmed a takeover mode and directory, so a
+            // silent `false` here would read as a dead button after an explicit
+            // choice. Report it exactly like the preflight and send-preflight
+            // paths do; the dialog's Check Again route stays available.
+            Modal.alert(t('common.error'), t('chatFooter.externalSessionStatusUnavailable'));
             return false;
         }
         if (!latestStatus.machineOnline) {

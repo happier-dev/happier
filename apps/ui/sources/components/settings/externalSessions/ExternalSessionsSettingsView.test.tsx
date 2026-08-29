@@ -11,6 +11,7 @@ import { readExternalSessionLink } from '@/sync/domains/session/external/readExt
 import type { Machine, Metadata, Session } from '@/sync/domains/state/storageTypes';
 
 const modalMock = createModalModuleMock();
+const accountCurrentnessState = vi.hoisted(() => ({ current: true }));
 const virtualizedBoundary = vi.hoisted(() => ({
     props: null as Record<string, any> | null,
     mountLimit: Number.POSITIVE_INFINITY,
@@ -129,6 +130,14 @@ vi.mock('@/sync/sync', () => ({
         applySessionMetadataLocally: effectBoundary.applySessionMetadataLocally,
         mutateAccountSettings: effectBoundary.mutateAccountSettings,
     },
+}));
+
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>(),
+    captureActiveServerAccountScopeCurrentness: () => ({
+        isCurrent: () => accountCurrentnessState.current,
+        onRetire: () => ({ dispose() {} }),
+    }),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -265,9 +274,18 @@ function requireItemGroupSurface(row: ReactTestInstance | null | undefined): Rea
 }
 
 describe('ExternalSessionsSettingsView passive shell', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         effectBoundary.machines = [];
         effectBoundary.machineRpc.mockReset();
+        accountCurrentnessState.current = true;
+        modalMock.spies.alert.mockClear();
+        modalMock.spies.alertAsync.mockClear();
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        registerStorageStateReader(() => ({
+            sessions: Object.fromEntries(
+                effectBoundary.sessions.map((session) => [session.id, session]),
+            ),
+        } as never));
         effectBoundary.daemonProjection = {
             phase: 'ready',
             inputs: {
@@ -1120,7 +1138,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
-    it('preserves the stored follow status while capability projection is still loading', async () => {
+    it('keeps the stored follow status but fails mutation closed while capability projection is still loading', async () => {
         effectBoundary.machines = [createMachineFixture({
             id: 'machine-1',
             active: true,
@@ -1143,9 +1161,105 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         const row = screen.findRow(
             'settings-external-sessions-follow-item-loading-projection',
         );
+        // The stored policy/status stay visible as last-known information, but
+        // the mutation is disabled and the row truthfully shows its in-flight
+        // capability state instead of an enabled-looking control.
         expect(row?.props.subtitle).toBe('externalSessions.followStatusPaused');
         expect(row?.props.rightElement).toBeTruthy();
         expect(row?.props.mode).not.toBe('info');
+        expect(row?.props.loading).toBe(true);
+        expect(row?.props.disabled).toBe(true);
+        const toggle = row?.props.rightElement as React.ReactElement<Record<string, unknown>> | undefined;
+        expect(toggle?.props.disabled).toBe(true);
+        await act(async () => {
+            await row?.props.onPress?.();
+        });
+        expect(effectBoundary.followPolicySet).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('reports a failed capability projection as unverifiable and keeps the follow mutation closed', async () => {
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.sessions = [createExternalSession({
+            id: 'errored-projection',
+            policy: 'attached_only',
+            status: 'paused',
+            title: 'Errored projection follow',
+        })];
+        effectBoundary.daemonProjection = {
+            phase: 'error' as 'ready' | 'loading' | 'error',
+            inputs: null,
+        };
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+
+        const row = screen.findRow(
+            'settings-external-sessions-follow-item-errored-projection',
+        );
+        expect(row?.props.subtitle).toBe('externalSessions.followStatusUnknown');
+        expect(row?.props.rightElement).toBeTruthy();
+        expect(row?.props.mode).not.toBe('info');
+        expect(row?.props.disabled).toBe(true);
+        const toggle = row?.props.rightElement as React.ReactElement<Record<string, unknown>> | undefined;
+        expect(toggle?.props.disabled).toBe(true);
+        await act(async () => {
+            await row?.props.onPress?.();
+        });
+        expect(effectBoundary.followPolicySet).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('retires a late follow settlement when the active Account is no longer current', async () => {
+        effectBoundary.machines = [createMachineFixture({
+            id: 'machine-1',
+            active: true,
+            activeAt: Date.now(),
+        })];
+        effectBoundary.sessions = [createExternalSession({
+            id: 'selected',
+            policy: 'attached_only',
+            status: 'disabled',
+            title: 'Selected follow',
+        })];
+        effectBoundary.followPolicySet.mockReset();
+        effectBoundary.applySessionMetadataLocally.mockReset();
+        let resolveFollowPolicySet: ((value: {
+            ok: true;
+            enabled: true;
+            leaseActive: true;
+            updatedAtMs: number;
+        }) => void) | undefined;
+        effectBoundary.followPolicySet.mockReturnValue(new Promise((resolve) => {
+            resolveFollowPolicySet = resolve;
+        }));
+
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const row = screen.findRow('settings-external-sessions-follow-item-selected');
+
+        let press: Promise<void> | undefined;
+        await act(async () => {
+            press = row?.props.onPress();
+            await Promise.resolve();
+        });
+        // Account A retires while the machine RPC is in flight; its late
+        // settlement must not alert or publish into the successor Account.
+        accountCurrentnessState.current = false;
+        await act(async () => {
+            resolveFollowPolicySet?.({ ok: true, enabled: true, leaseActive: true, updatedAtMs: 42 });
+            await press;
+        });
+
+        expect(effectBoundary.applySessionMetadataLocally).not.toHaveBeenCalled();
+        expect(modalMock.spies.alert).not.toHaveBeenCalled();
+        expect(modalMock.spies.alertAsync).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

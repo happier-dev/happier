@@ -344,7 +344,9 @@ export function createVoiceQaController(
           return normalizedFollowUpAssistantText;
         };
         try {
-          let result: Awaited<ReturnType<typeof runVoiceAgentTurnWithTools>> | null = null;
+          const resultRef: {
+            current: Awaited<ReturnType<typeof runVoiceAgentTurnWithTools>> | null;
+          } = { current: null };
           let interruptedFollowUpText: string | null = null;
           const durableResult = await submitDurableVoiceTextTurn({
             conversationSessionId,
@@ -352,7 +354,7 @@ export function createVoiceQaController(
             pendingPort: deps.pendingPort,
             dispatch: async ({ localId, onAccepted }) => {
               try {
-                result = await runVoiceAgentTurnWithTools({
+                resultRef.current = await runVoiceAgentTurnWithTools({
                   sessionId: runtimeSessionId,
                   userText: prompt,
                   durableLocalId: localId,
@@ -383,7 +385,7 @@ export function createVoiceQaController(
                 const followUp = await appendFollowUpAssistantTurn(20_000);
                 if (followUp) appendedAssistantTurn = true;
                 interruptedFollowUpText = followUp;
-                result = {
+                resultRef.current = {
                   disposition: 'completed',
                   assistantTurns: followUp ? [followUp] : [],
                   toolResultBatches: [],
@@ -402,6 +404,7 @@ export function createVoiceQaController(
           if (interruptedFollowUpText) {
             return { assistantText: interruptedFollowUpText, actions: [] };
           }
+          const result = resultRef.current;
           if (result === null) {
             if (durableResult.disposition === 'settled') {
               return { assistantText: '', actions: [] };

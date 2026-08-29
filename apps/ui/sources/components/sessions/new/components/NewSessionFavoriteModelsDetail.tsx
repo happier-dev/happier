@@ -28,6 +28,7 @@ import {
     readProviderSettingsFromAccountSettingsV1,
     serializeModelVisibilityRefV1,
     type SessionModelSelectionV1,
+    type ProviderErrorV1,
 } from '@happier-dev/protocol';
 import type {
     SessionConfigOptionControl,
@@ -87,6 +88,7 @@ type FavoriteModelSnapshot = Readonly<{
     selectedValue: string;
     selectedLabel?: string;
     probe: OptionPickerProbeState | null;
+    projectionError: ProviderErrorV1 | null;
     refreshFailures: readonly DaemonProviderModelProjectionRefreshFailureV1[];
     retryProjection: () => Promise<void>;
 }>;
@@ -150,6 +152,7 @@ function areFavoriteModelSnapshotsEqual(a: FavoriteModelSnapshot, b: FavoriteMod
     if (a.selectedValue !== b.selectedValue) return false;
     if (a.selectedLabel !== b.selectedLabel) return false;
     if (a.probe?.phase !== b.probe?.phase) return false;
+    if (JSON.stringify(a.projectionError) !== JSON.stringify(b.projectionError)) return false;
     if (JSON.stringify(a.refreshFailures) !== JSON.stringify(b.refreshFailures)) return false;
     if (!areStringArraysEqual(a.favoriteValues, b.favoriteValues)) return false;
     if (!areStringArraysEqual(a.availableValues, b.availableValues)) return false;
@@ -545,6 +548,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             selectedValue,
             ...(selectedOption?.label ? { selectedLabel: selectedOption.label } : {}),
             probe: unifiedProbe ?? null,
+            projectionError: providerProjection.error,
             refreshFailures: providerProjection.refreshFailures,
             retryProjection: providerProjection.refresh,
         });
@@ -614,6 +618,9 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
     const availableValues = React.useMemo(() => new Set(orderedSnapshots.flatMap((snapshot) => snapshot.availableValues)), [orderedSnapshots]);
     const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.selectedValue.length > 0) ?? null;
     const selectedValue = selectedSnapshot?.selectedValue ?? '';
+    const projectionErrors = orderedSnapshots.flatMap((snapshot) => (
+        snapshot.projectionError ? [{ snapshot, error: snapshot.projectionError }] : []
+    ));
     const projectionFailures = orderedSnapshots.flatMap((snapshot) => (
         snapshot.refreshFailures.map((failure) => ({ snapshot, failure }))
     ));
@@ -673,14 +680,21 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                     onSnapshot={handleSnapshot}
                 />
             ))}
-            {options.length > 0 || projectionFailures.length > 0 || unifiedProbe?.phase !== 'idle' ? (
+            {options.length > 0 || projectionErrors.length > 0 || projectionFailures.length > 0 || unifiedProbe?.phase !== 'idle' ? (
                 <OptionPickerOverlay
                     fillAvailableSpace
                     title={t('profiles.groups.favorites')}
                     effectiveLabel={selectedSnapshot?.selectedLabel}
                     notes={[]}
-                    summary={projectionFailures.length > 0 ? (
+                    summary={projectionErrors.length > 0 || projectionFailures.length > 0 ? (
                         <>
+                            {projectionErrors.map(({ snapshot, error }) => (
+                                <ProviderErrorItems
+                                    key={`${snapshot.entry.backendTargetKey}:projection`}
+                                    error={error}
+                                    retry={snapshot.retryProjection}
+                                />
+                            ))}
                             {projectionFailures.map(({ snapshot, failure }) => (
                                 <ProviderErrorItems
                                     key={`${snapshot.entry.backendTargetKey}:${failure.connectionId}`}

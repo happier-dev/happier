@@ -353,6 +353,37 @@ describe('useExternalSessionOperationOwnerHydration', () => {
         expect(machineExternalSessionOperationStatusSpy).toHaveBeenCalledTimes(2);
     });
 
+    it('settles checkAgain as false when the re-read fails again and true only when it succeeds', async () => {
+        // The row host owns the armed focus transition for a Check Again press
+        // and needs the settlement: a failed re-read must disarm, a successful
+        // one may keep it for the exact card replacement.
+        const progress = createProgress();
+        machineExternalSessionOperationStatusSpy
+            .mockRejectedValueOnce(new Error('status read failed'))
+            .mockRejectedValueOnce(new Error('re-read failed too'));
+        const hook = await renderOwnerHydration({
+            presentation: createPresentation(),
+            isExactOwner: true,
+            machineOnline: true,
+        });
+        expect(hook.getCurrent().status).toBe('unavailable');
+
+        let failedOutcome: boolean | undefined;
+        await act(async () => {
+            failedOutcome = await hook.getCurrent().checkAgain();
+        });
+        expect(failedOutcome).toBe(false);
+        expect(hook.getCurrent().status).toBe('unavailable');
+
+        machineExternalSessionOperationStatusSpy.mockResolvedValueOnce({ ok: true, progress });
+        let succeededOutcome: boolean | undefined;
+        await act(async () => {
+            succeededOutcome = await hook.getCurrent().checkAgain();
+        });
+        expect(succeededOutcome).toBe(true);
+        expect(hook.getCurrent().status).toBe('ready');
+    });
+
     it('separates not-owner and offline from a failed read', async () => {
         machineExternalSessionOperationStatusSpy.mockResolvedValue({
             ok: true,

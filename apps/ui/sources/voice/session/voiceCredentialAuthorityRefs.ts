@@ -12,32 +12,24 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 export type VoiceCredentialRuntimeAuthoritySnapshot = Readonly<{
   accountScopeAuthority: string;
   agentConnectedServiceBindingAuthority: string;
-  connectedServiceCredentialRevisionsAuthority: string;
-  connectedServicesAuthority: string;
   credentialBindingAuthority: string;
   providerEnvelopeAuthority: string;
-  secretsAuthority: string;
+  selectedCredentialAuthority: string;
 }>;
 
 export function createVoiceCredentialRuntimeAuthoritySnapshot(input: Readonly<{
   accountScope: unknown;
   agentConnectedServiceBindingAuthority: string;
-  connectedServiceCredentialRevisions: unknown;
-  connectedServices: unknown;
   credentialBinding: unknown;
   providerEnvelope: unknown;
-  secrets: unknown;
+  selectedCredentialAuthority: unknown;
 }>): VoiceCredentialRuntimeAuthoritySnapshot {
   return Object.freeze({
     accountScopeAuthority: stableJsonStringify(input.accountScope),
     agentConnectedServiceBindingAuthority: input.agentConnectedServiceBindingAuthority,
-    connectedServiceCredentialRevisionsAuthority: stableJsonStringify(
-      input.connectedServiceCredentialRevisions,
-    ),
-    connectedServicesAuthority: stableJsonStringify(input.connectedServices),
     credentialBindingAuthority: stableJsonStringify(input.credentialBinding),
     providerEnvelopeAuthority: stableJsonStringify(input.providerEnvelope),
-    secretsAuthority: stableJsonStringify(input.secrets),
+    selectedCredentialAuthority: stableJsonStringify(input.selectedCredentialAuthority),
   });
 }
 
@@ -48,12 +40,27 @@ export function hasVoiceCredentialRuntimeAuthorityChanged(
   return previous.accountScopeAuthority !== next.accountScopeAuthority
     || previous.agentConnectedServiceBindingAuthority
       !== next.agentConnectedServiceBindingAuthority
-    || previous.connectedServiceCredentialRevisionsAuthority
-      !== next.connectedServiceCredentialRevisionsAuthority
-    || previous.connectedServicesAuthority !== next.connectedServicesAuthority
     || previous.credentialBindingAuthority !== next.credentialBindingAuthority
     || previous.providerEnvelopeAuthority !== next.providerEnvelopeAuthority
-    || previous.secretsAuthority !== next.secretsAuthority;
+    || previous.selectedCredentialAuthority !== next.selectedCredentialAuthority;
+}
+
+/**
+ * Composes only the already-selected non-secret credential authority. Source
+ * selection, SavedSecret lookup and Connected Account health/revision remain
+ * with their canonical owners; this lifecycle projection merely compares the
+ * facts they produced.
+ */
+export function createVoiceSelectedCredentialAuthorityFingerprint(input: Readonly<{
+  sourceResolution: unknown;
+  selectedSavedSecret: unknown;
+  selectedConnectedAccountAuthority: string;
+}>): string {
+  return stableJsonStringify({
+    sourceResolution: input.sourceResolution,
+    selectedSavedSecret: input.selectedSavedSecret,
+    selectedConnectedAccountAuthority: input.selectedConnectedAccountAuthority,
+  });
 }
 
 function readQualifiedContribution(providerId: string | 'off' | null) {

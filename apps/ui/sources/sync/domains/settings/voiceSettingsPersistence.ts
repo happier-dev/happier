@@ -17,6 +17,7 @@ import {
 import { z } from 'zod';
 
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import { stripMigratedSessionOrganizationSettings } from './parse/accountSettingsLegacyCleanup';
 import {
@@ -913,8 +914,8 @@ function projectPredecessorOpenAiCompatChatSidecar(
     const commit = providerChat.commit;
     if (
         !expectedAgentTargetKey
-        || chat.agentTargetKey !== expectedAgentTargetKey
-        || commit.agentTargetKey !== expectedAgentTargetKey
+        || !backendTargetKeysMatch(chat.agentTargetKey, expectedAgentTargetKey)
+        || !backendTargetKeysMatch(commit.agentTargetKey, expectedAgentTargetKey)
         || chat.providerConnectionId === null
         || commit.providerConnectionId !== chat.providerConnectionId
         || chat.modelId.trim().length === 0

@@ -1,15 +1,11 @@
 import * as React from 'react';
 import { router } from 'expo-router';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol';
 import { useAuth } from '@/auth/context/AuthContext';
 import {
     TokenStorage,
     type AuthCredentials,
-    isDataKeyAuthCredentials,
-    isLegacyAuthCredentials,
     isTokenOnlyAuthCredentials,
 } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
 import { authApprove } from '@/auth/flows/approve';
 import {
     buildTerminalResponseV1,
@@ -28,6 +24,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { isRuntimeFeatureEnabled } from '@/sync/domains/features/featureDecisionInputs';
+import { resolveProvisioningMaterial } from '@/auth/terminal/resolveProvisioningMaterial';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -37,26 +34,6 @@ interface UseConnectTerminalOptions {
 
 function hasTokenOnlyTerminalCredentials(credentials: AuthCredentials): boolean {
     return isTokenOnlyAuthCredentials(credentials);
-}
-
-function resolveTerminalProvisioningContentPrivateKey(credentials: AuthCredentials): Uint8Array {
-    if (isDataKeyAuthCredentials(credentials)) {
-        const machineKey = decodeBase64(credentials.encryption.machineKey, 'base64');
-        if (machineKey.length !== 32) {
-            throw new Error('Invalid dataKey credential key lengths');
-        }
-        return machineKey;
-    }
-
-    if (!isLegacyAuthCredentials(credentials)) {
-        throw new Error('Terminal provisioning requires E2EE credentials');
-    }
-
-    const secretKey = decodeBase64(credentials.secret, 'base64url');
-    if (secretKey.length !== 32) {
-        throw new Error(`Invalid secret key length: ${secretKey.length}, expected 32`);
-    }
-    return deriveAccountMachineKeyFromRecoverySecret(secretKey);
 }
 
 export function useConnectTerminal(options?: UseConnectTerminalOptions) {
@@ -153,7 +130,11 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                 });
                 responseV1 = new Uint8Array();
             } else {
-                const contentPrivateKey = resolveTerminalProvisioningContentPrivateKey(activeCredentials);
+                const provisioningMaterial = resolveProvisioningMaterial(activeCredentials);
+                if (provisioningMaterial.type === 'tokenOnly') {
+                    throw new Error('Token-only terminal pairing requires an authenticated compatible reader');
+                }
+                const contentPrivateKey = provisioningMaterial.key;
                 responseV2 =
                     parsed.pairing && pairingSecret?.length === 32
                         ? buildTerminalResponseV3({

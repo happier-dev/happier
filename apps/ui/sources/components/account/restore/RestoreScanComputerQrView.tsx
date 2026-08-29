@@ -8,7 +8,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
     useAuth,
-    type AuthCredentialLifecycleResult,
 } from '@/auth/context/AuthContext';
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
@@ -20,8 +19,7 @@ import { t } from '@/text';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { pairingRequest } from '@/sync/api/account/apiPairingAuth';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
-import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
+import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -32,25 +30,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     presentFirstKeyCredentialLifecycle,
 } from '@/components/account/presentFirstKeyCredentialLifecycle';
-import {
-    guardAccountEncryptionFirstKeyCredentialMutation,
-} from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { promptAccountConnectApprovalRequired } from './accountConnectApprovalGuidance';
-
-async function guardServerSwitchAuthIngress(
-    serverUrl: string,
-): Promise<AuthCredentialLifecycleResult> {
-    const current =
-        await guardAccountEncryptionFirstKeyCredentialMutation();
-    if (current.kind !== 'allowed') return current;
-    const target =
-        await guardAccountEncryptionFirstKeyCredentialMutation({
-            serverUrl,
-        });
-    return target.kind === 'allowed'
-        ? { kind: 'completed' }
-        : target;
-}
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -215,35 +195,6 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 const activeServerUrl = normalizeServerUrl(getActiveServerUrl());
                 const activeServerUrlIsLoopback = activeServerUrl ? isLoopbackServerUrl(activeServerUrl) : false;
 
-                if (parsed.serverUrl) {
-                    const target = resolveEffectiveServerUrlOverride({
-                        requestedServerUrl: parsed.serverUrl,
-                        activeServerUrl,
-                    });
-                    if (target && activeServerUrl !== target) {
-                        let maySwitch = false;
-                        await presentFirstKeyCredentialLifecycle({
-                            run: async () =>
-                                await guardServerSwitchAuthIngress(
-                                    target,
-                                ),
-                            onCompleted: () => {
-                                maySwitch = true;
-                            },
-                        });
-                        if (!maySwitch) {
-                            setPhase('idle');
-                            return;
-                        }
-                        await upsertActivateAndSwitchServer({
-                            serverUrl: target,
-                            source: 'url',
-                            scope: 'device',
-                            refreshAuth: auth.refreshFromActiveServer,
-                        });
-                    }
-                }
-
                 const keypair = generateAuthKeyPair();
                 const started = await authQRStart(keypair);
                 if (!started) {
@@ -290,13 +241,9 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 );
 
                 if (credentials && !isCancelledRef.current) {
-                    const secretString = encodeBase64(credentials.secret, 'base64url');
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>
-                            await auth.login(
-                                credentials.token,
-                                secretString,
-                            ),
+                            await auth.loginWithCredentials(credentials),
                         onCompleted: () => {
                             trackAccountRestored();
                             if (!isCancelledRef.current) {

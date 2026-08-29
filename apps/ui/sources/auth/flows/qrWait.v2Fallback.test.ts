@@ -13,7 +13,7 @@ const activeServerSnapshot = vi.hoisted(() => ({
     generation: 0,
 }));
 
-const setServerProfileIdentityForUrlMock = vi.hoisted(() => vi.fn());
+const adoptHomeProfileMock = vi.hoisted(() => vi.fn(async () => ({ serverId: 'relay-example', serverUrl: 'https://relay.example.test' })));
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    setServerProfileIdentityForUrl: (...args: unknown[]) => setServerProfileIdentityForUrlMock(...args),
+    adoptHomeProfile: (...args: unknown[]) => adoptHomeProfileMock(...args),
 }));
 
 type StubResponse = {
@@ -62,7 +62,7 @@ describe('authQRWait v2 fallback', () => {
 
         const out = await authQRWait(keypair);
         expect(out?.token).toBe(expectedToken);
-        expect(out?.secret).toEqual(expectedSecret);
+        expect(out?.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
         expect(fetchMock.mock.calls[0]?.[0]).toBe('/v2/auth/account/request');
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
@@ -83,7 +83,7 @@ describe('authQRWait v2 fallback', () => {
 
         const out = await authQRWait(keypair);
         expect(out?.token).toBe(expectedToken);
-        expect(out?.secret).toEqual(expectedSecret);
+        expect(out?.secret).toBe(encodeBase64(expectedSecret, 'base64url'));
         expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
             '/v2/auth/account/request',
             '/v1/auth/account/request',
@@ -97,7 +97,7 @@ describe('authQRWait v2 fallback', () => {
         const expectedSecret = new Uint8Array([4, 5, 6]);
         const responseEncrypted = encodeBase64(encryptBox(expectedSecret, keypair.publicKey));
 
-        setServerProfileIdentityForUrlMock.mockClear();
+        adoptHomeProfileMock.mockClear();
         const fetchMock = vi.mocked(serverFetch);
         fetchMock.mockReset();
         fetchMock.mockResolvedValueOnce(
@@ -112,9 +112,30 @@ describe('authQRWait v2 fallback', () => {
         const out = await authQRWait(keypair);
 
         expect(out?.token).toBe(expectedToken);
-        expect(setServerProfileIdentityForUrlMock).toHaveBeenCalledWith(
-            'https://relay.example.test',
-            'srv_auth_identity',
+        expect(adoptHomeProfileMock).toHaveBeenCalledWith(expect.objectContaining({
+            source: 'qr',
+            preserveUserLabel: true,
+            descriptor: expect.objectContaining({
+                homeServerIdentityId: 'srv_auth_identity',
+                canonicalServerUrl: 'https://relay.example.test',
+            }),
+        }));
+    });
+
+    it('retries after a transient network failure', async () => {
+        const keypair = generateAuthKeyPair();
+        const expectedToken = 'tkn-after-retry';
+        const expectedSecret = new Uint8Array([7, 7, 7]);
+        const responseEncrypted = encodeBase64(encryptBox(expectedSecret, keypair.publicKey));
+        const fetchMock = vi.mocked(serverFetch);
+        fetchMock.mockReset();
+        fetchMock.mockRejectedValueOnce(new Error('network unavailable'));
+        fetchMock.mockResolvedValueOnce(
+            makeJsonResponse(200, { state: 'authorized', token: expectedToken, response: responseEncrypted }) as any,
         );
+
+        const out = await authQRWait(keypair);
+        expect(out).toEqual({ token: expectedToken, secret: encodeBase64(expectedSecret, 'base64url') });
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 });

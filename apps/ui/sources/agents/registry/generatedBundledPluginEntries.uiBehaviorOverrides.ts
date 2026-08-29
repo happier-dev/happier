@@ -89,7 +89,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             "resume_from_summary",
             "resume_full_session"
           ],
-          "settingId": "claudeUnifiedTerminalResumeChoice"
+          "settingId": {
+            "localId": "claudeUnifiedTerminalResumeChoice",
+            "scope": "account"
+          }
         },
         "terminalSecondaryAction": {
           "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
@@ -120,7 +123,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             "always_trust_happier_workspaces",
             "always_reject_happier_workspaces"
           ],
-          "settingId": "claudeUnifiedTerminalWorkspaceTrust"
+          "settingId": {
+            "localId": "claudeUnifiedTerminalWorkspaceTrust",
+            "scope": "account"
+          }
         },
         "terminalSecondaryAction": {
           "descriptionKey": "tools.askUserQuestion.attachedTerminalNotice.description",
@@ -325,7 +331,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       },
       "connectedServiceProfileSources": [
         {
-          "detailSettingsKey": "connectedServicesProfileLabelByKey",
+          "detailSettingsKey": {
+            "localId": "connectedServicesProfileLabelByKey",
+            "scope": "host"
+          },
           "keyPrefix": "codex:connected-service",
           "labelKey": "externalSessions.browseSourceCodexConnectedServices",
           "labelParams": {
@@ -427,12 +436,18 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
                     "mcp_resume": "acp"
                   },
                   "kind": "settingEquals",
-                  "settingKey": "codexBackendMode",
+                  "settingKey": {
+                    "localId": "codexBackendMode",
+                    "scope": "account"
+                  },
                   "value": "acp"
                 },
                 {
                   "kind": "settingTrue",
-                  "settingKey": "experimentalCodexAcp"
+                  "settingKey": {
+                    "localId": "experimentalCodexAcp",
+                    "scope": "account"
+                  }
                 }
               ]
             }
@@ -476,7 +491,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       },
       "defaultValue": "appServer",
       "outputKey": "codexBackendMode",
-      "settingKey": "codexBackendMode",
+      "settingKey": {
+        "localId": "codexBackendMode",
+        "scope": "account"
+      },
       "values": [
         "acp",
         "appServer"
@@ -501,7 +519,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
             "mcp_resume": "acp"
           },
           "kind": "settingEquals",
-          "settingKey": "codexBackendMode",
+          "settingKey": {
+            "localId": "codexBackendMode",
+            "scope": "account"
+          },
           "value": "acp"
         }
       }
@@ -684,7 +705,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "envKey": "HAPPIER_OPENCODE_BACKEND_MODE",
         "legacyMetadataKey": "opencodeBackendMode",
         "runtimeDescriptorField": "backendMode",
-        "settingKey": "opencodeBackendMode",
+        "settingKey": {
+          "localId": "opencodeBackendMode",
+          "scope": "account"
+        },
         "values": [
           "server",
           "acp"
@@ -695,7 +719,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
           "http:",
           "https:"
         ],
-        "byServerIdSettingKey": "opencodeServerBaseUrlByServerIdV1",
+        "byServerIdSettingKey": {
+          "localId": "opencodeServerBaseUrlByServerIdV1",
+          "scope": "account"
+        },
         "envKey": "HAPPIER_OPENCODE_SERVER_URL",
         "explicitEnvKey": "HAPPIER_OPENCODE_SERVER_URL_EXPLICIT",
         "legacyExplicitMetadataKey": "opencodeServerBaseUrlExplicit",
@@ -704,7 +731,10 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "rejectCredentials": true,
         "runtimeDescriptorExplicitField": "serverBaseUrlExplicit",
         "runtimeDescriptorField": "serverBaseUrl",
-        "settingKey": "opencodeServerBaseUrl"
+        "settingKey": {
+          "localId": "opencodeServerBaseUrl",
+          "scope": "account"
+        }
       }
     }
   }

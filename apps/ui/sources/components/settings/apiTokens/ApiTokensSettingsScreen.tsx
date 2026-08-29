@@ -13,6 +13,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SoftSlideTransitionFrame } from '@/components/ui/motion';
 import { RelativeTimeText } from '@/components/ui/selectionList/accessories/RelativeTimeText';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -137,7 +138,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         alignSelf: 'center',
         width: '100%',
-        maxWidth: 760,
     },
     heading: {
         ...Typography.default('semiBold'),
@@ -389,6 +389,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
     const auth = useAuth();
     const router = useRouter();
     const styles = stylesheet;
+    const contentMaxWidthStyle = useLayoutMaxWidthStyle();
     const ownedControllerRef = React.useRef<ApiTokenSettingsController | null>(null);
     if (!props.controller && !ownedControllerRef.current) {
         ownedControllerRef.current = createApiTokenSettingsController();
@@ -432,6 +433,12 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
         announceAccessibilityMessage(resolveOperationNotice(state.operationNotice));
     }, [state.operationNotice]);
 
+    React.useEffect(() => {
+        if (!state.operationError && !state.operationNotice) return undefined;
+        const timeout = setTimeout(() => controller.clearOperationFeedback(), 5_000);
+        return () => clearTimeout(timeout);
+    }, [controller, state.operationError, state.operationNotice]);
+
     const revokeAll = React.useCallback(async () => {
         const confirmed = await Modal.confirm(
             t('settingsApiTokens.revokeAll.title'),
@@ -470,7 +477,7 @@ export const ApiTokensSettingsScreen = React.memo(function ApiTokensSettingsScre
                 />
             )}
         >
-            <View style={styles.intro}>
+            <View testID="settings-api-tokens-intro" style={[styles.intro, contentMaxWidthStyle]}>
                 <Text style={styles.heading}>{t('settingsApiTokens.title')}</Text>
                 <Text style={styles.introBody}>{t('settingsApiTokens.description')}</Text>
                 <View style={styles.headerActions}>

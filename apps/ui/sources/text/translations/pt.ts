@@ -10292,7 +10292,6 @@ settingsSession: {
       clearConfirmBody: 'Isto elimina permanentemente todo o histórico de voz autónomo desta conta. Não é possível anular.',
       clearConfirmAction: 'Limpar histórico',
       clearSucceeded: 'O histórico de voz foi limpo.',
-      clearActiveCall: 'Termine a conversa de voz antes de limpar o histórico de voz.',
       clearFailed: 'Não foi possível limpar o histórico de voz.',
       errorTitle: 'O histórico de voz não está disponível',
       errorBody: 'O Happier não conseguiu carregar o histórico encriptado desta conta. Verifique a ligação e tente novamente.',

@@ -210,6 +210,9 @@ function createDemoSurfaceHost(initial: SurfaceContext): DemoSurfaceHost {
         openNewSession: async () => {
             throw new Error('dev surface cannot open New Session');
         },
+        openConnectedAccounts: async () => {
+            throw new Error('dev surface cannot open Connected Accounts');
+        },
         settleEphemeralInput: async () => {
             throw new Error('dev surface has no ephemeral input');
         },

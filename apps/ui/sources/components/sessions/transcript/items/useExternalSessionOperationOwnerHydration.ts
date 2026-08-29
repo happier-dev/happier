@@ -145,7 +145,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             presentation: ExternalSessionOperationSharedPresentationV1;
             serverId: string;
         }>,
-    ) => {
+    ): Promise<'ready' | 'unavailable' | 'superseded'> => {
         const sequence = requestSequenceRef.current + 1;
         requestSequenceRef.current = sequence;
         latestRequestRef.current = {
@@ -160,11 +160,11 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 revision: snapshot.presentation.revision,
             }, { serverId: snapshot.serverId });
             const current = currentRef.current;
-            if (!mountedRef.current) return;
+            if (!mountedRef.current) return 'superseded';
             if (
                 latestRequestRef.current?.key !== snapshot.key
                 || latestRequestRef.current.sequence !== sequence
-            ) return;
+            ) return 'superseded';
             if (
                 !current.authorized
                 || current.key !== snapshot.key
@@ -179,15 +179,17 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                     const settled = hydratedRef.current;
                     if (settled?.key !== snapshot.key || settled.outcome !== 'ready') {
                         commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                        return 'unavailable';
                     }
                 }
-                return;
+                return 'superseded';
             }
             commitRead({
                 key: snapshot.key,
                 outcome: 'ready',
                 progress: result.progress,
             });
+            return 'ready';
         } catch {
             if (
                 mountedRef.current
@@ -198,8 +200,10 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
                 const settled = hydratedRef.current;
                 if (settled?.key !== snapshot.key || settled.outcome !== 'ready') {
                     commitRead({ key: snapshot.key, outcome: 'unavailable' });
+                    return 'unavailable';
                 }
             }
+            return 'superseded';
         }
     }, [commitRead, sessionId]);
 
@@ -277,8 +281,13 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
      * same read against the CURRENT operation identity — never a captured stale one — and
      * the existing request-sequence fence still discards any superseded response. It is
      * inert unless the current read actually failed, so it cannot become a poll.
+     *
+     * The boolean settlement tells the row-host focus owner what happened: `true` only
+     * when the re-read succeeded (the control will be replaced by its result), `false`
+     * when the attempt settled — or was superseded — without replacing the control, so
+     * the armed transition must be released instead of firing on a later revision.
      */
-    const checkAgain = React.useCallback(() => {
+    const checkAgain = React.useCallback(async (): Promise<boolean> => {
         const current = currentRef.current;
         if (
             !current.authorized
@@ -287,15 +296,16 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             || !current.machineId
             || !current.presentation
             || !current.serverId
-        ) return;
+        ) return false;
         const read = hydratedRef.current;
-        if (read?.key !== current.key || read.outcome !== 'unavailable') return;
-        fireAndForget(loadCurrent({
+        if (read?.key !== current.key || read.outcome !== 'unavailable') return false;
+        const outcome = await loadCurrent({
             key: current.key,
             machineId: current.machineId,
             presentation: current.presentation,
             serverId: current.serverId,
-        }), { tag: 'externalSessionOperation.ownerHydrationCheckAgain' });
+        });
+        return outcome === 'ready';
     }, [loadCurrent]);
 
     const currentRead = currentKey !== null && hydrated?.key === currentKey

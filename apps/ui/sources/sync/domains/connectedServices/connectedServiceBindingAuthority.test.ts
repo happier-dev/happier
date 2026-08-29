@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  QualifiedConnectedAccountProfileV4Schema,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type AccountProfile,
   type ConnectedServiceBindingsV1,
 } from '@happier-dev/protocol';
 
-import { createConnectedServiceBindingAuthorityFingerprint } from './connectedServiceBindingAuthority';
+import {
+  createConnectedAccountTargetAuthorityFingerprint,
+  createConnectedServiceBindingAuthorityFingerprint,
+} from './connectedServiceBindingAuthority';
 
 const CODEX_SERVICE_KEY = readBuiltInLegacyConnectedAccountServiceKeyIngress('openai-codex')!;
 
@@ -155,5 +159,51 @@ describe('createConnectedServiceBindingAuthorityFingerprint', () => {
       bindings: null,
       connectedServices: services(),
     })).toBe('unbound');
+  });
+
+  it('tracks only the selected account credential revision', () => {
+    const target = {
+      kind: 'account' as const,
+      account: {
+        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+        accountId: 'primary',
+      },
+    };
+    const selectedAccount = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: target.account,
+      status: 'connected',
+      authenticationModeId: 'oauth',
+      configurationReady: true,
+      configurationRevision: null,
+      revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      displayName: 'Primary',
+      scopes: [],
+    });
+    const initial = createConnectedAccountTargetAuthorityFingerprint({
+      target,
+      accounts: [selectedAccount],
+      groups: [],
+    });
+    expect(createConnectedAccountTargetAuthorityFingerprint({
+      target,
+      accounts: [selectedAccount, QualifiedConnectedAccountProfileV4Schema.parse({
+        ...selectedAccount,
+        ref: {
+          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          accountId: 'unrelated',
+        },
+        credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
+      })],
+      groups: [],
+    })).toBe(initial);
+    expect(createConnectedAccountTargetAuthorityFingerprint({
+      target,
+      accounts: [{
+        ...selectedAccount,
+        credentialRevision: 'csr_2123456789ABCDEFGHJKMNPQRS',
+      }],
+      groups: [],
+    })).not.toBe(initial);
   });
 });

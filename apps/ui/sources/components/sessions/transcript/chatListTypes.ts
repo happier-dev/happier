@@ -130,9 +130,11 @@ export type ChatListInternalProps = Readonly<{
     /**
      * Supplied only while the EXACT owner's operation status read has FAILED, so the
      * read-only fallback card can offer that owner one manual re-read. `null` for every
-     * other reader and every other hydration status.
+     * other reader and every other hydration status. The promise settles to `true` only
+     * when the re-read succeeded and will replace the control; a settled attempt without
+     * a replacement releases the row host's armed focus transition.
      */
-    onCheckAgainExternalSessionOperation: (() => void) | null;
+    onCheckAgainExternalSessionOperation: (() => Promise<boolean>) | null;
     isWarmKeepAliveInstance?: boolean;
     routeHydrationPending?: boolean;
 } & TranscriptSessionCommonProps>;

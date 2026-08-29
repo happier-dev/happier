@@ -2,12 +2,16 @@ import * as React from 'react';
 import { getSharedVoiceAudioSessionCoordinator } from '@happier-dev/audio-stream-native';
 
 import { storage, useActiveServerAccountScope, useProfile, useSetting } from '@/sync/domains/state/storage';
+import { sync } from '@/sync/sync';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { createBuiltinVoiceAdapterAssembly } from '@/voice/adapters/registerBuiltinVoiceAdapters';
 import { resolveVoiceProviderIdForBindingScope } from '@/voice/settings/resolveVoiceProviderId';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
-import { createConnectedServiceBindingAuthorityFingerprint } from '@/sync/domains/connectedServices/connectedServiceBindingAuthority';
+import {
+  createConnectedAccountTargetAuthorityFingerprint,
+  createConnectedServiceBindingAuthorityFingerprint,
+} from '@/sync/domains/connectedServices/connectedServiceBindingAuthority';
 import { readVoiceProviderConnectedServicesBinding } from '@/voice/settings/passiveSetup';
 
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
@@ -24,6 +28,7 @@ import { createNativeAudioSessionLifecycleBridge } from '@/voice/runtime/nativeA
 import { useVoiceDiagnosticsRuntimeSync } from '@/voice/diagnostics/useVoiceDiagnosticsRuntimeSync';
 import {
   createVoiceCredentialRuntimeAuthoritySnapshot,
+  createVoiceSelectedCredentialAuthorityFingerprint,
   hasVoiceCredentialRuntimeAuthorityChanged,
   readVoiceCredentialAuthorityRefs,
   type VoiceCredentialRuntimeAuthoritySnapshot,
@@ -32,6 +37,8 @@ import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegi
 import { useVoiceProviderRegistryRevision } from '@/voice/registry/useVoiceProviderRegistryRevision';
 import { useCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
 import { useForegroundVoiceTextTurnQaBridge } from '@/dev/testkit/harness/useForegroundVoiceTextTurnQaBridge';
+import { resolveAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
+import { useVoiceExecutionMachinePresentation } from '@/voice/credentials/useExecutionMachinePresentation';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
 
@@ -41,7 +48,9 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
   const voice = useSetting('voice') as any;
   const canonicalVoice = useSetting('voiceSettingsV1');
   const secrets = useSetting('secrets');
+  const connectedAccountPurposeBindingsV1 = useSetting('connectedAccountPurposeBindingsV1');
   const profile = useProfile();
+  const executionMachine = useVoiceExecutionMachinePresentation();
   const accountScope = useActiveServerAccountScope();
   const connectedServices = profile?.connectedServicesV2 ?? null;
   const connectedServiceCredentialRevisions = profile?.connectedServiceCredentialRevisionsV1 ?? null;
@@ -72,6 +81,55 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     providerId,
     credentialSlotId,
   );
+  const selectedCredentialAuthority = (() => {
+    const declaration = selectedProviderEntry?.kind === 'voice.conversation-provider.v1'
+      ? selectedProviderEntry.declaration
+      : null;
+    const credentials = declaration?.credentials;
+    if (!declaration || !credentials) return 'unbound';
+    const contribution = {
+      pluginId: selectedProviderEntry.pluginId,
+      localId: declaration.id,
+    };
+    try {
+      const sourceResolution = resolveAccountVoiceCredentialSourceSelection({
+        settings: {
+          voiceSettingsV1: canonicalVoiceSettings,
+          secrets,
+          connectedAccountPurposeBindingsV1,
+        },
+        contribution,
+        credentialSlotId: credentials.slot.id,
+        purpose: {
+          consumer: contribution,
+          purpose: credentials.slot.purpose,
+        },
+        machineId: executionMachine.machineId,
+      });
+      const selectedSavedSecret = sourceResolution.savedSecret === null
+        ? null
+        : secrets.find((candidate) => candidate.id === sourceResolution.savedSecret?.secretId)
+          ?? null;
+      return createVoiceSelectedCredentialAuthorityFingerprint({
+        sourceResolution,
+        selectedSavedSecret: selectedSavedSecret === null
+          ? null
+          : {
+              id: selectedSavedSecret.id,
+              kind: selectedSavedSecret.kind,
+              updatedAt: selectedSavedSecret.updatedAt,
+            },
+        selectedConnectedAccountAuthority:
+          createConnectedAccountTargetAuthorityFingerprint({
+            target: sourceResolution.binding?.target ?? null,
+            accounts: profile?.connectedAccountsV4 ?? [],
+            groups: profile?.connectedAccountGroupsV4 ?? [],
+          }),
+      });
+    } catch {
+      return 'indeterminate';
+    }
+  })();
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
   const accountLifetimeRetirementRef = React.useRef<Readonly<{ dispose(): void }> | null>(null);
   const accountScopeAtLastLayoutCommitRef = React.useRef<typeof accountScope | undefined>(undefined);
@@ -89,7 +147,9 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
       ...(currentUiContext ? { currentUiContext } : {}),
     });
     registerVoiceAdapters(assembly.adapters);
-    const controller = createVoiceSessionLifecycleController();
+    const controller = createVoiceSessionLifecycleController({
+      acquireConnectivityLease: () => sync.acquireUserRequestLease(),
+    });
     const audioSessionCoordinator = getSharedVoiceAudioSessionCoordinator();
     const nativeAudioLifecycleBridge = audioSessionCoordinator
       ? createNativeAudioSessionLifecycleBridge({ coordinator: audioSessionCoordinator, controller })
@@ -201,12 +261,11 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
         createConnectedServiceBindingAuthorityFingerprint({
           bindings: agentConnectedServicesBinding,
           connectedServices: connectedServices ?? [],
+          credentialRevisions: connectedServiceCredentialRevisions ?? [],
         }),
-      connectedServiceCredentialRevisions,
-      connectedServices,
       credentialBinding: voiceCredentialAuthority.credentialBinding,
       providerEnvelope: voiceCredentialAuthority.providerEnvelope,
-      secrets,
+      selectedCredentialAuthority,
     });
     const previousAuthority = credentialAuthorityRef.current;
     credentialAuthorityRef.current = nextAuthority;
@@ -236,7 +295,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     selectedProviderEntry,
     voiceCredentialAuthority.credentialBinding,
     voiceCredentialAuthority.providerEnvelope,
-    secrets,
+    selectedCredentialAuthority,
   ]);
 
   return null;

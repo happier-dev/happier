@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { readBackendTargetEnabled } from '@/agents/backendCatalog/backendTargetEnablement';
 import { formatBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import {
     getResolvedBackendCatalogEntries,
@@ -129,6 +130,22 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
             }
         })()
         : null;
+
+    // An exact persisted target is also the user's enablement authority. The
+    // projected runtime backend may use a different carrier key, so filtering
+    // only the operational catalog entry would silently bypass an explicit
+    // disable of the selected contributed Agent.
+    if (selectionTargetKey && !readBackendTargetEnabled({
+        backendEnabledByTargetKey,
+        canonicalTargetKey: selectionTargetKey,
+    })) {
+        return {
+            ok: false,
+            errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+            agentId,
+            agentTargetKey: targetKeySelection,
+        };
+    }
 
     let matchByKey: (typeof entries)[number] | null = null;
     let matchByIdentity: (typeof entries)[number] | null = null;

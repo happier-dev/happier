@@ -3,6 +3,7 @@ import { presentFirstKeyCredentialLifecycle } from '@/components/account/present
 import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from './serverRuntime';
 import {
+    adoptHomeProfile,
     areServerProfileIdentifiersEquivalent,
     getDeviceDefaultServerId,
     getTabActiveServerId,
@@ -107,12 +108,20 @@ export async function upsertActivateAndSwitchServer(params: Readonly<{
     if (canSkipActiveServerUrlSwitch({ activeServerUrl: active.serverUrl, targetServerUrl, scope })) return false;
 
     return await runGuardedActiveServerSwitch(async () => {
-        upsertAndActivateServer({
-            serverUrl: targetServerUrl,
-            name: params.name ?? defaultServerNameFromUrl(targetServerUrl),
-            source: params.source ?? 'url',
-            scope,
-        });
+        const source = params.source ?? 'url';
+        const profile = source === 'manual'
+            ? await adoptHomeProfile({
+                descriptor: { serverUrl: targetServerUrl },
+                source: 'manual',
+                preserveUserLabel: true,
+            })
+            : upsertAndActivateServer({
+                serverUrl: targetServerUrl,
+                name: params.name ?? defaultServerNameFromUrl(targetServerUrl),
+                source,
+                scope,
+            });
+        if (source === 'manual') setActiveServer({ serverId: profile.id, scope });
         await switchConnectionToActiveServer();
         if (params.refreshAuth) {
             await params.refreshAuth();

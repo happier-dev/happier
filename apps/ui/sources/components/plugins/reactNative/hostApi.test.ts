@@ -448,6 +448,33 @@ describe('canonical React Native plugin Host API adapter', () => {
         ]);
     });
 
+    it('carries only semantic Connected Accounts identity through the native adapter', async () => {
+        const requests: PluginUiHostApiRequestEnvelopeV1[] = [];
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: createPluginSurfaceContextFixture({ mount: canonicalRightPaneMount }),
+            requestSurface: surface,
+            requestIdPrefix: 'rn-open-connected-accounts',
+            handleRequest: async (request) => {
+                requests.push(request);
+                return null;
+            },
+            installedMethods: ['openConnectedAccounts'],
+        });
+
+        await adapter.api.openConnectedAccounts({
+            service: { pluginId: 'acme.provider', localId: 'account' },
+            accountId: 'work',
+        });
+
+        expect(requests).toContainEqual(expect.objectContaining({
+            method: 'openConnectedAccounts',
+            payload: {
+                service: { pluginId: 'acme.provider', localId: 'account' },
+                accountId: 'work',
+            },
+        }));
+    });
+
     it('rejects settled reads when generation retirement races result delivery', async () => {
         const canonicalSurface = createPluginSurfaceContextFixture({
             mount: canonicalRightPaneMount,
@@ -1005,7 +1032,10 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             const host = createPluginSurfaceHostApi({
                 surfaceContext: surface,
                 handlers: {
-                    [method]: async (_request, options) => handle(options?.signal),
+                    [method]: async (
+                        _request: PluginUiHostApiRequestEnvelopeV1,
+                        options?: PluginSurfaceHostApiRequestOptions,
+                    ) => handle(options?.signal),
                 },
             });
             return createCanonicalPluginReactNativeHostApiAdapter({

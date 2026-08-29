@@ -718,6 +718,12 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
             const { socket, transport } = createConcurrentServerSocketTransport({
                 serverUrl: normalizedServerUrl,
                 token: credentials.token,
+                ...(() => {
+                    const active = getActiveServerSnapshot();
+                    return areServerProfileIdentifiersEquivalent(active.serverId, entry.id)
+                        ? { runtimeOrigin: active.runtimeOrigin, carrier: active.carrier }
+                        : {};
+                })(),
             });
             entry.socket = socket;
             entry.socketTransport = transport;

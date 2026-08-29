@@ -32,6 +32,7 @@ const appStateAddListener = vi.hoisted(() => vi.fn((_event: string, handler: (st
 }));
 
 const tauriDesktopState = vi.hoisted(() => ({ value: false }));
+const platformOs = vi.hoisted(() => ({ value: 'web' as 'web' | 'ios' }));
 
 vi.mock('@/utils/platform/desktopHost', () => ({
     isDesktopHost: () => tauriDesktopState.value,
@@ -66,14 +67,18 @@ vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {
-                        Platform: { OS: 'web' },
-                        AppState: {
-                            get currentState() {
-                                return appStateCurrentState.value;
-                            },
-                            addEventListener: appStateAddListener as any,
-                        },
-                    }
+            Platform: {
+                get OS() {
+                    return platformOs.value;
+                },
+            },
+            AppState: {
+                get currentState() {
+                    return appStateCurrentState.value;
+                },
+                addEventListener: appStateAddListener as any,
+            },
+        },
     );
 });
 
@@ -105,6 +110,7 @@ describe('sync AppState pause/resume', () => {
         appStateHandlers.clear();
         appStateAddListener.mockClear();
         appStateCurrentState.value = 'active';
+        platformOs.value = 'web';
         tauriDesktopState.value = false;
         apiSocketDisconnect.mockClear();
         apiSocketConnect.mockClear();
@@ -116,6 +122,23 @@ describe('sync AppState pause/resume', () => {
         jsThreadLagTelemetryRuntime.recordSample.mockClear();
         jsThreadLagTelemetryRuntime.snapshot.mockClear();
         jsThreadLagTelemetryRuntime.flushSummary.mockClear();
+    });
+
+    it('keeps native socket connectivity during routine background while a Voice activity lease is active', async () => {
+        platformOs.value = 'ios';
+        const { sync } = await import('./sync');
+        const { isServerReachabilityNetworkAllowed } = await import('./runtime/connectivity/serverReachabilitySupervisorPool');
+        const releaseActivityLease = sync.acquireUserRequestLease();
+
+        for (const handler of appStateHandlers) handler('background');
+
+        expect(apiSocketDisconnect).not.toHaveBeenCalled();
+        expect(isServerReachabilityNetworkAllowed()).toBe(true);
+
+        releaseActivityLease();
+
+        expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+        expect(isServerReachabilityNetworkAllowed()).toBe(false);
     });
 
     afterEach(() => {

@@ -133,7 +133,8 @@ export function DictationSettingsSection(props: Readonly<{
         declaration: selectedSpeechEntry.declaration,
         contribution,
         selection: source.selection,
-      }).filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech');
+        access: { realm: 'daemon', phase: 'speech' },
+      });
       return rawGrants.length > 0 ? { contribution, rawGrants } : null;
     } catch {
       return null;

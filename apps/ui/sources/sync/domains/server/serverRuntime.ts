@@ -13,6 +13,15 @@ import {
 } from './serverProfiles';
 
 export type { ActiveServerSnapshot } from './serverProfiles';
+export type { AccountServiceEndpointV1 } from './serverProfiles';
+export {
+    updateActiveServerRuntimeOrigin,
+    subscribeActiveServerRuntimeOrigin,
+    getAccountServiceEndpointSnapshot,
+    setAccountServiceEndpoint,
+    subscribeAccountServiceEndpoint,
+    resetAccountServiceToDefault,
+} from './serverProfiles';
 
 export function getActiveServerSnapshot(): ActiveServerSnapshot {
     return getSnapshotFromProfiles();

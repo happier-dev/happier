@@ -22,6 +22,7 @@ afterEach(() => {
 async function loadClient(params?: Readonly<{
     retireBeforeRequest?: boolean;
     responseForPath?: (path: string) => unknown;
+    statusForPath?: (path: string) => number;
     throwForPath?: (path: string) => unknown;
 }>) {
     let current = true;
@@ -37,7 +38,7 @@ async function loadClient(params?: Readonly<{
                         : { revoked: true }
         );
         return new Response(JSON.stringify(body), {
-            status: 200,
+            status: params?.statusForPath?.(path) ?? 200,
             headers: { 'Content-Type': 'application/json' },
         });
     });
@@ -135,5 +136,18 @@ describe('current-Account API-token Action transport', () => {
             errorCode: 'network_error',
             error: 'network_error',
         });
+    });
+
+    it.each([
+        [400, 'invalid_request'],
+        [403, 'present_user_required'],
+    ] as const)('preserves a canonical %s non-success server response as a typed Action failure', async (status, errorCode) => {
+        const client = await loadClient({
+            responseForPath: () => ({ error: errorCode }),
+            statusForPath: () => status,
+        });
+
+        await expect(client.createCurrentAccountApiToken({ label: token.label, expiresAt: token.expiresAt }))
+            .resolves.toEqual({ ok: false, errorCode, error: errorCode });
     });
 });

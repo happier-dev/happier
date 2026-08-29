@@ -366,4 +366,16 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         setServerUrl('https://server-b.example.test');
         await expect(TokenStorage.getCredentials()).resolves.toBeNull();
     });
+
+    it('writes explicit Home credentials without changing the focused server', async () => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+        const { setServerUrl } = await import('@/sync/domains/server/serverConfig');
+        const { getActiveServerUrl } = await import('@/sync/domains/server/serverProfiles');
+        const { TokenStorage } = await import('./tokenStorage');
+        setServerUrl('https://focused.example.test');
+        const before = getActiveServerUrl();
+        await expect(TokenStorage.setCredentialsForServerUrl('https://secondary.example.test', { token: 'secondary' })).resolves.toBe(true);
+        expect(getActiveServerUrl()).toBe(before);
+        await expect(TokenStorage.getCredentialsForServerUrl('https://secondary.example.test')).resolves.toEqual({ token: 'secondary' });
+    });
 });

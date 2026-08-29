@@ -22,6 +22,13 @@ import {
 import type { SttController, SttStartParams, SttStopResult } from './sttController';
 import { readDeviceSpeechRecognitionAvailability } from './deviceSpeechRecognitionAvailability';
 
+type DeviceSttMuteTransition = Readonly<{
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+}>;
+
 type DeviceSttHandle = {
   sessionId: string;
   latestInterimText: string;
@@ -36,6 +43,10 @@ type DeviceSttHandle = {
   /** Detaches the D8 abort listener; idempotent and safe after teardown. */
   abortCleanup: () => void;
   recognizerStopRequested: boolean;
+  desiredMuted: boolean;
+  recognizerState: 'running' | 'stopping_for_mute' | 'muted' | 'stopping';
+  startRecognizer: () => void;
+  muteTransition: DeviceSttMuteTransition | null;
   audioSessionLease: VoiceAudioSessionLease | null;
   audioSessionReleaseAttempt: Promise<void> | null;
   speechCandidateActive: boolean;
@@ -50,7 +61,9 @@ type DeviceSttStartReservation = {
   resolveSettled: () => void;
 };
 
-export type DeviceSttController = SttController;
+export type DeviceSttController = SttController & Readonly<{
+  setMuted(muted: boolean): Promise<void>;
+}>;
 
 export type CreateDeviceSttControllerDeps = {
   getSettings: () => any;
@@ -117,6 +130,21 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     ? deps.stopTimeoutMs
     : DEFAULT_STOP_TIMEOUT_MS;
 
+  const settleMuteTransition = (
+    target: DeviceSttHandle,
+    result: Readonly<{ status: 'resolved' }> | Readonly<{ status: 'rejected'; error: Error }>,
+  ): void => {
+    const transition = target.muteTransition;
+    if (!transition) return;
+    target.muteTransition = null;
+    clearTimeout(transition.timeout);
+    if (result.status === 'resolved') {
+      transition.resolve();
+    } else {
+      transition.reject(result.error);
+    }
+  };
+
   const resolveAdapterSettings = () => {
     return resolveLocalVoiceAdapterSettings(deps.getSettings()).config;
   };
@@ -174,6 +202,10 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     if (target.cleanupAttempt) return await target.cleanupAttempt;
     const attempt = (async () => {
       target.acceptsRecognizerEvents = false;
+      settleMuteTransition(target, {
+        status: 'rejected',
+        error: new Error('device_stt_mute_cancelled'),
+      });
       endpointController.clearSession(target.sessionId);
       target.abortCleanup();
       try {
@@ -194,7 +226,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     }
   };
 
-  const start = async ({ micSession, sink, signal }: SttStartParams) => {
+  const start = async ({ capturePurpose = 'dictation', micSession, sink, signal }: SttStartParams) => {
     if (signal?.aborted) {
       completedResult = {
         error: createVoiceMachineError({ kind: 'turn_aborted', reason: 'turn_aborted' }),
@@ -370,7 +402,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         const audioSessionStage = await runSetupStage(
           () => coordinator.acquire({
             ownerId: `device-stt:${sessionKey}`,
-            mode: 'dictation',
+            mode: capturePurpose,
             input: true,
             output: false,
             aec: 'off',
@@ -413,6 +445,10 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       acceptsRecognizerEvents: true,
       abortCleanup: () => {},
       recognizerStopRequested: false,
+      desiredMuted: micSession.isMuted(),
+      recognizerState: micSession.isMuted() ? 'muted' : 'running',
+      startRecognizer: () => {},
+      muteTransition: null,
       audioSessionLease,
       audioSessionReleaseAttempt: null,
       speechCandidateActive: false,
@@ -459,6 +495,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         return;
       }
       nextHandle.recognizerStopRequested = true;
+      nextHandle.recognizerState = 'stopping';
       try {
         nextHandle.module?.stop?.();
       } catch {
@@ -526,6 +563,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('audiostart', () => {
         if (!acceptsRecognizerEvent()) return;
+        if (nextHandle.desiredMuted) return;
         markAudioStarted();
       })
     );
@@ -533,7 +571,7 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('speechstart', () => {
         if (!acceptsRecognizerEvent()) return;
-        if (micSession.isMuted()) return;
+        if (nextHandle.desiredMuted) return;
         markSpeechCandidateStarted();
       })
     );
@@ -550,9 +588,9 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
         if (!acceptsRecognizerEvent()) return;
         const results = Array.isArray(event?.results) ? event.results : [];
         const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
+        if (nextHandle.desiredMuted) return;
         markAudioStarted();
         if (!transcript) return;
-        if (micSession.isMuted()) return;
         markSpeechCandidateStarted();
 
         if (event?.isFinal) {
@@ -569,6 +607,11 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('end', () => {
         if (!acceptsRecognizerEvent()) return;
+        if (nextHandle.recognizerState === 'stopping_for_mute') {
+          nextHandle.recognizerState = 'muted';
+          settleMuteTransition(nextHandle, { status: 'resolved' });
+          return;
+        }
         nextHandle.acceptsRecognizerEvents = false;
         let shouldPublishTerminalFailure = false;
         try {
@@ -597,6 +640,11 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
         if (!acceptsRecognizerEvent()) return;
+        if (nextHandle.recognizerState === 'stopping_for_mute') {
+          nextHandle.recognizerState = 'muted';
+          settleMuteTransition(nextHandle, { status: 'resolved' });
+          return;
+        }
         nextHandle.acceptsRecognizerEvents = false;
         const reason = normalizeNonEmptyString(event?.error) ?? 'device_stt_error';
         resolveSpeechCandidateFalseAlarm();
@@ -672,12 +720,35 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
       ? settings.voice.assistantLanguage.trim()
       : undefined;
 
-      ExpoSpeechRecognitionModule.start({
-        ...(language ? { lang: language } : {}),
-        interimResults: true,
-        maxAlternatives: 1,
-        continuous: resolveDeviceContinuousRecognition({ platformOs, isDomRuntime: dom }),
-      } as any);
+    const recognizerStartOptions = {
+      ...(language ? { lang: language } : {}),
+      interimResults: true,
+      maxAlternatives: 1,
+      continuous: resolveDeviceContinuousRecognition({ platformOs, isDomRuntime: dom }),
+    } as any;
+    nextHandle.startRecognizer = () => {
+      if (
+        handle !== nextHandle
+        || !nextHandle.acceptsRecognizerEvents
+        || nextHandle.desiredMuted
+        || nextHandle.recognizerState === 'running'
+        || nextHandle.recognizerState === 'stopping_for_mute'
+        || nextHandle.recognizerState === 'stopping'
+      ) {
+        return;
+      }
+      nextHandle.recognizerStopRequested = false;
+      nextHandle.recognizerState = 'running';
+      try {
+        ExpoSpeechRecognitionModule.start(recognizerStartOptions);
+      } catch (error) {
+        nextHandle.recognizerState = 'muted';
+        throw error;
+      }
+    };
+    if (!nextHandle.desiredMuted) {
+      ExpoSpeechRecognitionModule.start(recognizerStartOptions);
+    }
     } catch (error) {
       const startError = createVoiceMachineError({
         kind: 'provider_error',
@@ -717,14 +788,28 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
     }
     if (!current.recognizerStopRequested) {
       current.recognizerStopRequested = true;
+      const captureAlreadyStopped = current.recognizerState === 'muted';
+      current.recognizerState = 'stopping';
+      if (captureAlreadyStopped) current.resolveEnd();
       try {
-        current.module?.stop?.();
+        if (!captureAlreadyStopped) current.module?.stop?.();
       } catch {
         // ignore
       }
     }
 
-    await Promise.race([current.endPromise, new Promise<void>((resolve) => setTimeout(resolve, stopTimeoutMs))]);
+    let providerEnded = false;
+    await Promise.race([
+      current.endPromise.then(() => { providerEnded = true; }),
+      new Promise<void>((resolve) => setTimeout(resolve, stopTimeoutMs)),
+    ]);
+    if (!providerEnded) {
+      try {
+        current.module?.abort?.();
+      } catch {
+        // Cleanup below still releases the aggregate audio-session owner.
+      }
+    }
 
     current.terminalResult ??= (() => {
       const finalText = current.finalSegments.join(' ').trim();
@@ -748,6 +833,59 @@ export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): 
 
   return {
     start,
+    setMuted: async (nextMuted) => {
+      const current = handle;
+      if (!current) return;
+      if (current.desiredMuted === nextMuted) {
+        await current.muteTransition?.promise;
+        return;
+      }
+      current.desiredMuted = nextMuted;
+      if (nextMuted) {
+        if (current.recognizerState !== 'running') return;
+        current.recognizerState = 'stopping_for_mute';
+        let resolveTransition!: () => void;
+        let rejectTransition!: (error: Error) => void;
+        const promise = new Promise<void>((resolve, reject) => {
+          resolveTransition = resolve;
+          rejectTransition = reject;
+        });
+        let transition!: DeviceSttMuteTransition;
+        const timeout = setTimeout(() => {
+          if (current.muteTransition !== transition) return;
+          settleMuteTransition(current, {
+            status: 'rejected',
+            error: new Error('device_stt_mute_timeout'),
+          });
+        }, stopTimeoutMs);
+        transition = {
+          promise,
+          resolve: resolveTransition,
+          reject: rejectTransition,
+          timeout,
+        };
+        current.muteTransition = transition;
+        try {
+          current.module?.stop?.();
+        } catch (error) {
+          settleMuteTransition(current, {
+            status: 'rejected',
+            error: error instanceof Error ? error : new Error('device_stt_mute_failed'),
+          });
+        }
+        try {
+          await promise;
+        } catch (error) {
+          if (handle === current && current.desiredMuted) {
+            current.desiredMuted = false;
+          }
+          throw error;
+        }
+        return;
+      }
+      await current.muteTransition?.promise;
+      if (current.recognizerState === 'muted') current.startRecognizer();
+    },
     stop,
   };
 }

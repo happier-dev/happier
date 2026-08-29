@@ -5,10 +5,8 @@ import type {
 import {
   buildQualifiedPluginContributionKey,
   ConnectedServiceBindingsV1Schema,
-  createRecipientContractDigestV1,
   createPluginContributionIdentity,
   deriveVoiceCredentialBindingIdentityV1,
-  normalizeRecipientContractV1,
   VoiceProviderContributionSchema,
   readVoiceProviderCredentialRemediationCode,
   VoiceRealtimeJsonValueSchema,
@@ -67,9 +65,8 @@ import {
 import { subscribeBundledConversationRuntimeGeneration } from './bundledConversationRuntimeGeneration';
 import { createBundledRealtimeProviderRuntime } from './createBundledRealtimeProviderRuntime';
 import {
-  createDeclaredSettingsProjector,
-  projectVoiceProviderDeclarationRequirements,
-  type VoiceProviderRegistryEntry,
+  projectVoiceProviderAccountCredentialSlot,
+  projectVoiceProviderDeclarationRegistryBase,
 } from './providerRegistry';
 import {
   commitExternalVoiceProviderRegistration,
@@ -402,6 +399,7 @@ function createUnavailableInvocationUi(): PluginUiHostApi {
     executeAction: async () => unavailable(),
     selectActionInput: async () => unavailable(),
     openNewSession: async () => unavailable(),
+    openConnectedAccounts: async () => unavailable(),
     settleEphemeralInput: async () => unavailable(),
     readResource: async () => unavailable(),
     statOpenableContent: async () => unavailable(),
@@ -439,27 +437,6 @@ function createVoiceAttemptInvocationUi(input: Readonly<{
 
 function declarationTitle(declaration: VoiceProviderContribution): string {
   return typeof declaration.title === 'string' ? declaration.title : declaration.title.fallback;
-}
-
-function projectExternalAccountCredentialSlot(
-  declaration: VoiceConversationProviderContribution,
-  recipientContract: RecipientContractV1 | null,
-): NonNullable<VoiceProviderRegistryEntry['accountCredentialSlot']> | null {
-  const credentials = declaration.credentials;
-  if (!credentials?.hostMediated || !recipientContract) return null;
-  const savedSecret = credentials.sources.find((source) => source.kind === 'savedSecret');
-  if (!savedSecret?.secretKinds.includes('apiKey')) return null;
-  const slot = credentials.slot;
-  const normalizedRecipientContract = normalizeRecipientContractV1(recipientContract);
-  if (credentials.hostMediated.operations.some((operation) => operation.credentialSlotId !== slot.id)
-    || normalizedRecipientContract.credentialSlot.id !== slot.id) return null;
-  return Object.freeze({
-    id: slot.id,
-    scope: 'account' as const,
-    kind: 'apiKey' as const,
-    recipientContract: normalizedRecipientContract,
-    recipientContractDigest: createRecipientContractDigestV1(normalizedRecipientContract),
-  });
 }
 
 function createVoiceCredentialAccess<P extends 'settings' | 'prepare' | 'connection'>(input: Readonly<{
@@ -1253,7 +1230,10 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
           const recipientContract = hostBinding?.recipientContract
             ?? input.recipientContractsByLocalId?.[declaration.id]
             ?? null;
-          const accountCredentialSlot = projectExternalAccountCredentialSlot(declaration, recipientContract);
+          const accountCredentialSlot = projectVoiceProviderAccountCredentialSlot(
+            declaration,
+            recipientContract,
+          );
           const createSettingsCredentials = (signal: AbortSignal) => createVoiceCredentialAccess({
             declaration,
             phase: 'settings',
@@ -1316,13 +1296,17 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
                 revocationSignal: settingsOperationsRevocation.signal,
               })
             : undefined;
-          const requirements = projectVoiceProviderDeclarationRequirements(declaration);
           const selectionOptions = Object.freeze([Object.freeze({
             id: 'default', modeId: 'default', order: 10_000,
             titleKey: declarationTitle(declaration),
             subtitleKey: input.pluginId,
             configPatch: providerSettings.defaultConfig,
           })]);
+          const declarationBase = projectVoiceProviderDeclarationRegistryBase({
+            declaration,
+            providerSettings,
+            selectionOptions,
+          });
           commitExternalVoiceProviderRegistration(Object.freeze({
             token,
             pluginId: input.pluginId,
@@ -1334,16 +1318,7 @@ export function createExternalVoiceProviderActivationScope(input: Readonly<{
               providerId,
               settingsSectionId: providerId,
               kind: 'voice.conversation-provider.v1' as const,
-              roles: declaration.roles,
-              requirements,
-              supportedPlatforms: declaration.platforms,
-              selectionOptions,
-              projectSettings: createDeclaredSettingsProjector(
-                declaration,
-                providerSettings,
-                selectionOptions,
-              ),
-              providerSettings,
+              ...declarationBase,
               declaration,
               ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
               source: Object.freeze({

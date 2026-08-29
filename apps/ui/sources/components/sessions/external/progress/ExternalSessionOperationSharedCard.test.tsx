@@ -111,10 +111,14 @@ describe('ExternalSessionOperationSharedCard accessibility', () => {
         });
     });
 
-    it('returns focus to Dismiss when Check Again resolves the read failure', async () => {
+    it('leaves check-again focus ownership to the transcript row host', async () => {
+        // One activation owns one focus transition. The row host arms, settles, and
+        // disarms the transition (moving focus to the viewport only on the exact
+        // action-caused card replacement); the card must not keep a second armed
+        // owner that could fire on a later unrelated revision.
         accessibilityPlatform.os = 'web';
         itemFocusNodes.clear();
-        const onCheckAgain = vi.fn();
+        const onCheckAgain = vi.fn(async () => true);
         const onDismiss = vi.fn();
         const { ExternalSessionOperationSharedCard } = await import(
             './ExternalSessionOperationSharedCard'
@@ -140,7 +144,7 @@ describe('ExternalSessionOperationSharedCard accessibility', () => {
 
         expect(screen.findByTestId('external-session-operation-action-check-again')).toBeNull();
         expect(itemFocusNodes.get('external-session-operation-action-dismiss')?.focus)
-            .toHaveBeenCalledTimes(1);
+            .not.toHaveBeenCalled();
         expect(itemFocusNodes.get('external-session-operation-action-check-again')?.focus)
             .not.toHaveBeenCalled();
     });

@@ -252,6 +252,8 @@ function createHostApi(
         releaseComposerContent: async () => unexpectedHostApiCall('releaseComposerContent'),
         executeAction,
         selectActionInput: async () => unexpectedHostApiCall('selectActionInput'),
+        openNewSession: async () => unexpectedHostApiCall('openNewSession'),
+        openConnectedAccounts: async () => unexpectedHostApiCall('openConnectedAccounts'),
         readResource: async () => {
             throw new Error('not used by this menu');
         },

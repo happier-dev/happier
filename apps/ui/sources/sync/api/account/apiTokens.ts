@@ -11,6 +11,7 @@ import {
     AccountApiTokensRevokeActionOutputV1Schema,
     AccountApiTokensRevokeAllActionInputV1Schema,
     AccountApiTokensRevokeAllActionOutputV1Schema,
+    AccountApiTokensServerErrorV1Schema,
     type AccountApiTokensCreateActionInputV1,
     type AccountApiTokensCreateActionOutputV1,
     type AccountApiTokensListActionInputV1,
@@ -110,13 +111,23 @@ async function requestCurrentAccountApiTokens<
             if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
             return networkFailure();
         }
-        if (controller.signal.aborted || !isCurrent(captured) || !response.ok) return unavailable();
+        if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
 
         let body: unknown;
         try {
             body = await response.json();
         } catch {
             return unavailable();
+        }
+        if (controller.signal.aborted || !isCurrent(captured)) return unavailable();
+        if (!response.ok) {
+            const parsedError = AccountApiTokensServerErrorV1Schema.safeParse(body);
+            if (!parsedError.success) return unavailable();
+            return {
+                ok: false,
+                errorCode: parsedError.data.error,
+                error: parsedError.data.error,
+            };
         }
         const parsed = outputSchema.safeParse(body);
         if (controller.signal.aborted || !isCurrent(captured) || !parsed.success) return unavailable();

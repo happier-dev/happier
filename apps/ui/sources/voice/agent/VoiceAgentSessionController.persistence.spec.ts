@@ -45,7 +45,7 @@ function buildExecutionRunPublicState(
     callId: 'call_1',
     sidechainId: 'sidechain_1',
     intent: 'voice_agent',
-    backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+    backendTarget: { kind: 'backend', backendId: 'claude' },
     permissionMode: 'read_only',
     retentionPolicy: 'resumable',
     runClass: 'long_lived',
@@ -202,7 +202,7 @@ const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({
     transcript: { persistenceMode: 'persistent', epoch: 1 },
     resumeHandle: {
       kind: 'provider_session.v1',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      backendTarget: { kind: 'backend', backendId: 'claude' },
       providerSessionId: 'vs_1',
     },
   }),
@@ -453,7 +453,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         transcript: { persistenceMode: 'ephemeral', epoch: 1 },
         resumeHandle: {
           kind: 'provider_session.v1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           providerSessionId: 'vs_legacy',
         },
       }),
@@ -502,7 +502,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         transcript: { persistenceMode: 'persistent', epoch: 1 },
         resumeHandle: {
           kind: 'provider_session.v1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           providerSessionId: 'vs_1',
         },
       }),
@@ -564,7 +564,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         }),
         buildExecutionRunPublicState({
           runId: 'run_other_backend',
-          backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          backendTarget: { kind: 'backend', backendId: 'codex' },
           startedAtMs: 30,
         }),
       ],
@@ -606,7 +606,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
           runId: 'run_new',
           resumeHandle: {
             kind: 'provider_session.v1',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude' },
             providerSessionId: 'vs_new',
           },
         }),
@@ -616,7 +616,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
           runId: 'run_new',
           resumeHandle: {
             kind: 'provider_session.v1',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude' },
             providerSessionId: 'vs_new',
           },
         }),
@@ -745,7 +745,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
           transcript: { persistenceMode: 'persistent', epoch: 1 },
           resumeHandle: {
             kind: 'provider_session.v1',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude' },
             providerSessionId: 'vs_prev',
           },
         }),
@@ -756,7 +756,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
           transcript: { persistenceMode: 'persistent', epoch: 1 },
           resumeHandle: {
             kind: 'provider_session.v1',
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude' },
             providerSessionId: 'vs_2',
           },
         }),
@@ -800,7 +800,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         transcript: { persistenceMode: 'persistent', epoch: 1 },
         resumeHandle: {
           kind: 'provider_session.v1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           providerSessionId: 'vs_2',
         },
       }),
@@ -1015,7 +1015,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         transcript: { persistenceMode: 'persistent', epoch: 1 },
         resumeHandle: {
           kind: 'provider_session.v1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           providerSessionId: 'vs_4',
         },
       }),
@@ -1055,14 +1055,14 @@ describe('VoiceExecutionTransport (persistence)', () => {
         ? buildExecutionRunPublicState({
             resumeHandle: {
               kind: 'provider_session.v1',
-              backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+              backendTarget: { kind: 'backend', backendId: 'claude' },
               providerSessionId: 'vs_1',
             },
           })
         : buildExecutionRunPublicState({
             resumeHandle: {
               kind: 'voice_agent_sessions.v1',
-              backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+              backendTarget: { kind: 'backend', backendId: 'claude' },
               chatProviderSessionId: 'vs_1',
               commitProviderSessionId: 'vs_commit',
             },
@@ -1126,7 +1126,7 @@ describe('VoiceExecutionTransport (persistence)', () => {
         transcript: { persistenceMode: 'persistent', epoch: 1 },
         resumeHandle: {
           kind: 'provider_session.v1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           providerSessionId: `vs_${params.runId}`,
         },
       }),

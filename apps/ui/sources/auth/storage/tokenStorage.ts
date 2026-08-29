@@ -1114,6 +1114,22 @@ export const TokenStorage = {
         return true;
     },
 
+    /** Persist credentials for an explicit Home without changing focused-server state. */
+    async setCredentialsForServerUrl(
+        serverUrl: string,
+        credentials: AuthCredentials,
+        options: ServerCredentialLookupOptions = {},
+    ): Promise<boolean> {
+        const keys = await getAuthKeys(serverUrl, options);
+        const json = JSON.stringify(credentials);
+        const written = await writeCredentialRawByKey(keys.primary, json);
+        if (!written) return false;
+        for (const legacyKey of keys.legacy) {
+            await removeCredentialByKey(legacyKey);
+        }
+        return true;
+    },
+
     async removeCredentials(): Promise<boolean> {
         // Clearing credentials should not implicitly suppress auth redirects forever.
         // Reset any suppression so subsequent auth flows can run normally.

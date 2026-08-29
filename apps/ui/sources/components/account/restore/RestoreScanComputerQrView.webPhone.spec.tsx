@@ -80,7 +80,7 @@ vi.mock('@/utils/platform/platform', () => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: restoreScanSuccessState.loginSpy, refreshFromActiveServer: vi.fn(async () => {}) }),
+    useAuth: () => ({ loginWithCredentials: restoreScanSuccessState.loginSpy, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -190,7 +190,7 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         });
         restoreScanSuccessState.authQRWaitSpy.mockResolvedValueOnce({
             token: 'tok_pair',
-            secret: new Uint8Array(32).fill(4),
+            secret: 'BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ',
         });
         restoreScanSuccessState.parsePairingDeepLinkSpy.mockReturnValueOnce({
             pairId: 'p',
@@ -205,7 +205,10 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             await lastScannerProps.onScan('happier:///pair?v=1&pairId=p&secret=s');
         });
 
-        expect(restoreScanSuccessState.loginSpy).toHaveBeenCalledWith('tok_pair', 'x');
+        expect(restoreScanSuccessState.loginSpy).toHaveBeenCalledWith({
+            token: 'tok_pair',
+            secret: 'BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ',
+        });
         expect(restoreScanSuccessState.trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
     });
 });

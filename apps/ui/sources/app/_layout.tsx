@@ -73,6 +73,7 @@ import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWi
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { AppPresentationPlatformProvider } from '@/components/ui/presentation/AppPresentationPlatformProvider';
+import { PersonalHomeBootstrapRuntimeMount } from '@/components/personalHome/bootstrap';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -855,7 +856,9 @@ function AppBoot(props: {
                             <StatusBarProvider />
                             <AppPaneModalProvider>
                                 <CommandPaletteProvider>
-                                    {appContent}
+                                    <PersonalHomeBootstrapRuntimeMount>
+                                        {appContent}
+                                    </PersonalHomeBootstrapRuntimeMount>
                                 </CommandPaletteProvider>
                             </AppPaneModalProvider>
                         </ThemeProvider>

@@ -77,6 +77,8 @@ type TestProfileAuthority = Readonly<{
     profileId: string;
     credentialRevision: string;
   }>>;
+  connectedAccountsV4?: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  connectedAccountGroupsV4?: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }> | null;
 
 const useProfile = vi.fn<() => TestProfileAuthority>(() => null);
@@ -520,11 +522,44 @@ describe('VoiceSessionRuntime', () => {
         groups: [],
       }],
       connectedServiceCredentialRevisionsV1: [],
+      connectedAccountsV4: [{
+        ref: {
+          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          accountId: 'work',
+        },
+        status: 'needs_reauth',
+        authenticationModeId: 'api-key',
+        configurationReady: true,
+        configurationRevision: null,
+        revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_initial',
+        scopes: [],
+      }],
+      connectedAccountGroupsV4: [],
     };
     useSetting.mockImplementation((key: string) => {
       if (key === 'voice') return voiceSetting;
       if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
       if (key === 'secrets') return [];
+      if (key === 'connectedAccountPurposeBindingsV1') return {
+        v: 1,
+        bindings: [{
+          purpose: {
+            consumer: {
+              pluginId: 'happier.voice.openai',
+              localId: 'realtime-openai',
+            },
+            purpose: 'voice.client-auth',
+          },
+          target: {
+            kind: 'account',
+            account: {
+              service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+              accountId: 'work',
+            },
+          },
+        }],
+      };
       return null;
     });
     useProfile.mockImplementation(() => profile);
@@ -569,6 +604,20 @@ describe('VoiceSessionRuntime', () => {
         profileId: 'work',
         credentialRevision: 'csr_replacement',
       }],
+      connectedAccountsV4: [{
+        ref: {
+          service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+          accountId: 'work',
+        },
+        status: 'connected',
+        authenticationModeId: 'api-key',
+        configurationReady: true,
+        configurationRevision: null,
+        revisionSemantics: 'revisioned',
+        credentialRevision: 'csr_replacement',
+        scopes: [],
+      }],
+      connectedAccountGroupsV4: [],
     };
     voiceSetting = {
       ...voiceSetting,
@@ -689,6 +738,7 @@ describe('VoiceSessionRuntime', () => {
       if (key === 'voice') return readVoiceSetting();
       if (key === 'voiceSettingsV1') return readCanonicalVoiceSetting();
       if (key === 'secrets') return secrets;
+      if (key === 'connectedAccountPurposeBindingsV1') return { v: 1, bindings: [] };
       return null;
     });
     useProfile.mockImplementation(() => profile);
@@ -801,7 +851,14 @@ describe('VoiceSessionRuntime', () => {
     });
     expect(rearmAfterCredentialAuthorityChange).toHaveBeenCalledTimes(3);
 
-    secrets = [{ id: 'secret-b', revision: 2 }];
+    secrets = [{
+      id: 'secret-b',
+      name: 'OpenAI',
+      kind: 'apiKey',
+      encryptedValue: { _isSecretValue: true, value: 'selected-secret' },
+      createdAt: 1,
+      updatedAt: 2,
+    }];
     profile = {
       connectedServicesV2: [{
         serviceId: 'openai',
@@ -909,7 +966,14 @@ describe('VoiceSessionRuntime', () => {
         credentialBindings: { account: { api_key: 'openai-secret' } },
       }],
     };
-    let secrets: ReadonlyArray<unknown> = [{ id: 'openai-secret', revision: 1 }];
+    let secrets: ReadonlyArray<unknown> = [{
+      id: 'openai-secret',
+      name: 'OpenAI',
+      kind: 'apiKey',
+      encryptedValue: { _isSecretValue: true, value: 'selected-secret' },
+      createdAt: 1,
+      updatedAt: 1,
+    }];
     let profile: Exclude<TestProfileAuthority, null> = {
       connectedServicesV2: [],
       connectedServiceCredentialRevisionsV1: [],
@@ -918,6 +982,7 @@ describe('VoiceSessionRuntime', () => {
       if (key === 'voice') return voiceSetting;
       if (key === 'voiceSettingsV1') return canonicalVoiceSetting;
       if (key === 'secrets') return secrets;
+      if (key === 'connectedAccountPurposeBindingsV1') return { v: 1, bindings: [] };
       return null;
     });
     useProfile.mockImplementation(() => profile);
@@ -965,7 +1030,14 @@ describe('VoiceSessionRuntime', () => {
 
     secrets = [
       ...secrets,
-      { id: 'unrelated-secret', revision: 2 },
+      {
+        id: 'unrelated-secret',
+        name: 'Unrelated',
+        kind: 'token',
+        encryptedValue: { _isSecretValue: true, value: 'unrelated-secret' },
+        createdAt: 2,
+        updatedAt: 2,
+      },
     ];
     profile = {
       connectedServicesV2: [{

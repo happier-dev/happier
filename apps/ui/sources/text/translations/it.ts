@@ -10512,7 +10512,6 @@ settingsSession: {
       clearConfirmBody: 'L’intera cronologia vocale autonoma di questo account verrà eliminata definitivamente. L’azione non può essere annullata.',
       clearConfirmAction: 'Cancella cronologia',
       clearSucceeded: 'La cronologia vocale è stata cancellata.',
-      clearActiveCall: 'Termina la conversazione vocale prima di cancellare la cronologia vocale.',
       clearFailed: 'Impossibile cancellare la cronologia vocale.',
       errorTitle: 'Cronologia vocale non disponibile',
       errorBody: 'Happier non ha potuto caricare la cronologia cifrata per questo account. Controlla la connessione e riprova.',

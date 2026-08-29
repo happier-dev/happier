@@ -1343,6 +1343,15 @@ describe('Voice provider selection persistence compatibility', () => {
         expect(agent).not.toHaveProperty('providerChat');
         expect(openAiCompat).not.toHaveProperty('maxTokens');
 
+        const canonicalTargetAdapter = projectLocalConversation(currentAccount({
+            chatTargetKey: 'agent:happier.agent.opencode/opencode',
+            commitTargetKey: 'agent:happier.agent.opencode/opencode',
+        }));
+        expect(readRequiredRecord(
+            canonicalTargetAdapter.agent,
+            'canonical-target compatibility Agent',
+        ).openaiCompat).toEqual(openAiCompat);
+
         const stt = adapter.stt as Readonly<Record<string, unknown>>;
         const tts = adapter.tts as Readonly<Record<string, unknown>>;
         expect((stt.openaiCompat as Readonly<Record<string, unknown>>).apiKey).toEqual(

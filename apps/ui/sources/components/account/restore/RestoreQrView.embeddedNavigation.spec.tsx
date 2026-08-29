@@ -44,7 +44,7 @@ const restoreQrViewState = vi.hoisted(() => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ login: restoreQrViewState.loginSpy }),
+    useAuth: () => ({ loginWithCredentials: restoreQrViewState.loginSpy }),
 }));
 
 vi.mock('@/auth/flows/qrStart', () => ({
@@ -195,7 +195,7 @@ describe('RestoreQrView (embedded navigation)', () => {
         vi.resetModules();
         restoreQrViewState.authQRWaitSpy.mockResolvedValueOnce({
             token: 'tok_qr',
-            secret: new Uint8Array(32).fill(7),
+            secret: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
         });
         const onBack = vi.fn();
         const { RestoreQrView } = await import('./RestoreQrView');
@@ -207,7 +207,10 @@ describe('RestoreQrView (embedded navigation)', () => {
             });
             await act(async () => {});
 
-            expect(restoreQrViewState.loginSpy).toHaveBeenCalledWith('tok_qr', 'encoded');
+            expect(restoreQrViewState.loginSpy).toHaveBeenCalledWith({
+                token: 'tok_qr',
+                secret: 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc',
+            });
             expect(restoreQrViewState.trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
             expect(onBack).toHaveBeenCalledTimes(1);
         } finally {

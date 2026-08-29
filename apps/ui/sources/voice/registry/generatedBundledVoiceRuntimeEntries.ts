@@ -1938,6 +1938,116 @@ const ELEVENLABS_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               "title": "ElevenLabs Agent ID"
             }
           ],
+          "presentation": {
+            "credential": {
+              "catalog": "voices",
+              "credentialPurpose": "voice.client-auth.elevenlabs",
+              "kind": "api_key",
+              "promptBodyKey": "settingsVoice.byo.apiKeyDescription",
+              "promptTitleKey": "settingsVoice.byo.apiKeyTitle",
+              "titleKey": "settingsVoice.byo.apiKeyTitle"
+            },
+            "fields": [
+              {
+                "kind": "welcome",
+                "path": "welcome",
+                "subtitleKey": "settingsVoice.byo.realtime.call.welcome.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.call.welcome.title"
+              },
+              {
+                "kind": "text",
+                "path": "agentId",
+                "promptBodyKey": "settingsVoice.byo.agentIdDescription",
+                "promptTitleKey": "settingsVoice.byo.agentIdTitle",
+                "subtitleKey": "settingsVoice.byo.agentIdDescription",
+                "titleKey": "settingsVoice.byo.agentIdTitle"
+              },
+              {
+                "catalog": "voices",
+                "kind": "remote_voice",
+                "path": "tts.voiceId",
+                "searchPlaceholderKey": "settingsVoice.byo.voiceSearchPlaceholder",
+                "subtitleKey": "settingsVoice.byo.realtime.voicePicker.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.voicePicker.title"
+              },
+              {
+                "kind": "select",
+                "options": [
+                  {
+                    "id": "",
+                    "subtitleKey": "settingsVoice.byo.realtime.modelPicker.options.autoSubtitle",
+                    "titleKey": "settingsVoice.byo.realtime.modelPicker.options.autoTitle"
+                  },
+                  {
+                    "id": "eleven_multilingual_v2",
+                    "subtitleKey": "settingsVoice.byo.realtime.modelPicker.options.multilingualV2Subtitle",
+                    "title": "eleven_multilingual_v2"
+                  },
+                  {
+                    "id": "eleven_turbo_v2",
+                    "subtitleKey": "settingsVoice.byo.realtime.modelPicker.options.turboV2Subtitle",
+                    "title": "eleven_turbo_v2"
+                  },
+                  {
+                    "id": "eleven_turbo_v2_5",
+                    "subtitleKey": "settingsVoice.byo.realtime.modelPicker.options.turboV25Subtitle",
+                    "title": "eleven_turbo_v2_5"
+                  },
+                  {
+                    "id": "custom",
+                    "subtitleKey": "settingsVoice.byo.realtime.modelPicker.options.customSubtitle",
+                    "titleKey": "settingsVoice.byo.realtime.modelPicker.options.customTitle"
+                  }
+                ],
+                "path": "tts.modelId",
+                "promptBodyKey": "settingsVoice.byo.realtime.modelPicker.prompt.body",
+                "promptTitleKey": "settingsVoice.byo.realtime.modelPicker.prompt.title",
+                "subtitleKey": "settingsVoice.byo.realtime.modelPicker.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.modelPicker.title"
+              },
+              {
+                "kind": "number",
+                "max": 1,
+                "min": 0,
+                "path": "tts.voiceSettings.stability",
+                "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.stability.promptBody",
+                "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.stability.promptTitle",
+                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.stability.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.voiceSettings.stability.title"
+              },
+              {
+                "kind": "number",
+                "max": 1,
+                "min": 0,
+                "path": "tts.voiceSettings.similarityBoost",
+                "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptBody",
+                "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.promptTitle",
+                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.voiceSettings.similarityBoost.title"
+              },
+              {
+                "kind": "number",
+                "max": 1.2,
+                "min": 0.7,
+                "path": "tts.voiceSettings.speed",
+                "promptBodyKey": "settingsVoice.byo.realtime.voiceSettings.speed.promptBody",
+                "promptTitleKey": "settingsVoice.byo.realtime.voiceSettings.speed.promptTitle",
+                "subtitleKey": "settingsVoice.byo.realtime.voiceSettings.speed.subtitle",
+                "titleKey": "settingsVoice.byo.realtime.voiceSettings.speed.title"
+              }
+            ],
+            "footerKey": "settingsVoice.byo.provisioningGroupFooter",
+            "kind": "voice.provider-settings.v1",
+            "links": {
+              "account": "https://elevenlabs.io",
+              "apiKeys": "https://elevenlabs.io/app/settings/api-keys"
+            },
+            "modes": [
+              "happier",
+              "byo"
+            ],
+            "titleKey": "settingsVoice.byo.title"
+          },
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to ElevenLabs through the ElevenLabs client connection. Depending on the selected setup, Happier may also send ElevenLabs bounded agent instructions, client-tool definitions and results, and authentication or provisioning requests needed for the feature. Happier’s server may participate in hosted authentication and usage accounting, but neither Happier’s server nor relay carries the live conversation audio. ElevenLabs may process and retain received data under your ElevenLabs account settings and its terms. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.elevenLabs.privacyDisclosure"
@@ -2923,6 +3033,197 @@ const XAI_BUNDLED_PLUGIN_MANIFEST = Object.freeze(
               "title": "Resume recent xAI conversation"
             }
           ],
+          "presentation": {
+            "credential": {
+              "catalog": "voices",
+              "credentialPurpose": "voice.client-auth",
+              "kind": "api_key",
+              "promptBodyKey": "settingsVoice.realtimeProviders.xai.credential.promptBody",
+              "promptTitleKey": "settingsVoice.realtimeProviders.credential.promptTitle",
+              "titleKey": "settingsVoice.realtimeProviders.credential.title"
+            },
+            "fields": [
+              {
+                "kind": "model",
+                "movingAliasRequiresOptIn": true,
+                "options": [
+                  {
+                    "id": "grok-voice-think-fast-2.0",
+                    "kind": "pinned"
+                  },
+                  {
+                    "id": "grok-voice-latest",
+                    "kind": "moving_alias"
+                  }
+                ],
+                "path": "model",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.model.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.model.title"
+              },
+              {
+                "customIdAllowed": true,
+                "kind": "voice_catalog",
+                "path": "voice",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.voice.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.voice.title"
+              },
+              {
+                "kind": "instructions",
+                "maxLength": 10000,
+                "path": "instructions",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.instructions.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.instructions.promptTitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.instructions.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.instructions.title"
+              },
+              {
+                "kind": "segmented",
+                "options": [
+                  "high",
+                  "none"
+                ],
+                "path": "reasoningEffort",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.reasoning.subtitle",
+                "supportedModelIds": [
+                  "grok-voice-latest",
+                  "grok-voice-think-fast-2.0",
+                  "grok-voice-think-fast-1.0"
+                ],
+                "titleKey": "settingsVoice.realtimeProviders.fields.reasoning.title"
+              },
+              {
+                "kind": "range",
+                "max": 1.5,
+                "min": 0.7,
+                "path": "outputSpeed",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.outputSpeed.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.outputSpeed.promptTitle",
+                "reset": 1,
+                "step": 0.05,
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.outputSpeed.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.outputSpeed.title"
+              },
+              {
+                "kind": "language_hint",
+                "options": [
+                  "en",
+                  "ar-EG",
+                  "ar-SA",
+                  "ar-AE",
+                  "bn",
+                  "zh",
+                  "fr",
+                  "de",
+                  "hi",
+                  "id",
+                  "it",
+                  "ja",
+                  "ko",
+                  "pt-BR",
+                  "pt-PT",
+                  "ru",
+                  "es-MX",
+                  "es-ES",
+                  "tr",
+                  "vi"
+                ],
+                "path": "transcription.languageHint",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.languageHint.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.languageHint.promptTitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.languageHint.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.languageHint.title"
+              },
+              {
+                "kind": "keyterms",
+                "maxItems": 100,
+                "maxLength": 50,
+                "path": "transcription.keyterms",
+                "promptBodyKey": "settingsVoice.realtimeProviders.fields.keyterms.promptBody",
+                "promptTitleKey": "settingsVoice.realtimeProviders.fields.keyterms.promptTitle",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.keyterms.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.keyterms.title"
+              },
+              {
+                "advanced": true,
+                "kind": "server_vad",
+                "path": "turnDetection",
+                "subfields": [
+                  {
+                    "max": 0.9,
+                    "min": 0.1,
+                    "nullable": true,
+                    "path": "turnDetection.threshold",
+                    "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.threshold.promptBody",
+                    "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.threshold.promptTitle",
+                    "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.threshold.subtitle",
+                    "suffix": "threshold",
+                    "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.threshold.title"
+                  },
+                  {
+                    "integer": true,
+                    "max": 10000,
+                    "min": 0,
+                    "nullable": true,
+                    "path": "turnDetection.silenceDurationMs",
+                    "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.promptBody",
+                    "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.promptTitle",
+                    "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.subtitle",
+                    "suffix": "silenceDurationMs",
+                    "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.silenceDurationMs.title"
+                  },
+                  {
+                    "integer": true,
+                    "max": 10000,
+                    "min": 0,
+                    "nullable": true,
+                    "path": "turnDetection.prefixPaddingMs",
+                    "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.promptBody",
+                    "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.promptTitle",
+                    "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.subtitle",
+                    "suffix": "prefixPaddingMs",
+                    "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.prefixPaddingMs.title"
+                  },
+                  {
+                    "confirmActionKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.confirmAction",
+                    "confirmBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.confirmBody",
+                    "confirmTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.confirmTitle",
+                    "integer": true,
+                    "max": 600000,
+                    "min": 1,
+                    "nullable": true,
+                    "path": "turnDetection.idleTimeoutMs",
+                    "promptBodyKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.promptBody",
+                    "promptTitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.promptTitle",
+                    "requiresOptIn": true,
+                    "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.subtitle",
+                    "suffix": "idleTimeoutMs",
+                    "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.idleTimeoutMs.title"
+                  }
+                ],
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.turnDetection.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.turnDetection.title"
+              },
+              {
+                "defaultValue": false,
+                "forgetAction": "forget_provider_conversation",
+                "kind": "privacy_opt_in",
+                "path": "resumptionEnabled",
+                "subtitleKey": "settingsVoice.realtimeProviders.fields.resumption.subtitle",
+                "titleKey": "settingsVoice.realtimeProviders.fields.resumption.title"
+              }
+            ],
+            "footerKey": "settingsVoice.realtimeProviders.xai.setup.footer",
+            "kind": "voice.provider-settings.v1",
+            "links": {
+              "account": "https://console.x.ai",
+              "apiKeys": "https://console.x.ai/team/default/api-keys",
+              "privacy": "https://x.ai/legal/privacy-policy"
+            },
+            "modes": [
+              "byo"
+            ],
+            "titleKey": "settingsVoice.realtimeProviders.setup.title"
+          },
           "privacyDisclosure": {
             "fallback": "Audio and conversation content are sent from this device to xAI through the xAI Realtime connection. When enabled or used, xAI may also receive bounded Voice context updates, client-tool definitions, and delegated results from this device. Happier uses the xAI API key saved in your Happier account secrets only for the bounded client-auth and voice-catalog operations. xAI processes the live conversation under that account and may retain received data according to the account settings and xAI’s terms. If resumption is enabled, Happier saves the provider conversation ID; forgetting it removes Happier’s saved ID and does not delete data held by xAI. Happier’s server and relay do not carry live audio. Voice context-sharing controls are separate from this provider processing.",
             "key": "settingsVoice.realtimeProviders.xai.privacyDisclosure"

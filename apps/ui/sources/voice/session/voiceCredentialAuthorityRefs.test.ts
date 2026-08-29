@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createVoiceCredentialRuntimeAuthoritySnapshot,
+  createVoiceSelectedCredentialAuthorityFingerprint,
   hasVoiceCredentialRuntimeAuthorityChanged,
   readVoiceCredentialAuthorityRefs,
 } from './voiceCredentialAuthorityRefs';
@@ -115,20 +116,16 @@ describe('Voice credential runtime authority', () => {
     const first = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope: { serverId: 'server-1', accountId: 'account-1' },
       agentConnectedServiceBindingAuthority: 'unbound',
-      connectedServiceCredentialRevisions: { openai: 2 },
-      connectedServices: [{ serviceId: 'openai-codex', profiles: [{ profileId: 'profile-1' }] }],
       credentialBinding: runtimeBinding,
       providerEnvelope: runtimeProviderEnvelope,
-      secrets: [{ id: 'secret-1', value: 'ciphertext' }],
+      selectedCredentialAuthority: 'saved-secret:secret-1:revision-1',
     });
     const refreshed = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope: { serverId: 'server-1', accountId: 'account-1' },
       agentConnectedServiceBindingAuthority: 'unbound',
-      connectedServiceCredentialRevisions: { openai: 2 },
-      connectedServices: [{ serviceId: 'openai-codex', profiles: [{ profileId: 'profile-1' }] }],
       credentialBinding: { ...runtimeBinding },
       providerEnvelope: { ...runtimeProviderEnvelope },
-      secrets: [{ id: 'secret-1', value: 'ciphertext' }],
+      selectedCredentialAuthority: 'saved-secret:secret-1:revision-1',
     });
 
     expect(hasVoiceCredentialRuntimeAuthorityChanged(first, refreshed)).toBe(false);
@@ -138,22 +135,32 @@ describe('Voice credential runtime authority', () => {
     const first = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope: { serverId: 'server-1', accountId: 'account-1' },
       agentConnectedServiceBindingAuthority: 'unbound',
-      connectedServiceCredentialRevisions: null,
-      connectedServices: [{ serviceId: 'openai-codex', activeProfileId: 'profile-1' }],
       credentialBinding: runtimeBinding,
       providerEnvelope: runtimeProviderEnvelope,
-      secrets: [],
+      selectedCredentialAuthority: 'connected-account:profile-1:revision-1',
     });
     const changed = createVoiceCredentialRuntimeAuthoritySnapshot({
       accountScope: { serverId: 'server-1', accountId: 'account-1' },
       agentConnectedServiceBindingAuthority: 'unbound',
-      connectedServiceCredentialRevisions: null,
-      connectedServices: [{ serviceId: 'openai-codex', activeProfileId: 'profile-2' }],
       credentialBinding: runtimeBinding,
       providerEnvelope: runtimeProviderEnvelope,
-      secrets: [],
+      selectedCredentialAuthority: 'connected-account:profile-2:revision-2',
     });
 
     expect(hasVoiceCredentialRuntimeAuthorityChanged(first, changed)).toBe(true);
+  });
+
+  it('ignores unrelated credential collections after canonical selection', () => {
+    const selected = createVoiceSelectedCredentialAuthorityFingerprint({
+      sourceResolution: { selection: { kind: 'savedSecret' }, savedSecret: { secretId: 'selected' } },
+      selectedSavedSecret: { id: 'selected', updatedAt: 2 },
+      selectedConnectedAccountAuthority: 'unbound',
+    });
+    const afterUnrelatedChange = createVoiceSelectedCredentialAuthorityFingerprint({
+      sourceResolution: { selection: { kind: 'savedSecret' }, savedSecret: { secretId: 'selected' } },
+      selectedSavedSecret: { id: 'selected', updatedAt: 2 },
+      selectedConnectedAccountAuthority: 'unbound',
+    });
+    expect(afterUnrelatedChange).toBe(selected);
   });
 });

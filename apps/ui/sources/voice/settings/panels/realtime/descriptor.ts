@@ -1,5 +1,6 @@
 import {
   ConnectedAccountPurposeIdSchema,
+  VoiceProviderSettingsPresentationSchema,
 } from '@happier-dev/protocol';
 
 import { VOICE_PROVIDER_CONVERSATION_RETENTION_MS } from '@/voice/persistence/voiceProviderConversationRetention';
@@ -68,29 +69,10 @@ export function parseRealtimeSettingsDescriptor(
   providerId: string,
   value: unknown,
 ): RealtimeSettingsDescriptor | null {
-  if (!isNonEmptyString(providerId)
-    || !isRecord(value)
-    || value.kind !== 'voice.provider-settings.v1'
-    || !Array.isArray(value.modes)
-    || value.modes.length === 0
-    || !value.modes.every((mode) => mode === 'byo' || mode === 'happier')
-    || !isRecord(value.credential)
-    || !isRecord(value.links)
-    || !Array.isArray(value.fields)
-    || !value.fields.every((field) => isRecord(field)
-      && isNonEmptyString(field.kind)
-      && isNonEmptyString(field.path)
-      && (field.subfields === undefined || (Array.isArray(field.subfields) && field.subfields.every((subfield) => (
-        isRecord(subfield) && isNonEmptyString(subfield.path)
-      )))))) return null;
-  const presentation = value as Readonly<{
-    modes: readonly ('byo' | 'happier')[];
-    titleKey?: unknown;
-    footerKey?: unknown;
-    credential: Readonly<Record<string, unknown>>;
-    links: Readonly<Record<string, unknown>>;
-    fields: readonly Readonly<Record<string, unknown> & { kind: string; path: string; subfields?: readonly Readonly<Record<string, unknown> & { path: string }>[] }>[];
-  }>;
+  if (!isNonEmptyString(providerId)) return null;
+  const parsedPresentation = VoiceProviderSettingsPresentationSchema.safeParse(value);
+  if (!parsedPresentation.success) return null;
+  const presentation = parsedPresentation.data;
   const fields = presentation.fields.map((field): RealtimeSettingsFieldDescriptor => Object.freeze({
     ...field,
     pathSegments: Object.freeze(field.path.split('.')),

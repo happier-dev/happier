@@ -71,6 +71,7 @@ export function useNewSessionCreateSessionAction(params: UseNewSessionCreateSess
         createSessionParams.resumeSessionId,
         createSessionParams.selectedMachineId,
         createSessionParams.settings,
+        createSessionParams.pluginSettings,
     ]);
 
     return {

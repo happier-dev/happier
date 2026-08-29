@@ -247,6 +247,7 @@ describe('projected external Voice provider activation', () => {
 
   it('projects a current installed external speech declaration into the Voice registry and withdraws it with generation authority', async () => {
     rawCredentialMachineRpc.mockReset();
+    const pluginId = 'acme.external-speech';
     const declaration = PluginContributesV2Schema.parse({ voiceProviders: [{
       id: 'speech',
       title: 'Never-before-seen Speech',
@@ -291,6 +292,13 @@ describe('projected external Voice provider activation', () => {
             default: 'synthetic-voice-v1',
             presentation: { control: 'text' },
           },
+          {
+            id: 'format',
+            title: 'Output format',
+            schema: { type: 'string', enum: ['wav'] },
+            default: 'wav',
+            presentation: { control: 'select', options: [{ value: 'wav', title: 'WAV' }] },
+          },
         ],
         actions: [{
           id: 'refresh-voice',
@@ -306,6 +314,12 @@ describe('projected external Voice provider activation', () => {
         sources: [{
           kind: 'savedSecret',
           secretKinds: ['apiKey'],
+          operationProjections: [{
+            kind: 'recipientCredential',
+            operation: 'speech-auth',
+            phase: 'speech',
+            format: 'bearer',
+          }],
           rawGrants: [{
             realm: 'daemon',
             phase: 'speech',
@@ -316,12 +330,45 @@ describe('projected external Voice provider activation', () => {
             },
           }],
         }],
+        hostMediated: { operations: [{
+          id: 'speech-auth',
+          purpose: 'voice.speech',
+          credentialSlotId: 'api_key',
+          effect: 'read',
+          request: {
+            origin: 'https://speech.example.test',
+            pathTemplate: '/session',
+            queryTemplate: [],
+            headerTemplate: [],
+            bodyTemplate: { kind: 'none' },
+            method: 'POST',
+            credential: { kind: 'httpHeader', name: 'authorization', format: 'bearer' },
+            redirect: 'error',
+            maxBodyBytes: 0,
+            contentTypes: [],
+          },
+          parameters: {
+            schema: { type: 'object', properties: {}, additionalProperties: false },
+            mapping: [],
+          },
+          response: { maxBytes: 65536, contentTypes: ['application/json'] },
+        }] },
       },
     }] }).voiceProviders[0]!;
     if (declaration.kind !== 'speech') throw new Error('expected speech declaration');
 
-    const pluginId = 'acme.external-speech';
     const contributionId = `${pluginId}/${declaration.id}`;
+    if (!declaration.credentials?.hostMediated) throw new Error('expected mediated speech declaration');
+    const recipientContract = createVoiceProviderRecipientContractFromCredentialsV1({
+      package: { pluginId, source: { kind: 'package', locator: pluginId } },
+      publisher: { trust: 'verified', identity: `package:${pluginId}` },
+      contribution: { pluginId, localId: declaration.id },
+      credentials: {
+        slot: declaration.credentials.slot,
+        hostMediated: declaration.credentials.hostMediated,
+      },
+      presentation: { title: declaration.title },
+    });
     const rawProjection: PluginProjectionV2 = {
       v: 2,
       generation: 31,
@@ -343,6 +390,8 @@ describe('projected external Voice provider activation', () => {
               generation: 31,
               contributionKey: contributionId,
               definition: declaration,
+              recipientContract,
+              recipientContractDigest: createRecipientContractDigestV1(recipientContract),
             },
           },
         },
@@ -378,6 +427,13 @@ describe('projected external Voice provider activation', () => {
     const installedEntry = installedRegistrations
       .map((registration) => registration.descriptor)
       .find((entry) => entry?.kind === 'voice.speech-engine.v1') ?? null;
+    expect(installedEntry?.accountCredentialSlot).toEqual({
+      id: 'api_key',
+      scope: 'account',
+      kind: 'apiKey',
+      recipientContract,
+      recipientContractDigest: createRecipientContractDigestV1(recipientContract),
+    });
     const installedRegistry = createDefaultVoiceProviderRegistry();
     const installedSettingsDescriptor = readBundledSpeechSettingsDescriptorFromEntry(
       contributionId,
@@ -396,6 +452,7 @@ describe('projected external Voice provider activation', () => {
         insecureLocalConsentMachineId: '',
         model: 'synthetic-stt-v1',
         voiceName: 'synthetic-voice-v1',
+        format: 'wav',
       },
       settingsRevision: '7',
       signal: actionSignal,
@@ -406,13 +463,6 @@ describe('projected external Voice provider activation', () => {
       payload: {
         target: { pluginId, localId: declaration.id },
         actionId: 'refresh-voice',
-        settings: {
-          baseUrl: '',
-          insecureLocalOriginConsent: '',
-          insecureLocalConsentMachineId: '',
-          model: 'synthetic-stt-v1',
-          voiceName: 'synthetic-voice-v1',
-        },
         expectedSettingsVersion: 7,
       },
       signal: actionSignal,
@@ -453,6 +503,7 @@ describe('projected external Voice provider activation', () => {
               insecureLocalConsentMachineId: '',
               model: 'synthetic-stt-v1',
               voiceName: 'synthetic-voice-v1',
+              format: 'wav',
             },
           },
           executionMachineId: 'machine-1',
@@ -471,6 +522,7 @@ describe('projected external Voice provider activation', () => {
               insecureLocalConsentMachineId: '',
               model: 'synthetic-stt-v1',
               voiceName: 'synthetic-voice-v1',
+              format: 'wav',
             },
           },
           executionMachineId: 'machine-1',
@@ -556,6 +608,7 @@ describe('projected external Voice provider activation', () => {
           { key: 'baseUrl', kind: 'text' },
           { key: 'model', kind: 'text' },
           { key: 'voiceName', kind: 'text' },
+          { key: 'format', kind: 'enum' },
         ],
         endpointConsent: {
           baseUrlFieldId: 'baseUrl',
@@ -671,18 +724,19 @@ describe('projected external Voice provider activation', () => {
     })).resolves.toBe('packed transcript');
     expect(transcribe).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: `${manifest.id}/speech-stt` }),
-      model: 'packed-stt-v1',
     }));
+    expect(transcribe.mock.calls[0]?.[0]).not.toHaveProperty('model');
 
     await expect(speechRuntime.speak(`${manifest.id}/speech-tts`, {
       text: 'packed speech',
-      providerConfig: { voice: 'packed-voice-primary' },
+      providerConfig: { voice: 'packed-voice-primary', format: 'wav' },
       registerPlaybackStopper: () => () => {},
     })).resolves.toBeUndefined();
     expect(synthesize).toHaveBeenCalledWith(expect.objectContaining({
       entry: expect.objectContaining({ providerId: `${manifest.id}/speech-tts` }),
-      voiceName: 'packed-voice-primary',
     }));
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('voiceName');
+    expect(synthesize.mock.calls[0]?.[0]).not.toHaveProperty('format');
     expect(play).toHaveBeenCalledOnce();
   });
 

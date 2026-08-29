@@ -1,5 +1,6 @@
 import {
-    ConnectedServiceBindingsV1Schema,
+    BuiltInLegacyConnectedServiceBindingsV1IngressSchema,
+    readBuiltInLegacyConnectedAccountServiceKeyIngress,
     type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
 
@@ -89,7 +90,7 @@ export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
         }
     }
 
-    const bindings = ConnectedServiceBindingsV1Schema.safeParse(rawBinding);
+    const bindings = BuiltInLegacyConnectedServiceBindingsV1IngressSchema.safeParse(rawBinding);
     if (!bindings.success) {
         return params.bindingScope === 'global'
             ? { kind: 'provider_settings' }
@@ -111,7 +112,8 @@ export function resolveVoiceConnectRecoveryTarget(params: Readonly<{
         return { kind: 'unavailable' };
     }
 
-    const serviceId = connectedServicesBinding.serviceIds[0];
+    const declaredServiceId = connectedServicesBinding.serviceIds[0];
+    const serviceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(declaredServiceId);
     if (!serviceId) return { kind: 'unavailable' };
     const selection = bindings.data.bindingsByServiceId[serviceId];
     if (!selection || selection.source !== 'connected') {

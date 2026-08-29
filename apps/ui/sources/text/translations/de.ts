@@ -10349,7 +10349,6 @@ settingsSession: {
             clearConfirmBody: 'Damit wird der gesamte eigenständige Voice-Verlauf dieses Kontos dauerhaft gelöscht. Das lässt sich nicht rückgängig machen.',
             clearConfirmAction: 'Verlauf löschen',
             clearSucceeded: 'Der Voice-Verlauf wurde gelöscht.',
-            clearActiveCall: 'Beende Voice, bevor du den Voice-Verlauf löschst.',
             clearFailed: 'Der Voice-Verlauf ließ sich nicht löschen.',
             errorTitle: 'Der Voice-Verlauf ist nicht verfügbar',
             errorBody: 'Happier konnte den verschlüsselten Verlauf dieses Kontos nicht laden. Prüf deine Verbindung und versuch es noch einmal.',

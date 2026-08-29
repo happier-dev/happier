@@ -829,6 +829,32 @@ export function createActivePluginCollectionClient<
         absenceEpoch,
     });
 
+    /**
+     * An absent create is witnessed by the Collection-wide epoch, not by a
+     * synthetic row revision. Both mutation and measurement must obtain that
+     * same incumbent snapshot so their sealed request shapes stay identical.
+     */
+    const readAbsenceEpochForOperations = async (
+        operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
+        options?: ActivePluginCollectionOperationOptionsV1,
+    ): Promise<
+        | Readonly<{ status: 'ready'; absenceEpoch?: number }>
+        | ActivePluginCollectionUnavailableV1
+        | ActivePluginCollectionRejectedV1
+    > => {
+        const absentPut = operations.find((candidate) => (
+            candidate.kind === 'put' && candidate.expectedRevision === 'absent'
+        ));
+        if (!absentPut) return { status: 'ready' };
+        const rowId = PluginCollectionRowIdV1Schema.safeParse(
+            absentPut.value[params.contract.rowIdField],
+        );
+        if (!rowId.success) return rejected('collection_mutation_invalid');
+        const current = await get(rowId.data, options);
+        if (current.status !== 'ready') return current;
+        return { status: 'ready', absenceEpoch: current.absenceEpoch };
+    };
+
     const mutate = async (
         operations: readonly ActivePluginCollectionMutationInputV1<TValue>[],
         options?: ActivePluginCollectionOperationOptionsV1,
@@ -839,23 +865,12 @@ export function createActivePluginCollectionClient<
         ) {
             return rejected('collection_mutation_invalid');
         }
+        const absence = await readAbsenceEpochForOperations(operations, options);
+        if (absence.status !== 'ready') return absence;
         const prepared = await prepareCollectionOperation(options, params.accountLifetime);
         if (prepared.status === 'unavailable') return prepared;
         try {
-            const absentPut = operations.find((candidate) => (
-                candidate.kind === 'put' && candidate.expectedRevision === 'absent'
-            ));
-            let absenceEpoch: number | undefined;
-            if (absentPut) {
-                const rowId = PluginCollectionRowIdV1Schema.safeParse(
-                    absentPut.value[params.contract.rowIdField],
-                );
-                if (!rowId.success) return rejected('collection_mutation_invalid');
-                const current = await get(rowId.data, options);
-                if (current.status !== 'ready') return current;
-                absenceEpoch = current.absenceEpoch;
-            }
-            const sealed = prepareMutationRequest(operations, prepared.operation, absenceEpoch);
+            const sealed = prepareMutationRequest(operations, prepared.operation, absence.absenceEpoch);
             if (sealed.status === 'failed') return rejected('collection_mutation_invalid');
             const response = await requestCollectionOperation({
                 operation: prepared.operation,
@@ -884,36 +899,43 @@ export function createActivePluginCollectionClient<
         expectedRevision: number,
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionForgetOutcomeV1> => {
-        const current = await get(rowId, options);
-        if (current.status !== 'ready') return current;
-        const prepared = await prepareCollectionOperation(options, params.accountLifetime);
-        if (prepared.status === 'unavailable') return prepared;
-        try {
-            const body = PluginCollectionForgetRequestV1Schema.safeParse({
-                pluginId: params.contract.pluginId,
-                collectionId: params.contract.collectionId,
-                writerContext: {
-                    schemaVersion: params.contract.schemaVersion,
-                    contractDigest: params.contract.contractDigest,
-                },
-                rowId,
-                expectedRevision,
-                expectedAbsenceEpoch: current.absenceEpoch,
-            });
-            if (!body.success) return rejected('collection_mutation_invalid');
-            const response = await requestCollectionOperation({
-                operation: prepared.operation,
-                path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
-                body: body.data,
-                options,
-            });
-            if (response.status === 'unavailable') return response;
-            if (!response.ok) return mapMutationError(response.body);
-            const result = PluginCollectionForgetResultV1Schema.safeParse(response.body);
-            if (!result.success) return unavailable('response-invalid');
-            return result.data;
-        } finally {
-            prepared.operation.release();
+        // The freshness epoch is Collection-wide, so an unrelated concurrent
+        // forget can legitimately invalidate it. Retry only that typed race;
+        // an exact live revision remains a real conflict and all transport or
+        // currentness failures retain their normal outcome.
+        for (;;) {
+            const current = await get(rowId, options);
+            if (current.status !== 'ready') return current;
+            if (current.row?.revision === expectedRevision) return { status: 'conflict' };
+            const prepared = await prepareCollectionOperation(options, params.accountLifetime);
+            if (prepared.status === 'unavailable') return prepared;
+            try {
+                const body = PluginCollectionForgetRequestV1Schema.safeParse({
+                    pluginId: params.contract.pluginId,
+                    collectionId: params.contract.collectionId,
+                    writerContext: {
+                        schemaVersion: params.contract.schemaVersion,
+                        contractDigest: params.contract.contractDigest,
+                    },
+                    rowId,
+                    expectedRevision,
+                    expectedAbsenceEpoch: current.absenceEpoch,
+                });
+                if (!body.success) return rejected('collection_mutation_invalid');
+                const response = await requestCollectionOperation({
+                    operation: prepared.operation,
+                    path: PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
+                    body: body.data,
+                    options,
+                });
+                if (response.status === 'unavailable') return response;
+                if (!response.ok) return mapMutationError(response.body);
+                const result = PluginCollectionForgetResultV1Schema.safeParse(response.body);
+                if (!result.success) return unavailable('response-invalid');
+                if (result.data.status === 'forgotten') return result.data;
+            } finally {
+                prepared.operation.release();
+            }
         }
     };
 
@@ -988,6 +1010,8 @@ export function createActivePluginCollectionClient<
         options?: ActivePluginCollectionOperationOptionsV1,
     ): Promise<ActivePluginCollectionMeasurementOutcomeV1> => {
         if (operations.length < 1) return rejected('collection_mutation_invalid');
+        const absence = await readAbsenceEpochForOperations(operations, options);
+        if (absence.status !== 'ready') return absence;
         const prepared = await prepareCollectionOperation(options, params.accountLifetime);
         if (prepared.status === 'unavailable') return prepared;
         try {
@@ -1002,6 +1026,7 @@ export function createActivePluginCollectionClient<
                 const sealed = prepareMutationRequest(
                     operations.slice(offset, offset + window),
                     prepared.operation,
+                    absence.absenceEpoch,
                 );
                 if (sealed.status === 'failed') return rejected('collection_mutation_invalid');
                 overheadEncodedBytes = sealed.measurement.overheadEncodedBytes;

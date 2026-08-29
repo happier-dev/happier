@@ -13,6 +13,7 @@ import {
   resolveAccountVoiceCredentialSourceSelection,
   resolveAccountVoiceCredentialStatus,
   resolveExactAccountVoiceCredentialSecretId,
+  resolveSelectedVoiceCredentialRawGrants,
   saveAndUseAccountVoiceCredential as saveAndUseAccountVoiceCredentialAtOwner,
   shouldUseVoiceCredentialSourceMutationForSavedSecret,
   upsertAccountVoiceCredential,
@@ -108,6 +109,102 @@ const PACKED_VOICE_CONTRIBUTION = Object.freeze({
 });
 
 describe('account Voice credential source mutation', () => {
+  it('projects only the selected source grants for the exact access scope and request', () => {
+    const base = voiceDeclaration(OPENAI_VOICE_CONTRIBUTION, 'voice.client-auth');
+    const webGrant = {
+      realm: 'web' as const,
+      phase: 'prepare' as const,
+      request: {
+        kind: 'httpHeaders' as const,
+        origin: 'https://api.openai.com',
+        headerNames: ['authorization'],
+      },
+    };
+    const connectionGrant = {
+      realm: 'web' as const,
+      phase: 'connection' as const,
+      request: {
+        kind: 'httpHeaders' as const,
+        origin: 'https://api.openai.com',
+        headerNames: ['authorization', 'x-request-id'],
+      },
+    };
+    const connectedGrant = {
+      realm: 'web' as const,
+      phase: 'prepare' as const,
+      request: {
+        kind: 'httpHeaders' as const,
+        origin: 'https://accounts.example.com',
+        headerNames: ['x-account-token'],
+      },
+    };
+    const declaration = VoiceProviderContributionSchema.parse({
+      ...base,
+      credentials: {
+        ...base.credentials,
+        sources: base.credentials?.sources.map((source, index) => (
+          index === 0
+            ? { ...source, rawGrants: [webGrant, connectionGrant] }
+            : index === 1
+              ? { ...source, rawGrants: [connectedGrant] }
+              : source
+        )),
+      },
+    });
+
+    expect(resolveSelectedVoiceCredentialRawGrants({
+      declaration,
+      contribution: OPENAI_VOICE_CONTRIBUTION,
+      selection: { kind: 'savedSecret' },
+      access: {
+        realm: 'web',
+        phase: 'connection',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['x-request-id', 'authorization'],
+        },
+      },
+    })).toEqual([connectionGrant]);
+    expect(resolveSelectedVoiceCredentialRawGrants({
+      declaration,
+      contribution: OPENAI_VOICE_CONTRIBUTION,
+      selection: { kind: 'savedSecret' },
+      access: {
+        realm: 'web',
+        phase: 'connection',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://api.openai.com',
+          headerNames: ['authorization'],
+        },
+      },
+    })).toEqual([]);
+    expect(resolveSelectedVoiceCredentialRawGrants({
+      declaration,
+      contribution: OPENAI_VOICE_CONTRIBUTION,
+      selection: {
+        kind: 'connectedAccount',
+        target: {
+          kind: 'account',
+          account: {
+            service: { pluginId: 'happier.voice.openai', localId: 'openai' },
+            accountId: 'account-a',
+          },
+        },
+      },
+      access: {
+        realm: 'web',
+        phase: 'prepare',
+        request: {
+          kind: 'httpHeaders',
+          origin: 'https://accounts.example.com',
+          headerNames: ['x-account-token'],
+        },
+      },
+    })).toEqual([connectedGrant]);
+  });
+
   it.each([
     [{ kind: 'none' }, true],
     [{ kind: 'savedSecret' }, true],

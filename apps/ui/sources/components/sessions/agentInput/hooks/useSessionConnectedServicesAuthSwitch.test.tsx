@@ -328,15 +328,19 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
     AgentInputChipLabel: 'AgentInputChipLabel',
 }));
 
+type PopoverConnectedBinding = {
+    source: 'connected';
+    selection: 'profile' | 'group';
+    profileId?: string;
+    groupId?: string;
+};
+type PopoverBinding = PopoverConnectedBinding | { source: 'native' };
 type PopoverContentProps = {
     resolveOptionAvailability: (params: {
         serviceId: string;
-        binding: { source: 'connected'; selection: 'profile' | 'group'; profileId?: string; groupId?: string };
+        binding: PopoverConnectedBinding;
     }) => { disabled?: boolean };
-    setBindingForService: (
-        serviceId: string,
-        binding: { source: 'connected'; selection: 'profile' | 'group'; profileId?: string; groupId?: string },
-    ) => void;
+    setBindingForService: (serviceId: string, binding: PopoverBinding) => void;
 };
 
 type AuthSwitchHookLike = {
@@ -1482,6 +1486,74 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         });
 
         await hook.unmount();
+    });
+
+    it('routes passive Provider daemon/runtime failures into the incumbent recovery owner', async () => {
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        seedCodexProfile();
+
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-passive-provider',
+            agentId: 'codex',
+            machineId: 'machine-1',
+            serverId: 'server-1',
+            connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+            sessionMetadata: {
+                connectedServices: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        [CODEX_SERVICE_KEY]: {
+                            source: 'connected',
+                            selection: 'profile',
+                            profileId: 'happier',
+                        },
+                    },
+                },
+            },
+            settings: {
+                connectedServicesProfileLabelByKey: {},
+                connectedServicesDefaultProfileByServiceId: {},
+                connectedServicesProviderStateSharingSettingsV1: {
+                    v: 1,
+                    defaults: { configMode: 'linked', stateMode: 'shared' },
+                    byAgentId: {},
+                    acknowledgedRisksByAgentId: {},
+                },
+            },
+            switchingDisabledReason: null,
+            passiveProviderRecoveryServiceId: CODEX_SERVICE_KEY,
+        }));
+
+        await act(async () => { await Promise.resolve(); });
+        expect(hook.getCurrent().actionableState).toEqual(expect.objectContaining({
+            kind: 'provider_session_state_unavailable_for_resume',
+            recovery: 'retry_required',
+            diagnostic: expect.objectContaining({
+                code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume,
+                source: 'runtime_auth_recovery',
+                serviceId: CODEX_SERVICE_KEY,
+            }),
+        }));
+        const recoveryBadge = hook.getCurrent().statusBadges.find(
+            (badge) => badge.testID === 'session-connected-services-auth-switch-retry-required',
+        );
+        expect(recoveryBadge?.onPress).toEqual(expect.any(Function));
+        await act(async () => {
+            recoveryBadge?.onPress?.();
+            await Promise.resolve();
+        });
+        const alertButtons = modalAlertMock.mock.calls.at(-1)?.[2] as Array<{
+            text: string;
+            onPress?: () => void;
+        }>;
+        await act(async () => {
+            alertButtons.find((button) => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress?.();
+            await Promise.resolve();
+        });
+        expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-passive-provider',
+            rematerializeServiceId: CODEX_SERVICE_KEY,
+        }));
     });
 
     it('surfaces provider session-state resume gaps with executable diagnostic actions', async () => {

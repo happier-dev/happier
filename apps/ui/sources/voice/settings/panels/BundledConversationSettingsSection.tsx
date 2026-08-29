@@ -19,7 +19,10 @@ import {
   VoiceCredentialItem,
   type VoiceCredentialItemStatus,
 } from '@/voice/credentials/CredentialItem';
-import { shouldUseVoiceCredentialSourceMutationForSavedSecret } from '@/voice/credentials/accountVoiceCredential';
+import {
+  resolveSelectedVoiceCredentialRawGrants,
+  shouldUseVoiceCredentialSourceMutationForSavedSecret,
+} from '@/voice/credentials/accountVoiceCredential';
 import {
   getExternalVoiceProviderRegistrationsRevision,
   subscribeExternalVoiceProviderRegistrations,
@@ -172,12 +175,14 @@ export function BundledConversationSettingsSection(props: Readonly<{
       ? Platform.OS
       : null;
     if (!realm) return [];
-    return credentialDeclaration?.sources
-      .filter((source) => source.kind === 'savedSecret')
-      .flatMap((source) => source.rawGrants ?? [])
-      .filter((grant) => grant.realm === realm && grant.phase === 'prepare')
-      ?? [];
-  }, [credentialDeclaration, credentialSourceStatus?.selection.kind]);
+    if (!credentialProviderDeclaration || !contribution) return [];
+    return resolveSelectedVoiceCredentialRawGrants({
+      declaration: credentialProviderDeclaration,
+      contribution,
+      selection: credentialSourceStatus.selection,
+      access: { realm, phase: 'prepare' },
+    });
+  }, [contribution, credentialProviderDeclaration, credentialSourceStatus?.selection]);
   const credentialUsable = credentialDeclaration && credentialDeclaration.sources.length > 1
     ? credentialSourceStatus?.selection.kind === 'connectedAccount'
       ? credentialSourceStatus.usable

@@ -209,6 +209,22 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             transcriptInteraction.canSendMessages,
         ],
     );
+    const invokeExternalSessionOperationCheckAgain = React.useCallback(async (
+        itemId: string,
+        checkAgain: () => Promise<boolean>,
+    ) => {
+        // The row host owns the armed focus transition for this activation: the
+        // card only reports the press. A settled attempt that neither retired
+        // nor replaced the control must disarm, or a later unrelated revision
+        // would move focus the reader's action never caused. A successful read
+        // keeps the arm: the layout effect above fires it on the exact card
+        // replacement before this finally runs.
+        try {
+            await checkAgain();
+        } finally {
+            clearExternalSessionOperationFocusTransition(itemId, 'check_again');
+        }
+    }, [clearExternalSessionOperationFocusTransition]);
     const invokeExternalSessionOperationAction = React.useCallback(async (
         action:
             | typeof machineExternalSessionOperationResume
@@ -448,7 +464,13 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
                             onTranscriptOperationActionTransition={(kind) =>
                                 armExternalSessionOperationFocusTransition(item.id, kind)}
                             {...(onCheckAgainExternalSessionOperation
-                                ? { onCheckAgain: onCheckAgainExternalSessionOperation }
+                                ? {
+                                    onCheckAgain: () =>
+                                        invokeExternalSessionOperationCheckAgain(
+                                            item.id,
+                                            onCheckAgainExternalSessionOperation,
+                                        ),
+                                }
                                 : {})}
                         />
                     )}

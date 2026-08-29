@@ -601,7 +601,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
         };
         const baseDeps = {
             ...createRendererDeps(createRendererProps({
-                onCheckAgainExternalSessionOperation: vi.fn(),
+                onCheckAgainExternalSessionOperation: vi.fn(async () => false),
             })),
             returnFocusToTranscriptViewport,
         } as unknown as TranscriptItemRendererDeps;
@@ -731,7 +731,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
             createdAt: 0,
         };
         const beforeCheckAgain = createRendererProps({
-            onCheckAgainExternalSessionOperation: vi.fn(),
+            onCheckAgainExternalSessionOperation: vi.fn(async () => false),
         });
         const afterCheckAgain = {
             ...beforeCheckAgain,
@@ -769,6 +769,56 @@ describe('useTranscriptItemRenderer identity stability', () => {
             listData: [sharedItem],
             props: afterCheckAgain,
         });
+        expect(returnFocusToTranscriptViewport).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('disarms a check-again activation that settles without replacing the control', async () => {
+        // A failed re-read leaves the Check Again control in place. The armed
+        // transition must be released with the settlement; otherwise a later
+        // unrelated revision (here: hydration) would move focus the reader's
+        // action never caused.
+        const returnFocusToTranscriptViewport = vi.fn();
+        const sharedItem = {
+            kind: 'external-session-operation' as const,
+            id: 'external-session-operation:operation-check-settle',
+            presentation: {
+                v: 1 as const,
+                operationId: 'operation-check-settle',
+                revision: 1,
+                kind: 'materialize' as const,
+                status: 'completed' as const,
+                phase: 'publishing' as const,
+            },
+            progress: null,
+            createdAt: 0,
+        };
+        const hydratedItem = {
+            ...sharedItem,
+            progress: {} as never,
+        };
+        const baseDeps = {
+            ...createRendererDeps(createRendererProps({
+                onCheckAgainExternalSessionOperation: vi.fn(async () => false),
+            })),
+            returnFocusToTranscriptViewport,
+        } as unknown as TranscriptItemRendererDeps;
+        const hook = await renderHook(
+            ({ listData }: { listData: readonly typeof sharedItem[] }) => useTranscriptItemRenderer({
+                ...baseDeps,
+                listData,
+            }),
+            { initialProps: { listData: [sharedItem] } },
+        );
+        const row = hook.getCurrent().renderItem({ item: sharedItem, index: 0 }) as {
+            props: { children: { props: { children: { props: Record<string, unknown> } } } };
+        };
+        const card = row.props.children.props.children;
+
+        await act(async () => {
+            await (card.props.onCheckAgain as () => Promise<boolean>)();
+        });
+        await hook.rerender({ listData: [hydratedItem] });
         expect(returnFocusToTranscriptViewport).not.toHaveBeenCalled();
         await hook.unmount();
     });

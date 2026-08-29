@@ -1577,7 +1577,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
         },
         sessionReplaySummaryRunnerV1: {
           v: 1,
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          backendTarget: { kind: 'backend', backendId: 'claude' },
           modelId: 'default',
           permissionMode: 'no_tools',
         },
@@ -1649,7 +1649,7 @@ describe('VoiceExecutionTransport (streaming)', () => {
       expect.objectContaining({
         replay: expect.objectContaining({
           summaryRunner: expect.objectContaining({
-            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            backendTarget: { kind: 'backend', backendId: 'claude' },
           }),
         }),
       }),

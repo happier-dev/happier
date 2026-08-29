@@ -1,16 +1,18 @@
-import React from 'react';
+import * as React from 'react';
 
 import ExternalSessionsSettingsView from '@/components/settings/externalSessions/ExternalSessionsSettingsView';
-import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
 
+/**
+ * The canonical route-admission owner for External Sessions Settings. Checking,
+ * probe-failure/unknown, and genuinely disabled decisions each render as an
+ * accessible, exitable gate state — never a blank screen — and the Settings
+ * children (and therefore their RPCs) mount only once admitted.
+ */
 export default React.memo(function ExternalSessionsSettingsRoute() {
-    const enabled = useFeatureEnabled('sessions.direct');
-
-    if (!enabled) {
-        return null;
-    }
-
     return (
-        <ExternalSessionsSettingsView integrationInventoryEnabled={true} />
+        <ExternalSessionsBrowseRouteGate>
+            <ExternalSessionsSettingsView integrationInventoryEnabled={true} />
+        </ExternalSessionsBrowseRouteGate>
     );
 });

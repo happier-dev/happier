@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginProjectionV2Schema } from '@happier-dev/protocol';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 type MachineContributionRegistryProjectionDescribeFn =
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe;
@@ -13,6 +14,7 @@ const { machineContributionRegistryProjectionDescribe } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
+  getMachineContributionRegistryProjectionRevision: () => 0,
   machineContributionRegistryProjectionDescribe,
   machinePluginSettingsGet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
   machinePluginSettingsSet: vi.fn(async () => ({ supported: false, reason: 'not-supported' })),
@@ -75,7 +77,7 @@ function enableExternalAgentProjection(generation: number): void {
 function expectProjectionDescribeCallsForMachine(machineId: string): void {
   expect(machineContributionRegistryProjectionDescribe).toHaveBeenCalledWith(
     machineId,
-    expect.objectContaining({ serverId: null }),
+    expect.objectContaining({ serverId: getActiveServerSnapshot().serverId }),
   );
 }
 
@@ -108,7 +110,7 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
     expectProjectionDescribeCallsForMachine('machine-1');
   });
 
-  it('resolves a bundled selection through its exact backend target key without requiring a machine projection', async () => {
+  it('resolves a released bundled backend key to the canonical Agent target without requiring a machine projection', async () => {
     machineContributionRegistryProjectionDescribe.mockResolvedValue({ supported: false, reason: 'not-supported' });
 
     const result = await resolveVoiceConfiguredAgentTarget({
@@ -125,7 +127,7 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
       kind: 'catalog',
       agentId: 'claude',
       backendTarget: { kind: 'backend', backendId: 'claude' },
-      targetKey: 'backend:claude',
+      targetKey: 'agent:happier.agent.claude/claude',
     });
     expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
   });
@@ -224,7 +226,7 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
     expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
   });
 
-  it('fails closed for a malformed persisted target key instead of spawning an arbitrary backend', async () => {
+  it('recovers a malformed persisted key only from the authoritative current identity', async () => {
     enableExternalAgentProjection(7);
 
     const result = await resolveVoiceConfiguredAgentTarget({
@@ -245,5 +247,24 @@ describe('resolveVoiceConfiguredAgentTarget', () => {
       backendTarget: { kind: 'backend', backendId: EXTERNAL_AGENT_ID },
       targetKey: EXTERNAL_TARGET_KEY,
     });
+  });
+
+  it('fails closed for a malformed persisted key without an authoritative identity', async () => {
+    const result = await resolveVoiceConfiguredAgentTarget({
+      machineId: null,
+      selection: {
+        agentId: 'untrusted-backend-id',
+        agentTargetKey: 'not-a-target-key',
+        agentIdentity: null,
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+      agentId: 'untrusted-backend-id',
+      agentTargetKey: 'not-a-target-key',
+    });
+    expect(machineContributionRegistryProjectionDescribe).not.toHaveBeenCalled();
   });
 });

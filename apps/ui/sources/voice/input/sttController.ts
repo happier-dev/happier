@@ -35,6 +35,8 @@ export type SttStartParams = Readonly<{
     sink: SttSink;
     /** Aborts in-flight capture/transcription work. */
     signal?: AbortSignal;
+    /** Product capture purpose used by the aggregate native audio-session owner. */
+    capturePurpose?: 'dictation' | 'conversation';
 }>;
 
 export type SttStopResult =

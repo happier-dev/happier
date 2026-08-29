@@ -5,7 +5,10 @@ import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import { t } from '@/text';
-import { buildLocalRelayRuntimeSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
+import {
+    buildLocalRelayRuntimeSystemTaskSpec,
+    type LocalRelayRuntimeTaskOptions,
+} from '@/components/systemTasks/specs/localControl/buildLocalRelayRuntimeSystemTaskSpec';
 
 type RelayRuntimeStatusData = Readonly<{
     installed: boolean;
@@ -72,9 +75,12 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
     const statusSnapshot = useSystemTaskSnapshot(runner, statusTaskId);
     const actionSnapshot = useSystemTaskSnapshot(runner, actionTaskId);
 
-    const startTask = React.useCallback(async (kind: RelayRuntimeActionKind | 'relay.runtime.status.v1') => {
+    const startTask = React.useCallback(async (
+        kind: RelayRuntimeActionKind | 'relay.runtime.status.v1',
+        taskOptions: LocalRelayRuntimeTaskOptions = {},
+    ) => {
         try {
-            const taskId = await runner.start(buildLocalRelayRuntimeSystemTaskSpec(kind));
+            const taskId = await runner.start(buildLocalRelayRuntimeSystemTaskSpec(kind, taskOptions));
             setBridgeUnavailable(false);
             setLastErrorMessage(null);
             return taskId;
@@ -101,11 +107,11 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
         return taskId;
     }, [isUnavailable, startTask]);
 
-    const runAction = React.useCallback(async (kind: RelayRuntimeActionKind) => {
+    const runAction = React.useCallback(async (kind: RelayRuntimeActionKind, taskOptions: LocalRelayRuntimeTaskOptions = {}) => {
         if (isUnavailable) {
             return null;
         }
-        const taskId = await startTask(kind);
+        const taskId = await startTask(kind, taskOptions);
         if (!taskId) {
             return null;
         }
@@ -168,6 +174,10 @@ export function useLocalRelayRuntimeControl(options: Readonly<{
 
     return {
         activeTaskSnapshot,
+        runTask: React.useCallback(async (kind: RelayRuntimeActionKind | 'relay.runtime.status.v1', taskOptions: LocalRelayRuntimeTaskOptions = {}) => {
+            if (kind === 'relay.runtime.status.v1') return await startTask(kind, taskOptions);
+            return await runAction(kind, taskOptions);
+        }, [runAction, startTask]),
         installOrUpdate: React.useCallback(async () => {
             await runAction('relay.runtime.installOrUpdate.v1');
         }, [runAction]),

@@ -19,6 +19,8 @@ import { assertNoUnsealedSettingsSecretValues } from '@/sync/encryption/secretSe
 import { loadPendingSettings, parsePendingSettings } from './persistence';
 import { getPersistenceStorage } from './persistenceStorage';
 import { loadSettings } from './settingsPersistence';
+import { loadHomeViewState, migrateHomeViewStateFromSettings, saveHomeViewState } from '@/sync/domains/server/serverProfiles';
+import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
 
 function accountSettingsKey(scope: AccountSettingsScope): string {
     return `account-settings:v2:${accountSettingsScopeKeySuffix(scope)}`;
@@ -195,14 +197,37 @@ export function loadAccountSettings(scope: AccountSettingsScope): { settings: un
     const parsedSettings = isPlainRecord(hydratedSettings)
         ? stripMigratedSessionOrganizationSettings(hydratedSettings)
         : hydratedSettings;
+    const globalHomeView = loadHomeViewState();
+    const projectedSettings = globalHomeView && isPlainRecord(parsedSettings)
+        ? {
+            ...parsedSettings,
+            serverSelectionGroups: globalHomeView.groups,
+            serverSelectionActiveTargetKind: globalHomeView.activeTargetKind,
+            serverSelectionActiveTargetId: globalHomeView.activeTargetId,
+        }
+        : parsedSettings;
     return {
-        settings: parsedSettings,
+        settings: projectedSettings,
         version: typeof parsed.version === 'number' ? parsed.version : null,
     };
 }
 
 export function saveAccountSettings(scope: AccountSettingsScope, settings: Settings, version: number): void {
     saveAccountSettingsEnvelope(scope, settings, version);
+    const global = loadHomeViewState();
+    if (global) {
+        migrateHomeViewStateFromSettings(settings as Record<string, unknown>);
+        saveHomeViewState({
+            ...global,
+            groups: normalizeStoredServerSelectionGroups(settings.serverSelectionGroups),
+            activeTargetKind:
+                settings.serverSelectionActiveTargetKind === 'server' || settings.serverSelectionActiveTargetKind === 'group'
+                    ? settings.serverSelectionActiveTargetKind : global.activeTargetKind,
+            activeTargetId:
+                typeof settings.serverSelectionActiveTargetId === 'string'
+                    ? settings.serverSelectionActiveTargetId : global.activeTargetId,
+        });
+    }
 }
 
 export function prepareAccountSettingsScopeForActivation(
@@ -214,7 +239,6 @@ export function prepareAccountSettingsScopeForActivation(
     const legacySettingsExists = typeof storage.getString('settings') === 'string';
     const scopedPendingSettingsExists = typeof storage.getString(pendingAccountSettingsKey(scope)) === 'string';
     const legacyPendingSettingsExists = typeof storage.getString('pending-settings') === 'string';
-
     if (!scopedSettingsExists && legacySettingsExists) {
         const legacySettings = settingsParse(loadSettings().settings);
         const migratedSettings = applySettings(
@@ -356,6 +380,13 @@ export function prepareAccountSettingsScopeForActivation(
                 saveAccountSettingsEnvelope(scope, migratedSettings, current.version);
             }
         }
+    }
+
+    // Seed device-global Home-view state from the currently focused scope exactly once,
+    // after legacy/identity migrations have normalized the source values.
+    if (!loadHomeViewState()) {
+        const source = settingsParse(loadAccountSettings(scope).settings);
+        migrateHomeViewStateFromSettings(source as Record<string, unknown>);
     }
 }
 

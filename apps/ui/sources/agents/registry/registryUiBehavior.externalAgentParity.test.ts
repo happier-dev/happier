@@ -23,6 +23,7 @@ import {
     readProjectedAgentUiBehaviorDiagnostics,
 } from './agentUiBehaviorProjection';
 import { makeSettings } from './registryUiBehavior.testHelpers';
+import { attachAgentPluginSettings } from './agentUiSettingLookup';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 const EXTERNAL_AGENT_ID = 'acme.agent';
@@ -638,13 +639,22 @@ describe('external Agent runtime-descriptor declarations', () => {
         });
     }
 
+    function settingsWithAcmeBackendMode(value: unknown): ReturnType<typeof makeSettings> {
+        // Account-scoped Agent settings arrive from the New Session screen via
+        // the non-enumerable scoped carrier. A flat host Settings key is not a
+        // production-shaped input and must not make this test pass accidentally.
+        return attachAgentPluginSettings(makeSettings(), {
+            account: { acmeBackendMode: value },
+        });
+    }
+
     it('builds spawn extras from the Agent’s own declared account setting', () => {
         publishRuntimeDescriptorBlocks();
 
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: EXTERNAL_AGENT_ID,
             machineId: MACHINE_ID,
-            settings: makeSettings({ acmeBackendMode: 'fast' }) as never,
+            settings: settingsWithAcmeBackendMode('turbo') as never,
             resumeSessionId: '',
         })).toMatchObject({
             runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'turbo' } },
@@ -655,7 +665,7 @@ describe('external Agent runtime-descriptor declarations', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: EXTERNAL_AGENT_ID,
             machineId: MACHINE_ID,
-            settings: makeSettings({ acmeBackendMode: 'nonsense' }) as never,
+            settings: settingsWithAcmeBackendMode('nonsense') as never,
             resumeSessionId: '',
         })).toMatchObject({
             runtimeDescriptorV1: { v: 1, agentId: EXTERNAL_AGENT_ID, agent: { backendMode: 'classic' } },
@@ -667,7 +677,7 @@ describe('external Agent runtime-descriptor declarations', () => {
 
         expect(buildResumeSessionExtrasFromUiState({
             agentId: EXTERNAL_AGENT_ID,
-            settings: makeSettings({ acmeBackendMode: 'classic' }) as never,
+            settings: settingsWithAcmeBackendMode('classic') as never,
             session: {
                 metadata: { machineId: MACHINE_ID, runtimeDescriptorV1: RUNTIME_DESCRIPTOR },
             } as never,

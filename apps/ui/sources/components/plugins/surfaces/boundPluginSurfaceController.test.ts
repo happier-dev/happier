@@ -1370,6 +1370,24 @@ describe('BoundPluginSurfaceController (§3.1)', () => {
         });
     });
 
+    it('keeps canonical Connected Accounts navigation available without daemon interaction', async () => {
+        const openConnectedAccounts = vi.fn(async () => undefined);
+        const controller = createBoundPluginSurfaceController({
+            facts: { ...FACTS, interactionEnabled: false, daemonInteractionEnabled: false },
+            binding: { openConnectedAccounts },
+        });
+
+        expect(controller.installedMethods).toContain('openConnectedAccounts');
+        await expect(controller.hostApi.handleRequest(request('openConnectedAccounts', {
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+            accountId: 'github:work',
+        }))).resolves.toBeNull();
+        expect(openConnectedAccounts).toHaveBeenCalledWith({
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+            accountId: 'github:work',
+        });
+    });
+
     it('keeps locally served host methods when only the daemon binding is unavailable', async () => {
         const executeContributedAction = vi.fn();
         clipboard.getStringAsync.mockReset();

@@ -222,6 +222,11 @@ describe('automationEditorDraftFromDetail', () => {
 
         expect(shouldValidateAutomationEditorLifecycleTrigger(lifecycle)).toBe(false);
         expect(shouldValidateAutomationEditorLifecycleTrigger({ ...lifecycle, isDirty: true })).toBe(true);
+        expect(shouldValidateAutomationEditorLifecycleTrigger({
+            ...lifecycle,
+            isDirty: true,
+            definition: { ...lifecycle.definition, enabled: false },
+        })).toBe(false);
         expect(shouldValidateAutomationEditorLifecycleTrigger({ ...lifecycle, persisted: null })).toBe(true);
     });
 });

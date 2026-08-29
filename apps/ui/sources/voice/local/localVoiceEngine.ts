@@ -361,6 +361,7 @@ async function startCaptureForAdmission(
   await startCaptureWithInputLevel({
     sessionId: captureAttempt.controlSessionId,
     provider: captureAttempt.provider,
+    capturePurpose: 'conversation',
     handsFree: captureAttempt.handsFree,
     ...(captureAttempt.localNeuralExecution
       ? { localNeuralExecution: captureAttempt.localNeuralExecution }
@@ -1116,7 +1117,15 @@ export async function setLocalVoiceMuted(sessionId: string, muted: boolean): Pro
   if (!current.sessionId) return;
   if (current.sessionId !== resolvedSessionId) return;
 
-  await localVoiceCaptureOwner.setMuted({ muted, sessionId: resolvedSessionId });
+  try {
+    await localVoiceCaptureOwner.setMuted({ muted, sessionId: resolvedSessionId });
+  } catch (error) {
+    // Provider-managed capture could not prove the requested physical mute.
+    // Retire the existing attempt through its canonical owner rather than
+    // publish a mute fact while recognition may still be live.
+    await stopLocalVoiceSession().catch(() => undefined);
+    throw error;
+  }
   if (muted) resetInputLevel();
   voiceConversationRuntimeMachine.setMuted({
     controlSessionId: resolvedSessionId,

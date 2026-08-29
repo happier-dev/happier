@@ -14,6 +14,7 @@ import {
     PluginUiHostApiRequestEnvelopeV1Schema,
     PluginUiJsonValueV1Schema,
     PluginUiOpenNewSessionRequestV1Schema,
+    PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiArtifactDigestV1Schema,
     PluginUiDisposeHostResourceRequestV1Schema,
     PluginUiResourceSubscriptionRequestV1Schema,
@@ -1266,6 +1267,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 payload.data,
                 options?.signal ? { signal: options.signal } : undefined,
             );
+        },
+        openConnectedAccounts: async (request = {}, options) => {
+            assertActive(options?.signal);
+            assertInstalled('openConnectedAccounts');
+            const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(request);
+            if (!payload.success) throwHostApiError('invalid_payload');
+            await transport.request('openConnectedAccounts', payload.data, options);
         },
         openSurface: async (destination, input, options) => {
             assertActive(options?.signal);

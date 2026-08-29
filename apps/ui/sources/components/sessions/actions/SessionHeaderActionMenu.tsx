@@ -40,16 +40,12 @@ import { teleportVoiceAgentToSessionRoot } from '@/voice/agent/teleportVoiceAgen
 import { useHasGlobalVoiceAgentConversation } from '@/voice/agent/useHasGlobalVoiceAgentConversation';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
-import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
 import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import {
-  readExternalSessionFollowPolicy,
-  updateMetadataWithExternalSessionFollowPolicy,
-} from '@/sync/domains/session/external/externalSessionFollowMetadata';
+import { readExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
+import { setExternalSessionFollowPolicy } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
-import { sync } from '@/sync/sync';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import {
   executeSessionAction,
@@ -558,18 +554,21 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           return;
         }
         if (actionId === 'session.externalSession.backgroundFollow') {
+          const nextPolicy = externalSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
           fireAndForget((async () => {
             if (!externalSessionLink) return;
-            const nextPolicy = externalSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
-            const result = await machineExternalSessionFollowPolicySet({
-              machineId: externalSessionLink.machineId,
+            // One shared operation owner with the External Sessions settings
+            // surface: it fences the settlement on the exact link identity and
+            // the active Account lifetime, and applies the canonical local
+            // projection catch-up on success.
+            const outcome = await setExternalSessionFollowPolicy({
               sessionId: props.sessionId,
-              agentId: externalSessionLink.agentId,
-              remoteSessionId: externalSessionLink.remoteSessionId,
-              source: externalSessionLink.source,
-              enabled: nextPolicy === 'background_follow',
-            }, sessionServerId ? { serverId: sessionServerId } : undefined).catch(() => undefined);
-            if (!result?.ok) {
+              serverId: sessionServerId ?? null,
+              link: externalSessionLink,
+              policy: nextPolicy,
+            });
+            if (outcome.kind === 'stale') return;
+            if (outcome.kind !== 'applied') {
               // The daemon owns live follow eligibility, so a refusal here is a
               // real outcome the user asked for. Report it the same way the
               // External Sessions settings surface reports the same operation
@@ -578,14 +577,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
                 t('common.error'),
                 t('externalSessions.followUpdateFailed'),
               );
-              return;
             }
-            sync.applySessionMetadataLocally(props.sessionId, (metadata) =>
-              updateMetadataWithExternalSessionFollowPolicy(metadata, {
-                policy: nextPolicy,
-                updatedAtMs: result.updatedAtMs,
-              }),
-            );
           })(), { tag: 'SessionHeaderActionMenu.execute.externalSessionBackgroundFollow' });
           return;
         }

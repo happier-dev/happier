@@ -316,21 +316,22 @@ export const VoiceHorizon = React.memo(function VoiceHorizon(props: Readonly<{
     /*
      * Copy comes from the model, never from a `t(...)` inside the shared control
      * primitive (§16.5 L1 deferral note). `startStopLabel` and `muteLabel`
-     * already carry the live/idle and muted/unmuted branch, so the transport is
-     * handed the same string for both sides rather than inventing a second
-     * vocabulary — and no key is minted here that a locale file does not have.
+     * already carry the live/idle and muted/unmuted branch. The attempt owner
+     * separately carries the consequence hint (notably that End Voice leaves
+     * delegated coding work running), so Horizon must not replace it with the
+     * visible label.
      */
     const transportLabels = React.useMemo(() => ({
         start: model.startStopLabel,
         end: model.startStopLabel,
-        startHint: model.startStopLabel,
-        endHint: model.startStopLabel,
+        startHint: attemptControl.primaryActionHint ?? model.startStopLabel,
+        endHint: attemptControl.primaryActionHint ?? model.startStopLabel,
         startText: model.startStopLabel,
         endText: model.startStopLabel,
         mute: model.muteLabel,
         unmute: model.muteLabel,
         micState: model.micStateLabel,
-    }), [model.micStateLabel, model.muteLabel, model.startStopLabel]);
+    }), [attemptControl.primaryActionHint, model.micStateLabel, model.muteLabel, model.startStopLabel]);
 
     const transcriptRows = React.useMemo(
         // Already newest-first: `visibleTranscriptEntries` is the reversed tail

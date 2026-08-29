@@ -74,6 +74,7 @@ const voiceSessionSnapshotState = vi.hoisted(() => ({
     canStop: false,
   } as any,
 }));
+const accountCurrentnessState = vi.hoisted(() => ({ current: true }));
 const actionsSettingsState = vi.hoisted(() => ({
   current: { v: 1, actions: {} } as any,
 }));
@@ -427,6 +428,14 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
   useServerFeaturesSnapshotForServerId: () => serverSnapshotState.current,
 }));
 
+vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>(),
+  captureActiveServerAccountScopeCurrentness: () => ({
+    isCurrent: () => accountCurrentnessState.current,
+    onRetire: () => ({ dispose() {} }),
+  }),
+}));
+
 vi.mock('@/sync/domains/session/resolveSessionActionDefaultBackend', () => ({
   resolveSessionActionDefaultBackend: (...args: unknown[]) => resolveSessionActionDefaultBackendMock(...args),
 }));
@@ -467,6 +476,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     readMachineTargetForSessionMock.mockReturnValue(null);
     machineRpcWithServerScopeMock.mockRejectedValue(new Error('unreachable'));
     canForkConversationState.current = false;
+    accountCurrentnessState.current = true;
     serverSnapshotState.current = { status: 'ready', features: { features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: true, directPeer: { enabled: true }, serverRouted: { enabled: false } } } }, capabilities: {} } } as any;
 
     createDefaultActionExecutorMock.mockReturnValue({
@@ -2340,6 +2350,77 @@ describe('SessionHeaderActionMenu handoff', () => {
       policy: 'attached_only',
       updatedAtMs: 2,
     });
+  });
+
+  it('silently retires a late follow settlement when the active Account is no longer current', async () => {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: { pluginProjectionV2: createDeclaredCodexSourceProjection() },
+    };
+    storageState.current.sessions = {
+      s1: {
+        id: 's1',
+        seq: 0,
+        encryptionMode: 'plain',
+        presence: 'offline',
+        active: true,
+        accessLevel: 'edit',
+        canApprovePermissions: false,
+        metadata: {
+          machineId: 'machine-1',
+          host: 'happy-host',
+          flavor: 'codex',
+          version: '0.0.0',
+          path: '/tmp',
+          homeDir: '/tmp',
+          externalSessionV1: {
+            v: 1,
+            agentId: 'codex',
+            machineId: 'machine-1',
+            remoteSessionId: 'vendor-session-1',
+            source: { kind: 'codexHome', home: 'user' },
+            followPolicyV1: { v: 1, policy: 'attached_only' },
+          },
+        },
+      } as any,
+    };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="s1"
+          session={storageState.current.sessions.s1 as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    let resolveFollowPolicySet: ((value: unknown) => void) | undefined;
+    machineRpcWithServerScopeMock.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveFollowPolicySet = resolve;
+    }));
+
+    await act(async () => {
+      dropdown.props.onSelect('session.externalSession.backgroundFollow');
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    // The follow mutation is actually in flight through the canonical machine
+    // RPC transport.
+    expect(resolveFollowPolicySet).toBeDefined();
+    // Account A retires while the machine RPC is in flight; the late
+    // settlement must not alert or publish into the successor Account.
+    accountCurrentnessState.current = false;
+    await act(async () => {
+      resolveFollowPolicySet?.({
+        ok: true,
+        enabled: true,
+        leaseActive: true,
+        updatedAtMs: 7,
+      });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      await flushHookEffects({ cycles: 2, turns: 1 });
+    });
+
+    expect(applySessionMetadataLocallyMock).not.toHaveBeenCalled();
+    expect(modalAlertMock).not.toHaveBeenCalled();
   });
 
   it('does not surface background follow for direct-session agents without follow support', async () => {

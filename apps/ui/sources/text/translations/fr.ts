@@ -10160,7 +10160,6 @@ settingsSession: {
       clearConfirmBody: 'Cela supprime définitivement tout l’historique vocal autonome de ce compte. C’est irréversible.',
       clearConfirmAction: 'Effacer l’historique',
       clearSucceeded: 'L’historique vocal a été effacé.',
-      clearActiveCall: 'Termine la session vocale avant d’effacer l’historique vocal.',
       clearFailed: 'Impossible d’effacer l’historique vocal.',
       errorTitle: 'Historique vocal indisponible',
       errorBody: 'Happier n’a pas pu charger l’historique chiffré de ce compte. Vérifie ta connexion et réessaie.',

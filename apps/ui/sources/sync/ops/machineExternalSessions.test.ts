@@ -823,6 +823,71 @@ describe('machine direct sessions ops server-scoped routing', () => {
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledTimes(1);
     });
 
+    describe('externalSessionTranscriptReadAfterRequiresResyncV1', () => {
+        const releasedTail = (overrides: Partial<Extract<
+            Awaited<ReturnType<typeof machineExternalSessionTranscriptReadAfter>>,
+            { ok: true }
+        >> = {}) => ({
+            ok: true as const,
+            items: [{
+                id: 'item-1',
+                createdAtMs: 1,
+                raw: { role: 'agent' },
+            }],
+            nextCursor: 'cursor-2',
+            truncated: false,
+            ...overrides,
+        });
+
+        it('resyncs on truncation, missing continuation, unfinished pages, and required diagnostics', async () => {
+            const {
+                externalSessionTranscriptReadAfterRequiresResyncV1,
+            } = await import('./machineExternalSessions');
+
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail({ truncated: true }),
+                'cursor-1',
+            )).toBe(true);
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail({ nextCursor: null }),
+                'cursor-1',
+            )).toBe(true);
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail({ hasMore: true }),
+                'cursor-1',
+            )).toBe(true);
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail({
+                    diagnostics: [{
+                        code: 'external_session_source_diagnostic',
+                        severity: 'required',
+                        count: 1,
+                        positions: [0],
+                    }],
+                }),
+                'cursor-1',
+            )).toBe(true);
+        });
+
+        it('keeps a clean advanced page and the released already-current collapse applicable', async () => {
+            const {
+                externalSessionTranscriptReadAfterRequiresResyncV1,
+            } = await import('./machineExternalSessions');
+
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail(),
+                'cursor-1',
+            )).toBe(false);
+            expect(externalSessionTranscriptReadAfterRequiresResyncV1(
+                releasedTail({
+                    items: [],
+                    nextCursor: 'cursor-1',
+                }),
+                'cursor-1',
+            )).toBe(false);
+        });
+    });
+
     it('does not use relay method-unavailable to downgrade link creation', async () => {
         const relayError = createRpcCallError({
             error: 'RPC method not available',

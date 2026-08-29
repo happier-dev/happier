@@ -22,7 +22,7 @@ import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServi
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
-import { useProfile, useSettings } from '@/sync/store/hooks';
+import { useActiveServerAccountScope, useProfile, useSettings } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import {
@@ -86,12 +86,23 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
   const serverFeatures = useServerFeaturesRuntimeSnapshot({ enabled: true });
   const accountTransport = resolveConnectedAccountUiNegotiation(serverFeatures);
+  const activeAccountScope = useActiveServerAccountScope();
+  // A feature bit only proves the transport is understood. The profile owner
+  // proves whether the qualified target arrays belong to the current Account;
+  // its default empty profile must remain indeterminate until that owner has
+  // hydrated (or a cached profile is demonstrably for the active Account).
+  const profileHydrated = typeof profile.id === 'string'
+    && Boolean(activeAccountScope?.accountId)
+    && profile.id.trim() === activeAccountScope?.accountId;
+  const effectiveAccountTransport = accountTransport === 'advertised-v4' && !profileHydrated
+    ? 'indeterminate'
+    : accountTransport;
   const pickerModalIdRef = React.useRef<string | null>(null);
   const [reloading, setReloading] = React.useState(false);
-  const accounts = accountTransport === 'advertised-v4'
+  const accounts = effectiveAccountTransport === 'advertised-v4'
     ? profile.connectedAccountsV4 ?? EMPTY_ACCOUNTS
     : EMPTY_ACCOUNTS;
-  const groups = accountTransport === 'advertised-v4'
+  const groups = effectiveAccountTransport === 'advertised-v4'
     ? profile.connectedAccountGroupsV4 ?? EMPTY_GROUPS
     : EMPTY_GROUPS;
   const serviceTitle = React.useMemo(() => {
@@ -109,12 +120,12 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
     groups,
     labelsByKey: settings.connectedServicesProfileLabelByKey,
     serviceTitle,
-    sourceNegotiation: accountTransport,
+    sourceNegotiation: effectiveAccountTransport,
     resolveAuthentication: getConnectedAccountAuthentication,
   }), [
     accounts,
     groups,
-    accountTransport,
+    effectiveAccountTransport,
     props.declaration,
     props.value,
     serviceTitle,
@@ -131,9 +142,9 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const selectedTargetAccessibilityLabel = selected?.selectable
     ? selected.presentation.accessibilityLabel
     : null;
-  const unresolvedSourceLabel = accountTransport === 'indeterminate'
+  const unresolvedSourceLabel = effectiveAccountTransport === 'indeterminate'
     ? t('common.loading')
-    : accountTransport === 'legacy'
+    : effectiveAccountTransport === 'legacy'
       ? t('connectedServices.purposeTargets.legacyUnavailable')
       : null;
   const requiredUnsetLabel = props.value === null && props.declaration.required === true

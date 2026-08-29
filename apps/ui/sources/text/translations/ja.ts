@@ -10420,7 +10420,6 @@ settingsSession: {
       clearConfirmBody: 'このアカウントのスタンドアロン音声履歴全体が完全に削除されます。この操作は元に戻せません。',
       clearConfirmAction: '履歴を消去',
       clearSucceeded: '音声履歴を消去しました。',
-      clearActiveCall: '音声履歴を消去する前に音声を終了してください。',
       clearFailed: '音声履歴を消去できませんでした。',
       errorTitle: '音声履歴を利用できません',
       errorBody: 'このアカウントの暗号化された履歴を読み込めませんでした。接続を確認して再試行してください。',

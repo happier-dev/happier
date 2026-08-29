@@ -9197,7 +9197,6 @@ settingsSession: {
             clearConfirmBody: 'Això elimina permanentment tot l’historial de veu independent d’aquest compte. No es pot desfer.',
             clearConfirmAction: 'Esborra l’historial',
             clearSucceeded: 'S’ha esborrat l’historial de veu.',
-            clearActiveCall: 'Finalitza la conversa de veu abans d’esborrar l’historial de veu.',
             clearFailed: 'No s’ha pogut esborrar l’historial de veu.',
             errorTitle: 'L’historial de veu no està disponible',
             errorBody: 'Happier no ha pogut carregar l’historial xifrat d’aquest compte. Comprova la connexió i torna-ho a provar.',

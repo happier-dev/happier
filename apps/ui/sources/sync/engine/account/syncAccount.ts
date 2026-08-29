@@ -18,6 +18,17 @@ import { serverFetch } from '@/sync/http/client';
 import { isExpoPushNotificationChannelEnabled } from '@happier-dev/protocol';
 import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 import { readExpoPushToken, readPushPermission } from '@/activity/notifications/permission/pushNotificationAccess';
+import { createSessionRequestForExplicitServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+
+export async function fetchHomeNotificationSettings(home: { id: string; serverUrl: string }, credentials: AuthCredentials): Promise<unknown | null> {
+    const request = createSessionRequestForExplicitServerScope({ serverUrl: home.serverUrl, token: credentials.token });
+    const response = await request('/v2/account/settings', { method: 'GET' });
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    if (!payload || typeof payload !== 'object') return null;
+    const settings = (payload as Record<string, unknown>).settings;
+    return settings && typeof settings === 'object' ? settings : null;
+}
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -217,6 +228,11 @@ function readAccountSettingsFromStore(): unknown {
     }
 }
 
+// Last successfully observed Home-scoped notification settings. This is a
+// projection cache only; Home remains authoritative and a missing entry uses
+// the product default provisionally until the Home can be queried again.
+const lastKnownHomeNotificationSettings = new Map<string, unknown>();
+
 export async function registerPushTokenIfAvailable(params: {
     credentials: AuthCredentials;
     log: { log: (message: string) => void };
@@ -225,6 +241,13 @@ export async function registerPushTokenIfAvailable(params: {
      * already hold a settings snapshot.
      */
     getAccountSettings?: () => unknown;
+    /**
+     * Reads the notification settings owned by one Home. The caller must issue an
+     * explicit request against the supplied Home; returning null/undefined means
+     * that Home is currently offline and the last local value (or product default)
+     * should be used provisionally.
+     */
+    getHomeAccountSettings?: (home: { id: string; serverUrl: string }, credentials: AuthCredentials) => Promise<unknown | null | undefined>;
 }): Promise<void> {
     const { credentials, log } = params;
 
@@ -233,14 +256,10 @@ export async function registerPushTokenIfAvailable(params: {
         return;
     }
 
-    // The account-level push setting governs registration and prompting, not just delivery.
-    // Registering a token for an account that disabled push would leave a live delivery target
-    // contradicting the setting the user can see.
+    // Home notification consent is evaluated independently below for every
+    // credentialed profile. The focused account setting is only a fallback when
+    // a Home is offline or has not yet returned settings.
     const readAccountSettings = params.getAccountSettings ?? readAccountSettingsFromStore;
-    if (!isExpoPushNotificationChannelEnabled(readAccountSettings())) {
-        log.log('Push notifications disabled for this account; skipping push token registration');
-        return;
-    }
 
     const permission = await readPushPermission();
     if (!permission.ok) {
@@ -275,8 +294,8 @@ export async function registerPushTokenIfAvailable(params: {
             activeServerUrl = null;
         }
 
-        let didRegisterActiveServer = false;
         let didRegisterAnyServer = false;
+        let didRegisterActiveServer = false;
         for (const profile of profiles) {
             let serverCredentials: AuthCredentials | null = null;
             try {
@@ -287,6 +306,50 @@ export async function registerPushTokenIfAvailable(params: {
                 serverCredentials = null;
             }
             if (!serverCredentials) continue;
+
+            // Settings are Home-owned. Never apply the focused Home's setting to
+            // another profile. A missing response is an offline read: retain the
+            // local value for the focused Home, otherwise use the enabled product
+            // default and mark the registration provisional in the log.
+            let homeSettings: unknown = undefined;
+            let provisional = false;
+            const getHomeAccountSettings = params.getHomeAccountSettings;
+            if (getHomeAccountSettings) {
+                try {
+                    homeSettings = await getHomeAccountSettings(
+                        { id: profile.id, serverUrl: profile.serverUrl },
+                        serverCredentials,
+                    );
+                } catch {
+                    homeSettings = undefined;
+                }
+            }
+            if (homeSettings == null) {
+                const cached = lastKnownHomeNotificationSettings.get(profile.id);
+                if (cached !== undefined) {
+                    homeSettings = cached;
+                } else {
+                    const isFocusedHome = activeServerUrl !== null
+                        && normalizeServerUrl(profile.serverUrl) === activeServerUrl;
+                    homeSettings = isFocusedHome ? readAccountSettings() : {};
+                }
+                provisional = true;
+            } else if (typeof profile.id === 'string' && profile.id.trim()) {
+                lastKnownHomeNotificationSettings.set(profile.id, homeSettings);
+            }
+            if (!isExpoPushNotificationChannelEnabled(homeSettings)) {
+                log.log(`Push notifications disabled for Home ${profile.serverUrl}; skipping push token registration`);
+                // Best-effort removal prevents a previously registered device
+                // target from surviving a Home-level opt-out.
+                try {
+                    await deletePushTokenApi(serverCredentials, token, {
+                        apiEndpoint: profile.serverUrl,
+                    });
+                } catch {
+                    // A disabled/offline Home must not block other registrations.
+                }
+                continue;
+            }
 
             try {
                 await registerPushTokenApi(serverCredentials, token, {
@@ -299,19 +362,30 @@ export async function registerPushTokenIfAvailable(params: {
                 if (activeServerUrl && normalizeServerUrl(profile.serverUrl) === activeServerUrl) {
                     didRegisterActiveServer = true;
                 }
+                if (provisional) {
+                    log.log(`Push token registration provisional for Home ${profile.serverUrl}`);
+                }
             } catch (error) {
                 const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
                 log.log(`Failed to register push token for ${profile.serverUrl}: ${message}`);
             }
         }
 
-        // Back-compat: if the active server isn't included in profiles for some reason, still try the passed credentials.
-        if (!didRegisterActiveServer) {
-            await registerPushTokenApi(credentials, token, {
-                clientServerUrl: activeServerUrl ?? undefined,
-                retry: 'none',
-            });
-            didRegisterAnyServer = true;
+        // Preserve the legacy active-Home retry when its profile is not present
+        // (or its first attempt failed). The credentials argument is the focused
+        // Home's credential context supplied by Sync (Account Service credentials
+        // never enter this runtime path).
+        if (!didRegisterActiveServer && activeServerUrl) {
+            try {
+                await registerPushTokenApi(credentials, token, {
+                    clientServerUrl: activeServerUrl,
+                    retry: 'none',
+                });
+                didRegisterAnyServer = true;
+            } catch (error) {
+                const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+                log.log(`Failed to register push token for ${activeServerUrl}: ${message}`);
+            }
         }
 
         if (didRegisterAnyServer) {

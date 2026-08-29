@@ -115,4 +115,20 @@ describe('createConcurrentServerSocketTransport', () => {
         expect(socket.disconnect).toHaveBeenCalledTimes(1);
         expect(socket.connected).toBe(false);
     });
+
+    it('uses an Iroh runtime origin and forces websocket transport', async () => {
+        vi.resetModules();
+        const socket = createSocketStub();
+        const ioSpy = vi.fn(() => socket);
+        vi.doMock('socket.io-client', () => ({ io: ioSpy }));
+        vi.doMock('@/sync/runtime/socketIoTransports', () => ({ resolveSocketIoTransports: () => ['polling', 'websocket'] }));
+        const { createConcurrentServerSocketTransport } = await import('./createConcurrentServerSocketTransport');
+        createConcurrentServerSocketTransport({
+            serverUrl: 'https://home.example',
+            runtimeOrigin: 'http://127.0.0.1:4312/',
+            carrier: 'iroh',
+            token: 'token-a',
+        });
+        expect(ioSpy).toHaveBeenCalledWith('http://127.0.0.1:4312', expect.objectContaining({ transports: ['websocket'] }));
+    });
 });

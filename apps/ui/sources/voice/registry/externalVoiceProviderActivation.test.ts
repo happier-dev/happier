@@ -1006,6 +1006,92 @@ describe('external Voice provider activation', () => {
     }
   });
 
+  it('projects conditional credential requirements identically for bundled and external declarations', async () => {
+    const conditionalDeclaration = requireConversationDeclaration(PluginContributesV2Schema.parse({
+      voiceProviders: [{
+        ...declaration,
+        id: 'conditional-credential-parity',
+        credentials: {
+          slot: { id: 'api_key', purpose: 'voice.client-auth', title: 'API key' },
+          requirement: { kind: 'when_setting_equals', settingId: 'billingMode', value: 'byo' },
+          sources: [{
+            kind: 'savedSecret',
+            secretKinds: ['apiKey'],
+            rawGrants: [{
+              realm: 'web',
+              phase: 'connection',
+              request: {
+                kind: 'httpHeaders',
+                origin: 'https://voice.example.test',
+                headerNames: ['authorization'],
+              },
+            }],
+          }],
+        },
+        settings: {
+          schemaVersion: 1,
+          fields: [{
+            id: 'billingMode',
+            title: 'Billing mode',
+            schema: { type: 'string', enum: ['hosted', 'byo'] },
+            default: 'hosted',
+            presentation: {
+              control: 'select',
+              options: [
+                { value: 'hosted', title: 'Hosted' },
+                { value: 'byo', title: 'Bring your own key' },
+              ],
+            },
+          }],
+        },
+      }],
+    }).voiceProviders[0]!);
+    const pluginId = 'acme.conditional-parity';
+    const providerId = `${pluginId}/${conditionalDeclaration.id}`;
+    const bundled = createVoiceProviderRegistry({
+      bundledContributions: [{ pluginId, providerId, declaration: conditionalDeclaration }],
+      bundledPresentations: [{
+        providerId,
+        settingsSectionId: providerId,
+        selectionOptions: [
+          {
+            id: 'hosted', modeId: 'hosted', order: 10,
+            titleKey: 'Hosted', subtitleKey: 'Hosted', configPatch: { billingMode: 'hosted' },
+          },
+          {
+            id: 'byo', modeId: 'byo', order: 20,
+            titleKey: 'BYO', subtitleKey: 'BYO', configPatch: { billingMode: 'byo' },
+          },
+        ],
+      }],
+    });
+    const hostLease = createBundledConversationRuntimeHostLease();
+    const scope = createExternalVoiceProviderActivationScope({
+      pluginId,
+      declarations: [conditionalDeclaration],
+      hostPlatform: 'web',
+    });
+    onTestFinished(async () => {
+      await scope.unwind();
+      hostLease.revoke();
+    });
+    scope.api.voiceProviders.register(conditionalDeclaration.id, createProviderLeaf());
+    await scope.commit();
+    const external = createDefaultVoiceProviderRegistry().get(providerId);
+
+    expect(bundled.get(providerId)?.requirementsByMode).toEqual({ hosted: [], byo: ['credential'] });
+    expect(external?.requirementsByMode).toEqual({ default: [] });
+    expect(external?.requirements).toContain('credential');
+    expect(external?.projectSettings?.({
+      schemaVersion: 1,
+      config: { billingMode: 'hosted' },
+    })).toMatchObject({ requirements: [] });
+    expect(external?.projectSettings?.({
+      schemaVersion: 1,
+      config: { billingMode: 'byo' },
+    })).toMatchObject({ requirements: ['credential'] });
+  });
+
   it('projects only the one exact host-mediated credential slot and rejects mismatched declarations', async () => {
     const operation = {
       id: 'client-auth',

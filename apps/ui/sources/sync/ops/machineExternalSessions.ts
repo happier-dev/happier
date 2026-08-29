@@ -32,6 +32,7 @@ import {
     ExternalSessionTranscriptReadAfterResponseSchema,
     ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
     ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
+    shouldResyncExternalSessionTranscriptReadAfterV1,
     type ExternalSessionAttachRequest,
     type ExternalSessionAttachResponse,
     type ExternalSessionDetachRequest,
@@ -471,6 +472,32 @@ export async function machineExternalSessionTranscriptRefreshReadAfter(
         // The secure refresh contract never downgrades to transcript-bearing
         // released/predecessor RPC shapes.
         opts,
+    });
+}
+
+/**
+ * Applies the one Protocol read-after continuation decision to a released
+ * direct-session read-after response. Current daemons answer the released
+ * shape with additive rich facts (`hasMore`, bounded `diagnostics`); released
+ * daemons omit them, so this degrades to the released lossy semantics: a
+ * truncated response — and only that — forces the full resync refetch. The
+ * empty, non-advancing `ok` response is the released collapse of
+ * `already_current` and stays a clean no-op; a page without any continuation
+ * cursor counts as the shared decision's stalled read and resyncs.
+ */
+export function externalSessionTranscriptReadAfterRequiresResyncV1(
+    response: Extract<ExternalSessionTranscriptReadAfterResponse, { ok: true }>,
+    requestCursor: string,
+): boolean {
+    if (response.truncated === true) return true;
+    if (response.items.length === 0 && response.nextCursor === requestCursor) {
+        return false;
+    }
+    return shouldResyncExternalSessionTranscriptReadAfterV1({
+        requestCursor,
+        nextCursor: response.nextCursor ?? requestCursor,
+        hasMore: response.hasMore === true,
+        diagnostics: response.diagnostics,
     });
 }
 

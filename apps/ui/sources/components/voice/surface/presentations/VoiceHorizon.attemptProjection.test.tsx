@@ -159,6 +159,7 @@ describe('VoiceHorizon canonical attempt projection', () => {
             && typeof node.props?.onPress === 'function'
         ));
         expect(endControls).toHaveLength(1);
+        expect(endControls[0]!.props.accessibilityHint).toBe('Ends Voice');
         endControls[0]!.props.onPress();
         expect(attemptControl.onToggle).toHaveBeenCalledTimes(1);
 

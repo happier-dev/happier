@@ -41,6 +41,7 @@ const addListener = vi.fn((eventName: string, cb: (event: any) => void) => {
 });
 const start = vi.fn();
 const stop = vi.fn();
+const abortRecognition = vi.fn();
 const requestPermissionsAsync = vi.fn(async () => ({ granted: true }));
 const isRecognitionAvailable = vi.fn(() => true);
 const listeners: Record<string, (event: any) => void> = {};
@@ -50,6 +51,7 @@ vi.mock('expo-speech-recognition', () => ({
     addListener,
     start,
     stop,
+    abort: abortRecognition,
     requestPermissionsAsync,
     isRecognitionAvailable,
   },
@@ -191,6 +193,10 @@ describe('createDeviceSttController', () => {
   beforeEach(() => {
     platformOsMock.value = 'ios';
     webVadState.onSpeechEnd = null;
+    start.mockClear();
+    stop.mockClear();
+    abortRecognition.mockClear();
+    for (const key of Object.keys(listeners)) delete listeners[key];
     releaseAudioSession.mockReset();
     releaseAudioSession.mockResolvedValue(undefined);
     acquireAudioSession.mockReset();
@@ -244,10 +250,9 @@ describe('createDeviceSttController', () => {
     expect(sink.onFinal).toHaveBeenCalledWith('hello world');
   });
 
-  it('suppresses recognizer transcripts and endpointing while the canonical mic session is muted', async () => {
+  it('stops provider capture while muted and rearms it exactly once on unmute', async () => {
     const sink = createSink();
     const micSession = createMicSession();
-    vi.mocked(micSession.isMuted).mockReturnValue(true);
     const onEndpointSignal = vi.fn();
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({
@@ -256,13 +261,53 @@ describe('createDeviceSttController', () => {
     });
 
     await controller.start({ micSession, sink });
+    expect(start).toHaveBeenCalledTimes(1);
+
+    let muteSettled = false;
+    const mute = controller.setMuted(true).then(() => {
+      muteSettled = true;
+    });
+    await Promise.resolve();
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(muteSettled).toBe(false);
+
     listeners.result?.({ results: [{ transcript: 'muted partial' }], isFinal: false });
     listeners.result?.({ results: [{ transcript: 'muted final' }], isFinal: true });
 
     expect(sink.onPartial).not.toHaveBeenCalled();
     expect(sink.onFinal).not.toHaveBeenCalled();
+    expect(sink.onAudioStarted).not.toHaveBeenCalled();
     expect(sink.onEndpoint).not.toHaveBeenCalled();
     expect(onEndpointSignal).not.toHaveBeenCalled();
+
+    listeners.end?.({});
+    await mute;
+
+    await controller.setMuted(false);
+    expect(start).toHaveBeenCalledTimes(2);
+
+    await controller.setMuted(false);
+    expect(start).toHaveBeenCalledTimes(2);
+
+    listeners.result?.({ results: [{ transcript: 'heard after unmute' }], isFinal: true });
+    expect(sink.onFinal).toHaveBeenCalledWith('heard after unmute');
+  });
+
+  it('rejects mute when provider capture does not confirm it stopped', async () => {
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({
+      getSettings: () => baseSettings(false),
+      stopTimeoutMs: 0,
+    });
+
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
+
+    await expect(controller.setMuted(true)).rejects.toThrow('device_stt_mute_timeout');
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    await controller.stop();
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(abortRecognition).toHaveBeenCalledTimes(1);
   });
 
   it('emits runtime-owned heuristic endpoint signals for finalized device transcripts', async () => {
@@ -327,13 +372,17 @@ describe('createDeviceSttController', () => {
     });
 
     const micSession = createMicSession();
-    await controller.start({ micSession, sink: createSink() });
+    await controller.start({
+      capturePurpose: 'conversation',
+      micSession,
+      sink: createSink(),
+    });
     listeners.speechstart?.({});
     listeners.result?.({ results: [{ transcript: 'native vad backed transcript' }], isFinal: true });
 
     expect(acquireAudioSession).toHaveBeenCalledWith({
       ownerId: expect.stringMatching(/^device-stt:/),
-      mode: 'dictation', input: true, output: false, aec: 'off',
+      mode: 'conversation', input: true, output: false, aec: 'off',
       capture: 'provider_managed_exclusive',
     });
     expect(micSession.ensureActive).not.toHaveBeenCalled();

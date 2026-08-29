@@ -2,8 +2,10 @@ import {
   isConnectedServiceCredentialHealthStatusUsable,
   normalizeConnectedServiceCredentialHealthStatus,
   readBuiltInLegacyConnectedAccountServiceKeyIngress,
+  sameQualifiedConnectedAccountRef,
   type AccountProfile,
   type ConnectedServiceBindingsV1,
+  type QualifiedConnectedAccountPurposeBindingTargetV1,
 } from '@happier-dev/protocol';
 
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
@@ -21,6 +23,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 export function createConnectedServiceBindingAuthorityFingerprint(params: Readonly<{
   bindings: ConnectedServiceBindingsV1 | null;
   connectedServices: AccountProfile['connectedServicesV2'];
+  credentialRevisions?: AccountProfile['connectedServiceCredentialRevisionsV1'];
 }>): string {
   if (!params.bindings) return 'unbound';
 
@@ -33,6 +36,15 @@ export function createConnectedServiceBindingAuthorityFingerprint(params: Readon
     if (serviceKey && !servicesByQualifiedKey.has(serviceKey)) {
       servicesByQualifiedKey.set(serviceKey, service);
     }
+  }
+  const credentialRevisionsByQualifiedServiceAndProfile = new Map<string, string>();
+  for (const revision of params.credentialRevisions ?? []) {
+    const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(revision.serviceId);
+    if (!serviceKey) continue;
+    credentialRevisionsByQualifiedServiceAndProfile.set(
+      JSON.stringify([serviceKey, revision.profileId]),
+      revision.credentialRevision,
+    );
   }
   const authority = Object.entries(params.bindings.bindingsByServiceId)
     .sort(([left], [right]) => left.localeCompare(right))
@@ -49,6 +61,11 @@ export function createConnectedServiceBindingAuthorityFingerprint(params: Readon
           : null;
         return {
           profileId,
+          credentialRevision: profileId === null
+            ? null
+            : credentialRevisionsByQualifiedServiceAndProfile.get(
+                JSON.stringify([serviceId, profileId]),
+              ) ?? null,
           usable: profile !== null
             && isConnectedServiceCredentialHealthStatusUsable(
               normalizeConnectedServiceCredentialHealthStatus(profile.status),
@@ -79,4 +96,70 @@ export function createConnectedServiceBindingAuthorityFingerprint(params: Readon
     });
 
   return stableJsonStringify(authority);
+}
+
+/**
+ * Projects one selected Connected Account source through the same authority
+ * domain-owned V4 projection. The selected target is already owned by the
+ * qualified purpose binding; consumers retain only the authority-bearing
+ * fields of that exact account/group instead of fingerprinting every Account
+ * credential and presentation row.
+ */
+export function createConnectedAccountTargetAuthorityFingerprint(params: Readonly<{
+  target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
+  accounts: AccountProfile['connectedAccountsV4'];
+  groups: AccountProfile['connectedAccountGroupsV4'];
+}>): string {
+  if (!params.target) return 'unbound';
+  const projectAccount = (account: AccountProfile['connectedAccountsV4'][number] | null) => (
+    account === null
+      ? null
+      : {
+          ref: account.ref,
+          status: account.status,
+          authenticationModeId: account.authenticationModeId,
+          configurationReady: account.configurationReady,
+          configurationRevision: account.configurationRevision,
+          revisionSemantics: account.revisionSemantics,
+          credentialRevision: account.credentialRevision,
+          expiresAt: account.expiresAt ?? null,
+        }
+  );
+  if (params.target.kind === 'account') {
+    const targetAccount = params.target.account;
+    const account = params.accounts.find((candidate) => (
+      sameQualifiedConnectedAccountRef(candidate.ref, targetAccount)
+    )) ?? null;
+    return stableJsonStringify({ kind: 'account', account: projectAccount(account) });
+  }
+  const targetService = params.target.service;
+  const targetGroupId = params.target.groupId;
+  const group = params.groups.find((candidate) => (
+    candidate.ref.service.pluginId === targetService.pluginId
+    && candidate.ref.service.localId === targetService.localId
+    && candidate.ref.groupId === targetGroupId
+  )) ?? null;
+  const activeAccount = group?.activeConnectedAccountId
+    ? params.accounts.find((candidate) => (
+        candidate.ref.service.pluginId === targetService.pluginId
+        && candidate.ref.service.localId === targetService.localId
+        && candidate.ref.accountId === group.activeConnectedAccountId
+      )) ?? null
+    : null;
+  return stableJsonStringify({
+    kind: 'group',
+    group: group === null
+      ? null
+      : {
+          ref: group.ref,
+          incarnation: group.incarnation,
+          policy: group.policy,
+          activeConnectedAccountId: group.activeConnectedAccountId,
+          generation: group.generation,
+          runtimeStateRevision: group.runtimeStateRevision,
+          state: group.state,
+          members: group.members,
+        },
+    activeAccount: projectAccount(activeAccount),
+  });
 }

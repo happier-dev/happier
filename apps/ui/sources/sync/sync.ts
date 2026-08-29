@@ -425,6 +425,7 @@ import {
 import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
 import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
 import {
+    externalSessionTranscriptReadAfterRequiresResyncV1,
     machineExternalSessionTranscriptPage,
     machineExternalSessionTranscriptReadAfter,
     machineExternalSessionTranscriptRefreshReadAfter,
@@ -443,7 +444,7 @@ import {
 } from './engine/artifacts/syncArtifacts';
 import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
 import { fetchAndApplyFriends } from './engine/social/syncFriends';
-import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
+import { fetchAndApplyProfile, fetchHomeNotificationSettings, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
 import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines, type MachineDataKeyCacheEntry } from './engine/machines/syncMachines';
 import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './engine/automations/syncAutomations';
 import {
@@ -1474,11 +1475,7 @@ class Sync {
                       }
                       fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
                   };
-                  if (Platform.OS === 'web') {
-                      this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
-                  } else {
-                      teardownConnectivity();
-                  }
+                  this.userRequestLeaseOwner.deferRoutineTeardown(teardownConnectivity);
                   if (nextAppState === 'inactive') {
                       this.scheduleNativeInactiveCheckpoint();
                   } else {
@@ -7021,7 +7018,11 @@ class Sync {
                   return {
                       items: tail.items,
                       nextCursor: tail.nextCursor ?? null,
-                      truncated: tail.truncated === true,
+                      truncated:
+                          externalSessionTranscriptReadAfterRequiresResyncV1(
+                              tail,
+                              cursor,
+                          ),
                   };
               },
               onPageItems: applyOrStagePage,
@@ -7132,7 +7133,11 @@ class Sync {
                       return {
                           items: response.items,
                           nextCursor: response.nextCursor ?? null,
-                          truncated: response.truncated === true,
+                          truncated:
+                              externalSessionTranscriptReadAfterRequiresResyncV1(
+                                  response,
+                                  nextCursor,
+                              ),
                       };
                   },
                   onItems: async (page) => {
@@ -8239,7 +8244,11 @@ class Sync {
 
       private registerPushToken = async () => {
           log.log('registerPushToken');
-          await registerPushTokenIfAvailable({ credentials: this.credentials, log });
+          await registerPushTokenIfAvailable({
+              credentials: this.credentials,
+              log,
+              getHomeAccountSettings: fetchHomeNotificationSettings,
+          });
     }
 
     private subscribeToUpdates = () => {

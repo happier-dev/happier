@@ -78,7 +78,7 @@ afterEach(() => {
 });
 
 describe('registerPushTokenIfAvailable push policy', () => {
-    it('skips the notification runtime entirely when the account disabled Expo push', async () => {
+    it('skips registration when the Home disabled Expo push', async () => {
         const notifications = await notificationsMock();
         const { log } = collectLogs();
         const { registerPushTokenIfAvailable } = await import('./syncAccount');
@@ -89,10 +89,12 @@ describe('registerPushTokenIfAvailable push policy', () => {
             getAccountSettings: () => ({
                 attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: false } } },
             }),
+            getHomeAccountSettings: async () => ({
+                attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: false } } },
+            }),
         });
 
-        expect(notifications.getPermissionsAsync).not.toHaveBeenCalled();
-        expect(notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+        expect(notifications.getPermissionsAsync).toHaveBeenCalled();
         expect(mocks.registerPushToken).not.toHaveBeenCalled();
     });
 

@@ -58,6 +58,10 @@ import {
     createPluginSurfaceOpenSurfaceHandler,
     type PluginSurfaceOpenHandler,
 } from './openPluginSurface';
+import {
+    createPluginOpenConnectedAccountsHostApiHandler,
+    type PluginOpenConnectedAccountsHandler,
+} from './openPluginConnectedAccounts';
 import type { PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
 import type { PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 import type { PluginSurfaceOpenableContentBinding } from './pluginSurfaceOpenableContent';
@@ -299,6 +303,8 @@ export type BoundPluginSurfaceBinding = Readonly<{
     executeHostAction?: PluginSurfaceHostActionExecute;
     /** EU-5a: the placement's own destination selector. Absent → uninstalled. */
     openSurface?: PluginSurfaceOpenHandler;
+    /** Happier-owned semantic navigation to Connected Accounts. */
+    openConnectedAccounts?: PluginOpenConnectedAccountsHandler;
     /** Transport overrides for the daemon boundary (tests). */
     executeContributedAction?: PluginSurfaceContributedActionTransport;
     readResource?: PluginSurfaceResourceReadTransport;
@@ -602,11 +608,15 @@ function normalizeCurrentUiContextPublication(input: Readonly<{
 }
 
 /** The controller owns this Host API method; mounted bundles cannot bypass it. */
-function omitCurrentUiContextHostApiHandler(
+function omitControllerOwnedHostApiHandlers(
     handlers: PluginSurfaceHostApiHandlers | undefined,
 ): PluginSurfaceHostApiHandlers | undefined {
-    if (!handlers || handlers.publishCurrentUiContext === undefined) return handlers;
-    const { publishCurrentUiContext: _ignored, ...retained } = handlers;
+    if (!handlers) return handlers;
+    const {
+        publishCurrentUiContext: _ignoredCurrentUiContext,
+        openConnectedAccounts: _ignoredConnectedAccounts,
+        ...retained
+    } = handlers;
     return retained;
 }
 
@@ -684,6 +694,12 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         && accountLifetime?.isCurrent() === true
         && parentLifetime?.isCurrent() !== false;
     const binding = input.binding;
+    const openConnectedAccounts = binding?.openConnectedAccounts
+        ? createPluginOpenConnectedAccountsHostApiHandler(
+            binding.openConnectedAccounts,
+            isCurrent,
+        )
+        : undefined;
     const isOpenableContentViewer = binding?.openableContent !== undefined;
     if (!accountActiveAtConstruction || !parentActiveAtConstruction || !input.facts.interactionEnabled) {
         const hostApi = createPluginSurfaceHostApi({
@@ -708,8 +724,11 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                         binding.openSurface,
                         isCurrent,
                     ),
+                    ...(openConnectedAccounts ? { openConnectedAccounts } : {}),
                 }
-                : {},
+                : !isOpenableContentViewer && openConnectedAccounts
+                    ? { openConnectedAccounts }
+                    : {},
         });
         const dispatchAction = createBoundPluginSurfaceActionDispatcher({ surfaceContext, hostApi });
         const applyComposer = createBoundPluginSurfaceComposerApplyDispatcher({ surfaceContext, hostApi });
@@ -788,19 +807,18 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // A mounted bundle may contribute other semantic handlers, but only this
     // controller parses/qualifies `publishCurrentUiContext`. Dropping a legacy
     // supplied handler closes the otherwise competing publication path.
-    const bindingMountedHostApiHandlers = omitCurrentUiContextHostApiHandler(
+    const bindingMountedHostApiHandlers = omitControllerOwnedHostApiHandlers(
         binding?.mountedHostApiHandlers,
     );
-    const bundleMountedHostApiHandlers = omitCurrentUiContextHostApiHandler(
+    const bundleMountedHostApiHandlers = omitControllerOwnedHostApiHandlers(
         mountedHandlerBundle?.handlers,
     );
-    const mountedHostApiHandlers = mountedHandlerBundle
-        ? Object.freeze({
-            ...bindingMountedHostApiHandlers,
-            ...bundleMountedHostApiHandlers,
-            ...(publishCurrentUiContext ? { publishCurrentUiContext } : {}),
-        })
-        : bindingMountedHostApiHandlers;
+    const mountedHostApiHandlers = Object.freeze({
+        ...bindingMountedHostApiHandlers,
+        ...bundleMountedHostApiHandlers,
+        ...(publishCurrentUiContext ? { publishCurrentUiContext } : {}),
+        ...(openConnectedAccounts ? { openConnectedAccounts } : {}),
+    });
     const disposeMountedHostApiHandlers = mountedHandlerBundle
         ? () => {
             // Retire the exact current-UI record before arbitrary mounted
@@ -1118,6 +1136,7 @@ export function useBoundPluginSurfaceController(input: Readonly<{
             joinResourceScope(facts.resourceScope),
             binding?.executeHostAction,
             binding?.openSurface,
+            binding?.openConnectedAccounts,
             binding?.executeContributedAction,
             binding?.readResource,
             binding?.watchResource,

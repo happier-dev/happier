@@ -496,7 +496,7 @@ describe('realtime tool barrier', () => {
     expect(continueResponse).toHaveBeenCalledTimes(1);
   });
 
-  it('retains a completed mutating result across cancellation and redelivers it without rerunning the effect', async () => {
+  it('retains outcome_unknown when cancellation precedes mutation settlement and never retries the effect', async () => {
     let release!: (value: unknown) => void;
     const executeCall = vi.fn(async () => await new Promise((resolve) => { release = resolve; }));
     const submitResults = vi.fn(async () => undefined);
@@ -515,15 +515,22 @@ describe('realtime tool barrier', () => {
     const first = barrier.run({ ...input, signal: controller.signal });
     await vi.waitFor(() => expect(executeCall).toHaveBeenCalledTimes(1));
     controller.abort();
-    await expect(first).resolves.toEqual({ status: 'cancelled', results: [] });
+    await expect(first).resolves.toEqual({
+      status: 'cancelled',
+      results: [expect.objectContaining({
+        callId: 'mutation-1',
+        status: 'error',
+        errorCode: 'outcome_unknown',
+      })],
+    });
     release({ ok: true, receipt: 'receipt-1' });
 
     await expect(barrier.run(input)).resolves.toMatchObject({
       status: 'submitted',
       results: [expect.objectContaining({
         callId: 'mutation-1',
-        status: 'success',
-        output: { ok: true, receipt: 'receipt-1' },
+        status: 'error',
+        errorCode: 'outcome_unknown',
       })],
     });
     expect(executeCall).toHaveBeenCalledTimes(1);
@@ -600,6 +607,51 @@ describe('realtime tool barrier', () => {
       status: 'submitted',
       results: [expect.objectContaining({
         callId: 'external-1',
+        status: 'error',
+        errorCode: 'outcome_unknown',
+      })],
+    });
+    expect(executeCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports outcome_unknown when a timed-out mutation ignores abort and commits late', async () => {
+    let commitLate!: () => void;
+    let committed = false;
+    const executeCall = vi.fn(async () => await new Promise((resolve) => {
+      commitLate = () => {
+        committed = true;
+        resolve({ ok: true, receipt: 'late-mutation-receipt' });
+      };
+    }));
+    const submitResults = vi.fn(async () => undefined);
+    const barrier = createRealtimeToolBarrier({
+      timeoutMs: 10,
+      classifyCall: () => 'mutation',
+      authorizeCall: async () => ({ status: 'allowed' as const }),
+      executeCall,
+      redactResult: (value) => value,
+      submitResults,
+      continueResponse: async () => undefined,
+    });
+    const input = { responseId: 'response-1', calls: [call('late-mutation', 0)] };
+
+    await expect(barrier.run(input)).resolves.toMatchObject({
+      status: 'submitted',
+      results: [expect.objectContaining({
+        callId: 'late-mutation',
+        status: 'error',
+        errorCode: 'outcome_unknown',
+      })],
+    });
+    expect(committed).toBe(false);
+
+    commitLate();
+    await Promise.resolve();
+    expect(committed).toBe(true);
+    await expect(barrier.run(input)).resolves.toMatchObject({
+      status: 'submitted',
+      results: [expect.objectContaining({
+        callId: 'late-mutation',
         status: 'error',
         errorCode: 'outcome_unknown',
       })],

@@ -9,12 +9,15 @@ import {
     type ConnectedServiceId,
     type PluginContributionIdentityV1,
 } from '@happier-dev/protocol';
+import type { PluginUiOpenConnectedAccountsRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import {
     getGeneratedLegacyConnectedServiceRegistryFallback,
     type ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
 
+export const CONNECTED_ACCOUNTS_SETTINGS_ROUTE =
+    '/(app)/settings/connected-services' as const;
 export const CONNECTED_ACCOUNT_SETTINGS_ROUTE =
     '/(app)/settings/connected-services/account' as const;
 
@@ -136,6 +139,25 @@ export function buildConnectedAccountSettingsRoute(
                 : {}),
         },
     } as const;
+}
+
+/**
+ * Canonical semantic Host API request -> app route mapping.
+ *
+ * Plugin code can name only a service/account identity. This owner is the sole
+ * place that knows which internal Happier route renders Connected Accounts.
+ */
+export function buildConnectedAccountsSettingsRoute(
+    request: PluginUiOpenConnectedAccountsRequestV1,
+) {
+    return request.service === undefined
+        ? CONNECTED_ACCOUNTS_SETTINGS_ROUTE
+        : buildConnectedAccountSettingsRoute(
+            request.service,
+            request.accountId === undefined
+                ? null
+                : { kind: 'account', accountId: request.accountId },
+        );
 }
 
 export function resolveQualifiedConnectedAccountSettingsRoute(

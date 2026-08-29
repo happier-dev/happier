@@ -35,7 +35,9 @@ describe('localVoiceEngine capture admission', () => {
         });
 
         await stopLocalVoiceSession();
-        expect(voiceCaptureAdmissionController.acquire('dictation').status).toBe('acquired');
+        const recoveredDictation = voiceCaptureAdmissionController.acquire('dictation');
+        expect(recoveredDictation.status).toBe('acquired');
+        if (recoveredDictation.status === 'acquired') recoveredDictation.lease.release();
     });
 
     it.each([

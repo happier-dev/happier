@@ -134,7 +134,8 @@ export function projectVoiceSpeechCredentialReadiness(input: Readonly<{
     declaration,
     contribution,
     selection: selected.selection,
-  }).some((grant) => grant.realm === 'daemon' && grant.phase === 'speech');
+    access: { realm: 'daemon', phase: 'speech' },
+  }).length > 0;
   const rawAuthorization = input.rawAuthorization;
   if (selectedSourceHasRawSpeechGrant
     && rawAuthorization

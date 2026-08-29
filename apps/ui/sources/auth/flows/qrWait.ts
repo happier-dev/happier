@@ -3,14 +3,12 @@ import { QRAuthKeyPair } from './qrStart';
 import { decryptBox } from '@/encryption/libsodium';
 import { serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { delay } from '@/utils/timing/time';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-export interface AuthCredentials {
-    secret: Uint8Array;
-    token: string;
-}
+export type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean): Promise<AuthCredentials | null> {
     let dots = 0;
@@ -73,22 +71,69 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
                 }
 
                 if (data.serverIdentityId) {
-                    setServerProfileIdentityForUrl(getActiveServerSnapshot().serverUrl, data.serverIdentityId);
+                    // Direct QR responses predate HomeConnectionDescriptorV1 and only carry
+                    // the Home identity. Converge them through the canonical adoption owner by
+                    // binding that identity to the currently connected stable HTTPS origin.
+                    const active = getActiveServerSnapshot();
+                    const canonicalServerUrl = active.canonicalServerUrl ?? active.serverUrl;
+                    try {
+                        await adoptHomeProfile({
+                            descriptor: {
+                                v: 1,
+                                homeServerIdentityId: data.serverIdentityId,
+                                canonicalServerUrl,
+                                revision: 1,
+                                endpoints: [{ kind: 'https', url: canonicalServerUrl }],
+                            },
+                            source: 'qr',
+                            preserveUserLabel: true,
+                        });
+                    } catch {
+                        // Identity conflicts fail closed; do not return credentials for an
+                        // ambiguous Home association.
+                        return null;
+                    }
                 }
 
                 const encryptedResponse = decodeBase64(data.response);
-                
                 const decrypted = decryptBox(encryptedResponse, keypair.secretKey);
                 if (decrypted) {
-                    return {
-                        secret: decrypted,
-                        token: token
-                    };
+                    const text = new TextDecoder().decode(decrypted);
+                    try {
+                        const material = JSON.parse(text) as {
+                            type?: unknown;
+                            publicKey?: unknown;
+                            machineKey?: unknown;
+                        };
+                        if (material.type === 'tokenOnly') return { token };
+                        if (
+                            material.type === 'dataKey'
+                            && typeof material.publicKey === 'string'
+                            && typeof material.machineKey === 'string'
+                        ) {
+                            return {
+                                token,
+                                encryption: {
+                                    publicKey: material.publicKey,
+                                    machineKey: material.machineKey,
+                                },
+                            };
+                        }
+                    } catch {
+                        // Released V1 readers carry raw legacy secret bytes.
+                    }
+                    return { secret: encodeBase64(decrypted, 'base64url'), token };
                 }
                 return null;
             }
         } catch (error) {
-            return null;
+            // Polling is long-lived; transient transport failures must not discard
+            // an otherwise valid pairing. Malformed/cryptographically invalid
+            // responses remain terminal and fail closed.
+            const message = error instanceof Error ? error.message : String(error);
+            if (!/network|fetch|timeout|aborted|temporar|connection|\b5\d\d\b/i.test(message)) {
+                return null;
+            }
         }
 
         // Call progress callback if provided

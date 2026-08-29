@@ -202,13 +202,9 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 );
 
                 if (credentials && !isCancelledRef.current) {
-                    const secretString = encodeBase64(credentials.secret, 'base64url');
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>
-                            await auth.login(
-                                credentials.token,
-                                secretString,
-                            ),
+                            await auth.loginWithCredentials(credentials),
                         onCompleted: () => {
                             trackAccountRestored();
                             if (!isCancelledRef.current) {

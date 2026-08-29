@@ -12,7 +12,8 @@ describe('shouldAutoRedirectToSetupOnFirstLaunch', () => {
         expect(shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: 'web', isDesktopHost: false })).toBe(false);
     });
 
-    it('returns true in Tauri desktop webview', () => {
+    it('redirects Desktop first launch when the Desktop host is active', () => {
         expect(shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: 'web', isDesktopHost: true })).toBe(true);
+        expect(shouldAutoRedirectToSetupOnFirstLaunch({ platformOs: 'desktop', isDesktopHost: true })).toBe(true);
     });
 });

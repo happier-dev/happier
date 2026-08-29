@@ -171,6 +171,7 @@ export function resolveVoiceDictationReadiness(input: Readonly<{
     providerId,
     platform: input.platform,
     modeId: settingsProjection?.modeId ?? null,
+    settingsRequirements: settingsProjection?.requirements,
     localAvailability: input.localAvailability,
     facts: {
       settings: settingsProjection?.status ?? 'ready',

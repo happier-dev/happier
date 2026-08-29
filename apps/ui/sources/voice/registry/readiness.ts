@@ -146,6 +146,7 @@ type ResolveVoiceRoleReadinessInput = Readonly<{
   providerId: string | null;
   platform: VoiceRuntimePlatform | 'unknown';
   modeId?: string | null;
+  settingsRequirements?: readonly VoiceReadinessRequirement[];
   credentialSourceKind?: VoiceProviderCredentialSourceKind | null;
   localAvailability?: VoiceProviderLocalAvailability;
   passiveSetupUnavailable?: boolean;
@@ -179,11 +180,12 @@ function resolveVoiceRoleReadinessInternal(
     }
     return result(input.role, input.providerId, 'needs_setup', `settings_${input.facts.settings}`, 'open_provider_settings');
   }
-  const declaredRequirements = projectVoiceProviderRequirements(
-    entry,
-    input.modeId,
-    input.credentialSourceKind,
-  );
+  const declaredRequirements = input.settingsRequirements
+    ? input.credentialSourceKind === 'connectedAccount'
+      && !input.settingsRequirements.includes('execution_machine')
+      ? Object.freeze([...input.settingsRequirements, 'execution_machine' as const])
+      : input.settingsRequirements
+    : projectVoiceProviderRequirements(entry, input.modeId, input.credentialSourceKind);
   if (!declaredRequirements) {
     return result(input.role, input.providerId, 'needs_setup', 'provider_mode_unknown', 'open_provider_settings');
   }

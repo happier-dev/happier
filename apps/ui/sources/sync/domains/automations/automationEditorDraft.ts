@@ -69,7 +69,11 @@ export function shouldValidateAutomationEditorLifecycleTrigger(
     trigger: AutomationEditorTriggerDraft,
 ): boolean {
     return trigger.definition?.kind === 'sessionLifecycle'
-        && (trigger.persisted === null || trigger.isDirty === true);
+        // A disabled historical one-off trigger no longer needs a live source
+        // turn. New rows and enabled/re-enabled rows still require the exact
+        // current-turn proof; the server remains authoritative for all other
+        // source/target and revision invariants.
+        && (trigger.persisted === null || (trigger.isDirty === true && getAutomationEditorTriggerEnabled(trigger)));
 }
 
 /**

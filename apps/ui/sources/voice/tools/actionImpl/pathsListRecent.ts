@@ -1,7 +1,7 @@
 import { storage } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { readDisplayMachineIdForSession, readDisplayPathForSession } from '@/sync/ops/sessionMachineTarget';
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { resolveVoiceActionTargetSessionId, useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { buildSafeWorkspaceLabel, buildSafeWorkspaceLabels } from '@/utils/worktree/workspaceHandles';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -13,9 +13,12 @@ function resolveDefaultMachineId(state: any): string | null {
   const machines = Object.values(state?.machines ?? {}) as Array<{ id: string; replacedByMachineId?: string | null; replacedAt?: unknown }>;
   const sessionsObj = state?.sessions ?? {};
   const voiceTarget = useVoiceTargetStore.getState();
-  const candidates = [voiceTarget.primaryActionSessionId, voiceTarget.lastFocusedSessionId]
-    .map((v) => normalizeNonEmptyString(v))
-    .filter(Boolean) as string[];
+  const targetSessionId = resolveVoiceActionTargetSessionId({
+    scope: voiceTarget.scope,
+    primaryActionSessionId: voiceTarget.primaryActionSessionId,
+    lastFocusedSessionId: voiceTarget.lastFocusedSessionId,
+  });
+  const candidates = targetSessionId ? [targetSessionId] : [];
 
   for (const sid of candidates) {
     const s = sessionsObj?.[sid] ?? null;

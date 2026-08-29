@@ -13,6 +13,7 @@ const featureRuntimeState = vi.hoisted(() => ({
 }));
 const connectedAccountState = vi.hoisted(() => ({
   additionalAccounts: [] as Array<Record<string, unknown>>,
+  profileId: 'account-a' as string,
 }));
 const modalSpies = vi.hoisted(() => ({ show: vi.fn((_config: unknown) => 'purpose-target-modal'), hide: vi.fn() }));
 const localizationSpies = vi.hoisted(() => ({ resolve: vi.fn((_pluginId: string, value: string | { key: string; fallback: string }) => (
@@ -53,8 +54,10 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
+  useActiveServerAccountScope: () => ({ serverId: 'server-a', accountId: 'account-a' }),
   useLocalSetting: (key: string) => key === 'uiFontScale' ? 1 : 'comfortable',
   useProfile: () => ({
+    id: connectedAccountState.profileId,
     connectedAccountsV4: [{
       ref: {
         service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
@@ -114,6 +117,7 @@ afterEach(() => {
   featureRuntimeState.qualifiedAccounts = true;
   routeState.pathname = '/settings/providers/cpx-moving';
   connectedAccountState.additionalAccounts = [];
+  connectedAccountState.profileId = 'account-a';
   modalSpies.show.mockClear();
   modalSpies.hide.mockClear();
   localizationSpies.resolve.mockClear();
@@ -245,6 +249,52 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
     );
   });
 
+  it('keeps a saved qualified target loading until the Account profile is hydrated', async () => {
+    connectedAccountState.profileId = '';
+    const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
+    const selected = {
+      kind: 'account' as const,
+      account: {
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        accountId: '35f1d8ec-633c-4bda-9e0d-7055ac95b8af',
+      },
+    };
+    const screen = await renderScreen(<ConnectedAccountPurposeTargetChooser
+      testID="provider-connection-managed-purpose-chooser:hydrating"
+      localizedTextPluginId="acme.provider.author"
+      declaration={{
+        purpose: 'openai-upstream',
+        service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+        required: true,
+      }}
+      value={selected}
+      onChange={vi.fn()}
+    />);
+
+    const trigger = findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:hydrating');
+    expect(trigger?.props).toEqual(expect.objectContaining({
+      subtitle: 'Loading...',
+      detail: 'Loading...',
+    }));
+
+    connectedAccountState.profileId = 'account-a';
+    await act(async () => {
+      screen.tree.update(<ConnectedAccountPurposeTargetChooser
+        testID="provider-connection-managed-purpose-chooser:hydrating"
+        localizedTextPluginId="acme.provider.author"
+        declaration={{
+          purpose: 'openai-upstream',
+          service: { pluginId: 'acme.managed.provider', localId: 'gateway' },
+          required: true,
+        }}
+        value={selected}
+        onChange={vi.fn()}
+      />);
+    });
+    expect(findItemByTestId(screen, 'provider-connection-managed-purpose-chooser:hydrating')?.props.detail)
+      .toBe('Personal OpenAI');
+  });
+
   it('distinguishes legacy transport from a deleted target and required-unset prompt', async () => {
     featureRuntimeState.qualifiedAccounts = false;
     const { ConnectedAccountPurposeTargetChooser } = await import('./ConnectedAccountPurposeTargetChooser');
@@ -276,6 +326,7 @@ describe('ConnectedAccountPurposeTargetChooser', () => {
 
     featureRuntimeState.qualifiedAccounts = true;
     connectedAccountState.additionalAccounts = [];
+  connectedAccountState.profileId = 'account-a';
     await act(async () => {
       screen.tree.update(<ConnectedAccountPurposeTargetChooser
         testID="provider-connection-managed-purpose-chooser:legacy"

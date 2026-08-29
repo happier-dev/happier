@@ -137,6 +137,7 @@ function createObservableController(initialState: ApiTokenSettingsState) {
     let state = initialState;
     const listeners = new Set<() => void>();
     const refresh = vi.fn(async () => {});
+    const clearOperationFeedback = vi.fn();
     const controller: ApiTokenSettingsController = {
         getState: () => state,
         subscribe(listener) {
@@ -153,7 +154,7 @@ function createObservableController(initialState: ApiTokenSettingsState) {
         revokeToken: async () => true,
         revokeAllTokens: async () => 0,
         signOutEverywhere: async () => true,
-        clearOperationFeedback: () => {},
+        clearOperationFeedback,
         retire: () => {},
     };
     return {
@@ -164,6 +165,7 @@ function createObservableController(initialState: ApiTokenSettingsState) {
                 for (const listener of listeners) listener();
             }
         },
+        clearOperationFeedback,
     };
 }
 
@@ -708,5 +710,39 @@ describe('ApiTokensSettingsScreen', () => {
         });
 
         expect(runtime.announceAccessibilityMessage).toHaveBeenCalledWith('settingsApiTokens.notices.revoked');
+    });
+
+    it('clears operation feedback after its brief accessible display window', async () => {
+        vi.useFakeTimers();
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        const initialState: ApiTokenSettingsState = {
+            phase: 'ready', tokens: [], isRefreshing: false, listError: null,
+            createDraft: { label: '', expiryPreset: '90d' }, createPending: false,
+            createError: null, reveal: null, operation: null, operationTokenId: null,
+            operationError: null, operationNotice: 'revoked',
+        };
+        const observable = createObservableController(initialState);
+        await renderScreen(<ApiTokensSettingsScreen controller={observable.controller} />);
+
+        expect(runtime.announceAccessibilityMessage).toHaveBeenCalledWith('settingsApiTokens.notices.revoked');
+        expect(observable.clearOperationFeedback).not.toHaveBeenCalled();
+        await act(async () => { vi.advanceTimersByTime(5_000); });
+        expect(observable.clearOperationFeedback).toHaveBeenCalledTimes(1);
+    });
+
+    it('also clears operation errors after the same accessible display window', async () => {
+        vi.useFakeTimers();
+        const { ApiTokensSettingsScreen } = await import('./ApiTokensSettingsScreen');
+        const observable = createObservableController({
+            phase: 'ready', tokens: [], isRefreshing: false, listError: null,
+            createDraft: { label: '', expiryPreset: '90d' }, createPending: false,
+            createError: null, reveal: null, operation: null, operationTokenId: null,
+            operationError: 'invalid_request', operationNotice: null,
+        });
+        await renderScreen(<ApiTokensSettingsScreen controller={observable.controller} />);
+
+        expect(observable.clearOperationFeedback).not.toHaveBeenCalled();
+        await act(async () => { vi.advanceTimersByTime(5_000); });
+        expect(observable.clearOperationFeedback).toHaveBeenCalledTimes(1);
     });
 });

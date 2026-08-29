@@ -19,6 +19,7 @@ export type ApiTokenExpiryPreset = '30d' | '90d' | '1y' | 'none';
 export type ApiTokenSettingsErrorCode =
     | 'account_unavailable'
     | 'auth_unavailable'
+    | 'invalid_request'
     | 'invalid_response'
     | 'label_required'
     | 'network_error'
@@ -101,6 +102,7 @@ function normalizeActionErrorCode(errorCode: unknown): ApiTokenSettingsErrorCode
     switch (code) {
         case 'account_unavailable':
         case 'auth_unavailable':
+        case 'invalid_request':
         case 'invalid_response':
         case 'label_required':
         case 'network_error':

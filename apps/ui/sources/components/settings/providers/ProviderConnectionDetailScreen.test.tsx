@@ -155,9 +155,11 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 }));
 vi.mock('@/sync/store/hooks', () => ({
     useProfile: () => ({
+        id: 'account-a',
         connectedAccountsV4: connectedAccountProfileState.accounts,
         connectedAccountGroupsV4: connectedAccountProfileState.groups,
     }),
+    useActiveServerAccountScope: () => ({ serverId: 'srv_test', accountId: 'account-a' }),
     useSettings: () => ({ connectedServicesProfileLabelByKey: {} }),
     useLocalSetting: () => 'comfortable',
 }));
@@ -384,9 +386,9 @@ describe('ProviderConnectionDetailScreen', () => {
         administrationTarget.controller.select('machine-a', 'srv_b');
         state.connection = connection({
             credential: {
+                required: true,
                 accountBound: true,
                 boundMachineIds: ['machine-a'],
-                keyUrl: null,
             },
         });
 
@@ -592,7 +594,7 @@ describe('ProviderConnectionDetailScreen', () => {
 
         const updatedTestRow = screen.findAllByType('Item')
             .find((item) => item.props.title === 'settingsProviders.detail.testConnection');
-        expect(updatedTestRow?.props.subtitle).toBe('settingsProviders.errors.unreachableDescription');
+        expect(updatedTestRow?.props.subtitle).toBe('settingsProviders.errors.machineUnavailableDescription');
     });
 
     it('clears the previous machine probe result when the target machine changes', async () => {

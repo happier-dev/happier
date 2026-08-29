@@ -85,7 +85,7 @@ export type VoiceProviderCredentialReadinessContext = Readonly<{
   }>;
 }>;
 
-type VoiceProviderSelectionOption = Readonly<{
+export type VoiceProviderSelectionOption = Readonly<{
   id: string;
   modeId: string | null;
   order: number;
@@ -249,22 +249,18 @@ function isConfigPatchMatch(config: unknown, patch: unknown): boolean {
     .every(([key, value]) => isConfigPatchMatch(configRecord[key], value));
 }
 
-function projectBundledAccountCredentialSlot(
-  pluginId: string,
-  declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'conversation' }>>,
+export function projectVoiceProviderAccountCredentialSlot(
+  declaration: VoiceProviderContribution,
+  recipientContract: RecipientContractV1 | null,
 ): NonNullable<VoiceProviderRegistryEntry['accountCredentialSlot']> | null {
   const credentials = declaration.credentials;
   if (!credentials?.hostMediated
+    || !recipientContract
     || !credentials.sources.some((source) => (
       source.kind === 'savedSecret' && source.secretKinds.includes('apiKey')
     ))) return null;
   const slot = credentials.slot;
   if (credentials.hostMediated.operations.some((operation) => operation.credentialSlotId !== slot.id)) return null;
-  const recipientContract = createBundledVoiceRecipientContract({
-    pluginId,
-    declaration,
-  });
-  if (!recipientContract) return null;
   const normalizedRecipientContract = normalizeRecipientContractV1(recipientContract);
   if (normalizedRecipientContract.credentialSlot.id !== slot.id) return null;
   return Object.freeze({
@@ -294,6 +290,18 @@ function projectDeclaredSettingsReadiness(
     if (!isNonEmptySetting(config[requirement.settingId])) return 'missing_required_setting';
   }
   return 'ready';
+}
+
+function projectDeclaredSettingsRequirements(
+  declaration: VoiceProviderContribution,
+  config: Readonly<Record<string, unknown>>,
+): readonly VoiceReadinessRequirement[] | null {
+  const credentialRequirement = declaration.credentials?.requirement;
+  if (credentialRequirement?.kind !== 'when_setting_equals') return null;
+  const requirements = projectVoiceProviderDeclarationRequirements(declaration);
+  return config[credentialRequirement.settingId] === credentialRequirement.value
+    ? requirements
+    : Object.freeze(requirements.filter((requirement) => requirement !== 'credential'));
 }
 
 export function projectVoiceProviderDeclarationRequirements(
@@ -329,6 +337,48 @@ function deriveRequirementsByMode(
 }
 
 /**
+ * Shared declaration-backed registry facts. Provenance and executable leaves
+ * remain with their activation owners; manifest settings, readiness, and
+ * conditional credential requirements must not vary by bundled/external
+ * delivery.
+ */
+export function projectVoiceProviderDeclarationRegistryBase(input: Readonly<{
+  declaration: VoiceProviderContribution;
+  providerSettings: ExternalVoiceProviderSettingsDescriptor | null;
+  selectionOptions?: readonly VoiceProviderSelectionOption[];
+}>): Readonly<{
+  roles: readonly VoiceReadinessRole[];
+  requirements: readonly VoiceReadinessRequirement[];
+  requirementsByMode?: Readonly<Record<string, readonly VoiceReadinessRequirement[]>>;
+  supportedPlatforms: readonly VoiceRuntimePlatform[];
+  selectionOptions?: readonly VoiceProviderSelectionOption[];
+  providerSettings?: ExternalVoiceProviderSettingsDescriptor;
+  projectSettings?: (envelope: Readonly<{ schemaVersion: number; config: unknown }> | null) => VoiceProviderSettingsProjection;
+}> {
+  const selectionOptions = deepFreeze([...(input.selectionOptions ?? [])]);
+  const requirementsByMode = input.declaration.kind === 'conversation'
+    ? deriveRequirementsByMode(input.declaration, selectionOptions)
+    : undefined;
+  return deepFreeze({
+    roles: [...input.declaration.roles],
+    requirements: projectVoiceProviderDeclarationRequirements(input.declaration),
+    supportedPlatforms: [...input.declaration.platforms],
+    ...(selectionOptions.length > 0 ? { selectionOptions } : {}),
+    ...(requirementsByMode ? { requirementsByMode } : {}),
+    ...(input.providerSettings
+      ? {
+          providerSettings: input.providerSettings,
+          projectSettings: createDeclaredSettingsProjector(
+            input.declaration,
+            input.providerSettings,
+            selectionOptions,
+          ),
+        }
+      : {}),
+  });
+}
+
+/**
  * The one declaration-driven settings projector. Bundled and external
  * descriptors share it so a declared `settings.readiness` rule and the selected
  * mode are answered from the manifest, never from where the contribution came
@@ -348,12 +398,17 @@ export function createDeclaredSettingsProjector(
     const selectedMode = selectionOptions.find(
       (option) => option.configPatch && isConfigPatchMatch(parsedConfigObject.data, option.configPatch),
     )?.modeId ?? selectionOptions[0]?.modeId ?? projection.modeId;
+    const settingsRequirements = projectDeclaredSettingsRequirements(
+      declaration,
+      parsedConfigObject.data,
+    );
     return Object.freeze({
       ...projection,
       status: projection.status === 'ready'
         ? projectDeclaredSettingsReadiness(declaration, parsedConfigObject.data)
         : projection.status,
       modeId: selectedMode,
+      ...(settingsRequirements ? { requirements: settingsRequirements } : {}),
     });
   };
 }
@@ -396,36 +451,28 @@ function normalizeBundledContribution(
   const selectionOptions = declaration.kind === 'conversation'
     ? deepFreeze([...(presentation.selectionOptions ?? [])])
     : Object.freeze([]);
-  const requirements = projectVoiceProviderDeclarationRequirements(declaration);
+  const declarationBase = projectVoiceProviderDeclarationRegistryBase({
+    declaration,
+    providerSettings,
+    selectionOptions,
+  });
+  const accountCredentialSlot = projectVoiceProviderAccountCredentialSlot(
+    declaration,
+    createBundledVoiceRecipientContract({ pluginId: raw.pluginId, declaration }),
+  );
   const common = {
     pluginId: raw.pluginId,
     providerId,
     settingsSectionId: presentation.settingsSectionId,
-    roles: deepFreeze([...declaration.roles]),
-    requirements,
-    supportedPlatforms: deepFreeze([...declaration.platforms]),
-    ...(selectionOptions.length > 0 ? { selectionOptions } : {}),
-    ...(providerSettings
-      ? {
-          providerSettings,
-          projectSettings: createDeclaredSettingsProjector(
-            declaration,
-            providerSettings,
-            selectionOptions,
-          ),
-        }
-      : {}),
+    ...declarationBase,
+    ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
     declaration,
     source: Object.freeze({ kind: 'bundled' as const, pluginId: raw.pluginId }),
   };
   if (declaration.kind === 'conversation') {
-    const requirementsByMode = deriveRequirementsByMode(declaration, selectionOptions);
-    const accountCredentialSlot = projectBundledAccountCredentialSlot(raw.pluginId, declaration);
     return deepFreeze({
       kind: 'voice.conversation-provider.v1' as const,
       ...common,
-      ...(requirementsByMode ? { requirementsByMode } : {}),
-      ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
       presentation,
     }) as VoiceProviderRegistryEntry;
   }

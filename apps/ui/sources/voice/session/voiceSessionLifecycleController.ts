@@ -146,11 +146,13 @@ function requiresCurrentUiContextToolSetReplacement(adapter: VoiceAdapterControl
 
 export function createVoiceSessionLifecycleController(deps?: Readonly<{
     captureAdmission?: VoiceCaptureAdmissionController;
+    acquireConnectivityLease?: () => () => void;
     getRegistry?: () => ReturnType<typeof getVoiceAdapterRegistry>;
 }>): VoiceSessionLifecycleController {
     const getRegistry = deps?.getRegistry ?? getVoiceAdapterRegistry;
     const captureAdmissionOwner =
         deps?.captureAdmission ?? voiceCaptureAdmissionController;
+    const acquireConnectivityLease = deps?.acquireConnectivityLease ?? (() => () => {});
     let configuredProviderId: VoiceAdapterId | 'off' | null = null;
     let currentUiContextToolSetEnabled: boolean | null = null;
     let unavailableConfiguredProvider: UnavailableConfiguredProvider | null = null;
@@ -163,6 +165,11 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         adapterId: string;
         sessionId: string;
         lease: VoiceCaptureAdmissionLease;
+    }> | null = null;
+    let attemptConnectivityLease: Readonly<{
+        adapter: VoiceAdapterController;
+        sessionId: string;
+        release: () => void;
     }> | null = null;
     let retiredAttemptStopStarted = false;
     let muteAttemptOwner: MuteAttemptOwner | null = null;
@@ -186,6 +193,32 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         if (!disposed) {
             refreshAdapterSubscriptions();
         }
+    };
+
+    const releaseAttemptConnectivityLease = (match?: Readonly<{
+        adapter?: VoiceAdapterController;
+        sessionId?: string;
+    }>): void => {
+        const lease = attemptConnectivityLease;
+        if (!lease) return;
+        if (match?.adapter && match.adapter !== lease.adapter) return;
+        if (match?.sessionId && match.sessionId !== lease.sessionId) return;
+        attemptConnectivityLease = null;
+        lease.release();
+    };
+
+    const ensureAttemptConnectivityLease = (
+        adapter: VoiceAdapterController,
+        sessionId: string,
+    ): void => {
+        const current = attemptConnectivityLease;
+        if (current?.adapter === adapter && current.sessionId === sessionId) return;
+        releaseAttemptConnectivityLease();
+        attemptConnectivityLease = {
+            adapter,
+            sessionId,
+            release: acquireConnectivityLease(),
+        };
     };
 
     /*
@@ -226,6 +259,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         startAttempt = createStartingAdapter(adapter, sessionId),
     ): Promise<void> => {
         if (adapter.engineKind !== 'realtime') {
+            ensureAttemptConnectivityLease(adapter, sessionId);
             startingAdapter = startAttempt;
             try {
                 await adapter.start({ sessionId });
@@ -236,6 +270,12 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     // cannot regain media or tool authority.
                     await stopAdapter(adapter, sessionId);
                 }
+                if (adapter.getSnapshot().status === 'disconnected') {
+                    releaseAttemptConnectivityLease({ adapter, sessionId });
+                }
+            } catch (error) {
+                releaseAttemptConnectivityLease({ adapter, sessionId });
+                throw error;
             } finally {
                 if (startingAdapter === startAttempt) {
                     startingAdapter = null;
@@ -259,6 +299,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             recordVoiceRuntimeFailure(adapter.id, 'unstarted', 'capture_busy', busy.code);
             throw busy;
         }
+        ensureAttemptConnectivityLease(adapter, sessionId);
         realtimeCaptureAdmission = {
             adapter,
             adapterId: adapter.id,
@@ -278,12 +319,14 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     adapterId: adapter.id,
                     sessionId,
                 });
+                releaseAttemptConnectivityLease({ adapter, sessionId });
             }
         } catch (error) {
             releaseRealtimeCaptureAdmission({
                 adapterId: adapter.id,
                 sessionId,
             });
+            releaseAttemptConnectivityLease({ adapter, sessionId });
             throw error;
         } finally {
             if (startingAdapter === startAttempt) {
@@ -310,6 +353,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     adapterId: adapter.id,
                     sessionId,
                 });
+                releaseAttemptConnectivityLease({ adapter, sessionId });
             }
         })();
         adapterStopPromises.set(stopKey, stop);
@@ -622,6 +666,13 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             // admitted attempt. A later attempt, even through the same adapter
             // and control-session id, starts from its own runtime snapshot.
             muteAttemptOwner = null;
+            // A Start owns connectivity before the adapter has an active
+            // snapshot. Initial/retiring snapshot emissions during that
+            // interval must not tear the lease out from under the pending
+            // provider watch. Start failure/settlement owns that release.
+            if (!startingAdapter) {
+                releaseAttemptConnectivityLease();
+            }
         }
         const startAttempt = startingAdapter;
         if (
@@ -887,6 +938,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             const disposal = (async () => {
                 if (disposalTargets.size === 0) {
                     releaseRealtimeCaptureAdmission();
+                    releaseAttemptConnectivityLease();
                     return;
                 }
                 await Promise.allSettled(
@@ -895,6 +947,7 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                     ),
                 );
                 releaseRealtimeCaptureAdmission();
+                releaseAttemptConnectivityLease();
             })();
             disposePromise = disposal;
             return disposal;

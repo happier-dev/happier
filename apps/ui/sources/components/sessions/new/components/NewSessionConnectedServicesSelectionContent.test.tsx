@@ -56,7 +56,7 @@ describe('NewSessionConnectedServicesSelectionContent', () => {
         const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
         await renderScreen(<NewSessionConnectedServicesSelectionContent
-            supportedServiceIds={['codex' as never]}
+            supportedServiceIds={['happier.agent.codex/openai-codex']}
             profileOptionsByServiceId={{}}
             groupOptionsByServiceId={{}}
             bindingsByServiceId={{}}
@@ -68,15 +68,15 @@ describe('NewSessionConnectedServicesSelectionContent', () => {
         expect(capturedSelectionLists[0]?.heightBehavior).toBe('measuredToMaxHeight');
     });
 
-    it('uses cache-only quota badges for picker rows', async () => {
+    it('keeps a novel qualified service key intact for cache-only quota rows', async () => {
         capturedSelectionLists.length = 0;
         useConnectedServiceQuotaBadgesMock.mockClear();
         const { NewSessionConnectedServicesSelectionContent } = await import('./NewSessionConnectedServicesSelectionContent');
 
         await renderScreen(<NewSessionConnectedServicesSelectionContent
-            supportedServiceIds={['openai-codex' as never]}
+            supportedServiceIds={['acme.review/reviewer-service']}
             profileOptionsByServiceId={{
-                'openai-codex': [{
+                'acme.review/reviewer-service': [{
                     profileId: 'work',
                     status: 'connected',
                     providerEmail: 'work@example.com',
@@ -90,7 +90,7 @@ describe('NewSessionConnectedServicesSelectionContent', () => {
         />);
 
         expect(useConnectedServiceQuotaBadgesMock).toHaveBeenCalledWith(
-            [{ serviceId: 'openai-codex', profileId: 'work' }],
+            [{ serviceId: 'acme.review/reviewer-service', profileId: 'work' }],
             { fetchPolicy: 'cache_only' },
         );
     });

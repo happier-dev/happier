@@ -291,7 +291,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
       const effectClass = deps.classifyCall?.(call) ?? 'read_only';
       const executeAndRedact = async (): Promise<VoiceRealtimeToolResultV1> => {
         try {
-          const rawResult = effectClass === 'external'
+          const rawResult = effectClass !== 'read_only'
             ? await raceWithAbort(() => deps.executeCall(call, controller.signal), controller.signal)
             : await deps.executeCall(call, controller.signal);
           let redacted: VoiceRealtimeJsonValue;
@@ -361,7 +361,7 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
         if (effectOutcome?.result) {
           return projectResultToCall(effectOutcome.result, call);
         }
-        if (effectClass === 'external' && effectOutcome && (responseSignal.aborted || timedOut)) {
+        if (effectClass !== 'read_only' && effectOutcome && (responseSignal.aborted || timedOut)) {
           return projectResultToCall(await effectOutcome.promise, call);
         }
         throw error;

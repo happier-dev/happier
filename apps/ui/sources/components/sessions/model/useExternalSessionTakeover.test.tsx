@@ -564,6 +564,86 @@ describe('useExternalSessionTakeover', () => {
     await harness.unmount();
   });
 
+  it('reports a post-confirmation status refresh that returns no status instead of closing silently', async () => {
+    // Preflight succeeds, the user confirms a mode and directory, then the
+    // fail-closed re-read inside requestTakeover returns typed null. A silent
+    // `false` would read as a dead button after an explicit choice.
+    const refreshNow = vi.fn()
+      .mockResolvedValueOnce(status)
+      .mockResolvedValueOnce(null);
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: TARGET_DIRECTORY,
+    });
+    const harness = await renderHarness({ externalSessionLink, status: null, refreshNow, sessionServerId: 'server-owned' });
+
+    let ready = true;
+    await act(async () => {
+      ready = await harness.getCurrent().requestTakeoverPreflight();
+    });
+
+    expect(ready).toBe(false);
+    expect(refreshNow).toHaveBeenCalledTimes(2);
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'chatFooter.externalSessionStatusUnavailable',
+    );
+    await harness.unmount();
+  });
+
+  it('reports a post-confirmation status refresh that throws without leaking the read error', async () => {
+    const refreshNow = vi.fn()
+      .mockResolvedValueOnce(status)
+      .mockRejectedValueOnce(new Error('socket closed during revalidation'));
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: TARGET_DIRECTORY,
+    });
+    const harness = await renderHarness({ externalSessionLink, status: null, refreshNow, sessionServerId: 'server-owned' });
+
+    let ready = true;
+    await act(async () => {
+      ready = await harness.getCurrent().requestTakeoverPreflight();
+    });
+
+    expect(ready).toBe(false);
+    expect(refreshNow).toHaveBeenCalledTimes(2);
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'chatFooter.externalSessionStatusUnavailable',
+    );
+    await harness.unmount();
+  });
+
+  it('keeps a post-confirmation refresh failure silent once the Account or link is no longer current', async () => {
+    const refreshNow = vi.fn()
+      .mockResolvedValueOnce(status)
+      .mockImplementationOnce(async () => {
+        // The Account retires while the fail-closed re-read is in flight.
+        activeAccountIsCurrent = false;
+        return null;
+      });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({
+      action: 'direct',
+      targetDirectory: TARGET_DIRECTORY,
+    });
+    const harness = await renderHarness({ externalSessionLink, status: null, refreshNow, sessionServerId: 'server-owned' });
+
+    await act(async () => {
+      await harness.getCurrent().requestTakeoverPreflight();
+    });
+
+    expect(refreshNow).toHaveBeenCalledTimes(2);
+    expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
+    expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    await harness.unmount();
+  });
+
   it('drops a stale explicit preflight when the linked external session changes', async () => {
     const firstRefresh = createDeferred<NonNullable<ExternalSessionRuntimeLike['status']>>();
     const firstRuntime = {

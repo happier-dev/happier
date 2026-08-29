@@ -24,7 +24,6 @@ import {
 import { t, tLoose } from '@/text';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import type { VoiceProviderRegistry } from '@/voice/registry/providerRegistry';
-import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
 import {
   runVoiceTranscriptHistoryCarrierOperation,
 } from '@/voice/persistence/voiceTranscriptHistorySession';
@@ -184,7 +183,6 @@ export type DefaultVoiceHistoryRuntime = Readonly<{
     sessionId: string,
     authority: ServerAccountSessionRequestAuthority,
   ): Promise<SessionDeleteResult>;
-  canDeleteSession(sessionId: string): boolean;
   retireLocalSession(sessionId: string): void;
 }>;
 
@@ -255,18 +253,10 @@ export function createDefaultVoiceHistoryConsumerFromRuntime(
     },
     deleteSession: (sessionId, scope) =>
       runtime.deleteSession(sessionId, scope.authority),
-    canDeleteSession: runtime.canDeleteSession,
     retireLocalSession: runtime.retireLocalSession,
     runCarrierOperation: runVoiceTranscriptHistoryCarrierOperation,
     now: () => new Date(),
   });
-}
-
-export function canDeleteVoiceHistorySession(sessionId: string): boolean {
-  const binding =
-    voiceSessionBindingStore.getState().getByConversationSessionId(sessionId);
-  return binding?.lifetime !== 'runtime_attempt'
-    || binding.targetSessionId !== null;
 }
 
 export function createDefaultVoiceHistoryConsumer() {
@@ -319,7 +309,6 @@ export function createDefaultVoiceHistoryConsumer() {
     // unrelated session's write costs a revision comparison and stops there.
     subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
     deleteSession: sessionDeleteWithServerAccountAuthority,
-    canDeleteSession: canDeleteVoiceHistorySession,
     retireLocalSession: (sessionId) => sync.retireLocalSession(sessionId),
   };
   return createDefaultVoiceHistoryConsumerFromRuntime(runtime, providerRegistry);

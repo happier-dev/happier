@@ -14,8 +14,10 @@ import { ServerGroupsSection } from '@/components/settings/server/sections/Serve
 import { ServerRetentionSection } from '@/components/settings/server/sections/ServerRetentionSection';
 import { RelayDriftActionCard } from '@/components/settings/server/RelayDriftActionCard';
 import { LocalRelayRuntimeControlSection } from '@/components/settings/server/localControl/LocalRelayRuntimeControlSection';
+import { PersonalHomeRuntimeControlSection } from '@/components/settings/server/localControl/PersonalHomeRuntimeControlSection';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { resolveKnownLocalRelayUrl } from '@/sync/domains/server/url/resolveKnownLocalRelayUrl';
+import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { useServerSettingsScreenController } from '@/components/settings/server/hooks/useServerSettingsScreenController';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
@@ -55,6 +57,13 @@ export function ServerSettingsScreen() {
         activeServerUrl: controller.activeServerUrl,
         activeLocalRelayUrl: controller.activeLocalRelayUrl,
     }), [controller.activeLocalRelayUrl, controller.activeServerUrl]);
+    const activeProfile = React.useMemo(
+        () => controller.servers.find((profile) => (
+            profile.id === controller.activeServerId
+            || resolveServerProfileScopeId(profile) === controller.activeServerId
+        )) ?? null,
+        [controller.activeServerId, controller.servers],
+    );
     const handleLocalRelayStatusChange = React.useCallback((status: Readonly<{ relayUrl: string }> | null | undefined) => {
         const nextRelayUrl = typeof status?.relayUrl === 'string' && status.relayUrl.trim().length > 0
             ? status.relayUrl.trim()
@@ -115,9 +124,20 @@ export function ServerSettingsScreen() {
 
                     {isDesktop && setupPolicy.relay.allowLocalRelayHost ? (
                         <>
-                            <LocalRelayRuntimeControlSection
-                                onStatusChange={handleLocalRelayStatusChange}
-                            />
+                            {activeProfile?.source === 'desktop-personal-home' ? (
+                                <PersonalHomeRuntimeControlSection
+                                    onStatusChange={handleLocalRelayStatusChange}
+                                    operations={{
+                                        // Profile removal is the existing settings/profile owner;
+                                        // runtime uninstall and data erase are supplied by Lane 07.
+                                        removeProfile: async () => {
+                                            await controller.onRemoveServer(activeProfile);
+                                        },
+                                    }}
+                                />
+                            ) : (
+                                <LocalRelayRuntimeControlSection onStatusChange={handleLocalRelayStatusChange} />
+                            )}
                             <LocalRelayAccessControlSection upstreamUrl={localRelayUrl ?? knownLocalRelayUrl} />
                         </>
                     ) : isWeb ? null : (

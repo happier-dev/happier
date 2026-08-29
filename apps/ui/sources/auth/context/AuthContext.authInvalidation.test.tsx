@@ -13,6 +13,8 @@ const switchConnectionToActiveServerSpy = vi.hoisted(() => vi.fn(async () => nul
 const syncSwitchServerSpy = vi.hoisted(() => vi.fn(async () => {}));
 const subscribeActiveServerSpy = vi.hoisted(() => vi.fn());
 const subscribeAuthCredentialsInvalidationSpy = vi.hoisted(() => vi.fn());
+const startConcurrentSessionCacheSyncSpy = vi.hoisted(() => vi.fn());
+const stopConcurrentSessionCacheSyncSpy = vi.hoisted(() => vi.fn());
 
 let authInvalidationListener: ((event: unknown) => void | Promise<void>) | null = null;
 
@@ -57,8 +59,8 @@ vi.mock('@/track', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/concurrentSessionCache', () => ({
-    startConcurrentSessionCacheSync: vi.fn(),
-    stopConcurrentSessionCacheSync: vi.fn(),
+    startConcurrentSessionCacheSync: startConcurrentSessionCacheSyncSpy,
+    stopConcurrentSessionCacheSync: stopConcurrentSessionCacheSyncSpy,
 }));
 
 describe('AuthContext credential invalidation handling', () => {
@@ -68,6 +70,8 @@ describe('AuthContext credential invalidation handling', () => {
         syncSwitchServerSpy.mockReset();
         subscribeActiveServerSpy.mockReset();
         subscribeAuthCredentialsInvalidationSpy.mockReset();
+        startConcurrentSessionCacheSyncSpy.mockReset();
+        stopConcurrentSessionCacheSyncSpy.mockReset();
         authInvalidationListener = null;
     });
 
@@ -75,7 +79,7 @@ describe('AuthContext credential invalidation handling', () => {
         vi.unstubAllGlobals();
     });
 
-    it('refreshes auth and disconnects sync when active-server credentials are invalidated', async () => {
+    it('refreshes focused auth without stopping secondary-server cache continuity', async () => {
         const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
 
         const screen = await renderScreen(
@@ -87,6 +91,7 @@ describe('AuthContext credential invalidation handling', () => {
 
         try {
             expect(getCurrentAuth()?.isAuthenticated).toBe(true);
+            expect(startConcurrentSessionCacheSyncSpy).toHaveBeenCalledTimes(1);
             expect(subscribeAuthCredentialsInvalidationSpy).toHaveBeenCalledTimes(1);
             expect(authInvalidationListener).toBeTypeOf('function');
 
@@ -103,8 +108,10 @@ describe('AuthContext credential invalidation handling', () => {
                 expect(syncSwitchServerSpy).toHaveBeenCalledWith(null);
                 expect(getCurrentAuth()?.isAuthenticated).toBe(false);
             });
+            expect(stopConcurrentSessionCacheSyncSpy).not.toHaveBeenCalled();
         } finally {
             await screen.unmount();
         }
+        expect(stopConcurrentSessionCacheSyncSpy).toHaveBeenCalledTimes(1);
     });
 });

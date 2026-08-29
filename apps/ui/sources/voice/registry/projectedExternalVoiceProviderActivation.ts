@@ -1,6 +1,7 @@
 import {
   buildQualifiedPluginContributionKey,
   createPluginContributionIdentity,
+  type RecipientContractV1,
   type PluginContributionClientPlatform,
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
@@ -35,12 +36,12 @@ import {
   replaceExternalVoiceProviderProjectionAuthority,
 } from './externalVoiceProviderRegistrations';
 import {
-  projectVoiceProviderDeclarationRequirements,
+  projectVoiceProviderAccountCredentialSlot,
+  projectVoiceProviderDeclarationRegistryBase,
   type VoiceProviderRegistryEntry,
 } from './providerRegistry';
 import {
   createExternalVoiceProviderSettingsDescriptor,
-  projectExternalVoiceProviderSettings,
 } from '@/voice/settings/externalProviderSettings';
 import { bundledSpeechDaemonClient } from '@/voice/credentials/bundledSpeechClient';
 import type { VoiceProviderPresentation, VoiceSpeechSettingsPresentation } from './voiceProviderPresentation';
@@ -57,6 +58,7 @@ function localizedText(
 function projectExternalSpeechDescriptor(input: Readonly<{
   pluginId: string;
   declaration: Extract<VoiceProviderContribution, Readonly<{ kind: 'speech' }>>;
+  recipientContract: RecipientContractV1 | null;
 }>): VoiceProviderRegistryEntry {
   const { declaration } = input;
   const providerId = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
@@ -64,7 +66,14 @@ function projectExternalSpeechDescriptor(input: Readonly<{
     localId: declaration.id,
   }));
   const providerSettings = createExternalVoiceProviderSettingsDescriptor(declaration.settings);
-  const requirements = projectVoiceProviderDeclarationRequirements(declaration);
+  const declarationBase = projectVoiceProviderDeclarationRegistryBase({
+    declaration,
+    providerSettings,
+  });
+  const accountCredentialSlot = projectVoiceProviderAccountCredentialSlot(
+    declaration,
+    input.recipientContract,
+  );
   const hasStt = declaration.roles.some((role) => role.endsWith('_stt'));
   const hasTts = declaration.roles.some((role) => role.endsWith('_tts'));
   const speechPresentation: VoiceSpeechSettingsPresentation = Object.freeze({
@@ -105,16 +114,13 @@ function projectExternalSpeechDescriptor(input: Readonly<{
     pluginId: input.pluginId,
     providerId,
     settingsSectionId: providerId,
-    roles: Object.freeze([...declaration.roles]),
-    requirements: Object.freeze(requirements),
-    supportedPlatforms: Object.freeze([...declaration.platforms]),
+    ...declarationBase,
     role: hasStt && hasTts ? 'both' : hasTts ? 'tts' : 'stt',
     declaration,
     catalogs: declaration.catalogs,
     limits: declaration.limits,
     presentation,
-    providerSettings,
-    projectSettings: (envelope) => projectExternalVoiceProviderSettings(envelope, providerSettings),
+    ...(accountCredentialSlot ? { accountCredentialSlot } : {}),
     source: Object.freeze({
       kind: 'external' as const,
       pluginId: input.pluginId,
@@ -172,7 +178,11 @@ function reconcileProjectedExternalSpeechProviders(input: Readonly<{
       ) {
         continue;
       }
-      const descriptor = projectExternalSpeechDescriptor({ pluginId: entry.pluginId, declaration });
+      const descriptor = projectExternalSpeechDescriptor({
+        pluginId: entry.pluginId,
+        declaration,
+        recipientContract: entry.recipientContract ?? null,
+      });
       if (descriptor.providerId !== entry.id) continue;
       commitExternalVoiceProviderRegistration(Object.freeze({
         token,

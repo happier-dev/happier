@@ -149,6 +149,12 @@ async function loadClient(options: ClientHarnessOptions = {}) {
                 for (const callback of [...retireCallbacks]) callback();
             }
             if (options.advanceServerGenerationDuringDataRequest) generation += 1;
+            if (!options.responseForDataPath && path === '/v1/plugins/data/get') {
+                return new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                });
+            }
             return options.responseForDataPath?.(path, init) ?? new Response(JSON.stringify({
                 status: 'updated',
                 results: [{ rowId: 'channel-1', revision: 2, deleted: false }],
@@ -575,7 +581,12 @@ describe('active Account Collection direct client', () => {
 
     it('serializes a live-row batch assertion without giving the UI adapter a write path', async () => {
         const harness = await loadClient({
-            responseForDataPath: () => new Response(JSON.stringify({
+            responseForDataPath: (path) => path === '/v1/plugins/data/get'
+                ? new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(JSON.stringify({
                 status: 'updated',
                 results: [{ rowId: 'channel-written', revision: 1, deleted: false }],
                 changeCursor: 20,
@@ -610,10 +621,119 @@ describe('active Account Collection direct client', () => {
                 kind: 'put',
                 rowId: 'channel-written',
                 expectedRevision: 'absent',
+                expectedAbsenceEpoch: 0,
                 projection: { status: 'enabled', title: 'Writes only this row' },
                 content: { t: 'plain', v: { privateNote: 'leave assertion row unchanged' } },
             },
         ]);
+    });
+
+    it('refreshes the Collection absence epoch after an unrelated concurrent forget', async () => {
+        let getCalls = 0;
+        let forgetCalls = 0;
+        const harness = await loadClient({
+            responseForDataPath: (path) => {
+                if (path === '/v1/plugins/data/get') {
+                    getCalls += 1;
+                    return new Response(JSON.stringify({
+                        row: null,
+                        absenceEpoch: getCalls === 1 ? 3 : 4,
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                if (path === '/v1/plugins/data/forget') {
+                    forgetCalls += 1;
+                    return new Response(JSON.stringify({
+                        status: forgetCalls === 1 ? 'conflict' : 'forgotten',
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                throw new Error(`Unexpected Collection path: ${path}`);
+            },
+        });
+        const collection = harness.createActivePluginCollectionClient({ contract });
+
+        await expect(collection.forget('channel-1', 2)).resolves.toEqual({ status: 'forgotten' });
+        expect(getCalls).toBe(2);
+        expect(forgetCalls).toBe(2);
+        const epochs = harness.transport.mock.calls
+            .filter(([path]) => path === '/v1/plugins/data/forget')
+            .map(([, init]) => JSON.parse(String(init?.body)).expectedAbsenceEpoch);
+        expect(epochs).toEqual([3, 4]);
+    });
+
+    it('keeps an absent-create epoch conflict distinct from a retryable forget epoch race', async () => {
+        const harness = await loadClient({
+            responseForDataPath: (path) => {
+                if (path === '/v1/plugins/data/get') {
+                    return new Response(JSON.stringify({ row: null, absenceEpoch: 9 }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                if (path === '/v1/plugins/data/mutate') {
+                    return new Response(JSON.stringify({
+                        status: 'conflict',
+                        conflicts: [{ rowId: 'channel-stale', revision: null, deleted: false }],
+                    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+                }
+                throw new Error(`Unexpected Collection path: ${path}`);
+            },
+        });
+        const collection = harness.createActivePluginCollectionClient({ contract });
+
+        await expect(collection.mutate([{
+            kind: 'put',
+            expectedRevision: 'absent',
+            value: {
+                id: 'channel-stale',
+                status: 'enabled',
+                title: 'Stale absence observation',
+            },
+        }])).resolves.toEqual({
+            status: 'conflict',
+            conflicts: [{ rowId: 'channel-stale', revision: null, deleted: false }],
+        });
+        const mutationCall = harness.transport.mock.calls.find(([path]) => path === '/v1/plugins/data/mutate');
+        expect(mutationCall).toBeDefined();
+        expect(JSON.parse(String(mutationCall?.[1]?.body)).operations).toEqual([
+            expect.objectContaining({
+                rowId: 'channel-stale',
+                expectedRevision: 'absent',
+                expectedAbsenceEpoch: 9,
+            }),
+        ]);
+    });
+
+    it('lets a caller retry a response-lost forget through the same idempotent path', async () => {
+        let forgetAttempts = 0;
+        const harness = await loadClient({
+            responseForDataPath: (path) => {
+                if (path === '/v1/plugins/data/get') {
+                    return new Response(JSON.stringify({ row: null, absenceEpoch: 11 + forgetAttempts }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                if (path === '/v1/plugins/data/forget') {
+                    forgetAttempts += 1;
+                    if (forgetAttempts === 1) throw new Error('response lost after committed forget');
+                    return new Response(JSON.stringify({ status: 'forgotten' }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
+                throw new Error(`Unexpected Collection path: ${path}`);
+            },
+        });
+        const collection = harness.createActivePluginCollectionClient({ contract });
+
+        await expect(collection.forget('channel-retry', 4)).resolves.toMatchObject({
+            status: 'unavailable',
+        });
+        await expect(collection.forget('channel-retry', 4)).resolves.toEqual({ status: 'forgotten' });
+        const epochs = harness.transport.mock.calls
+            .filter(([path]) => path === '/v1/plugins/data/forget')
+            .map(([, init]) => JSON.parse(String(init?.body)).expectedAbsenceEpoch);
+        expect(epochs).toEqual([11, 12]);
     });
 
     it('opens and seals only the current Account E2EE collection envelope', async () => {
@@ -648,6 +768,7 @@ describe('active Account Collection direct client', () => {
 
         await expect(collection.get('channel-1')).resolves.toEqual({
             status: 'ready',
+            absenceEpoch: 0,
             row: {
                 rowId: 'channel-1',
                 revision: 4,
@@ -709,7 +830,12 @@ describe('active Account Collection direct client', () => {
 
     it('returns the server conflict without retrying a rejected CAS', async () => {
         const harness = await loadClient({
-            responseForDataPath: () => new Response(JSON.stringify({
+            responseForDataPath: (path) => path === '/v1/plugins/data/get'
+                ? new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(JSON.stringify({
                 status: 'conflict',
                 conflicts: [{ rowId: 'channel-1', revision: 5, deleted: false }],
             }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
@@ -988,14 +1114,19 @@ describe('active Account Collection direct client', () => {
         const harness = await loadClient({
             currentness: e2eeCurrentness,
             credentials: e2eeCredentials,
-            responseForDataPath: () => new Response(JSON.stringify({
-                status: 'updated',
-                results: [
-                    { rowId: 'channel-1', revision: 1, deleted: false },
-                    { rowId: 'channel-2', revision: 1, deleted: false },
-                ],
-                changeCursor: 21,
-            }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+            responseForDataPath: (path) => path === '/v1/plugins/data/get'
+                ? new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(JSON.stringify({
+                    status: 'updated',
+                    results: [
+                        { rowId: 'channel-1', revision: 1, deleted: false },
+                        { rowId: 'channel-2', revision: 1, deleted: false },
+                    ],
+                    changeCursor: 21,
+                }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
         });
         const collection = harness.createActivePluginCollectionClient({ contract });
         const operations = [
@@ -1047,7 +1178,13 @@ describe('active Account Collection direct client', () => {
         const harness = await loadClient({
             currentness: e2eeCurrentness,
             credentials: e2eeCredentials,
-            responseForDataPath: () => {
+            responseForDataPath: (path) => {
+                if (path === '/v1/plugins/data/get') {
+                    return new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json' },
+                    });
+                }
                 throw new Error('Measuring a candidate batch must not issue a mutation');
             },
         });
@@ -1087,7 +1224,12 @@ describe('active Account Collection direct client', () => {
     });
     it('carries the server quota incompatibility a batch planner must react to', async () => {
         const harness = await loadClient({
-            responseForDataPath: () => new Response(JSON.stringify({
+            responseForDataPath: (path) => path === '/v1/plugins/data/get'
+                ? new Response(JSON.stringify({ row: null, absenceEpoch: 0 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                })
+                : new Response(JSON.stringify({
                 error: 'collection_quota_incompatible',
                 dimension: 'maxBatchBytes',
                 effectiveMaximum: 4 * 1024 * 1024,

@@ -19,6 +19,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 export type AccountVoiceCredentialSource = 'account' | 'machine_override';
 /**
@@ -148,6 +149,17 @@ export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
   declaration: VoiceProviderContribution;
   contribution: PluginContributionIdentityV1;
   selection: VoiceCredentialSourceSelection;
+  /**
+   * Optional exact disclosure scope. Realm and phase are always paired; when
+   * the caller knows the concrete materialization request it may narrow to
+   * that complete tuple as well. This keeps settings, readiness and execution
+   * from each rebuilding a slightly different grant filter.
+   */
+  access?: Readonly<{
+    realm: VoiceRawCredentialGrantDeclaration['realm'];
+    phase: VoiceRawCredentialGrantDeclaration['phase'];
+    request?: VoiceRawCredentialGrantDeclaration['request'];
+  }>;
 }>): readonly VoiceRawCredentialGrantDeclaration[] {
   if (!params.declaration.credentials || params.selection.kind === 'none') return Object.freeze([]);
   const selectedService = params.selection.kind === 'connectedAccount'
@@ -166,7 +178,17 @@ export function resolveSelectedVoiceCredentialRawGrants(params: Readonly<{
       ? source.rawGrants ?? []
       : [];
   });
-  return Object.freeze(grants);
+  const access = params.access;
+  const scoped = access
+    ? grants.filter((grant) => (
+        grant.realm === access.realm
+        && grant.phase === access.phase
+        && (access.request === undefined
+          || stableJsonStringify(canonicalVoiceCredentialRequest(grant.request))
+            === stableJsonStringify(canonicalVoiceCredentialRequest(access.request)))
+      ))
+    : grants;
+  return Object.freeze(scoped);
 }
 
 function sortByCanonicalJson<T>(values: readonly T[]): readonly T[] {

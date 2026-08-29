@@ -4,18 +4,13 @@ import {
   type VoiceProviderContribution,
 } from '@happier-dev/protocol';
 
-type ConversationDeclaration = Extract<
-  VoiceProviderContribution,
-  Readonly<{ kind: 'conversation' }>
->;
-
 /**
  * Canonical trusted build-time identity for first-party Voice recipients.
  * Installed-generation currentness remains a separate invocation fence.
  */
 export function createBundledVoiceRecipientContract(input: Readonly<{
   pluginId: string;
-  declaration: ConversationDeclaration;
+  declaration: VoiceProviderContribution;
 }>): RecipientContractV1 | null {
   const credentials = input.declaration.credentials;
   if (!credentials?.hostMediated) return null;

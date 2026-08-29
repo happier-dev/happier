@@ -353,7 +353,8 @@ export function VoiceProviderSection(props: {
         declaration: entry.declaration,
         contribution,
         selection: source.selection,
-      }).filter((grant) => grant.realm === 'daemon' && grant.phase === 'speech');
+        access: { realm: 'daemon', phase: 'speech' },
+      });
       return rawGrants.length > 0 ? [{ providerId, contribution, rawGrants }] : [];
     } catch {
       return [];
@@ -428,13 +429,11 @@ export function VoiceProviderSection(props: {
           },
           machineId: null,
         });
-        sourceSelection = Object.freeze({
-          kind: resolvedSource.selection.kind,
-          ...(resolvedSource.selection.kind === 'connectedAccount'
-            ? { target: resolvedSource.selection.target }
-            : {}),
-          connectedAccountEligibility: resolvedSource.selection.kind === 'connectedAccount'
-            ? resolveVoiceConnectedAccountTargetEligibility({
+        sourceSelection = resolvedSource.selection.kind === 'connectedAccount'
+          ? Object.freeze({
+            kind: 'connectedAccount' as const,
+            target: resolvedSource.selection.target,
+            connectedAccountEligibility: resolveVoiceConnectedAccountTargetEligibility({
               target: resolvedSource.selection.target,
               declaredServices: credentialDeclaration.sources.flatMap((source) => (
                 source.kind === 'connectedAccount'
@@ -446,9 +445,12 @@ export function VoiceProviderSection(props: {
               accounts: accountProfile.connectedAccountsV4 ?? [],
               groups: accountProfile.connectedAccountGroupsV4 ?? [],
               resolveAuthentication: getConnectedAccountAuthentication,
-            })
-            : 'unusable',
-        });
+            }),
+          })
+          : Object.freeze({
+            kind: resolvedSource.selection.kind,
+            connectedAccountEligibility: 'unusable' as const,
+          });
       } catch {
         sourceSelection = null;
       }
@@ -520,6 +522,7 @@ export function VoiceProviderSection(props: {
       providerId: row.providerId,
       platform,
       modeId: row.modeId,
+      settingsRequirements: settingsProjection?.requirements,
       credentialSourceKind,
       facts: readinessFacts,
     });
@@ -600,6 +603,7 @@ export function VoiceProviderSection(props: {
         providerId: selectedUnavailableProvider.providerId,
         platform,
         modeId: selectedUnavailableProvider.modeId,
+        settingsRequirements: selectedUnavailableProvider.settingsProjection?.requirements,
         facts: {
           settings: selectedUnavailableProvider.settingsProjection?.status ?? 'unknown',
         },
@@ -776,12 +780,13 @@ export function VoiceProviderSection(props: {
     && selectedExternalDeclaration
     && selectedExternalContribution
     && selectedExternalRow?.sourceSelection
-  ) ? resolveSelectedVoiceCredentialRawGrants({
-      declaration: selectedExternalDeclaration,
-      contribution: selectedExternalContribution,
-      selection: selectedExternalRow.sourceSelection,
-    }).filter((grant) => (
-      grant.realm === platform && (grant.phase === 'prepare' || grant.phase === 'connection')
+  ) ? (['prepare', 'connection'] as const).flatMap((phase) => (
+      resolveSelectedVoiceCredentialRawGrants({
+        declaration: selectedExternalDeclaration,
+        contribution: selectedExternalContribution,
+        selection: selectedExternalRow.sourceSelection,
+        access: { realm: platform, phase },
+      })
     )).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))) : [];
   const selectedExternalCredentialAccessIsRaw = selectedExternalRawReviewGrants.length > 0;
   const selectedExternalConnectedRawReviewEligible = selectedExternalRow?.sourceSelection?.kind === 'connectedAccount'

@@ -1,4 +1,4 @@
-import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { resolveVoiceActionTargetSessionId, useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { normalizeNonEmptyString } from './actionImpl/shared';
 
 export function resolveToolSessionId(opts: Readonly<{
@@ -8,12 +8,11 @@ export function resolveToolSessionId(opts: Readonly<{
   const explicit = normalizeNonEmptyString(opts.explicitSessionId);
   if (explicit) return explicit;
 
-  const current = normalizeNonEmptyString(opts.currentSessionId);
-  if (current) return current;
-
   const { scope, primaryActionSessionId, lastFocusedSessionId } = useVoiceTargetStore.getState();
-  if (scope === 'global') {
-    return normalizeNonEmptyString(primaryActionSessionId) ?? normalizeNonEmptyString(lastFocusedSessionId);
-  }
-  return current;
+  return resolveVoiceActionTargetSessionId({
+    scope,
+    currentSessionId: opts.currentSessionId,
+    primaryActionSessionId,
+    lastFocusedSessionId,
+  });
 }

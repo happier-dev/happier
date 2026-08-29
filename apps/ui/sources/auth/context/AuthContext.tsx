@@ -220,16 +220,16 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         });
     }, [refreshFromActiveServer]);
 
+    // Secondary Home projections own their credentials and lifecycle. They must
+    // remain reconcilable even when the focused Home is signed out or expired;
+    // the concurrent runtime localizes auth failures per Home. Keep one global
+    // start/stop lifecycle tied to the provider rather than focused auth state.
     useEffect(() => {
-        if (!isAuthenticated) {
-            stopConcurrentSessionCacheSync();
-            return;
-        }
         startConcurrentSessionCacheSync();
         return () => {
             stopConcurrentSessionCacheSync();
         };
-    }, [isAuthenticated]);
+    }, []);
 
     return (
         <AuthContext.Provider value={value}>

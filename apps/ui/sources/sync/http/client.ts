@@ -24,6 +24,7 @@ import {
     resolveAccountStoredContentCompatibilityHeaders,
     stripAccountStoredContentCompatibilityHeader,
 } from './accountStoredContentCompatibility';
+import { resolveActiveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -203,9 +204,10 @@ export async function serverFetch(
         throw new StaleServerGenerationError();
     }
     const normalizedPath = normalizePath(path);
+    const transportOrigin = resolveActiveServerRuntimeOrigin(snapshot);
     const requestUrl = normalizedPath.startsWith('http://') || normalizedPath.startsWith('https://')
         ? normalizedPath
-        : `${snapshot.serverUrl}${normalizedPath}`;
+        : `${transportOrigin}${normalizedPath}`;
 
     if (isDebugEnabled() && !didLogActiveServerSnapshot) {
         didLogActiveServerSnapshot = true;
@@ -217,7 +219,7 @@ export async function serverFetch(
     }
 
     const absoluteRequestUrl = tryParseUrl(requestUrl);
-    const activeServerUrl = tryParseUrl(snapshot.serverUrl);
+    const activeServerUrl = tryParseUrl(transportOrigin);
     const isCrossOrigin =
         !!absoluteRequestUrl
         && !!activeServerUrl
@@ -417,7 +419,7 @@ export async function serverFetch(
         && !!activeServerUrl;
     const endpointSupervisor =
         isActiveOrigin
-            ? getEndpointSupervisorForServer({ serverId: snapshot.serverId, serverUrl: snapshot.serverUrl })
+            ? getEndpointSupervisorForServer({ serverId: snapshot.serverId, serverUrl: transportOrigin })
             : null;
 
     let response: Response | null = null;
@@ -427,7 +429,7 @@ export async function serverFetch(
                 if (isActiveOrigin && retryMode !== 'none') {
                     const reachabilityToken =
                         peekServerReachabilityToken(
-                            snapshot.serverUrl,
+                            transportOrigin,
                         ) ?? null;
                     const tokenForReachability =
                         usedToken
@@ -439,7 +441,7 @@ export async function serverFetch(
                         );
                     try {
                         await waitForServerReachable({
-                            serverUrl: snapshot.serverUrl,
+                            serverUrl: transportOrigin,
                             token: tokenForReachability,
                             signal: requestController.signal,
                             timeoutMs: readServerReachabilityWaitTimeoutMs(),

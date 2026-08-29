@@ -15,10 +15,10 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import {
     readExternalSessionFollowPolicy,
-    updateMetadataWithExternalSessionFollowPolicy,
 } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { setExternalSessionFollowPolicy } from '@/components/sessions/external/follow/setExternalSessionFollowPolicy';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     useMachineAdministrationTargetSelection,
@@ -26,7 +26,6 @@ import {
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { useAllMachines, useAllSessions, useSetting } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -130,15 +129,16 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
         serverId: props.row.session.serverId ?? null,
         enabled: link !== null,
     });
+    const capabilityPhase = daemonMergedProjection.phase;
     const supportsBackgroundFollow = link !== null
-        && daemonMergedProjection.phase === 'ready'
+        && capabilityPhase === 'ready'
         && supportsExternalSessionBackgroundFollow({
             providerId: link.agentId,
             source: link.source,
             projection: daemonMergedProjection.inputs?.pluginProjectionV2,
         });
 
-    if (daemonMergedProjection.phase === 'ready' && !supportsBackgroundFollow) {
+    if (capabilityPhase === 'ready' && !supportsBackgroundFollow) {
         return (
             <Item
                 testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
@@ -153,7 +153,16 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     }
 
     const status = props.mutationStatus ?? props.row.status;
+    // Until the current trusted plugin generation answers, the row keeps the
+    // stored policy as last-known information but must not advertise a
+    // capability nobody has declared yet: fail closed, truthfully. A pending
+    // projection shows its in-flight state; a failed projection says the
+    // status cannot be verified instead of leaving an enabled-looking control.
+    const capabilityPending = capabilityPhase === 'loading' || capabilityPhase === 'idle';
+    const capabilityUnavailable = capabilityPhase === 'error' || capabilityPhase === 'unsupported';
     const disabled = props.pending
+        || capabilityPending
+        || capabilityUnavailable
         || !props.row.canChange
         || (!props.row.enabled && props.mutationStatus === 'unsupported');
     return (
@@ -161,9 +170,9 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
             testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
             {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
             title={props.row.title}
-            subtitle={resolveFollowStatusSubtitle(status)}
+            subtitle={capabilityUnavailable ? resolveFollowStatusSubtitle('unknown') : resolveFollowStatusSubtitle(status)}
             icon={<Icon name="link" size={29} color={theme.colors.text.secondary} />}
-            loading={props.pending}
+            loading={props.pending || capabilityPending}
             disabled={disabled}
             rightElement={(
                 <Switch
@@ -332,16 +341,20 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
             return next;
         });
         try {
-            const result = await machineExternalSessionFollowPolicySet({
-                machineId: link.machineId,
+            // One shared operation owner with the session header action. It
+            // fences the settlement on the exact link identity and the active
+            // Account lifetime, so a stale settlement never publishes into a
+            // successor Account or a relinked session; only a current outcome
+            // is allowed to touch this surface's state.
+            const outcome = await setExternalSessionFollowPolicy({
                 sessionId: row.session.id,
-                agentId: link.agentId,
-                remoteSessionId: link.remoteSessionId,
-                source: link.source,
-                enabled,
-            }, row.session.serverId ? { serverId: row.session.serverId } : undefined);
-            if (!result.ok) {
-                const mutationStatus = result.error === 'background_follow_not_supported'
+                serverId: row.session.serverId ?? null,
+                link,
+                policy: enabled ? 'background_follow' : 'attached_only',
+            });
+            if (outcome.kind === 'stale') return;
+            if (outcome.kind !== 'applied') {
+                const mutationStatus = outcome.kind === 'refused' && outcome.reason === 'unsupported'
                     ? 'unsupported'
                     : 'error';
                 setMutationStatusBySessionId((current) => {
@@ -355,28 +368,12 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                 );
                 return;
             }
-            sync.applySessionMetadataLocally(row.session.id, (metadata) =>
-                updateMetadataWithExternalSessionFollowPolicy(metadata, {
-                    policy: enabled ? 'background_follow' : 'attached_only',
-                    updatedAtMs: result.updatedAtMs,
-                }),
-            );
             setMutationStatusBySessionId((current) => {
                 if (!current.has(row.session.id)) return current;
                 const next = new Map(current);
                 next.delete(row.session.id);
                 return next;
             });
-        } catch {
-            setMutationStatusBySessionId((current) => {
-                const next = new Map(current);
-                next.set(row.session.id, 'error');
-                return next;
-            });
-            await Modal.alert(
-                t('common.error'),
-                t('externalSessions.followUpdateFailed'),
-            );
         } finally {
             pendingSessionIdsRef.current.delete(row.session.id);
             setPendingSessionIds((current) => {

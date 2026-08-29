@@ -17,7 +17,6 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 
 import { createDefaultVoiceHistoryConsumer } from './defaultVoiceHistoryConsumer';
 import {
-  isVoiceHistoryClearActiveCallError,
   type VoiceHistoryExportArtifact,
   type VoiceHistoryRow,
   type VoiceHistorySnapshot,
@@ -190,10 +189,6 @@ const VoiceHistoryScreenBody = React.memo(function VoiceHistoryScreenBody(
   const showOperationError = React.useCallback((error: unknown, fallback: string) => {
     if (isVoiceHistoryOperationSupersededError(error)) {
       setLoadState('superseded');
-      return;
-    }
-    if (isVoiceHistoryClearActiveCallError(error)) {
-      setActionMessage(t('settingsVoice.history.clearActiveCall'));
       return;
     }
     setActionMessage(fallback);

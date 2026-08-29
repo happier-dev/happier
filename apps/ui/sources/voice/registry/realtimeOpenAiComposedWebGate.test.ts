@@ -64,7 +64,6 @@ import {
 import * as realtimeMicSession from '@/voice/runtime/mic/createRealtimeMicSession';
 import { createVoiceHistoryConsumer } from '@/voice/history/voiceHistoryConsumer';
 import {
-  canDeleteVoiceHistorySession,
   createDefaultVoiceHistoryConsumerFromRuntime,
   type DefaultVoiceHistoryRuntime,
 } from '@/voice/history/defaultVoiceHistoryConsumer';
@@ -2135,7 +2134,7 @@ describe('realtime_openai source-composed WebRTC gate', () => {
     }
   });
 
-  it('refuses active-carrier clear, persists the next final once, then clears after release', async () => {
+  it('clears the active carrier without ending the retained Voice attempt', async () => {
     const browser = installVoiceWebRtcBrowserBoundary();
     const composed = createSourceComposedOpenAiRuntime(browser);
     let discoveredSessionId: string | null = OPENAI_HISTORY_SESSION_ID;
@@ -2161,7 +2160,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       subscribeHistorySources: (listener) => storage.subscribe(() => { listener(); }),
       resolveProviderLabel: () => 'OpenAI Realtime',
       deleteSession,
-      canDeleteSession: canDeleteVoiceHistorySession,
       retireLocalSession: (sessionId) =>
         storage.getState().deleteSession(sessionId),
       runCarrierOperation: runVoiceTranscriptHistoryCarrierOperation,
@@ -2180,35 +2178,13 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       await starting;
 
       await consumer.open();
-      await expect(consumer.clear()).rejects.toMatchObject({
-        name: 'VoiceHistoryClearActiveCallError',
-        code: 'voice_history_clear_active_call',
-      });
-      expect(deleteSession).not.toHaveBeenCalled();
+      await expect(consumer.clear()).resolves.toEqual({ cleared: true });
+      expect(deleteSession).toHaveBeenCalledTimes(1);
       expect(voiceSessionBindingStore.getState().getByControlSessionId(
         composed.controlSessionId,
       )?.conversationSessionId).toBe(OPENAI_HISTORY_SESSION_ID);
-
-      browser.peer.channel.message(JSON.stringify({
-        type: 'conversation.item.input_audio_transcription.completed',
-        event_id: 'saved-secret-after-clear-final',
-        item_id: 'saved-secret-after-clear',
-        content_index: 0,
-        transcript: 'persist after clearing history',
-        usage: { type: 'duration', seconds: 1 },
-      }));
-
-      await vi.waitFor(() => expect(
-        readStoredSessionMessages(
-          storage.getState(),
-          OPENAI_HISTORY_SESSION_ID,
-        ),
-      ).toEqual([
-        expect.objectContaining({
-          kind: 'user-text',
-          text: 'persist after clearing history',
-        }),
-      ]));
+      expect(storage.getState().sessions[OPENAI_HISTORY_SESSION_ID])
+        .toBeUndefined();
 
       await composed.runtime.adapter.stop({
         sessionId: composed.controlSessionId,
@@ -2216,11 +2192,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       expect(voiceSessionBindingStore.getState().getByControlSessionId(
         composed.controlSessionId,
       )).toBeNull();
-
-      await expect(consumer.clear()).resolves.toEqual({ cleared: true });
-      expect(deleteSession).toHaveBeenCalledTimes(1);
-      expect(storage.getState().sessions[OPENAI_HISTORY_SESSION_ID])
-        .toBeUndefined();
     } finally {
       await composed.runtime.dispose();
       composed.hostLease.revoke();
@@ -2297,7 +2268,6 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         storage.getState().sessionMessages[sessionId]?.messagesVersion ?? 0,
       subscribeMessages: (listener) => storage.subscribe(() => { listener(); }),
       deleteSession,
-      canDeleteSession: canDeleteVoiceHistorySession,
       retireLocalSession: (sessionId) =>
         storage.getState().deleteSession(sessionId),
     };

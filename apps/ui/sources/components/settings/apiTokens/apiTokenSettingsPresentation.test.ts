@@ -62,6 +62,7 @@ describe('API-token Settings presentation', () => {
 
     it('maps typed auth and transport failures to designed states', () => {
         expect(resolveApiTokenOperationErrorMessageKey('present_user_required')).toBe('settingsApiTokens.errors.presentUserRequired');
+        expect(resolveApiTokenOperationErrorMessageKey('invalid_request')).toBe('settingsApiTokens.errors.unavailable');
         expect(resolveApiTokenOperationErrorMessageKey('auth_unavailable')).toBe('settingsApiTokens.errors.unavailable');
         expect(resolveApiTokenOperationErrorMessageKey('account_unavailable')).toBe('settingsApiTokens.errors.unavailable');
         expect(resolveApiTokenOperationErrorMessageKey('network_error')).toBe('settingsApiTokens.errors.offline');

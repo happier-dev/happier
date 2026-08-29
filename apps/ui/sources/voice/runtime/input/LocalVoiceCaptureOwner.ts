@@ -85,6 +85,7 @@ export type LocalVoiceCaptureOwner = Readonly<{
     startCapture: (args: Readonly<{
         sessionId: string;
         provider: LocalVoiceCaptureProvider;
+        capturePurpose?: 'dictation' | 'conversation';
         handsFree: boolean;
         localNeuralExecution?: LocalNeuralCaptureExecution;
         settings?: any;
@@ -705,6 +706,7 @@ export function createLocalVoiceCaptureOwner(
         startCapture: async ({
             sessionId,
             provider,
+            capturePurpose = 'conversation',
             handsFree,
             localNeuralExecution,
             settings,
@@ -734,7 +736,13 @@ export function createLocalVoiceCaptureOwner(
                         unlinkExternalAbort,
                     } = beginSttCapture(normalizedSessionId, externalSignal);
                     try {
-                        await getDeviceSttController().start({ sessionId: normalizedSessionId, micSession, sink, signal });
+                        await getDeviceSttController().start({
+                            capturePurpose,
+                            sessionId: normalizedSessionId,
+                            micSession,
+                            sink,
+                            signal,
+                        });
                     } catch (error) {
                         unlinkExternalAbort();
                         await releaseLiveMicAfterFailedStartup(normalizedSessionId, provider, micSession);
@@ -934,10 +942,32 @@ export function createLocalVoiceCaptureOwner(
             if (!normalizedSessionId) {
                 return;
             }
+            const previousMutedSessionId = mutedSessionId;
+            const previousMuted = muted;
+            const generation = captureLifecycleGeneration;
+            const provider = activeCaptureProvider;
+            const controller = deviceSttController;
             mutedSessionId = normalizedSessionId;
             muted = nextMuted;
             if (activeCaptureSessionId === normalizedSessionId) {
                 syncMutedStateForSession(normalizedSessionId);
+                if (provider === 'device' && controller) {
+                    try {
+                        await controller.setMuted(nextMuted);
+                    } catch (error) {
+                        if (
+                            captureLifecycleGeneration === generation
+                            && activeCaptureSessionId === normalizedSessionId
+                            && activeCaptureProvider === provider
+                            && deviceSttController === controller
+                        ) {
+                            mutedSessionId = previousMutedSessionId;
+                            muted = previousMuted;
+                            syncMutedStateForSession(normalizedSessionId);
+                        }
+                        throw error;
+                    }
+                }
             }
         },
         clearHandsFree: ({ sessionId, provider }) => {

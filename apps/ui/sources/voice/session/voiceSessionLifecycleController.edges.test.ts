@@ -34,6 +34,118 @@ function createSnapshotPublisher(initial: VoiceSessionSnapshot): Readonly<{
 }
 
 describe('voice session lifecycle edge contracts', () => {
+    it('holds routine connectivity through the exact active Voice attempt', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const snapshots = createSnapshotPublisher({
+            adapterId: 'local_direct',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        });
+        const releaseConnectivity = vi.fn();
+        const acquireConnectivityLease = vi.fn(() => releaseConnectivity);
+        const adapter: VoiceAdapterController = {
+            id: 'local_direct',
+            engineKind: 'local',
+            start: vi.fn(async ({ sessionId }) => snapshots.publish({
+                adapterId: 'local_direct',
+                sessionId,
+                status: 'connected',
+                mode: 'listening',
+                canStop: true,
+            })),
+            stop: vi.fn(async ({ sessionId }) => snapshots.publish({
+                adapterId: 'local_direct',
+                sessionId,
+                status: 'disconnected',
+                mode: 'idle',
+                canStop: false,
+            })),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            getSnapshot: snapshots.getSnapshot,
+            subscribe: snapshots.subscribe,
+        };
+        const controller = createVoiceSessionLifecycleController({
+            acquireConnectivityLease,
+            getRegistry: () => ({
+                get: (id) => id === adapter.id ? adapter : null,
+                list: () => [adapter],
+            }),
+        });
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            await controller.toggle('session-1');
+
+            expect(acquireConnectivityLease).toHaveBeenCalledTimes(1);
+            expect(releaseConnectivity).not.toHaveBeenCalled();
+
+            await controller.stop('session-1');
+            expect(releaseConnectivity).toHaveBeenCalledTimes(1);
+        } finally {
+            await controller.dispose();
+        }
+    });
+
+    it('does not release connectivity for an initial disconnected snapshot while Start is still pending', async () => {
+        const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
+        const snapshots = createSnapshotPublisher({
+            adapterId: 'local_direct',
+            sessionId: null,
+            status: 'disconnected',
+            mode: 'idle',
+            canStop: false,
+        });
+        let rejectStart: (error: Error) => void = () => {};
+        const startSettlement = new Promise<void>((_resolve, reject) => {
+            rejectStart = reject;
+        });
+        const releaseConnectivity = vi.fn();
+        const adapter: VoiceAdapterController = {
+            id: 'local_direct',
+            engineKind: 'local',
+            start: vi.fn(async ({ sessionId }) => {
+                snapshots.publish({
+                    adapterId: 'local_direct',
+                    sessionId,
+                    status: 'disconnected',
+                    mode: 'idle',
+                    canStop: false,
+                });
+                await startSettlement;
+            }),
+            stop: vi.fn(async () => {}),
+            toggle: vi.fn(async () => {}),
+            interrupt: vi.fn(async () => {}),
+            setMuted: vi.fn(async () => {}),
+            getSnapshot: snapshots.getSnapshot,
+            subscribe: snapshots.subscribe,
+        };
+        const controller = createVoiceSessionLifecycleController({
+            acquireConnectivityLease: () => releaseConnectivity,
+            getRegistry: () => ({
+                get: (id) => id === adapter.id ? adapter : null,
+                list: () => [adapter],
+            }),
+        });
+
+        try {
+            controller.setConfiguredProviderId(adapter.id);
+            const start = controller.toggle('session-1');
+            await Promise.resolve();
+            expect(releaseConnectivity).not.toHaveBeenCalled();
+
+            rejectStart(new Error('start_failed'));
+            await expect(start).rejects.toThrow('start_failed');
+            expect(releaseConnectivity).toHaveBeenCalledTimes(1);
+        } finally {
+            await controller.dispose();
+        }
+    });
+
     it('publishes a retryable provider-unavailable snapshot before admitting microphone capture', async () => {
         const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
         const captureAdmission = createVoiceCaptureAdmissionController();

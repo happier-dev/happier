@@ -415,6 +415,8 @@ import type { ComposerStructuredInputMention } from '@/sync/domains/input/draftV
 import type { StorageState } from '@/sync/store/types';
 import {
     ConnectedServiceIdSchema,
+    buildQualifiedPluginContributionKey,
+    type ConnectedAccountServiceKey,
     RawIngressStructuredInputV1Schema,
     type ComposerAttachmentDraftV1,
     type ComposerAttachmentInputV1,
@@ -2422,6 +2424,21 @@ function SessionViewLoaded({
             (group) => group.connectionId === providerModelSelection.ref.providerConnectionId,
         ) ?? null
         : null;
+    const passiveProviderRecoveryServiceId = React.useMemo<ConnectedAccountServiceKey | null>(() => {
+        const errorCode = providerBindingStatus.error?.code;
+        if (
+            errorCode !== 'provider_machine_unavailable'
+            && errorCode !== 'provider_managed_requires_daemon'
+            && errorCode !== 'provider_materialization_failed'
+        ) {
+            return null;
+        }
+        const target = providerLaunchBinding?.managedPurposeBindings?.bindings[0]?.target;
+        if (!target) return null;
+        return buildQualifiedPluginContributionKey(
+            target.kind === 'account' ? target.account.service : target.service,
+        );
+    }, [providerBindingStatus.error?.code, providerLaunchBinding?.managedPurposeBindings]);
     const providerBindingPresentation = React.useMemo(() => providerLaunchBinding
         ? presentSessionProviderBinding({
             binding: providerLaunchBinding,
@@ -6042,6 +6059,7 @@ function SessionViewLoaded({
                     : null,
             sessionActive: session.active === true,
             intentionalRestartSignals,
+            passiveProviderRecoveryServiceId,
         });
         const connectedServicesRestartState = sessionConnectedServicesAuthSwitch.restartState;
         const sessionStatusResuming = sessionStatus.state === 'resuming';

@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
     parseQualifiedPluginContributionKey,
+    type ConnectedAccountServiceKey,
 } from '@happier-dev/protocol';
 
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -26,7 +27,7 @@ import { buildNewSessionConnectedServicesSelectionListModel } from './buildNewSe
 import { Icon } from '@/components/ui/icons/Icon';
 
 export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
-    supportedServiceIds: ReadonlyArray<ConnectedServiceId>;
+    supportedServiceIds: ReadonlyArray<ConnectedAccountServiceKey>;
     profileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
     groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;

@@ -86,6 +86,39 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
         });
     });
 
+    it('normalizes a released bare service binding before resolving the exact account route', () => {
+        expect(resolveVoiceConnectRecoveryTarget({
+            agentRuntime: codexAgentRuntime,
+            bindingScope: 'global',
+            runtimeTarget,
+            provider: codexProvider,
+            providerConfig: {
+                agentAccounts: {
+                    v: 1,
+                    bindingsByServiceId: {
+                        'openai-codex': {
+                            source: 'connected',
+                            selection: 'profile',
+                            profileId: 'account-work',
+                        },
+                    },
+                },
+            },
+            sessionMetadata: null,
+            connectedServiceEntries: [connectedServiceEntry],
+        })).toEqual({
+            kind: 'exact',
+            route: {
+                pathname: '/(app)/settings/connected-services/account',
+                params: {
+                    pluginId: 'happier.agent.codex',
+                    localId: 'openai-codex',
+                    accountId: 'account-work',
+                },
+            },
+        });
+    });
+
     it('projects a provider-neutral selected group through the qualified account owner', () => {
         expect(resolveVoiceConnectRecoveryTarget({
             agentRuntime,
@@ -136,7 +169,7 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
         })).toEqual({ kind: 'provider_settings' });
     });
 
-    it('uses the direct session runtime descriptor instead of the conflicting global account selection', () => {
+    it('does not reconstruct a direct binding from the Agent-owned current runtime descriptor', () => {
         expect(resolveVoiceConnectRecoveryTarget({
             agentRuntime: codexAgentRuntime,
             runtimeTarget,
@@ -169,17 +202,7 @@ describe('resolveVoiceConnectRecoveryTarget', () => {
                 },
             },
             connectedServiceEntries: [connectedServiceEntry],
-        })).toEqual({
-            kind: 'exact',
-            route: {
-                pathname: '/(app)/settings/connected-services/account',
-                params: {
-                    pluginId: 'happier.agent.codex',
-                    localId: 'openai-codex',
-                    groupId: 'team-session',
-                },
-            },
-        });
+        })).toEqual({ kind: 'unavailable' });
     });
 
     it('fails direct-session recovery closed when the exact session binding is unavailable', () => {

@@ -4,6 +4,7 @@ import type {
     ConnectedServiceRegistryEntry,
 } from './connectedServiceRegistry';
 import {
+    buildConnectedAccountsSettingsRoute,
     buildConnectedAccountSettingsRoute,
     resolveConnectedAccountSettingsRoute,
     resolveQualifiedConnectedAccountSettingsRoute,
@@ -31,6 +32,20 @@ const entries: readonly ConnectedServiceRegistryEntry[] = [{
 }];
 
 describe('connectedAccountSettingsRoute', () => {
+    it('owns the semantic plugin navigation mapping for the overview, service, and account focus', () => {
+        expect(buildConnectedAccountsSettingsRoute({})).toBe('/(app)/settings/connected-services');
+        expect(buildConnectedAccountsSettingsRoute({
+            service: entries[0]!.service!,
+        })).toEqual(buildConnectedAccountSettingsRoute(entries[0]!.service!));
+        expect(buildConnectedAccountsSettingsRoute({
+            service: entries[0]!.service!,
+            accountId: 'work',
+        })).toEqual(buildConnectedAccountSettingsRoute(
+            entries[0]!.service!,
+            { kind: 'account', accountId: 'work' },
+        ));
+    });
+
     it('round-trips a novel external service through only its exact qualified identity', () => {
         const service = {
             pluginId: 'acme.connected-accounts-conformance',

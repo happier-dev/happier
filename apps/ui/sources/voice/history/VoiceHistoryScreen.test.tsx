@@ -96,7 +96,6 @@ function createDeps(
       source?.pluginId === XAI_SOURCE.pluginId ? 'Grok Realtime' : 'OpenAI Realtime'
     ),
     deleteSession: vi.fn(async () => ({ success: true })),
-    canDeleteSession: () => true,
     retireLocalSession: vi.fn(),
     runCarrierOperation: async (operation) => await operation(),
     now: () => new Date('2026-07-29T12:34:56.000Z'),
@@ -583,7 +582,7 @@ describe('VoiceHistoryScreen', () => {
       .toBe('');
   });
 
-  it('tells the user to end Voice before clearing when an active-call clear is refused', async () => {
+  it('clears an active carrier through the same delete-wins flow', async () => {
     const messages: Message[] = [
       voiceMessage({
         id: 'one',
@@ -596,7 +595,6 @@ describe('VoiceHistoryScreen', () => {
     const deleteSession = vi.fn(async () => ({ success: true }));
     const consumer = createVoiceHistoryConsumer(createDeps(messages, {
       deleteSession,
-      canDeleteSession: () => false,
     }));
     const { VoiceHistoryScreen } = await import('./VoiceHistoryScreen');
     const screen = await renderScreen(
@@ -606,11 +604,11 @@ describe('VoiceHistoryScreen', () => {
     await screen.pressByTestIdAsync('voice-history-clear');
 
     expect(screen.findByTestId('voice-history-action-message')?.props.children)
-      .toBe('End the standalone Voice conversation using this History on this device before clearing it.');
+      .toBe('Voice History was cleared.');
     expect(screen.findByTestId('voice-history-operation-status')?.props.children?.props.children)
-      .toBe('End the standalone Voice conversation using this History on this device before clearing it.');
+      .toBe('Voice History was cleared.');
     expect(screen.getTextContent()).not.toContain('Voice History could not be cleared.');
-    expect(deleteSession).not.toHaveBeenCalled();
+    expect(deleteSession).toHaveBeenCalledTimes(1);
   });
 
   it('announces loading, failure and recovery states through one persistent status region', async () => {

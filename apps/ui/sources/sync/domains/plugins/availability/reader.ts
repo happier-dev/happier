@@ -698,7 +698,10 @@ function readHostBundledArtifactAdmission(
     if (!state) return null;
     const snapshot = readProjectionForScope(state, scope);
     if (!snapshot) return null;
-    if (snapshot.intentReads.some((projection) => projection.pluginId === slot.pluginId)) {
+    if (snapshot.intentReads.some((projection) => (
+        projection.pluginId === slot.pluginId
+        && projection.response.intent !== null
+    ))) {
         return null;
     }
     const origin = slot.materializationOrigin;

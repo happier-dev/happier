@@ -51,6 +51,7 @@ import {
 import {
     requireCurrentAccountStoredContentServerCompatibility,
 } from '@/sync/api/capabilities/accountStoredContentCompatibility';
+import { resolveActiveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 
 const STATIC_EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS =
     process.env.EXPO_PUBLIC_HAPPIER_SOCKET_ACK_AUTH_SETTLE_TIMEOUT_MS;
@@ -282,7 +283,7 @@ class ApiSocket {
         }
         const endpoint = this.config.endpoint;
         const token = this.config.token;
-        const serverUrl = canonicalizeServerUrl(endpoint) || endpoint;
+        const serverUrl = resolveActiveServerRuntimeOrigin(getActiveServerSnapshot()) || canonicalizeServerUrl(endpoint) || endpoint;
 
         if (this.reachabilityUnsubscribe && this.reachabilityServerUrl && this.reachabilityServerUrl !== serverUrl) {
             const previousServerUrl = this.reachabilityServerUrl;
@@ -825,7 +826,9 @@ class ApiSocket {
 
     private ensureSocketTransport(): void {
         if (!this.config) return;
-        const key = `${this.config.endpoint}|${this.config.token}`;
+        const snapshot = getActiveServerSnapshot();
+        const transportEndpoint = resolveActiveServerRuntimeOrigin(snapshot) || this.config.endpoint;
+        const key = `${transportEndpoint}|${this.config.token}`;
         if (this.socketTransport && this.socketTransportKey === key && this.socket) {
             return;
         }
@@ -839,9 +842,10 @@ class ApiSocket {
         this.socket = null;
 
         const { socket, transport } = createSyncSocketTransport({
-            endpoint: this.config.endpoint,
+            endpoint: transportEndpoint,
             token: this.config.token,
             transports: resolveSocketIoTransports(),
+            carrier: snapshot.carrier,
         });
         this.socket = socket;
         this.socketTransport = transport;

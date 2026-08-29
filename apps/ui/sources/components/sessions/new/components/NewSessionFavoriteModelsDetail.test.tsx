@@ -133,6 +133,7 @@ const preflightModelsByTargetKey: Record<string, {
 }> = {};
 const providerGroupsByTargetKey: Record<string, any[]> = {};
 const providerFailuresByTargetKey: Record<string, any[]> = {};
+const providerErrorsByTargetKey: Record<string, any> = {};
 let providersFeatureEnabled = true;
 let retainStaleProviderProjectionDataWhenDisabled = false;
 const providerProjectionInputs: Array<Readonly<{
@@ -148,7 +149,7 @@ vi.mock('@/providers/hooks/useProviderModelProjection', () => ({
             data: input.enabled || retainStaleProviderProjectionDataWhenDisabled
                 ? { status: 'success', agentTargetKey: input.agentTargetKey, groups: providerGroupsByTargetKey[input.agentTargetKey] ?? [] }
                 : null,
-            error: null,
+            error: providerErrorsByTargetKey[input.agentTargetKey] ?? null,
             refreshFailures: input.enabled ? (providerFailuresByTargetKey[input.agentTargetKey] ?? []) : [],
             loading: false,
             status: input.enabled ? 'success' : 'disabled',
@@ -183,6 +184,9 @@ describe('NewSessionFavoriteModelsDetail', () => {
         }
         for (const key of Object.keys(providerFailuresByTargetKey)) {
             delete providerFailuresByTargetKey[key];
+        }
+        for (const key of Object.keys(providerErrorsByTargetKey)) {
+            delete providerErrorsByTargetKey[key];
         }
         providersFeatureEnabled = true;
         retainStaleProviderProjectionDataWhenDisabled = false;
@@ -268,6 +272,32 @@ describe('NewSessionFavoriteModelsDetail', () => {
             20,
             20,
         ]);
+    });
+
+    it('surfaces projection-wide Provider errors alongside per-connection failures', async () => {
+        providerErrorsByTargetKey['agent:codex'] = createProviderErrorV1('provider_machine_unavailable', {
+            machineId: 'machine-1',
+        });
+        const { NewSessionFavoriteModelsDetail } = await import('./NewSessionFavoriteModelsDetail');
+        await renderScreen(<NewSessionFavoriteModelsDetail
+            favoriteModelSelections={[favoriteModel('agent:codex', 'gpt-5.5', {
+                catalogAgentId: 'codex', builtInAgentId: 'codex', backendLabel: 'Codex', modelLabel: 'GPT 5.5',
+            })]}
+            resolvedBackendEntries={[createBuiltInEntry('codex', 'Codex')]}
+            selectedBackendTargetKey="agent:codex"
+            selectedModelId="gpt-5.5"
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            projectionCurrent
+            settings={settings}
+            onSelectFavoriteModel={vi.fn()}
+            onToggleFavoriteModel={vi.fn()}
+        />);
+
+        const summary = optionPickerOverlayProps.at(-1)?.summary;
+        const summaryScreen = await renderScreen(<>{summary}</>);
+        expect(summaryScreen.findAllByType(ProviderErrorItems.type).map((item) => item.props.error.code))
+            .toEqual(['provider_machine_unavailable']);
     });
 
     it('surfaces every Provider projection failure for favorite backends', async () => {
