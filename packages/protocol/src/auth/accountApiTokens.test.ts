@@ -3,15 +3,51 @@ import { describe, expect, it } from 'vitest';
 import {
   ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
   ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1,
+  AccountApiTokenSummaryV1Schema,
   AccountApiTokenIntrospectionRequestV1Schema,
   AccountApiTokenIntrospectionSubjectFailureV1Schema,
   AccountApiTokenIntrospectionSuccessV1Schema,
+  parseAccountApiTokenBearerV1,
 } from './accountApiTokens.js';
 
 const CREDENTIAL_ID = '2c67deea-5ae7-4706-9ad6-b5b992df1cba';
 const PAT = `hap_v1_${CREDENTIAL_ID}_${'A'.repeat(43)}`;
 
 describe('auth/accountApiTokens PAT introspection', () => {
+  it('uses a truthful non-secret display prefix from the minted bearer format', () => {
+    expect(AccountApiTokenSummaryV1Schema.parse({
+      tokenId: CREDENTIAL_ID,
+      label: 'Build automation',
+      displayPrefix: 'hap_v1_2c67deea',
+      createdAt: '2026-08-22T12:00:00.000Z',
+      lastUsedAt: null,
+      expiresAt: null,
+    }).displayPrefix).toBe('hap_v1_2c67deea');
+
+    expect(AccountApiTokenSummaryV1Schema.safeParse({
+      tokenId: CREDENTIAL_ID,
+      label: 'Build automation',
+      displayPrefix: 'hap_2c67deea',
+      createdAt: '2026-08-22T12:00:00.000Z',
+      lastUsedAt: null,
+      expiresAt: null,
+    }).success).toBe(false);
+  });
+
+  it('owns the exact bearer grammar minted by the Account server', () => {
+    expect(parseAccountApiTokenBearerV1(PAT)).toEqual({
+      tokenId: CREDENTIAL_ID,
+      secret: 'A'.repeat(43),
+    });
+    expect(parseAccountApiTokenBearerV1(
+      `hap_v1_2c67deea-5ae7-1706-9ad6-b5b992df1cba_${'A'.repeat(43)}`,
+    )).toBeNull();
+    expect(parseAccountApiTokenBearerV1(
+      `hap_v1_2c67deea-5ae7-4706-1ad6-b5b992df1cba_${'A'.repeat(43)}`,
+    )).toBeNull();
+    expect(parseAccountApiTokenBearerV1(`${PAT}extra`)).toBeNull();
+  });
+
   it('owns the strict introspection path and request envelope', () => {
     expect(ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1).toBe(
       '/v1/auth/api-tokens/introspect',

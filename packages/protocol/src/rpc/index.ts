@@ -19,6 +19,12 @@ export * from './npmRegistryProfiles.js';
 
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
 
+/** Optional expensive byte-identity request for the incumbent STAT_FILE owner. */
+export type WorkspaceStatFileRequestV1 = Readonly<{
+  path: string;
+  includeContentHash?: boolean;
+}>;
+
 export const RPC_ERROR_CODES = {
   METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',
   METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',

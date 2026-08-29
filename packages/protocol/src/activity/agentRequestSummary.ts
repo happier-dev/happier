@@ -9,6 +9,8 @@ export type AgentRequestQuestionChoiceSummary = Readonly<{
   label: string;
   /** Canonical value returned to the live requester when that label is selected. */
   value: string;
+  /** Optional author-provided context for the user-visible choice. */
+  description?: string | null;
 }>;
 
 /**
@@ -19,6 +21,8 @@ export type AgentRequestQuestionChoiceSummary = Readonly<{
 export type AgentRequestQuestionSummary = Readonly<{
   /** Live requester key; never supplied by a remote mediator. */
   answerKey: string;
+  /** Optional short author-provided heading for the question. */
+  header?: string | null;
   question: string;
   selection: AgentRequestQuestionSelection;
   required: boolean;
@@ -154,7 +158,11 @@ function extractQuestionSummaries(
         ?? firstString(optionRecord?.choice)
         ?? firstString(optionRecord?.value)
         ?? label;
-      choices.push(Object.freeze({ label, value }));
+      choices.push(Object.freeze({
+        label,
+        value,
+        description: firstString(optionRecord?.description),
+      }));
     }
     const declaredSelection = firstString(record?.selection)?.toLowerCase();
     const selection: AgentRequestQuestionSelection = declaredSelection === 'text'
@@ -167,6 +175,7 @@ function extractQuestionSummaries(
     const hasExplicitFreeform = asRecord(record?.freeform) !== null || record?.allowCustom === true;
     summaries.push(Object.freeze({
       answerKey: firstString(record?.id) ?? text,
+      header: firstString(record?.header),
       question: text,
       selection,
       required: record?.required !== false,

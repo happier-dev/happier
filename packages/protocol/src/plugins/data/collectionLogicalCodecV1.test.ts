@@ -83,6 +83,7 @@ describe('plugin Collection logical row codec', () => {
       encryptionMode: 'plain',
       material: null,
       randomBytes,
+      absenceEpoch: 0,
     });
 
     expect(prepared).toMatchObject({

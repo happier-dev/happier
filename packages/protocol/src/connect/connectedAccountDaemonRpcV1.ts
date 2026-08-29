@@ -336,12 +336,16 @@ export const ConnectedAccountAttemptResponseSchema =
       attemptId: BoundedIdentitySchema.optional(),
       code: BoundedIdentitySchema,
       diagnostic: z.unknown().optional(),
+      failureClass: z.literal('rateLimit').optional(),
+      retryNotBeforeMs: z.number().int().nonnegative().safe().optional(),
     }).strict(),
     z.object({
       status: z.literal('unavailable'),
       attemptId: BoundedIdentitySchema.optional(),
       code: BoundedIdentitySchema,
       diagnostic: z.unknown().optional(),
+      failureClass: z.literal('rateLimit').optional(),
+      retryNotBeforeMs: z.number().int().nonnegative().safe().optional(),
     }).strict(),
     z.object({
       status: z.literal('conflict'),
@@ -349,7 +353,17 @@ export const ConnectedAccountAttemptResponseSchema =
       code: BoundedIdentitySchema,
       diagnostic: z.unknown().optional(),
     }).strict(),
-  ]);
+  ]).superRefine((value, context) => {
+    if ((value.status === 'rejected' || value.status === 'unavailable')
+      && value.retryNotBeforeMs !== undefined
+      && value.failureClass !== 'rateLimit') {
+      context.addIssue({
+        code: 'custom',
+        path: ['retryNotBeforeMs'],
+        message: 'retryNotBeforeMs requires rate-limit failure evidence',
+      });
+    }
+  });
 export type ConnectedAccountAttemptResponse =
   ReadonlyArrayProperties<
     z.infer<typeof ConnectedAccountAttemptResponseSchema>

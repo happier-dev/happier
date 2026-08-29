@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
-import { ModelPackKindSchema, ModelPackRuntimeFamilySchema } from '../voice/modelPacks/manifest.js';
+import {
+  ModelPackKindSchema,
+  ModelPackRuntimeFamilySchema,
+  ModelPackVoiceCatalogEntrySchema,
+} from '../voice/modelPacks/manifest.js';
 import { VoiceModelPackIdentityV1Schema } from '../voice/modelPacks/identityV1.js';
 import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '../voice/runtimeConfig.js';
 import { VoiceSpeechDiagnosticsCaptureContextV1Schema } from '../voice/diagnostics.js';
@@ -138,6 +142,10 @@ export const DaemonVoiceInferenceModelStatusSchema = z.object({
   loadedArtifactBytes: z.number().int().nonnegative().optional(),
   /** Exact external-pack consent binding. Absent for built-in packs and licenses without consent. */
   licenseReview: DaemonVoiceModelPackLicenseReviewV1Schema.nullable().optional(),
+  /** TTS voices declared by this exact pack. Empty for packs without a catalog. */
+  voices: z.array(ModelPackVoiceCatalogEntrySchema).max(512).optional(),
+  /** Resolved explicit catalog default (or the first declared voice for legacy manifests). */
+  defaultVoiceId: z.string().min(1).nullable().optional(),
 }).superRefine((status, ctx) => {
   if (status.pluginIdentity && buildQualifiedPluginContributionKey({
     pluginId: status.pluginIdentity.pluginId,
@@ -147,6 +155,16 @@ export const DaemonVoiceInferenceModelStatusSchema = z.object({
       code: 'custom',
       path: ['pluginIdentity', 'packId'],
       message: 'Plugin model-pack identity must match the qualified projected pack id.',
+    });
+  }
+  if (
+    status.defaultVoiceId
+    && !(status.voices ?? []).some((voice) => voice.id === status.defaultVoiceId)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['defaultVoiceId'],
+      message: 'The default voice must identify a projected voice.',
     });
   }
 });

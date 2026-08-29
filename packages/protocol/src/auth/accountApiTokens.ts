@@ -2,10 +2,27 @@ import { z } from 'zod';
 
 const AccountApiTokenIdV1Schema = z.string().uuid();
 const AccountApiTokenInstantV1Schema = z.string().datetime({ offset: true }).max(64);
-const AccountApiTokenDisplayPrefixV1Schema = z.string().regex(/^hap_[0-9a-f]{8}$/u);
-const AccountApiTokenBearerV1Schema = z.string().regex(
-  /^hap_v1_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/u,
+const AccountApiTokenDisplayPrefixV1Schema = z.string().regex(/^hap_v1_[0-9a-f]{8}$/u);
+const ACCOUNT_API_TOKEN_BEARER_V1_PATTERN =
+  /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/u;
+export const AccountApiTokenBearerV1Schema = z.string().regex(
+  ACCOUNT_API_TOKEN_BEARER_V1_PATTERN,
 );
+
+export type ParsedAccountApiTokenBearerV1 = Readonly<{
+  tokenId: string;
+  secret: string;
+}>;
+
+/** The sole parser for the exact bearer shape minted by the Account server. */
+export function parseAccountApiTokenBearerV1(
+  token: string,
+): ParsedAccountApiTokenBearerV1 | null {
+  const match = ACCOUNT_API_TOKEN_BEARER_V1_PATTERN.exec(token);
+  const tokenId = match?.[1];
+  const secret = match?.[2];
+  return tokenId && secret ? { tokenId, secret } : null;
+}
 
 /** A non-secret, Account-scoped token projection suitable for Settings lists. */
 export const AccountApiTokenSummaryV1Schema = z.object({

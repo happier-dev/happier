@@ -101,16 +101,11 @@ const PeerApplicationEncryptionAadBaseV1Schema = z.object({
   phase: z.enum(['install', 'data', 'finish']),
 });
 
-export const PeerApplicationEncryptionAadV1Schema = z.discriminatedUnion('applicationKind', [
-  PeerApplicationEncryptionAadBaseV1Schema.extend({
-    applicationKind: z.literal('speech_transcription'),
-    streamId: z.string().min(1),
-    generation: z.number().int().nonnegative(),
-  }).strict(),
-  PeerApplicationEncryptionAadBaseV1Schema.extend({
-    applicationKind: z.literal('agent_realtime'),
-  }).strict(),
-]);
+export const PeerApplicationEncryptionAadV1Schema = PeerApplicationEncryptionAadBaseV1Schema.extend({
+  applicationKind: z.literal('speech_transcription'),
+  streamId: z.string().min(1),
+  generation: z.number().int().nonnegative(),
+}).strict();
 export type PeerApplicationEncryptionAadV1 = z.infer<typeof PeerApplicationEncryptionAadV1Schema>;
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -135,11 +130,7 @@ export function createSpeechTranscriptionApplicationAuthorityDigestV1(
 }
 
 export function createPeerApplicationEncryptionAadV1(
-  input:
-    | Omit<Extract<PeerApplicationEncryptionAadV1, { applicationKind: 'speech_transcription' }>,
-      'v' | 'domain' | 'suite' | 'flowKind'>
-    | Omit<Extract<PeerApplicationEncryptionAadV1, { applicationKind: 'agent_realtime' }>,
-      'v' | 'domain' | 'suite' | 'flowKind'>,
+  input: Omit<PeerApplicationEncryptionAadV1, 'v' | 'domain' | 'suite' | 'flowKind'>,
 ): Uint8Array {
   const aad = PeerApplicationEncryptionAadV1Schema.parse({
     v: PEER_APPLICATION_ENCRYPTION_VERSION_V1,

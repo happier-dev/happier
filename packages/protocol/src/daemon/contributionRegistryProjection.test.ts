@@ -2293,6 +2293,73 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(daemonProjection.fields[0]).not.toHaveProperty('defaultValue');
   });
 
+  it('projects the one supported rollback declaration and rejects malformed rollback facts', () => {
+    const projected = projectPluginSettingsContributionV2({
+      pluginId: 'acme.hooks',
+      definition: PluginSettingsContributionV2Schema.parse({
+        id: 'general',
+        version: 1,
+        title: { key: 'settings.general', fallback: 'General' },
+        target: { kind: 'plugin' },
+        scope: 'account',
+        fields: [
+          { id: 'mode', title: { key: 'settings.mode', fallback: 'Mode' }, schema: { type: 'string' } },
+        ],
+        presentation: { sections: [], subagentSections: [] },
+      }),
+      rollback: {
+        generation: 'generation-prev',
+        supported: true,
+        fieldIds: ['legacyMode'],
+      },
+    });
+    expect(projected.rollback).toEqual({
+      generation: 'generation-prev',
+      supported: true,
+      fieldIds: ['legacyMode'],
+    });
+    const wire = PluginProjectionV2Schema.parse({
+      v: 2,
+      generation: 7,
+      settingsById: { 'acme.hooks.general': projected },
+    });
+    expect(wire.settingsById['acme.hooks.general']?.rollback).toEqual({
+      generation: 'generation-prev',
+      supported: true,
+      fieldIds: ['legacyMode'],
+    });
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 7,
+      settingsById: {
+        'acme.hooks.general': {
+          ...projected,
+          rollback: { generation: 'generation-prev', supported: 'yes', fieldIds: [] },
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 7,
+      settingsById: {
+        'acme.hooks.general': {
+          ...projected,
+          rollback: { generation: 'generation-prev', supported: true, fieldIds: ['a', 'a'] },
+        },
+      },
+    }).success).toBe(false);
+    expect(PluginProjectionV2Schema.safeParse({
+      v: 2,
+      generation: 7,
+      settingsById: {
+        'acme.hooks.general': {
+          ...projected,
+          rollback: { generation: 'generation-prev', supported: false, fieldIds: ['legacyMode'] },
+        },
+      },
+    }).success).toBe(false);
+  });
+
   it('parses explicit Account settings metadata without exposing setting values', () => {
     const parsed = PluginProjectionV2Schema.parse({
       v: 2,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 
 import {
   DaemonPluginStructuredMessageActionExecuteRequestSchema,
@@ -77,6 +78,7 @@ import {
   type PluginSettingFieldV2,
   type PluginSettingsContributionV2,
 } from '../plugins/contributions/settings.js';
+import { PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1 } from '../plugins/settings/accountSettingsLimits.js';
 import { PluginUiHeaderActionPresentationV1Schema } from '../plugins/contributions/ui/sessionHeaderActions.js';
 import { PluginDeclarativeDocumentSourceV1Schema } from '../plugins/contributions/ui/v2.js';
 import {
@@ -772,6 +774,35 @@ export const DaemonPluginHostedWebArtifactCacheIdentityV1Schema = z.object({
 export type DaemonPluginHostedWebArtifactCacheIdentityV1 = z.infer<
   typeof DaemonPluginHostedWebArtifactCacheIdentityV1Schema
 >;
+
+/** Canonical cache identity equality shared by daemon, RN, and hosted clients. */
+export function isSameDaemonPluginReactNativeBundleCacheIdentityV1(
+  left: unknown,
+  right: unknown,
+): boolean {
+  const parsedLeft = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(left);
+  const parsedRight = DaemonPluginReactNativeBundleCacheIdentityV1Schema.safeParse(right);
+  return parsedLeft.success
+    && parsedRight.success
+    && createCanonicalJsonSigningInput(parsedLeft.data) === createCanonicalJsonSigningInput(parsedRight.data);
+}
+
+export function deriveDaemonPluginHostedWebArtifactCacheIdentityKeyV1(
+  identity: DaemonPluginHostedWebArtifactCacheIdentityV1,
+): string {
+  return createCanonicalJsonSigningInput(DaemonPluginHostedWebArtifactCacheIdentityV1Schema.parse(identity));
+}
+
+export function isSameDaemonPluginHostedWebArtifactCacheIdentityV1(
+  left: unknown,
+  right: unknown,
+): boolean {
+  const parsedLeft = DaemonPluginHostedWebArtifactCacheIdentityV1Schema.safeParse(left);
+  const parsedRight = DaemonPluginHostedWebArtifactCacheIdentityV1Schema.safeParse(right);
+  return parsedLeft.success
+    && parsedRight.success
+    && createCanonicalJsonSigningInput(parsedLeft.data) === createCanonicalJsonSigningInput(parsedRight.data);
+}
 
 export const DaemonPluginUiArtifactBytesCacheIdentityV1Schema = z.union([
   DaemonPluginReactNativeBundleCacheIdentityV1Schema,
@@ -1744,12 +1775,41 @@ export const PluginProjectedSettingsFieldV2Schema = z.object({
 }).strict();
 export type PluginProjectedSettingsFieldV2 = z.infer<typeof PluginProjectedSettingsFieldV2Schema>;
 
+/**
+ * The one already-supported rollback artifact declaration for one Settings
+ * scope (SET-09 bounded rollback-retention rule). `fieldIds` are exactly the
+ * non-secret local IDs the retained prior generation declared for this scope;
+ * their stored values stay owned — hidden from the current projection but
+ * preserved — while `supported` is true. The exact retirement signal is the
+ * existing generation support state. Retirement removes this public fact;
+ * the Availability owner compares two qualified registry generations and
+ * asks the Settings owner to prune only the retired declaration's exact ids.
+ * There is no history system behind this fact.
+ */
+export const PluginSettingsRollbackDeclarationV1Schema = z.object({
+  generation: PluginUiImmutableGenerationIdV1Schema,
+  supported: z.literal(true),
+  fieldIds: z.array(PluginSettingFieldIdV2Schema).max(PLUGIN_ACCOUNT_SETTINGS_LIMITS_V1.maximumFields),
+}).strict().superRefine((declaration, context) => {
+  const sorted = [...declaration.fieldIds].sort();
+  if (new Set(sorted).size !== sorted.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['fieldIds'],
+      message: 'Rollback declaration field ids must be unique',
+    });
+  }
+});
+export type PluginSettingsRollbackDeclarationV1 = z.infer<typeof PluginSettingsRollbackDeclarationV1Schema>;
+
 export const PluginProjectedSettingsV2Schema = z.object({
   id: z.string().trim().min(1),
   pluginId: z.string().trim().min(1),
   version: z.literal(1),
   title: z.string().trim().min(1),
   description: PluginOptionalStringSchema,
+  /** Present only while the existing generation support state retains exactly one prior artifact. */
+  rollback: PluginSettingsRollbackDeclarationV1Schema.optional(),
   scope: PluginProjectedSettingsScopeV2Schema,
   presentation: PluginSettingsPresentationV2Schema,
   target: z.union([
@@ -1987,6 +2047,8 @@ function projectPluginSettingsFieldV2(params: Readonly<{
 export function projectPluginSettingsContributionV2(params: Readonly<{
   pluginId: string;
   definition: PluginSettingsContributionV2;
+  /** The one supported rollback artifact declaration for this scope, when retained. */
+  rollback?: PluginSettingsRollbackDeclarationV1;
 }>): PluginProjectedSettingsV2 {
   const title = readProjectedSettingsText(params.definition.title);
   if (!title) {
@@ -2003,6 +2065,7 @@ export function projectPluginSettingsContributionV2(params: Readonly<{
     version: params.definition.version,
     title,
     ...(description ? { description } : {}),
+    ...(params.rollback ? { rollback: params.rollback } : {}),
     scope: { kind: params.definition.scope },
     presentation: params.definition.presentation,
     target: params.definition.target.kind === 'plugin'

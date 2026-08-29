@@ -9,16 +9,25 @@ import {
 } from './metadataRedaction.js';
 
 describe('peer mediation observability shared redactor (DUP-3 single owner)', () => {
-  it('drops all but the safe header allowlist and never surfaces the WS subprotocol', () => {
+  it('keeps safe header context while dropping credential and identity spellings', () => {
     const out = redactPeerMediationObservabilityHeaders({
       authorization: 'Bearer secret',
       'sec-websocket-protocol': 'base64url.bearer.authorization.k8s.io.tok',
+      'x-user-id': 'user-secret',
+      'chatgpt-account-id': 'account-secret',
       'content-type': 'application/json',
       'x-request-id': 'r1',
+      'X-Tenant-Label': 'workspace-alpha',
     });
-    expect(out).toEqual({ 'content-type': 'application/json', 'x-request-id': 'r1' });
+    expect(out).toEqual({
+      'content-type': 'application/json',
+      'x-request-id': 'r1',
+      'x-tenant-label': 'workspace-alpha',
+    });
     expect(JSON.stringify(out)).not.toContain('secret');
     expect(JSON.stringify(out)).not.toContain('bearer');
+    expect(JSON.stringify(out)).not.toContain('user-secret');
+    expect(JSON.stringify(out)).not.toContain('account-secret');
   });
 
   it('strips token-bearing query values, keeping only safe key names, honoring the url base', () => {

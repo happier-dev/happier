@@ -49,6 +49,7 @@ describe('buildAgentRequestSemanticSummary', () => {
       toolName: 'AskUserQuestion',
       toolInput: {
         questions: [{
+          header: 'Branch',
           question: 'Which branch should I use?',
           options: [
             { label: 'main', description: 'The default branch' },
@@ -60,13 +61,14 @@ describe('buildAgentRequestSemanticSummary', () => {
 
     expect(summary.questions).toEqual([{
       answerKey: 'Which branch should I use?',
+      header: 'Branch',
       question: 'Which branch should I use?',
       selection: 'single',
       required: true,
       allowCustom: false,
       choices: [
-        { label: 'main', value: 'main' },
-        { label: 'release', value: 'release' },
+        { label: 'main', value: 'main', description: 'The default branch' },
+        { label: 'release', value: 'release', description: null },
       ],
     }]);
   });
@@ -97,16 +99,18 @@ describe('buildAgentRequestSemanticSummary', () => {
 
     expect(summary.questions).toEqual([{
       answerKey: 'release-mode',
+      header: null,
       question: 'Which release mode should I use?',
       selection: 'single',
       required: true,
       allowCustom: true,
       choices: [
-        { label: 'Safe', value: 'safe' },
-        { label: 'Other', value: 'other' },
+        { label: 'Safe', value: 'safe', description: null },
+        { label: 'Other', value: 'other', description: null },
       ],
     }, {
       answerKey: 'notes',
+      header: null,
       question: 'Any notes?',
       selection: 'text',
       required: false,

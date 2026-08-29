@@ -24,6 +24,7 @@ import {
   PluginCollectionContractRefV1Schema,
   PluginCollectionGetRequestV1Schema,
   PluginCollectionGetResultV1Schema,
+  PluginCollectionForgetRequestV1Schema,
   PluginCollectionMemberNameV1Schema,
   PluginCollectionMigrationDeclarationV1Schema,
   PluginCollectionMutationErrorV1Schema,
@@ -191,6 +192,7 @@ describe('Plugin Account Collection contracts', () => {
         kind: 'put',
         rowId: 'row-1',
         expectedRevision: 'absent',
+        expectedAbsenceEpoch: 0,
         content: { t: 'encrypted', c: 'ciphertext' },
         projection: { status: 'open' },
       }],
@@ -206,6 +208,7 @@ describe('Plugin Account Collection contracts', () => {
         kind: 'put',
         rowId: 'row-1',
         expectedRevision: 'absent',
+        expectedAbsenceEpoch: 0,
         content: { t: 'encrypted', c: 'ciphertext' },
         projection: { status: 'open' },
       }],
@@ -213,6 +216,34 @@ describe('Plugin Account Collection contracts', () => {
     expect(measurePluginCollectionMutationRequestEncodedBytesV1(request)).toBe(
       new TextEncoder().encode(JSON.stringify(request)).byteLength,
     );
+  });
+
+  it('requires an observed Collection absence epoch before an absent create and closes exact tombstone forgetting', () => {
+    const base = {
+      pluginId: 'example.tasks',
+      collectionId: 'tasks',
+      writerContext: { schemaVersion: 1, contractDigest: 'a'.repeat(43) },
+      operations: [{
+        kind: 'put',
+        rowId: 'row-1',
+        expectedRevision: 'absent',
+        content: { t: 'plain', v: {} },
+        projection: {},
+      }],
+    };
+    expect(PluginCollectionMutationRequestV1Schema.safeParse(base).success).toBe(false);
+    expect(PluginCollectionMutationRequestV1Schema.safeParse({
+      ...base,
+      operations: [{ ...base.operations[0], expectedAbsenceEpoch: 0 }],
+    }).success).toBe(true);
+    expect(PluginCollectionForgetRequestV1Schema.safeParse({
+      pluginId: 'example.tasks',
+      collectionId: 'tasks',
+      writerContext: { schemaVersion: 1, contractDigest: 'a'.repeat(43) },
+      rowId: 'row-1',
+      expectedRevision: 4,
+      expectedAbsenceEpoch: 0,
+    }).success).toBe(true);
   });
 
   it('uses one exact error schema for direct and static Collection reads', () => {
@@ -747,6 +778,7 @@ describe('Plugin Account Collection contracts', () => {
           kind: 'put',
           rowId: 'next-row',
           expectedRevision: 'absent',
+          expectedAbsenceEpoch: 0,
           content: { t: 'plain', v: {} },
           projection: {},
         },
@@ -813,8 +845,8 @@ describe('Plugin Account Collection contracts', () => {
       collectionId: 'tasks',
       rowId: 'task-1',
     });
-    expect(PluginCollectionGetResultV1Schema.parse({ row })).toEqual({ row });
-    expect(PluginCollectionGetResultV1Schema.parse({ row: null })).toEqual({ row: null });
+    expect(PluginCollectionGetResultV1Schema.parse({ row, absenceEpoch: 0 })).toEqual({ row, absenceEpoch: 0 });
+    expect(PluginCollectionGetResultV1Schema.parse({ row: null, absenceEpoch: 0 })).toEqual({ row: null, absenceEpoch: 0 });
 
     expect(PluginCollectionQueryRequestV1Schema.parse({
       pluginId: 'example.tasks',

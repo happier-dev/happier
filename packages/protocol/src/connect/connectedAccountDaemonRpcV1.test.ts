@@ -71,6 +71,39 @@ describe('Connected Account daemon RPC v1', () => {
     }).success).toBe(false);
   });
 
+  it('admits bounded rate-limit evidence on terminal provider failures only', () => {
+    expect(ConnectedAccountAttemptResponseSchema.safeParse({
+      status: 'unavailable',
+      attemptId: 'attempt-1',
+      code: 'sentry_rate_limited',
+      failureClass: 'rateLimit',
+      retryNotBeforeMs: 1_786_000_060_000,
+    }).success).toBe(true);
+    expect(ConnectedAccountAttemptResponseSchema.safeParse({
+      status: 'unavailable',
+      code: 'sentry_rate_limited',
+      failureClass: 'transient',
+      retryNotBeforeMs: 1_786_000_060_000,
+    }).success).toBe(false);
+    expect(ConnectedAccountAttemptResponseSchema.safeParse({
+      status: 'unavailable',
+      code: 'sentry_rate_limited',
+      failureClass: 'rateLimit',
+      retryNotBeforeMs: -1,
+    }).success).toBe(false);
+    expect(ConnectedAccountAttemptResponseSchema.safeParse({
+      status: 'unavailable',
+      code: 'sentry_rate_limited',
+      retryNotBeforeMs: 1_786_000_060_000,
+    }).success).toBe(false);
+    expect(ConnectedAccountAttemptResponseSchema.safeParse({
+      status: 'unavailable',
+      code: 'sentry_rate_limited',
+      failureClass: 'rateLimit',
+      retryNotBeforeMs: Number.MAX_SAFE_INTEGER + 1,
+    }).success).toBe(false);
+  });
+
   it('carries daemon-proven account-list transport only when the caller requests admission', () => {
     expect(ConnectedAccountControlCommandRequestSchema.parse({
       v: 1,

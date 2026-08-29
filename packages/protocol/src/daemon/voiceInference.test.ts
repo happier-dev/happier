@@ -434,6 +434,34 @@ describe('daemonVoiceInference schemas', () => {
         }).success).toBe(false);
     });
 
+    it('projects a model-pack TTS voice catalog and rejects a default outside that exact catalog', () => {
+        const base = {
+            packId: 'acme.speech/tts-pack',
+            pluginIdentity: { pluginId: 'acme.speech', packId: 'tts-pack' },
+            kind: 'tts_sherpa' as const,
+            model: 'kokoro',
+            version: '1',
+            executionSupport: ['daemon'] as const,
+            installState: 'installed' as const,
+            progress: null,
+            lastError: null,
+            updatedAtMs: 1,
+            voices: [
+                { id: 'calm', title: 'Calm', sid: 2 },
+                { id: 'bright', title: 'Bright', subtitle: 'English', sid: 9 },
+            ],
+        };
+
+        expect(DaemonVoiceInferenceModelStatusSchema.parse({
+            ...base,
+            defaultVoiceId: 'bright',
+        })).toMatchObject({ voices: base.voices, defaultVoiceId: 'bright' });
+        expect(DaemonVoiceInferenceModelStatusSchema.safeParse({
+            ...base,
+            defaultVoiceId: 'retired',
+        }).success).toBe(false);
+    });
+
     it('rejects overlong daemon voice inference request ids across request-bearing contracts', () => {
         const overlongRequestId = 'r'.repeat(257);
 

@@ -28,6 +28,7 @@ describe('RPC_METHODS file-system surface', () => {
     expect(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1).toBe(
       'daemon.bulkTransfer.composerMedia.capability.get.v1',
     );
+    expect(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM).toBe('daemon.bulkTransfer.composerMedia.claim');
     expect(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE).toBe('daemon.bulkTransfer.composerMedia.release');
     expect('DAEMON_BULK_TRANSFER_UPLOAD_INIT' in RPC_METHODS).toBe(false);
     expect('DAEMON_BULK_TRANSFER_DOWNLOAD_INIT' in RPC_METHODS).toBe(false);

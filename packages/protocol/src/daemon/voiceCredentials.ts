@@ -7,6 +7,7 @@ import {
 import { ConnectedServiceCredentialRevisionV1Schema } from '../connect/connectedServiceSchemas.js';
 import {
   VoiceCredentialAccessPhaseSchema,
+  VoiceRawCredentialGrantDeclarationSchema,
 } from '../plugins/contributions/voiceProviders.js';
 import {
   PluginPermissionGrantAuthoritySourceV1Schema,
@@ -126,6 +127,7 @@ export type DaemonVoiceClientMediatedCredentialMaterializeResponseV1 = z.infer<
 
 export const DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema = z.object({
   contribution: asProtocolZod(PluginContributionIdentityV1Schema),
+  rawGrant: VoiceRawCredentialGrantDeclarationSchema,
 }).strict();
 export type DaemonVoiceClientRawCredentialAuthorizationRequestV1 = z.infer<
   typeof DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema

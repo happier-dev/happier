@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../plugins/pluginId.js';
+
+/** plugin id + routing separator + contribution-local id. */
+export const MAX_AGENT_ROUTING_ID_BYTES =
+  MAX_PLUGIN_IDENTIFIER_BYTES + 1 + MAX_PLUGIN_IDENTIFIER_BYTES;
+
 /**
  * Any installed Agent id, as it travels on a V1 wire.
  *
@@ -17,7 +23,7 @@ import { z } from 'zod';
  */
 export const AgentIdV1Schema = z.string()
   .min(1)
-  .max(128)
+  .max(MAX_AGENT_ROUTING_ID_BYTES)
   .refine(
     (value) => value === value.trim(),
     'Agent id must already be trimmed.',

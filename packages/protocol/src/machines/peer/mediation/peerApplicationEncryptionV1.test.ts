@@ -68,7 +68,7 @@ describe('peer application encryption v1', () => {
     expect(PEER_APPLICATION_ENCRYPTION_SUITE_V1).toBe('aes-256-gcm');
   });
 
-  it('cryptographically separates transcription and Agent realtime application authority', () => {
+  it('rejects the retired Agent realtime application AAD', () => {
     const common = {
       authorityDigest: `sha256:${'ab'.repeat(32)}`,
       applicationAttemptId: 'attempt-1',
@@ -81,17 +81,10 @@ describe('peer application encryption v1', () => {
       phase: 'data' as const,
       direction: 'client_to_daemon' as const,
     };
-    const speech = createPeerApplicationEncryptionAadV1({
+    expect(() => createPeerApplicationEncryptionAadV1({
       ...common,
-      applicationKind: 'speech_transcription',
-      streamId: 'stream-1',
-      generation: 1,
-    });
-    const agent = createPeerApplicationEncryptionAadV1({
-      ...common,
-      applicationKind: 'agent_realtime',
-    });
-    expect(agent).not.toEqual(speech);
+      applicationKind: 'agent_realtime' as never,
+    })).toThrow();
   });
 
   it('round-trips strict install and ciphertext frames and rejects unknown fields', () => {

@@ -6,13 +6,16 @@ import {
 } from '../plugins/contributionIdentity.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/publicTypes.js';
 import { PluginSettingFieldIdV2Schema } from '../plugins/contributions/settings.js';
-import { VoiceSpeechInputMimeTypeSchema } from '../plugins/contributions/voiceProviders.js';
+import {
+  VOICE_SPEECH_OUTPUT_MAX_BYTES,
+  VoiceSpeechInputMimeTypeSchema,
+} from '../plugins/contributions/voiceProviders.js';
 import { TransferSessionIdSchema } from '../transfers/sessions/index.js';
 import { VoiceProviderOperationErrorCodeSchema } from '../voice/providerOperations.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 export const DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES = 8 * 1024 * 1024;
-export const DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES = 16 * 1024 * 1024;
+export const DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES = VOICE_SPEECH_OUTPUT_MAX_BYTES;
 export const DAEMON_VOICE_SPEECH_REQUEST_ID_MAX_LENGTH = 128;
 
 export const DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_ENCODED_MAX_LENGTH = 4 * 1024 * 1024;
@@ -52,14 +55,12 @@ export type DaemonVoiceSpeechCatalogRequest = z.infer<
 >;
 
 /**
- * A generic UI settings action carries its already validated config and the
- * Account Settings revision it captured. The daemon admits only the matching
- * revision before provider effects; the UI remains the sole CAS/patch owner.
+ * The Account Settings revision is an admission fence. The daemon reads the
+ * matching canonical settings snapshot; the UI remains the sole CAS/patch owner.
  */
 export const DaemonVoiceSpeechSettingsActionRequestSchema = z.object({
   target: asProtocolZod(PluginContributionIdentityV1Schema),
   actionId: asProtocolZod(PluginContributionLocalIdSchema),
-  settings: z.record(PluginSettingFieldIdV2Schema, PluginJsonValueV2Schema),
   expectedSettingsVersion: z.number().int().nonnegative(),
 }).strict();
 export type DaemonVoiceSpeechSettingsActionRequest = z.infer<
@@ -156,8 +157,6 @@ export type DaemonVoiceSpeechTranscribeUploadAbortResponse = z.infer<
 export const DaemonVoiceSpeechTranscribeRequestSchema = z.object({
   target: asProtocolZod(PluginContributionIdentityV1Schema),
   requestId: VoiceSpeechRequestIdSchema,
-  model: VoiceSpeechRequiredStringSchema(256),
-  language: VoiceSpeechNullableStringSchema(64),
   mimeType: VoiceSpeechInputMimeTypeSchema,
   uploadId: TransferSessionIdSchema,
 }).strict();
@@ -220,12 +219,6 @@ export const DaemonVoiceSpeechSynthesizeRequestSchema = z.object({
   target: asProtocolZod(PluginContributionIdentityV1Schema),
   requestId: VoiceSpeechRequestIdSchema,
   input: VoiceSpeechRequiredStringSchema(200_000),
-  model: VoiceSpeechNullableStringSchema(256),
-  voiceName: VoiceSpeechRequiredStringSchema(512),
-  languageCode: VoiceSpeechNullableStringSchema(64),
-  format: z.enum(['mp3', 'wav']),
-  speakingRate: z.number().finite().nullable(),
-  pitch: z.number().finite().nullable(),
   recipientPublicKeyBase64: z.string().trim().min(1).max(DAEMON_VOICE_SPEECH_TRANSFER_KEY_ENVELOPE_MAX_LENGTH),
 }).strict();
 export type DaemonVoiceSpeechSynthesizeRequest = z.infer<

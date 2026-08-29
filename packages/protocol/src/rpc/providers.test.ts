@@ -583,16 +583,20 @@ describe('provider machine RPC contracts', () => {
     }
   });
 
-  it('projects declared purpose presentation as a resolved string for managed authoring availability', () => {
+  it('preserves localized purpose presentation and the producer-authored binding policy for managed authoring', () => {
     const managedLocalOption = {
       targetMachineId: 'machine-1',
+      connectedAccountPurposeBindingPolicy: { minimumBound: 1 as const },
       connectedAccountPurposes: [{
         purpose: 'upstream',
         service: {
           pluginId: 'happier.connected-account.openai',
           localId: 'openai',
         },
-        title: 'Use upstream OpenAI account',
+        title: {
+          key: 'connectedAccounts.upstream.title',
+          fallback: 'Use upstream OpenAI account',
+        },
         required: true,
         materializationKinds: ['httpHeaders'],
       }],
@@ -653,22 +657,7 @@ describe('provider machine RPC contracts', () => {
         },
       }],
     }).success).toBe(true);
-    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
-      ...response,
-      connections: [{
-        ...connection,
-        managedLocalOption: {
-          ...managedLocalOption,
-          connectedAccountPurposes: [{
-            ...managedLocalOption.connectedAccountPurposes[0],
-            title: {
-              key: 'connectedAccounts.upstream.title',
-              fallback: 'Use upstream OpenAI account',
-            },
-          }],
-        },
-      }],
-    }).success).toBe(false);
+    expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse(response).success).toBe(true);
     expect(DaemonProviderConnectionsDescribeResponseV1Schema.safeParse({
       ...response,
       connections: [{ ...connection, provenance: 'external' }],
@@ -770,8 +759,10 @@ describe('provider machine RPC contracts', () => {
     } as const;
     expect(DaemonProviderModelProjectionRequestV1Schema.parse(request)).toEqual(request);
     expect(DaemonProviderModelProjectionRequestV1Schema.parse({
-      machineId: 'machine-1', agentTargetKey: 'backend:codex', mode: 'management',
-    })).toEqual({ machineId: 'machine-1', agentTargetKey: 'backend:codex', mode: 'management' });
+      machineId: 'machine-1', agentTargetKey: 'backend:codex', mode: 'management', forceRefresh: true,
+    })).toEqual({
+      machineId: 'machine-1', agentTargetKey: 'backend:codex', mode: 'management', forceRefresh: true,
+    });
     expect(DaemonProviderModelProjectionRequestV1Schema.safeParse({
       ...request, agentTargetKey: 'codex',
     }).success).toBe(false);
@@ -846,6 +837,33 @@ describe('provider machine RPC contracts', () => {
         },
       })).toMatchObject({ currentSelectionRecovery: recovery });
     }
+  });
+
+  it('carries typed cold-refresh failures beside successful groups and stays strict about them', () => {
+    const failure = {
+      connectionId: 'pc_1',
+      error: createProviderErrorV1('provider_endpoint_unavailable', { connectionId: 'pc_1', machineId: 'machine-1' }),
+    } as const;
+    const successWithFailures = {
+      status: 'success',
+      agentTargetKey: 'backend:codex',
+      groups: [],
+      refreshFailures: [failure],
+    } as const;
+    // A reader without the field (or a writer without failures) round-trips unchanged.
+    expect(DaemonProviderModelProjectionResponseV1Schema.parse({
+      status: 'success', agentTargetKey: 'backend:codex', groups: [],
+    })).toEqual({ status: 'success', agentTargetKey: 'backend:codex', groups: [] });
+    expect(DaemonProviderModelProjectionResponseV1Schema.parse(successWithFailures))
+      .toEqual(successWithFailures);
+    expect(DaemonProviderModelProjectionResponseV1Schema.safeParse({
+      ...successWithFailures,
+      refreshFailures: [{ ...failure, error: { ...failure.error, retryable: false } }],
+    }).success).toBe(false);
+    expect(DaemonProviderModelProjectionResponseV1Schema.safeParse({
+      ...successWithFailures,
+      refreshFailures: [{ connectionId: 'pc_1' }],
+    }).success).toBe(false);
   });
 
   it('accepts only intent-level bounded model settings mutations', () => {

@@ -82,6 +82,10 @@
       "types": "./dist/actions/actionInputVoiceGuidance.d.ts",
       "default": "./dist/actions/actionInputVoiceGuidance.js"
     },
+    "./auth/accountApiTokens": {
+      "types": "./dist/auth/accountApiTokens.d.ts",
+      "default": "./dist/auth/accountApiTokens.js"
+    },
     "./automations/event-setup-result": {
       "types": "./dist/automations/automationEventSetupResultV1.d.ts",
       "default": "./dist/automations/automationEventSetupResultV1.js"
@@ -163,6 +167,10 @@
       "types": "./dist/sessions/general.d.ts",
       "default": "./dist/sessions/general.js"
     },
+    "./sessions/idsV1": {
+      "types": "./dist/sessions/idsV1.d.ts",
+      "default": "./dist/sessions/idsV1.js"
+    },
     "./sessions/replay-seed-budget": {
       "types": "./dist/sessions/replaySeedBudget.d.ts",
       "default": "./dist/sessions/replaySeedBudget.js"
@@ -223,6 +231,10 @@
       "types": "./dist/plugins/ui/composerRef.d.ts",
       "default": "./dist/plugins/ui/composerRef.js"
     },
+    "./plugins/actions/vocabulary": {
+      "types": "./dist/plugins/actions/vocabulary.d.ts",
+      "default": "./dist/plugins/actions/vocabulary.js"
+    },
     "./plugins/actions/json-schema-validation": {
       "types": "./dist/plugins/actions/jsonSchemaValidation.d.ts",
       "default": "./dist/plugins/actions/jsonSchemaValidation.js"
@@ -270,6 +282,10 @@
     "./plugins/manifest/declaration": {
       "types": "./dist/plugins/manifest/declaration.d.ts",
       "default": "./dist/plugins/manifest/declaration.js"
+    },
+    "./plugins/data/collectionOpaqueCursorV1": {
+      "types": "./dist/plugins/data/collectionOpaqueCursorV1.d.ts",
+      "default": "./dist/plugins/data/collectionOpaqueCursorV1.js"
     },
     "./plugins/data/collectionLimitsV1": {
       "types": "./dist/plugins/data/collectionLimitsV1.d.ts",
@@ -426,6 +442,10 @@
     "./plugins/contributions/composer-reference-candidate-id": {
       "types": "./dist/plugins/contributions/composerReferenceCandidateIdV1.d.ts",
       "default": "./dist/plugins/contributions/composerReferenceCandidateIdV1.js"
+    },
+    "./plugins/contributions/composer-reference-providers": {
+      "types": "./dist/plugins/contributions/composerReferenceProviders.d.ts",
+      "default": "./dist/plugins/contributions/composerReferenceProviders.js"
     },
     "./plugins/contributions/voice": {
       "types": "./dist/plugins/contributions/voiceProviders.d.ts",

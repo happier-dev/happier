@@ -405,6 +405,11 @@ export {
   type AgentExecutionTargetV1,
 } from './agents/executionTargetV1.js';
 export {
+  AgentIdV1Schema,
+  MAX_AGENT_ROUTING_ID_BYTES,
+  type AgentIdV1,
+} from './agents/agentIdV1.js';
+export {
   BackendTargetKeyV2Schema,
   BackendTargetKeyV2InputSchema,
   BackendTargetRefV2InputSchema,
@@ -587,6 +592,7 @@ export {
   type AgentUiMessageDeclarationV1,
   type AgentUiProjectedDeclarationV1,
   type AgentUiSessionDeclarationV1,
+  type AgentUiSettingReferenceV1,
 } from './plugins/contributions/agentUiGrammar.js';
 export {
   PluginActionAvailabilityV2Schema,
@@ -838,6 +844,7 @@ export {
   PluginTranscriptActivitySnapshotV1Schema,
   PluginTranscriptActivityResourceSnapshotV1Schema,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_RESOURCE_V1,
+  MAX_PLUGIN_TRANSCRIPT_ACTIVITIES_PER_SESSION_TAIL_V1,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITY_ACTIONS_V1,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITY_CHECKLIST_ITEMS_V1,
   MAX_PLUGIN_TRANSCRIPT_ACTIVITY_TEXT_UTF8_BYTES_V1,
@@ -1162,6 +1169,7 @@ export {
   deriveVoiceCredentialBindingIdentityV1,
   normalizeVoiceProviderContribution,
   resolveVoiceSpeechEndpointPolicy,
+  VOICE_SPEECH_OUTPUT_MAX_BYTES,
   resolveVoiceSpeechSettingsCorrespondence,
   type VoiceAvailabilityPlatform,
   type VoiceConversationCapabilities,
@@ -1195,8 +1203,13 @@ export {
   pluginJsonValuesEqual,
 } from './plugins/contributions/jsonSchemaValues.js';
 export {
+  evaluatePluginPolicyExpressionV2,
+  type PluginAvailabilityDescriptorV2,
   PluginJsonSchemaV2Schema,
   PluginJsonValueV2Schema,
+  type PluginPolicyExpressionV2,
+  type PluginPolicyFactValueV2,
+  type PluginPolicyFactsV2,
   type PluginJsonSchemaV2,
   type PluginJsonValueV2,
 } from './plugins/contributions/publicTypes.js';
@@ -2848,6 +2861,7 @@ export {
   type SocketRpcAuthorizationContext,
   type SocketRpcAuthorizationContextKind,
   type SocketRpcSessionWriteAuthorizationContext,
+  type WorkspaceStatFileRequestV1,
 } from './rpc/index.js';
 export {
   DAEMON_VOICE_INFERENCE_REQUEST_ID_MAX_LENGTH,
@@ -3339,6 +3353,7 @@ export {
   type CapabilityDetectResult,
   type CapabilityId,
   type CapabilityKind,
+  parseCapabilityId,
 } from './capabilities/index.js';
 
 export {
@@ -4642,6 +4657,7 @@ export {
   SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
   SessionPendingMessageComposerAdmissionPrepareResponseV1Schema,
   SessionPendingMessageComposerAdmissionAcceptedRequestV1Schema,
+  SessionPendingMessageComposerAdmissionAbandonedRequestV1Schema,
   hasAdmittedComposerAttachmentSelectionV1,
   readAttachmentEnvelopeLocalImagePaths,
   readHappierStructuredInputV1FromMeta,
@@ -4654,6 +4670,7 @@ export {
   type SessionPendingMessageComposerAdmissionPrepareRequestV1,
   type SessionPendingMessageComposerAdmissionPrepareResponseV1,
   type SessionPendingMessageComposerAdmissionAcceptedRequestV1,
+  type SessionPendingMessageComposerAdmissionAbandonedRequestV1,
 } from './sessions/userMessageRpc.js';
 
 export {
@@ -4860,7 +4877,10 @@ export {
   DaemonPluginComposerReferenceSearchResponseSchema,
   DaemonPluginReactNativeBundleCacheIdentityV1Schema,
   deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1,
+  isSameDaemonPluginReactNativeBundleCacheIdentityV1,
   DaemonPluginHostedWebArtifactCacheIdentityV1Schema,
+  deriveDaemonPluginHostedWebArtifactCacheIdentityKeyV1,
+  isSameDaemonPluginHostedWebArtifactCacheIdentityV1,
   DaemonPluginUiArtifactBytesCacheIdentityV1Schema,
   DaemonPluginUiArtifactBytesFamilyV1Schema,
   DaemonPluginUiArtifactBytesReadRequestSchema,
@@ -4918,6 +4938,7 @@ export {
   PluginProjectedSettingsFieldV2Schema,
   PluginProjectedSettingsScopeV2Schema,
   PluginProjectedSettingsV2Schema,
+  PluginSettingsRollbackDeclarationV1Schema,
   PluginSettingsProjectionError,
   projectPluginSettingsContributionV2,
   PluginProjectedToolV2Schema,
@@ -5013,6 +5034,7 @@ export {
   type PluginProjectedSettingsFieldV2,
   type PluginProjectedSettingsScopeV2,
   type PluginProjectedSettingsV2,
+  type PluginSettingsRollbackDeclarationV1,
   type PluginProjectedToolV2,
   type PluginProjectionBrandAssetV2,
   type PluginProjectionInstalledPackageV2,
@@ -6796,6 +6818,11 @@ export {
   AccountSettingsV2UpdateResponseSchema,
   AccountSettingMutationV1Schema,
   applyAccountSettingMutationV1,
+  applyAccountSettingsHistoryRestoreV1,
+  AccountSettingsV2HistoryContentKindV1Schema,
+  AccountSettingsV2HistoryListResponseSchema,
+  AccountSettingsV2HistoryDetailResponseSchema,
+  AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
   CONNECTED_ACCOUNT_SERVICE_CONFIGURATION_MAX_ENTRIES,
   ConnectedAccountServiceConfigurationEntryV1Schema,
   ConnectedAccountServiceConfigurationsV1Schema,
@@ -6866,6 +6893,12 @@ export {
   type AccountSettingMutationV1,
   type AccountSettingsMutationInvalidReason,
   type AccountSettingsMutationResult,
+  type AccountSettingsHistoryRestoreApplicationV1,
+  type AccountSettingsHistoryRestoreInvalidReasonV1,
+  type AccountSettingsV2HistoryContentKindV1,
+  type AccountSettingsV2HistoryListResponse,
+  type AccountSettingsV2HistoryDetailResponse,
+  type AccountSettingsV2HistoryRestoreClientUpdateRequiredResponse,
   type AccountSettingsSavedSecretMutation,
   type AccountSettingsSavedSecretReference,
   type AccountSettingsSavedSecretReferenceOwner,
@@ -6939,6 +6972,7 @@ export {
   ACCOUNT_API_TOKENS_REVOKE_ALL_HTTP_PATH_V1,
   ACCOUNT_API_TOKEN_INTROSPECTION_HTTP_PATH_V1,
   ACCOUNT_API_TOKEN_INTROSPECTION_MAX_BODY_BYTES_V1,
+  AccountApiTokenBearerV1Schema,
   AccountApiTokenIntrospectionRequestV1Schema,
   AccountApiTokenIntrospectionSuccessV1Schema,
   AccountApiTokenIntrospectionSubjectFailureV1Schema,
@@ -6952,6 +6986,8 @@ export {
   AccountApiTokensRevokeAllActionInputV1Schema,
   AccountApiTokensRevokeAllActionOutputV1Schema,
   AccountApiTokensServerErrorV1Schema,
+  parseAccountApiTokenBearerV1,
+  type ParsedAccountApiTokenBearerV1,
   type AccountApiTokenSummaryV1,
   type AccountApiTokensCreateActionInputV1,
   type AccountApiTokensCreateActionOutputV1,
@@ -7446,6 +7482,7 @@ export {
   type ComposerReferenceMentionV1,
 } from './runtime/input/composerReferenceProviderV1.js';
 export {
+  COMPOSER_SOURCE_REF_PRIVATE_META_FIELD_V1,
   COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
   ComposerCapabilitiesV1Schema,
   ComposerControlChoiceIdV1Schema,
@@ -7552,6 +7589,7 @@ export {
   PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1,
   PLUGIN_COLLECTION_CANDIDATE_PREPARATION_RETIRE_HTTP_PATH_V1,
   PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+  PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
   PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
   PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
   PluginAccountCollectionContributionV1Schema,
@@ -7574,6 +7612,9 @@ export {
   PluginCollectionDeleteMutationV1Schema,
   PluginCollectionGetRequestV1Schema,
   PluginCollectionGetResultV1Schema,
+  PluginCollectionForgetRequestV1Schema,
+  PluginCollectionForgetResultV1Schema,
+  PluginCollectionAbsenceEpochV1Schema,
   PluginCollectionIndexFieldV1Schema,
   PluginCollectionIndexPrefixQuotaV1Schema,
   PluginCollectionIndexScalarValueV1Schema,
@@ -7657,6 +7698,8 @@ export {
   type PluginCollectionDeleteMutationV1,
   type PluginCollectionGetRequestV1,
   type PluginCollectionGetResultV1,
+  type PluginCollectionForgetRequestV1,
+  type PluginCollectionForgetResultV1,
   type PluginCollectionIdentityTagOutcomeV1,
   type PluginCollectionIndexFieldV1,
   type PluginCollectionIndexPrefixQuotaV1,
@@ -7700,6 +7743,7 @@ export {
   type PluginCollectionUiRowV1,
   type PluginCollectionWriterContextV1,
 } from './plugins/data/collectionsV1.js';
+export type { PluginCollectionOpaqueCursorV1 } from './plugins/data/collectionOpaqueCursorV1.js';
 export {
   decodePluginCollectionLogicalRowV1,
   encodePluginCollectionLogicalValueV1,
@@ -7714,18 +7758,18 @@ export {
   type PluginCollectionLogicalValueValidatorV1,
 } from './plugins/data/collectionLogicalCodecV1.js';
 export {
-  PLUGIN_HOSTED_WEB_COLLECTION_UI_QUERY_BRIDGE_KIND_V1,
-  PluginHostedWebCollectionUiQueryBridgeChangeV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeOperationV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeRequestV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeResponseV1Schema,
-  PluginHostedWebCollectionUiQueryBridgeSnapshotV1Schema,
-  type PluginHostedWebCollectionUiQueryBridgeChangeV1,
-  type PluginHostedWebCollectionUiQueryBridgeOperationV1,
-  type PluginHostedWebCollectionUiQueryBridgeRequestV1,
-  type PluginHostedWebCollectionUiQueryBridgeResponseV1,
-  type PluginHostedWebCollectionUiQueryBridgeSnapshotV1,
-} from './plugins/data/hostedWebCollectionUiQueryBridgeV1.js';
+  PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1,
+  PluginHostedWebAccountDataBridgeChangeV1Schema,
+  PluginHostedWebAccountDataBridgeOperationV1Schema,
+  PluginHostedWebAccountDataBridgeRequestV1Schema,
+  PluginHostedWebAccountDataBridgeResponseV1Schema,
+  PluginHostedWebAccountDataBridgeSnapshotV1Schema,
+  type PluginHostedWebAccountDataBridgeChangeV1,
+  type PluginHostedWebAccountDataBridgeOperationV1,
+  type PluginHostedWebAccountDataBridgeRequestV1,
+  type PluginHostedWebAccountDataBridgeResponseV1,
+  type PluginHostedWebAccountDataBridgeSnapshotV1,
+} from './plugins/data/hostedWebAccountDataBridgeV1.js';
 export {
   PLUGIN_ACCOUNT_DATA_ERASE_HTTP_PATH_V1,
   PluginAccountDataEraseActionInputV1Schema,

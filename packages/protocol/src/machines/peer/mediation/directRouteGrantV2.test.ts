@@ -147,6 +147,6 @@ describe('DirectRouteGrantV2', () => {
         ...scope,
         applicationKind: 'agent_realtime',
       },
-    }).success).toBe(true);
+    }).success).toBe(false);
   });
 });

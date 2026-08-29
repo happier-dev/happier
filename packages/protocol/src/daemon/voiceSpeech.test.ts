@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { VOICE_SPEECH_OUTPUT_MAX_BYTES } from '../plugins/contributions/voiceProviders.js';
+
 import {
   DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES,
+  DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES,
   DaemonVoiceSpeechCatalogRequestSchema,
   DaemonVoiceSpeechDownloadChunkResponseSchema,
   DaemonVoiceSpeechSettingsActionRequestSchema,
@@ -14,6 +17,11 @@ import {
 } from './voiceSpeech.js';
 
 describe('daemon provider-neutral Voice speech RPC contract', () => {
+  it('uses one canonical 16 MiB speech output ceiling at the provider and wire boundary', () => {
+    expect(VOICE_SPEECH_OUTPUT_MAX_BYTES).toBe(16 * 1024 * 1024);
+    expect(DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES).toBe(VOICE_SPEECH_OUTPUT_MAX_BYTES);
+  });
+
   it('owns every strict provider-neutral operation request without predecessor selectors', () => {
     const target = { pluginId: 'happier.voice.google', localId: 'gemini-stt' } as const;
 
@@ -22,8 +30,6 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
     expect(DaemonVoiceSpeechTranscribeRequestSchema.parse({
       target,
       requestId: 'stt-1',
-      model: 'gemini-2.5-flash',
-      language: null,
       mimeType: 'audio/wav',
       uploadId: 'upload-1',
     })).toMatchObject({ requestId: 'stt-1', uploadId: 'upload-1' });
@@ -31,12 +37,6 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
       target: { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' },
       requestId: 'tts-1',
       input: 'Hello',
-      model: null,
-      voiceName: 'en-US-A',
-      languageCode: 'en-US',
-      format: 'wav',
-      speakingRate: null,
-      pitch: null,
       recipientPublicKeyBase64: 'recipient-key',
     })).toMatchObject({ requestId: 'tts-1', input: 'Hello' });
 
@@ -48,8 +48,6 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
       target,
       providerId: 'google_gemini',
       requestId: 'stt-1',
-      model: 'gemini-2.5-flash',
-      language: null,
       mimeType: 'audio/wav',
       uploadId: 'upload-1',
     })).toThrow();
@@ -57,14 +55,15 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
       target,
       requestId: 'tts-1',
       input: 'Hello',
-      model: null,
-      voiceName: 'en-US-A',
-      languageCode: null,
-      format: 'wav',
-      speakingRate: null,
-      pitch: null,
       recipientPublicKeyBase64: 'recipient-key',
       retiredSelector: 'google_cloud',
+    })).toThrow();
+    expect(() => DaemonVoiceSpeechSynthesizeRequestSchema.parse({
+      target,
+      requestId: 'tts-1',
+      input: 'Hello',
+      recipientPublicKeyBase64: 'recipient-key',
+      voiceName: 'caller-must-not-select-settings',
     })).toThrow();
   });
 
@@ -86,12 +85,11 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
     })).toThrow();
   });
 
-  it('binds a settings action to its exact validated UI settings snapshot', () => {
+  it('binds a settings action to the exact canonical Account Settings revision only', () => {
     const target = { pluginId: 'acme.voice', localId: 'speech' } as const;
     const request = {
       target,
       actionId: 'refresh-model',
-      settings: { model: 'acme-v2' },
       expectedSettingsVersion: 7,
     } as const;
 
@@ -99,7 +97,6 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
     expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
       target,
       actionId: 'refresh-model',
-      settings: { model: 'acme-v2' },
     }).success).toBe(false);
     expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
       ...request,
@@ -107,7 +104,7 @@ describe('daemon provider-neutral Voice speech RPC contract', () => {
     }).success).toBe(false);
     expect(DaemonVoiceSpeechSettingsActionRequestSchema.safeParse({
       ...request,
-      staleDaemonSettings: { model: 'old' },
+      settings: { model: 'caller-must-not-supply-settings' },
     }).success).toBe(false);
   });
 

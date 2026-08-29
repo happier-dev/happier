@@ -19,6 +19,7 @@ export const SAFE_TELEMETRY_HEADER_NAMES: ReadonlySet<string> = new Set([
   'accept',
   'content-type',
   'x-request-id',
+  'x-tenant-label',
 ]);
 
 export function normalizeTelemetryHeaderName(value: string): string {

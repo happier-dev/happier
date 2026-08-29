@@ -50,20 +50,9 @@ export {
   type MachineRpcGrantScopeV1,
 } from './directRouteGrantScopesV1.js';
 export {
-  VOICE_MEDIA_AGENT_REALTIME_PCM_FORMAT_V1,
   VOICE_MEDIA_VERSION_V1,
-  AgentRealtimeApplicationAuthorityFactsV1Schema,
-  VoiceMediaAgentRealtimeFrameV1Schema,
-  VoiceMediaAgentRealtimePcmFormatV1Schema,
   VoiceMediaApplicationAuthorityV1Schema,
   VoiceMediaApplicationKindV1Schema,
-  createAgentRealtimeApplicationAuthorityV1,
-  decodeVoiceMediaAgentRealtimeFrameV1,
-  encodeVoiceMediaAgentRealtimeFrameV1,
-  verifyAgentRealtimeApplicationAuthorityV1,
-  type AgentRealtimeApplicationAuthorityFactsV1,
-  type VoiceMediaAgentRealtimeFrameV1,
-  type VoiceMediaAgentRealtimePcmFormatV1,
   type VoiceMediaApplicationAuthorityV1,
   type VoiceMediaApplicationKindV1,
 } from './voiceMediaV1.js';

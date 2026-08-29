@@ -9,6 +9,15 @@ import {
 } from './voiceCredentials.js';
 
 const contribution = { pluginId: 'acme.voice', localId: 'browser' } as const;
+const rawGrant = {
+  realm: 'web' as const,
+  phase: 'connection' as const,
+  request: {
+    kind: 'httpHeaders' as const,
+    origin: 'https://voice.example.test',
+    headerNames: ['authorization'],
+  },
+};
 
 describe('daemon Voice raw credential authorization wire', () => {
   it('preserves the legacy raw-materialization shape while carrying an optional host callback receipt', () => {
@@ -62,12 +71,17 @@ describe('daemon Voice raw credential authorization wire', () => {
     })).toMatchObject({ credentialRevision: revision });
   });
 
-  it('accepts only the qualified contribution from callers and returns exact review facts', () => {
-    expect(DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema.parse({ contribution }))
-      .toEqual({ contribution });
+  it('accepts only the qualified contribution and exact raw tuple from callers', () => {
+    expect(DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema.parse({ contribution, rawGrant }))
+      .toEqual({ contribution, rawGrant });
     expect(DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema.safeParse({
       contribution,
+      rawGrant,
       subject: { kind: 'general' },
+    }).success).toBe(false);
+    expect(DaemonVoiceClientRawCredentialAuthorizationRequestV1Schema.safeParse({
+      contribution,
+      rawGrant: { realm: 'web', phase: 'connection' },
     }).success).toBe(false);
 
     const parsed = DaemonVoiceClientRawCredentialAuthorizationInspectResponseV1Schema.parse({

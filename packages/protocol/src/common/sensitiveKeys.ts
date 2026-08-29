@@ -35,6 +35,8 @@ const BASE_CREDENTIAL_SINGLE_SEGMENTS = new Set([
   'cookie',
   'jwt',
   'passphrase',
+  'x-user-id',
+  'chatgpt-account-id',
 ]);
 
 const BASE_CREDENTIAL_SEGMENT_SEQUENCES: readonly (readonly string[])[] = [
@@ -80,6 +82,8 @@ function containsSegmentSequence(
  * and runtime-only IDs) rather than widening this base through substrings.
  */
 export function isBaseCredentialDiagnosticKey(input: string): boolean {
+  const normalized = normalizeTelemetryDataKey(input);
+  if (BASE_CREDENTIAL_SINGLE_SEGMENTS.has(normalized)) return true;
   const segments = splitSensitiveDiagnosticKeySegments(input);
   return segments.some((segment) => BASE_CREDENTIAL_SINGLE_SEGMENTS.has(segment))
     || BASE_CREDENTIAL_SEGMENT_SEQUENCES.some((sequence) => (

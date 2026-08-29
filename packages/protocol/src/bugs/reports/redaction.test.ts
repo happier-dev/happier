@@ -121,6 +121,8 @@ describe('constructible credential shapes in diagnostic text', () => {
       'jwt=jwt-secret',
       'private_key=private-key-secret',
       'passphrase=passphrase-secret',
+      'x-user-id=user-secret',
+      'chatgpt-account-id=account-secret',
       'sessionCount=7',
       'tokenCount=8',
       'secretary=meeting-notes',
@@ -139,6 +141,8 @@ describe('constructible credential shapes in diagnostic text', () => {
       'jwt-secret',
       'private-key-secret',
       'passphrase-secret',
+      'user-secret',
+      'account-secret',
     ]) {
       expect(redacted).not.toContain(secret);
     }

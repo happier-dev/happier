@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1,
+  deriveDaemonPluginHostedWebArtifactCacheIdentityKeyV1,
+  isSameDaemonPluginHostedWebArtifactCacheIdentityV1,
+  isSameDaemonPluginReactNativeBundleCacheIdentityV1,
   type DaemonPluginReactNativeBundleCacheIdentityV1,
 } from './contributionRegistryProjection.js';
 
@@ -79,5 +82,22 @@ describe('daemon React Native bundle cache identity', () => {
 
     expect(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(withoutExpo))
       .not.toBe(deriveDaemonPluginReactNativeBundleCacheIdentityKeyV1(BASE_IDENTITY));
+  });
+
+  it('owns strict equality for both RN and hosted identities', () => {
+    expect(isSameDaemonPluginReactNativeBundleCacheIdentityV1(BASE_IDENTITY, { ...BASE_IDENTITY })).toBe(true);
+    expect(isSameDaemonPluginReactNativeBundleCacheIdentityV1(BASE_IDENTITY, {
+      ...BASE_IDENTITY,
+      projectionGeneration: BASE_IDENTITY.projectionGeneration + 1,
+    })).toBe(false);
+    const hosted = {
+      pluginId: BASE_IDENTITY.pluginId,
+      contributionId: BASE_IDENTITY.contributionId,
+      artifactDigest: BASE_IDENTITY.artifactDigest,
+      platform: 'web' as const,
+      projectionGeneration: BASE_IDENTITY.projectionGeneration,
+    };
+    expect(isSameDaemonPluginHostedWebArtifactCacheIdentityV1(hosted, { ...hosted })).toBe(true);
+    expect(deriveDaemonPluginHostedWebArtifactCacheIdentityKeyV1(hosted)).toContain('"platform":"web"');
   });
 });

@@ -411,6 +411,8 @@ export const PluginCollectionProjectionV1Schema = z.record(
 export type PluginCollectionProjectionV1 = z.infer<typeof PluginCollectionProjectionV1Schema>;
 
 const PluginCollectionRevisionV1Schema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+/** One compact currentness floor per Account/plugin/Collection. */
+export const PluginCollectionAbsenceEpochV1Schema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const PluginCollectionExpectedRevisionV1Schema = z.union([
   z.literal('absent'),
   PluginCollectionRevisionV1Schema,
@@ -420,9 +422,17 @@ export const PluginCollectionPutMutationV1Schema = z.object({
   kind: z.literal('put'),
   rowId: PluginCollectionRowIdV1Schema,
   expectedRevision: PluginCollectionExpectedRevisionV1Schema,
+  expectedAbsenceEpoch: PluginCollectionAbsenceEpochV1Schema.optional(),
   content: PluginCollectionContentEnvelopeV1Schema,
   projection: PluginCollectionProjectionV1Schema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.expectedRevision === 'absent' && value.expectedAbsenceEpoch === undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedAbsenceEpoch'], message: 'An absent create needs the observed Collection absence epoch.' });
+  }
+  if (value.expectedRevision !== 'absent' && value.expectedAbsenceEpoch !== undefined) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedAbsenceEpoch'], message: 'Only an absent create carries a Collection absence epoch.' });
+  }
+});
 export type PluginCollectionPutMutationV1 = z.infer<typeof PluginCollectionPutMutationV1Schema>;
 
 export const PluginCollectionDeleteMutationV1Schema = z.object({
@@ -486,6 +496,23 @@ export const PluginCollectionMutationRequestV1Schema = z.object({
   }
 });
 export type PluginCollectionMutationRequestV1 = z.infer<typeof PluginCollectionMutationRequestV1Schema>;
+
+/** Host-private physical reclamation; public Collection deletion remains logical CAS. */
+export const PluginCollectionForgetRequestV1Schema = z.object({
+  pluginId: asProtocolZod(PluginIdSchema),
+  collectionId: asProtocolZod(PluginContributionLocalIdSchema),
+  writerContext: PluginCollectionWriterContextV1Schema,
+  rowId: PluginCollectionRowIdV1Schema,
+  expectedRevision: PluginCollectionRevisionV1Schema,
+  expectedAbsenceEpoch: PluginCollectionAbsenceEpochV1Schema,
+}).strict();
+export type PluginCollectionForgetRequestV1 = z.infer<typeof PluginCollectionForgetRequestV1Schema>;
+
+export const PluginCollectionForgetResultV1Schema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('forgotten') }).strict(),
+  z.object({ status: z.literal('conflict') }).strict(),
+]);
+export type PluginCollectionForgetResultV1 = z.infer<typeof PluginCollectionForgetResultV1Schema>;
 
 export const PluginCollectionMutationResultEntryV1Schema = z.object({
   rowId: PluginCollectionRowIdV1Schema,
@@ -630,6 +657,7 @@ export type PluginCollectionIndexScalarValueV1 = z.infer<typeof PluginCollection
  */
 export const PLUGIN_COLLECTION_GET_HTTP_PATH_V1 = '/v1/plugins/data/get';
 export const PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 = '/v1/plugins/data/mutate';
+export const PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1 = '/v1/plugins/data/forget';
 export const PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1 = '/v1/plugins/data/query';
 
 /**
@@ -864,6 +892,9 @@ export type PluginCollectionGetRequestV1 = z.infer<typeof PluginCollectionGetReq
 
 export const PluginCollectionGetResultV1Schema = z.object({
   row: PluginCollectionRowV1Schema.nullable(),
+  // Direct-cut servers always return this; the default preserves a safe stale
+  // rejection when a transitional mocked/older response omits it.
+  absenceEpoch: PluginCollectionAbsenceEpochV1Schema.default(0),
 }).strict();
 export type PluginCollectionGetResultV1 = z.infer<typeof PluginCollectionGetResultV1Schema>;
 

@@ -239,6 +239,7 @@ export function preparePluginCollectionLogicalMutationRequestV1<
   encryptionMode: 'plain' | 'e2ee';
   material: AccountScopedCryptoMaterial | null;
   randomBytes: (length: number) => Uint8Array;
+  absenceEpoch?: number;
 }>): PluginCollectionLogicalMutationRequestOutcomeV1 {
   const operations: PluginCollectionMutationOperationV1[] = [];
   for (const operation of input.operations) {
@@ -263,6 +264,7 @@ export function preparePluginCollectionLogicalMutationRequestV1<
       kind: 'put',
       rowId: encoded.rowId,
       expectedRevision: operation.expectedRevision,
+      ...(operation.expectedRevision === 'absent' ? { expectedAbsenceEpoch: input.absenceEpoch } : {}),
       content: encoded.content,
       projection: encoded.projection,
     });

@@ -38,6 +38,7 @@ import {
   ProviderLocalInstallationSummaryV1Schema,
 } from '../providers/detection/v1.js';
 import { ProviderHttpsUrlSchema } from '../providers/httpsUrlSchema.js';
+import { ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema } from '../providers/contributions/v1.js';
 import { LegacyProfileReviewedMappingV1Schema } from '../providers/migrations/legacyProfilesV1.js';
 import { LegacyProfileMigrationConflictResolutionV1Schema } from '../providers/migrations/conflictsV1.js';
 import { ProviderMigrationSourceProfileIdSchema } from '../providers/settings/v1.js';
@@ -48,6 +49,7 @@ import {
 } from '../connect/connectedAccountPurposes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
 
 const ProviderRpcIdentityV1Schema = z.object({
@@ -290,7 +292,7 @@ const DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema =
   z.object({
   purpose: ConnectedAccountPurposeIdSchema,
   service: asProtocolZod(PluginContributionIdentityV1Schema),
-  title: z.string().trim().min(1).optional(),
+  title: PluginLocalizedStringV2Schema.optional(),
   required: z.boolean(),
   materializationKinds: PluginConnectedAccountMaterializationKindsSchema.optional(),
 }).strict();
@@ -327,6 +329,8 @@ const DaemonProviderConnectionDeploymentV1Schema = z.discriminatedUnion('kind', 
       connectedAccountPurposes: z.array(
         DaemonProviderManagedConnectedAccountPurposeV1Schema,
       ).max(32),
+      connectedAccountPurposeBindingPolicy:
+        ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema.optional(),
     }).strict().nullable(),
   }).strict(),
 ]);
@@ -364,6 +368,8 @@ export const DaemonProviderConnectionViewV1Schema = z.object({
     connectedAccountPurposes: z.array(
       DaemonProviderManagedConnectedAccountPurposeDeclarationV1Schema,
     ).max(32),
+    connectedAccountPurposeBindingPolicy:
+      ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema.optional(),
   }).strict().nullable().default(null),
   endpoints: z.array(DaemonProviderConnectionEndpointViewV1Schema)
     .max(PROVIDER_WIRE_PROTOCOL_LIMITS_V1.maxProtocolsPerDeclaration),
@@ -566,6 +572,8 @@ export const DaemonProviderModelProjectionRequestV1Schema = z.object({
   machineId: ProviderMachineIdSchema,
   agentTargetKey: BackendTargetKeyV2Schema,
   mode: z.enum(['picker', 'management']).optional(),
+  /** Explicit user retry; automatic reads stay backoff-aware. */
+  forceRefresh: z.literal(true).optional(),
   currentSelection: ProviderBoundModelRefSchema.optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.currentSelection && value.currentSelection.agentTargetKey !== value.agentTargetKey) {
@@ -664,12 +672,27 @@ export const DaemonProviderCurrentSelectionRecoveryV1Schema = z.object({
 });
 export type DaemonProviderCurrentSelectionRecoveryV1 = z.infer<typeof DaemonProviderCurrentSelectionRecoveryV1Schema>;
 
+/**
+ * One connection whose requested refresh settled with the existing typed
+ * Provider failure. A projection can still succeed partially: usable groups
+ * render from their observations while every failed connection carries its
+ * own typed recovery fact beside them.
+ */
+const DaemonProviderModelProjectionRefreshFailureV1Schema = z.object({
+  connectionId: ProviderConnectionIdSchema,
+  error: ProviderErrorV1Schema,
+}).strict();
+export type DaemonProviderModelProjectionRefreshFailureV1 = z.infer<
+  typeof DaemonProviderModelProjectionRefreshFailureV1Schema
+>;
+
 export const DaemonProviderModelProjectionResponseV1Schema = z.discriminatedUnion('status', [
   z.object({
     status: z.literal('success'),
     agentTargetKey: BackendTargetKeyV2Schema,
     groups: z.array(DaemonProviderModelProjectionGroupV1Schema),
     currentSelectionRecovery: DaemonProviderCurrentSelectionRecoveryV1Schema.nullable().optional(),
+    refreshFailures: z.array(DaemonProviderModelProjectionRefreshFailureV1Schema).optional(),
   }).strict(),
   z.object({ status: z.literal('error'), error: ProviderErrorV1Schema }).strict(),
 ]);
