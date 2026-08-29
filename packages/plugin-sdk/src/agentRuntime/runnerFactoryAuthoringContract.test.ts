@@ -176,7 +176,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
     expectTypeOf<keyof AgentPreflightSessionControlsContributionV1>().toEqualTypeOf<
       | 'resolveProbeVariant'
       | 'models'
-      | 'jsonRpcCommand'
+      | 'jsonRpcCommands'
       | 'probeModels'
       | 'probeModes'
       | 'probeConfigOptions'
@@ -198,7 +198,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       .not.toHaveProperty('exec');
     expectTypeOf<AgentPreflightSessionControlsProbeContextV1>()
       .not.toHaveProperty('process');
-    expectTypeOf<keyof AgentPreflightJsonRpcRequestClientV1>().toEqualTypeOf<'request'>();
+    expectTypeOf<keyof AgentPreflightJsonRpcRequestClientV1>().toEqualTypeOf<'request' | 'notify'>();
     expectTypeOf<AgentPreflightJsonRpcRequestClientV1>()
       .not.toHaveProperty('dispose');
     expectTypeOf<NonNullable<AgentRuntimeRegistrationOptions['terminalPromptSubmitVerification']>>()

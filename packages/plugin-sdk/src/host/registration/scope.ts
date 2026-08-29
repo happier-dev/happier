@@ -84,6 +84,7 @@ import {
     snapshotStaticRegistrationData,
     snapshotStaticRegistrationValue,
 } from './staticRegistrationSnapshots.js';
+import { raceWithTimeout } from '../../async.js';
 import { captureStaticRegistrationMethod } from '../../registration/staticCapture.js';
 import {
     type PluginAgentRuntimeRegistration,
@@ -175,6 +176,14 @@ type PluginRegistrationScopeParams = Readonly<{
     rights: readonly PluginRegistrationRight[];
     assertAvailable?(): void;
     onFailure?(message: string): void;
+    /**
+     * Host-owned bound for ONE independent registration-cleanup attempt
+     * (captured MCP runtime disposal). Cleanup policy belongs to the host;
+     * this value never widens or reorders the intentional reverse-order
+     * dependency between captured cleanups. When omitted, a finite default
+     * still guarantees every cleanup is attempted.
+     */
+    cleanupTimeoutMs?: number;
 }>;
 
 type PluginRegistrationScope<TApi extends PluginApi | PluginClientApi> = Readonly<{
@@ -219,6 +228,15 @@ const REGISTRATION_FAMILY = Object.freeze({
 
 function registrationKey(family: string, localId: string): string {
     return `${family}\u0000${localId}`;
+}
+
+const DEFAULT_REGISTRATION_CLEANUP_TIMEOUT_MS = 5_000;
+
+function normalizeRegistrationCleanupTimeoutMs(value: number | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        return DEFAULT_REGISTRATION_CLEANUP_TIMEOUT_MS;
+    }
+    return Math.trunc(value);
 }
 
 function isStructurallyEqual(left: unknown, right: unknown): boolean {
@@ -315,6 +333,32 @@ function bindAgentRegistrationCallback<T>(
         throw new TypeError(`${subject} must be a function`);
     }
     return value.bind(receiver) as T;
+}
+
+/**
+ * The one callable-admission rule shared by the External Sessions
+ * contribution snapshots (main contribution and observation). Plugin code is
+ * trusted executable code, so structural receivers stay allowed: inert state,
+ * class/prototype helpers, symbols, non-enumerable members, and accessors are
+ * ignored. Only an unknown OWN ENUMERABLE data-property function is a
+ * misspelled or retired declared operation and is rejected through an
+ * attributable diagnostic. Unknown accessors are never invoked to classify
+ * them, and declared operations keep their ordinary named reads with the
+ * original receiver.
+ */
+function rejectUnknownEnumerableCallableOperations(
+    receiver: Readonly<Record<string, unknown>>,
+    approvedCallbacks: ReadonlySet<string>,
+    subject: string,
+): void {
+    for (const key of Object.getOwnPropertyNames(receiver)) {
+        if (approvedCallbacks.has(key)) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(receiver, key);
+        if (!descriptor?.enumerable) continue;
+        if (descriptor.get !== undefined || descriptor.set !== undefined) continue;
+        if (typeof descriptor.value !== 'function') continue;
+        throw new TypeError(`${subject}.${key} is not an approved callback`);
+    }
 }
 
 function snapshotAgentProviderBindingAdapter(
@@ -930,7 +974,7 @@ function snapshotAgentPreflightSessionControlsContribution(
     const snapshot: {
         resolveProbeVariant?: AgentPreflightSessionControlsContributionV1['resolveProbeVariant'];
         models?: AgentPreflightSessionControlsModelsV1;
-        jsonRpcCommand?: AgentPreflightSessionControlsCommandV1;
+        jsonRpcCommands?: readonly AgentPreflightSessionControlsCommandV1[];
         probeModels?: AgentPreflightSessionControlsContributionV1['probeModels'];
         probeModes?: AgentPreflightSessionControlsContributionV1['probeModes'];
         probeConfigOptions?: AgentPreflightSessionControlsContributionV1['probeConfigOptions'];
@@ -950,11 +994,16 @@ function snapshotAgentPreflightSessionControlsContribution(
             receiver.models as AgentPreflightSessionControlsModelsV1,
         );
     }
-    if (receiver.jsonRpcCommand !== undefined) {
-        snapshot.jsonRpcCommand = snapshotAgentPreflightSessionControlsCommand(
-            receiver.jsonRpcCommand as AgentPreflightSessionControlsCommandV1,
-            'Agent preflight Session controls contribution.jsonRpcCommand',
-        );
+    if (receiver.jsonRpcCommands !== undefined) {
+        if (!Array.isArray(receiver.jsonRpcCommands) || receiver.jsonRpcCommands.length === 0) {
+            throw new TypeError('Agent preflight Session controls contribution.jsonRpcCommands must be a non-empty array');
+        }
+        snapshot.jsonRpcCommands = Object.freeze(receiver.jsonRpcCommands.map((command, index) => (
+            snapshotAgentPreflightSessionControlsCommand(
+                command as AgentPreflightSessionControlsCommandV1,
+                `Agent preflight Session controls contribution.jsonRpcCommands[${index}]`,
+            )
+        )));
     }
     for (const key of [
         'probeModels',
@@ -1172,17 +1221,14 @@ function snapshotAgentExternalSessionsContribution(
     // diagnostic; unrelated non-function extension data is ignored, never
     // invoked, and never snapshotted: the snapshot below copies only the
     // declared operations.
-    const approvedCallbacks = new Set<string>([
-        ...AGENT_EXTERNAL_SESSIONS_KEYS,
-        ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
-    ]);
-    for (const [key, value] of Object.entries(receiver)) {
-        if (!approvedCallbacks.has(key) && typeof value === 'function') {
-            throw new TypeError(
-                `Agent External Sessions contribution.${key} is not an approved callback`,
-            );
-        }
-    }
+    rejectUnknownEnumerableCallableOperations(
+        receiver,
+        new Set<string>([
+            ...AGENT_EXTERNAL_SESSIONS_KEYS,
+            ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
+        ]),
+        'Agent External Sessions contribution',
+    );
     const snapshot: Record<string, unknown> = {};
     for (const key of AGENT_EXTERNAL_SESSIONS_KEYS) {
         snapshot[key] = bindAgentRegistrationCallback(
@@ -1209,6 +1255,11 @@ function snapshotAgentExternalSessionObservationContribution(
 ): AgentExternalSessionObservationContribution {
     const receiver = readAgentRegistrationObject(
         contribution,
+        'Agent External Session observation',
+    );
+    rejectUnknownEnumerableCallableOperations(
+        receiver,
+        new Set<string>(AGENT_EXTERNAL_SESSION_OBSERVATION_KEYS),
         'Agent External Session observation',
     );
     const snapshot: Record<string, unknown> = {};
@@ -1475,7 +1526,10 @@ export function createPluginRegistrationScope(
     }
 
     const stagedByKey = new Map<string, StagedPluginRuntimeRegistration>();
-    const ownedMcpServerCleanups: Array<PluginMcpServerRuntime['dispose'] | null> = [];
+    const ownedMcpServerCleanups: Array<Readonly<{
+        localId: string;
+        dispose: PluginMcpServerRuntime['dispose'] | null;
+    }>> = [];
     let published: readonly PluginRuntimeRegistration[] = Object.freeze([]);
     let state: RegistrationState = 'staging';
     let disposalPromise: Promise<void> | null = null;
@@ -1596,7 +1650,7 @@ export function createPluginRegistrationScope(
             } catch {
                 // The exhaustive commit capture reports the malformed runtime.
             }
-            ownedMcpServerCleanups.push(rollbackCleanup);
+            ownedMcpServerCleanups.push({ localId, dispose: rollbackCleanup });
         }
     }
 
@@ -1950,9 +2004,10 @@ export function createPluginRegistrationScope(
                 }
                 assertCommitActive();
                 if (staged.family === REGISTRATION_FAMILY.mcpServers) {
-                    ownedMcpServerCleanups[mcpCleanupIndex] = (
-                        capturedValue as PluginMcpServerRuntime
-                    ).dispose;
+                    ownedMcpServerCleanups[mcpCleanupIndex] = {
+                        localId: staged.localId,
+                        dispose: (capturedValue as PluginMcpServerRuntime).dispose,
+                    };
                     mcpCleanupIndex += 1;
                 }
                 if (staged.family === REGISTRATION_FAMILY.voiceProviders) {
@@ -2077,14 +2132,30 @@ export function createPluginRegistrationScope(
             stagedByKey.clear();
             const pending = [...ownedMcpServerCleanups].reverse();
             ownedMcpServerCleanups.length = 0;
+            const cleanupTimeoutMs = normalizeRegistrationCleanupTimeoutMs(
+                params.cleanupTimeoutMs,
+            );
             disposalPromise = (async () => {
                 const errors: unknown[] = [];
+                // Reverse order is an intentional LIFO dependency between
+                // captured cleanups. Each independent cleanup receives its own
+                // bounded attempt so one hung disposer cannot starve the
+                // remaining steps; every timeout or rejection is collected for
+                // the aggregate outcome.
                 for (const cleanup of pending) {
-                    if (!cleanup) continue;
-                    try {
-                        await cleanup();
-                    } catch (error) {
-                        errors.push(error);
+                    if (!cleanup?.dispose) continue;
+                    const capturedDispose = cleanup.dispose;
+                    const outcome = await raceWithTimeout(
+                        Promise.resolve().then(capturedDispose),
+                        cleanupTimeoutMs,
+                    );
+                    if (outcome.type === 'rejected') {
+                        errors.push(outcome.error);
+                    } else if (outcome.type === 'timeout') {
+                        errors.push(new Error(
+                            `Plugin '${params.pluginId}' cleanup for 'mcp.servers/${cleanup.localId}' `
+                            + `timed out after ${cleanupTimeoutMs}ms`,
+                        ));
                     }
                 }
                 if (errors.length === 1) throw errors[0];

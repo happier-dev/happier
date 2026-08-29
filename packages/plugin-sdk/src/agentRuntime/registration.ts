@@ -456,7 +456,7 @@ export type AgentPreflightSessionControlsCommandResultV1 = Readonly<{
 }>;
 
 /**
- * Request-only view of a host-scoped JSON-RPC client. The host creates,
+ * Request/notification-only view of a host-scoped JSON-RPC client. The host creates,
  * bounds, cancels, and disposes the backing process; the Agent can only issue
  * protocol requests and interpret their responses.
  */
@@ -465,6 +465,10 @@ export type AgentPreflightJsonRpcRequestClientV1 = Readonly<{
     method: string,
     params?: JsonValue,
   ): Promise<JsonValue>;
+  notify(
+    method: string,
+    params?: JsonValue,
+  ): Promise<void>;
 }>;
 
 export type AgentPreflightSessionControlsProbeInputV1 = Readonly<{
@@ -519,7 +523,7 @@ export type AgentPreflightSessionControlsContributionV1 = Readonly<{
     input: AgentPreflightSessionControlsProbeInputV1,
   ) => string | null | undefined;
   models?: AgentPreflightSessionControlsModelsV1;
-  jsonRpcCommand?: AgentPreflightSessionControlsCommandV1;
+  jsonRpcCommands?: readonly AgentPreflightSessionControlsCommandV1[];
   probeModels?: (
     context: AgentPreflightSessionControlsProbeContextV1,
   ) => Promise<unknown | null> | unknown | null;

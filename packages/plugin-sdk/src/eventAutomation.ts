@@ -210,8 +210,6 @@ function sourceStatusForConnection(input: Readonly<{
         sourceSelectorId: input.definition.sourceSelectorId,
         state: state.state,
         code: state.code,
-        lastObservedAt: null,
-        lastDispositionAt: null,
         nextRetryAt: null,
         observedDelta: 0,
         admittedDelta: 0,

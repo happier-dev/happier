@@ -2149,6 +2149,50 @@ describe('plugin UI domain client transport adapter', () => {
         expect(withoutInput.payload).not.toHaveProperty('input');
     });
 
+    it('opens Connected Accounts through semantic service identity without exposing a host route', async () => {
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        let receive: ((message: unknown) => void) | undefined;
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            transport: {
+                subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            methods: ['openConnectedAccounts'], surface,
+                        });
+                        return;
+                    }
+                    if (message.kind === 'request') {
+                        receive?.({
+                            wireVersion: 1, kind: 'result', identity,
+                            requestId: message.requestId, method: message.method, result: null,
+                        });
+                    }
+                },
+            },
+        });
+
+        await api.openConnectedAccounts({
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+            accountId: 'github:work',
+        });
+        expect(sent.at(-1)).toMatchObject({
+            kind: 'request',
+            method: 'openConnectedAccounts',
+            payload: {
+                service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+                accountId: 'github:work',
+            },
+        });
+        expect(sent.at(-1)).not.toHaveProperty('payload.route');
+
+        await expect(api.openConnectedAccounts({ accountId: 'unqualified' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+    });
+
     it('replaces the page location through the host and renders the location the host settled on', async () => {
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         let receive: ((message: unknown) => void) | undefined;

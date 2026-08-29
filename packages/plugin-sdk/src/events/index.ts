@@ -17,17 +17,15 @@ export { PluginEventAutomationHistoryGapResetActionResultV1Schema } from '../eve
 export type { PluginEventAutomationSetupResultV1 } from '../events.js';
 export { PluginEventAutomationSetupResultV1Schema } from '../events.js';
 export type { PluginEventDispositionV1 } from '../eventAutomation.js';
-export type { PluginEventObservationScopeV1 } from '../eventAutomation.js';
-export type {
-    PluginEventSourceConnectionStatusProjectionV1,
-    PluginEventSourceConnectionStatusV1,
-} from '../eventAutomation.js';
 export type { PluginEventEmitResult } from '../events.js';
 export type { PluginEventEnvelope } from '../events.js';
 export type { PluginEventHandler } from '../activation.js';
+export type { PluginEventObservationScopeV1 } from '../eventAutomation.js';
 export type { PluginEventObservationV1 } from '../eventAutomation.js';
+export type { PluginEventSourceConnectionStatusProjectionV1 } from '../eventAutomation.js';
+export type { PluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
 export type { PluginEvents } from '../events.js';
 export { admitCheckpointedPluginEventObservationV1 } from '../eventAutomation.js';
 export { admitSessionSocketPluginEventObservationV1 } from '../eventAutomation.js';
-export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';
 export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';
+export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.js';

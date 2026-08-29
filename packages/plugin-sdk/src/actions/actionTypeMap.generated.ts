@@ -1137,6 +1137,7 @@ export type PluginActionInputById = {
                 };
             }[] | undefined;
         } | undefined;
+        environmentVariables?: Record<string, string> | undefined;
         agentSessionStartupInstructionsV1?: Readonly<{
             instructions: string;
             v: 1;
@@ -5795,12 +5796,12 @@ export type PluginActionInputById = {
         sourceSelectorId: string;
         state: 'uninitialized' | 'baselined' | 'observing' | 'backingOff' | 'attention';
         code: 'none' | 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable';
-        lastObservedAt: number | null;
-        lastDispositionAt: number | null;
         nextRetryAt: number | null;
         observedDelta: number;
         admittedDelta: number;
         skippedDelta: number;
+        lastObservedAt?: number | null | undefined;
+        lastDispositionAt?: number | null | undefined;
     } | {
         kind: 'catalogReconciliation';
         scope: {

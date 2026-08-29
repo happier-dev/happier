@@ -37,6 +37,7 @@ export type { PluginUiTestkitMountAvailability } from './uiHost.js';
 export type { PluginUiTestkitMountInput } from './uiHost.js';
 export type { PluginUiTestkitMountOptions } from './uiHost.js';
 export type { PluginUiTestkitMountResult } from './uiHost.js';
+export type { PluginUiTestkitOpenConnectedAccountsInput } from './uiHost.js';
 export type { PluginUiTestkitOpenNewSessionInput } from './uiHost.js';
 export type { PluginUiTestkitOpenSurfaceInput } from './uiHost.js';
 export type { PluginUiTestkitOptions } from './uiHost.js';

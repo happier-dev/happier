@@ -7329,10 +7329,34 @@
     },
     {
       "specifier": "./events",
+      "exportName": "PluginEventObservationScopeV1",
+      "kind": "type",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "PluginEventObservationScopeV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
       "exportName": "PluginEventObservationV1",
       "kind": "type",
       "sourceModule": "src/eventAutomation.ts",
       "sourceExport": "PluginEventObservationV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
+      "exportName": "PluginEventSourceConnectionStatusProjectionV1",
+      "kind": "type",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "PluginEventSourceConnectionStatusProjectionV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
+      "exportName": "PluginEventSourceConnectionStatusV1",
+      "kind": "type",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "PluginEventSourceConnectionStatusV1",
       "realm": "any"
     },
     {
@@ -7365,6 +7389,14 @@
       "kind": "value",
       "sourceModule": "src/events.ts",
       "sourceExport": "createPluginEventAutomationSetupResultV1JsonSchema",
+      "realm": "any"
+    },
+    {
+      "specifier": "./events",
+      "exportName": "projectPluginEventSourceConnectionStatusV1",
+      "kind": "value",
+      "sourceModule": "src/eventAutomation.ts",
+      "sourceExport": "projectPluginEventSourceConnectionStatusV1",
       "realm": "any"
     },
     {
@@ -16897,6 +16929,14 @@
     },
     {
       "specifier": "./testing",
+      "exportName": "PluginUiTestkitOpenConnectedAccountsInput",
+      "kind": "type",
+      "sourceModule": "src/testing/uiHost.ts",
+      "sourceExport": "PluginUiTestkitOpenConnectedAccountsInput",
+      "realm": "daemon"
+    },
+    {
+      "specifier": "./testing",
       "exportName": "PluginUiTestkitOpenNewSessionInput",
       "kind": "type",
       "sourceModule": "src/testing/uiHost.ts",
@@ -17517,6 +17557,14 @@
       "kind": "value",
       "sourceModule": "src/ui/hostApi.ts",
       "sourceExport": "MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./ui",
+      "exportName": "OpenConnectedAccountsRequest",
+      "kind": "type",
+      "sourceModule": "src/ui/hostApi.ts",
+      "sourceExport": "OpenConnectedAccountsRequest",
       "realm": "any"
     },
     {

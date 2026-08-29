@@ -43,6 +43,29 @@ import type {
 } from './events/index.js';
 import type { PluginInvocationContext } from './invocation.js';
 
+function sourceDefinition(triggerId: string) {
+    return {
+        automationId: '11111111-1111-4111-8111-111111111111',
+        triggerId,
+        triggerRevision: 1,
+        eventRef: { pluginId: 'com.example.events', localId: 'message-received' },
+        sourceInstanceId: `source:${triggerId}`,
+        sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+        sourceContractVersion: 1,
+        sourceConfig: { v: 1 },
+        observationTransport: {
+            kind: 'checkpointedPull' as const,
+            watcherMaterializationRef: {
+                pluginId: 'com.example.events',
+                machineId: 'machine-1',
+                materializationId: 'materialization-1',
+            },
+        },
+        filter: null,
+        maximumObservationAgeMs: null,
+    };
+}
+
 describe('EventsService contract', () => {
     it('keeps typed plugin and Host Event namespaces distinct', () => {
         expectTypeOf<keyof EventsService>().toEqualTypeOf<'plugin' | 'host'>();
@@ -224,6 +247,15 @@ describe('EventsService contract', () => {
                 skippedDelta: 0,
             }),
         ]);
+        for (const report of reports.filter((candidate) => (
+            typeof candidate === 'object'
+            && candidate !== null
+            && 'kind' in candidate
+            && candidate.kind === 'source'
+        ))) {
+            expect(report).not.toHaveProperty('lastObservedAt');
+            expect(report).not.toHaveProperty('lastDispositionAt');
+        }
     });
 
     it('rejects an empty source-list continuation before following its cursor', async () => {
@@ -259,6 +291,72 @@ describe('EventsService contract', () => {
             payload: {},
         }, context)).resolves.toEqual({ kind: 'unsettled' });
         expect(actionIds).toEqual(['automation.event.sources.list']);
+    });
+
+    it.each([
+        ['an empty continuation', [
+            { kind: 'page', revision: '7', definitions: [], nextCursor: 'page-2' },
+        ]],
+        ['a revision-drifting continuation', [
+            {
+                kind: 'page',
+                revision: '7',
+                definitions: [sourceDefinition('trigger-1')],
+                nextCursor: 'page-2',
+            },
+            {
+                kind: 'page',
+                revision: '8',
+                definitions: [sourceDefinition('trigger-2')],
+                nextCursor: null,
+            },
+        ]],
+        ['a repeated continuation cursor', [
+            {
+                kind: 'page',
+                revision: '7',
+                definitions: [sourceDefinition('trigger-1')],
+                nextCursor: 'page-2',
+            },
+            {
+                kind: 'page',
+                revision: '7',
+                definitions: [sourceDefinition('trigger-2')],
+                nextCursor: 'page-2',
+            },
+        ]],
+    ])('publishes no connection status for %s', async (_name, pages) => {
+        const reports: unknown[] = [];
+        let pageIndex = 0;
+        const context = {
+            signal: new AbortController().signal,
+            services: {
+                actions: {
+                    execute: async (actionId: string, input: unknown) => {
+                        if (actionId === 'automation.event.sources.list') {
+                            const page = pages[pageIndex++];
+                            if (page === undefined) throw new Error('unexpected additional source-list page');
+                            return page;
+                        }
+                        if (actionId === 'automation.event.source.status.report') {
+                            reports.push(input);
+                            return {};
+                        }
+                        throw new Error(`unexpected Action ${actionId}`);
+                    },
+                },
+            },
+        } as unknown as PluginInvocationContext;
+
+        await publicEvents.projectPluginEventSourceConnectionStatusV1({
+            eventRef: { pluginId: 'com.example.events', localId: 'message-received' },
+            sourceContractVersion: 1,
+            sourceInstanceIdPrefix: 'source:',
+            scope: { kind: 'checkpointedPull' },
+            status: 'ready',
+        }, context);
+
+        expect(reports).toEqual([]);
     });
 
     it('admits the source list through the canonical Protocol result schema before catalog side effects', async () => {

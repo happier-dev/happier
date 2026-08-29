@@ -531,6 +531,11 @@ describe('Agent runner-factory registration transaction', () => {
             },
           },
         },
+        jsonRpcCommands: [{
+          authorState: 'ignored',
+          toolId: 'assistant',
+          args: ['app-server', '--enable', 'realtime'],
+        }],
       },
     } as never);
 
@@ -544,6 +549,10 @@ describe('Agent runner-factory registration transaction', () => {
           command: { toolId: 'assistant', args: ['models', '--fallback'] },
         },
       },
+      jsonRpcCommands: [{
+        toolId: 'assistant',
+        args: ['app-server', '--enable', 'realtime'],
+      }],
     });
   });
 

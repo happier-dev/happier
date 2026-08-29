@@ -35,7 +35,6 @@ const request = {
 } as const satisfies AgentExternalSessionTakeoverResolveLaunchRequest;
 
 const plan = {
-    directory: '/work/project',
     backendModeHint: 'resume',
     environmentVariables: {
         AGENT_PROFILE: 'profile-1',
@@ -197,7 +196,14 @@ describe('External Session takeover public contract', () => {
     });
 
     it('accepts only the exact bounded launch-plan fields', () => {
+        // The result-side directory member was removed: the host alone enforces
+        // the request targetDirectory as the spawned process cwd, so a plugin
+        // cannot declare a launch cwd and the field must not reappear.
         expect(validateAgentExternalSessionTakeoverLaunchPlan(plan)).toEqual(plan);
+        expect(validateAgentExternalSessionTakeoverLaunchPlan({})).toEqual({});
+        rejects(() => validateAgentExternalSessionTakeoverLaunchPlan({
+            directory: '/work/project',
+        }));
         const planWithRuntimeDescriptor = {
             ...plan,
             runtimeDescriptorV1,
@@ -220,7 +226,6 @@ describe('External Session takeover public contract', () => {
             },
         });
         rejects(() => validateAgentExternalSessionTakeoverLaunchPlan({
-            directory: '/work/project',
             runtimeDescriptorV1: accessorDescriptor,
         }));
         expect(nestedAccessorReads).toBe(0);
@@ -245,12 +250,10 @@ describe('External Session takeover public contract', () => {
             cyclicRuntimeDescriptor,
         ]) {
             rejects(() => validateAgentExternalSessionTakeoverLaunchPlan({
-                directory: '/work/project',
                 runtimeDescriptorV1,
             }));
         }
         expect(validateAgentExternalSessionTakeoverLaunchPlan({
-            directory: 'd'.repeat(AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits),
             backendModeHint: 'm'.repeat(
                 AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxBackendModeHintCodeUnits,
             ),
@@ -272,7 +275,6 @@ describe('External Session takeover public contract', () => {
             ),
         })).toBeDefined();
         expect(validateAgentExternalSessionTakeoverLaunchPlan({
-            directory: '/work/project',
             environmentVariables: {
                 ['K'.repeat(
                     AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS
@@ -282,26 +284,18 @@ describe('External Session takeover public contract', () => {
         })).toBeDefined();
 
         const broadHints = {
-            directory: '/work/project',
             environmentVariables: {},
             resumePlanOptions: { mode: 'new' },
         };
         for (const invalidPlan of [
-            { directory: '' },
+            { directory: '/work/project' },
+            { backendModeHint: '' },
             {
-                directory: 'd'.repeat(
-                    AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits + 1,
-                ),
-            },
-            { directory: '/work/project', backendModeHint: '' },
-            {
-                directory: '/work/project',
                 backendModeHint: 'm'.repeat(
                     AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxBackendModeHintCodeUnits + 1,
                 ),
             },
             {
-                directory: '/work/project',
                 environmentVariables: Object.fromEntries(
                     Array.from(
                         {
@@ -314,7 +308,6 @@ describe('External Session takeover public contract', () => {
                 ),
             },
             {
-                directory: '/work/project',
                 environmentVariables: {
                     ['K'.repeat(
                         AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS
@@ -323,7 +316,6 @@ describe('External Session takeover public contract', () => {
                 },
             },
             {
-                directory: '/work/project',
                 environmentVariables: {
                     KEY: 'v'.repeat(
                         AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS
@@ -332,12 +324,12 @@ describe('External Session takeover public contract', () => {
                 },
             },
             broadHints,
-            { directory: '/work/project', existingSessionId: 'authority-smuggling' },
-            { directory: '/work/project', unrecognizedHostExtension: 'rejected' },
-            { directory: '/work/project', metadata: {} },
-            { directory: '/work/project', sessionStateUpdates: [] },
-            { directory: '/work/project', connectedServices: {} },
-            { directory: '/work/project', pendingInput: {} },
+            { existingSessionId: 'authority-smuggling' },
+            { unrecognizedHostExtension: 'rejected' },
+            { metadata: {} },
+            { sessionStateUpdates: [] },
+            { connectedServices: {} },
+            { pendingInput: {} },
         ]) {
             rejects(() => validateAgentExternalSessionTakeoverLaunchPlan(invalidPlan));
         }

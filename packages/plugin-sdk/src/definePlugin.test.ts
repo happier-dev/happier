@@ -953,6 +953,12 @@ describe('definePlugin', () => {
                     schema: { type: 'string', minLength: 1, maxLength: 256 },
                     default: 'voice-a',
                     presentation: { control: 'text' },
+                }, {
+                    id: 'format',
+                    title: 'Format',
+                    schema: { type: 'string', enum: ['wav'] },
+                    default: 'wav',
+                    presentation: { control: 'select', options: [{ value: 'wav', title: 'WAV' }] },
                 }],
             },
         });

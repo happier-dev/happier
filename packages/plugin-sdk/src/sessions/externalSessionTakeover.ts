@@ -44,10 +44,10 @@ export const AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS = Object.freeze({
 
 export type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
     /**
-     * Agent-native launch context. The host enforces the request
-     * targetDirectory as the spawned process cwd.
+     * Agent-native backend-mode selection hint. The host routes it through the
+     * launch's Agent-owned runtime descriptor; it never becomes a generic
+     * spawn field and never selects the process cwd.
      */
-    directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
     /** Agent-owned identity carried to the target Agent's session opener. */
@@ -315,12 +315,11 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
     const record = readRecord(
         value,
         [
-            'directory',
             'backendModeHint',
             'environmentVariables',
             'runtimeDescriptorV1',
         ],
-        ['directory'],
+        [],
         'launch plan',
     );
     const backendModeHint = record.backendModeHint === undefined
@@ -359,12 +358,6 @@ export function validateAgentExternalSessionTakeoverLaunchPlan(
             return parsed.data;
         })();
     return Object.freeze({
-        directory: boundedString(
-            record.directory,
-            1,
-            AGENT_EXTERNAL_SESSION_TAKEOVER_LIMITS.maxDirectoryCodeUnits,
-            'launch plan directory',
-        ),
         ...(backendModeHint === undefined ? {} : { backendModeHint }),
         ...(environmentVariables === undefined ? {} : { environmentVariables }),
         ...(runtimeDescriptorV1 === undefined ? {} : { runtimeDescriptorV1 }),

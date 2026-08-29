@@ -940,6 +940,31 @@ describe('createPluginUiTestkit', () => {
         await fixture.dispose();
     });
 
+    it('routes canonical Connected Accounts navigation through the supplied host boundary', async () => {
+        const controller = new AbortController();
+        const openConnectedAccounts = vi.fn(async ({ request, signal }) => {
+            expect(request).toEqual({
+                service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+                accountId: 'github:work',
+            });
+            expect(signal.aborted).toBe(false);
+        });
+        const fixture = await createPluginUiTestkit({
+            identity,
+            surface: { kind: 'author-surface' },
+            surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter,
+            handlers: { openConnectedAccounts },
+        });
+
+        await expect(fixture.context.hostApi.openConnectedAccounts({
+            service: { pluginId: 'happier.scm.github', localId: 'github-account' },
+            accountId: 'github:work',
+        }, { signal: controller.signal })).resolves.toBeUndefined();
+        expect(openConnectedAccounts).toHaveBeenCalledOnce();
+        await fixture.dispose();
+    });
+
     it('lets an external author carry one exact selected preparation into openNewSession', async () => {
         const operation = {
             point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },

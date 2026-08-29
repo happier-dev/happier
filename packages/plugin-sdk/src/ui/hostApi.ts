@@ -112,6 +112,7 @@ import type {
     OpenableContentRefV1,
     OpenableContentStatResultV1,
     PluginUiContextEnrichmentV1,
+    PluginUiContributionIdentityV1,
     PluginUiHostMethodV1,
     PluginUiHostApiSurfaceContextV1,
     PluginUiHostApiSurfaceTargetV1,
@@ -425,6 +426,18 @@ export type OpenSurfaceOptions = PluginCancellationOptions & Readonly<{
     instanceKey?: string;
 }>;
 
+/**
+ * A semantic destination inside Happier's canonical Connected Accounts flow.
+ * Omitting the request opens the Connected Accounts overview. An account id is
+ * accepted only beside the exact service contribution that qualifies it.
+ */
+export type OpenConnectedAccountsRequest =
+    | Readonly<{ service?: never; accountId?: never }>
+    | Readonly<{
+        service: PluginUiContributionIdentityV1;
+        accountId?: string;
+    }>;
+
 export interface PluginUiHostApi {
     version(): Readonly<{
         apiVersion: string;
@@ -509,6 +522,15 @@ export interface PluginUiHostApi {
      * fallback target.
      */
     openSurface(view: PluginReference, input?: JsonValue, options?: OpenSurfaceOptions): Promise<void>;
+    /**
+     * Open Happier's canonical Connected Accounts UI, optionally focused on an
+     * exact service or qualified account. The host owns routing and admission;
+     * plugins never receive credentials or an internal route.
+     */
+    openConnectedAccounts(
+        request?: OpenConnectedAccountsRequest,
+        options?: PluginCancellationOptions,
+    ): Promise<void>;
     /**
      * Replace THIS full-page surface's own location without adding a history
      * entry, and declare the one page-internal step system Back returns to.

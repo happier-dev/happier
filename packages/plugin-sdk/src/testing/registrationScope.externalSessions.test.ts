@@ -121,7 +121,7 @@ describe('Agent External Sessions registration staging', () => {
 
     it('does not inspect receiver state, symbols, non-enumerable members, or unknown accessors', () => {
         const contribution = { ...externalSessions } as Record<PropertyKey, unknown>;
-        const unknownAccessor = vi.fn(() => true);
+        const unknownAccessor = vi.fn(() => () => true);
         contribution.authorState = true;
         contribution[Symbol('unknown')] = true;
         Object.defineProperty(contribution, 'hidden', {
@@ -131,6 +131,7 @@ describe('Agent External Sessions registration staging', () => {
         });
         Object.defineProperty(contribution, 'unknownAccessor', {
             configurable: true,
+            enumerable: true,
             get: unknownAccessor,
         });
         const registrationScope = scope();

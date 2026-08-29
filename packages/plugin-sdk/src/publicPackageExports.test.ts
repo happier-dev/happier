@@ -722,6 +722,7 @@ describe('CORE-A curated package exports', () => {
             'PluginUiTestkitMountInput',
             'PluginUiTestkitMountOptions',
             'PluginUiTestkitMountResult',
+            'PluginUiTestkitOpenConnectedAccountsInput',
             'PluginUiTestkitOpenSurfaceInput',
             'PluginUiTestkitSelectActionInputInput',
             'PluginUiTestkitSettleEphemeralInputInput',

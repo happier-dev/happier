@@ -3227,6 +3227,7 @@ type PluginActionInputById = {
                 };
             }[] | undefined;
         } | undefined;
+        environmentVariables?: Record<string, string> | undefined;
         agentSessionStartupInstructionsV1?: Readonly<{
             instructions: string;
             v: 1;
@@ -7885,12 +7886,12 @@ type PluginActionInputById = {
         sourceSelectorId: string;
         state: 'uninitialized' | 'baselined' | 'observing' | 'backingOff' | 'attention';
         code: 'none' | 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable';
-        lastObservedAt: number | null;
-        lastDispositionAt: number | null;
         nextRetryAt: number | null;
         observedDelta: number;
         admittedDelta: number;
         skippedDelta: number;
+        lastObservedAt?: number | null | undefined;
+        lastDispositionAt?: number | null | undefined;
     } | {
         kind: 'catalogReconciliation';
         scope: {
@@ -34357,6 +34358,7 @@ Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightJsonRpcReque
 ```ts
 type AgentPreflightJsonRpcRequestClientV1 = Readonly<{
     request(method: string, params?: JsonValue): Promise<JsonValue>;
+    notify(method: string, params?: JsonValue): Promise<void>;
 }>;
 ```
 
@@ -34398,7 +34400,7 @@ Declared by `dist/agentRuntime/registration.d.ts` as `AgentPreflightSessionContr
 type AgentPreflightSessionControlsContributionV1 = Readonly<{
     resolveProbeVariant?: (input: AgentPreflightSessionControlsProbeInputV1) => string | null | undefined;
     models?: AgentPreflightSessionControlsModelsV1;
-    jsonRpcCommand?: AgentPreflightSessionControlsCommandV1;
+    jsonRpcCommands?: readonly AgentPreflightSessionControlsCommandV1[];
     probeModels?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
     probeModes?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
     probeConfigOptions?: (context: AgentPreflightSessionControlsProbeContextV1) => Promise<unknown | null> | unknown | null;
@@ -39355,6 +39357,13 @@ interface PluginAccountCollection<TValue extends Readonly<Record<string, JsonVal
         revision: number;
         deleted: true;
     }>>;
+    forget(rowId: string, options: Readonly<{
+        expectedRevision: number;
+        signal?: AbortSignal;
+    }>): Promise<Readonly<{
+        rowId: string;
+        forgotten: true;
+    }>>;
     query<TIndexId extends PluginCollectionIndexId<TIndexes>>(request: PluginCollectionQuery<TIndexId>, options?: PluginCancellationOptions): Promise<PluginCollectionPage<TValue>>;
     batch(operations: readonly PluginCollectionMutation<TValue>[], options?: PluginCancellationOptions): Promise<PluginCollectionBatchResult<TValue>>;
     limits(options?: PluginCancellationOptions): Promise<PluginCollectionLimits>;
@@ -41687,6 +41696,19 @@ type PluginEventHandler<TPayload extends JsonValue = JsonValue> = (payload: TPay
 ```
 
 
+### `./events` — `PluginEventObservationScopeV1` (type)
+
+Declared by `dist/eventAutomation.d.ts` as `PluginEventObservationScopeV1`.
+
+```ts
+type PluginEventObservationScopeV1 = Readonly<{
+    kind: 'checkpointedPull';
+} | {
+    kind: 'socket';
+}>;
+```
+
+
 ### `./events` — `PluginEventObservationV1` (type)
 
 Declared by `dist/eventAutomation.d.ts` as `PluginEventObservationV1`.
@@ -41702,6 +41724,30 @@ type PluginEventObservationV1 = Readonly<{
     observedDelta: 0 | 1;
     payload: JsonValue;
 }>;
+```
+
+
+### `./events` — `PluginEventSourceConnectionStatusProjectionV1` (type)
+
+Declared by `dist/eventAutomation.d.ts` as `PluginEventSourceConnectionStatusProjectionV1`.
+
+```ts
+type PluginEventSourceConnectionStatusProjectionV1 = Readonly<{
+    eventRef: PluginContributionRef;
+    sourceContractVersion: number;
+    sourceInstanceIdPrefix: string;
+    scope: PluginEventObservationScopeV1;
+    status: PluginEventSourceConnectionStatusV1;
+}>;
+```
+
+
+### `./events` — `PluginEventSourceConnectionStatusV1` (type)
+
+Declared by `dist/eventAutomation.d.ts` as `PluginEventSourceConnectionStatusV1`.
+
+```ts
+type PluginEventSourceConnectionStatusV1 = 'ready' | 'reconnecting' | 'historyGap';
 ```
 
 
@@ -41741,6 +41787,15 @@ Declared by `dist/events.d.ts` as `createPluginEventAutomationSetupResultV1JsonS
 
 ```ts
 const createPluginEventAutomationSetupResultV1JsonSchema: (sourceContractVersion: number, sourceConfigSchema: PluginJsonSchema) => PluginJsonSchema;
+```
+
+
+### `./events` — `projectPluginEventSourceConnectionStatusV1` (value)
+
+Declared by `dist/eventAutomation.d.ts` as `projectPluginEventSourceConnectionStatusV1`.
+
+```ts
+function projectPluginEventSourceConnectionStatusV1(input: PluginEventSourceConnectionStatusProjectionV1, context: PluginInvocationContext): Promise<void>;
 ```
 
 
@@ -62144,7 +62199,6 @@ Declared by `dist/sessions/externalSessionTakeover.d.ts` as `AgentExternalSessio
 
 ```ts
 type AgentExternalSessionTakeoverLaunchPlan = Readonly<{
-    directory: string;
     backendModeHint?: string;
     environmentVariables?: Readonly<Record<string, string>>;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
@@ -65984,6 +66038,7 @@ type PluginUiTestkitHostHandlers = Readonly<{
     executeAction?: (input: PluginUiTestkitExecuteActionInput) => JsonValue | Promise<JsonValue>;
     selectActionInput?: (input: PluginUiTestkitSelectActionInputInput) => SelectActionInputResult | Promise<SelectActionInputResult>;
     openNewSession?: (input: PluginUiTestkitOpenNewSessionInput) => void | Promise<void>;
+    openConnectedAccounts?: (input: PluginUiTestkitOpenConnectedAccountsInput) => void | Promise<void>;
     settleEphemeralInput?: (input: PluginUiTestkitSettleEphemeralInputInput) => void | Promise<void>;
     readResource?: (input: PluginUiTestkitReadResourceInput) => ResourceContent | Promise<ResourceContent>;
     statOpenableContent?: (input: PluginUiTestkitStatOpenableContentInput) => OpenableContentStatResult | Promise<OpenableContentStatResult>;
@@ -66093,6 +66148,18 @@ type PluginUiTestkitMountResult = Readonly<{
 }> | Readonly<{
     kind: 'refused';
     availability: PluginUiTestkitMountAvailability;
+}>;
+```
+
+
+### `./testing` — `PluginUiTestkitOpenConnectedAccountsInput` (type)
+
+Declared by `dist/testing/uiHost.d.ts` as `PluginUiTestkitOpenConnectedAccountsInput`.
+
+```ts
+type PluginUiTestkitOpenConnectedAccountsInput = Readonly<{
+    request: OpenConnectedAccountsRequest;
+    signal: AbortSignal;
 }>;
 ```
 
@@ -67124,6 +67191,21 @@ const MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1: number;
 ```
 
 
+### `./ui` — `OpenConnectedAccountsRequest` (type)
+
+Declared by `dist/ui/hostApi.d.ts` as `OpenConnectedAccountsRequest`.
+
+```ts
+type OpenConnectedAccountsRequest = Readonly<{
+    service?: never;
+    accountId?: never;
+}> | Readonly<{
+    service: PluginUiContributionIdentityV1;
+    accountId?: string;
+}>;
+```
+
+
 ### `./ui` — `OpenNewSessionOptions` (type)
 
 Declared by `dist/ui/hostApi.d.ts` as `OpenNewSessionOptions`.
@@ -67438,6 +67520,7 @@ interface PluginUiHostApi {
     statOpenableContent(ref: OpenableContentRef, options?: PluginCancellationOptions): Promise<OpenableContentStatResult>;
     readOpenableContent(request: OpenableContentReadRequest, options?: PluginCancellationOptions): Promise<OpenableContentReadResult>;
     openSurface(view: PluginReference, input?: JsonValue, options?: OpenSurfaceOptions): Promise<void>;
+    openConnectedAccounts(request?: OpenConnectedAccountsRequest, options?: PluginCancellationOptions): Promise<void>;
     replacePageLocation(subPath: string, options?: PluginCancellationOptions & Readonly<{
         backLocation?: string;
     }>): Promise<Readonly<{
@@ -68090,6 +68173,7 @@ interface PluginUiHostApi {
     statOpenableContent(ref: OpenableContentRef, options?: PluginCancellationOptions): Promise<OpenableContentStatResult>;
     readOpenableContent(request: OpenableContentReadRequest, options?: PluginCancellationOptions): Promise<OpenableContentReadResult>;
     openSurface(view: PluginReference, input?: JsonValue, options?: OpenSurfaceOptions): Promise<void>;
+    openConnectedAccounts(request?: OpenConnectedAccountsRequest, options?: PluginCancellationOptions): Promise<void>;
     replacePageLocation(subPath: string, options?: PluginCancellationOptions & Readonly<{
         backLocation?: string;
     }>): Promise<Readonly<{
@@ -70571,6 +70655,7 @@ type PluginRegistrationScopeParams = Readonly<{
     rights: readonly PluginRegistrationRight[];
     assertAvailable?(): void;
     onFailure?(message: string): void;
+    cleanupTimeoutMs?: number;
 }>;
 ```
 
@@ -101509,6 +101594,7 @@ const PluginUiHostMethodV1Schema: z.ZodEnum<{
     focusComposer: "focusComposer";
     inspectComposerContent: "inspectComposerContent";
     notify: "notify";
+    openConnectedAccounts: "openConnectedAccounts";
     openExternalLink: "openExternalLink";
     openNewSession: "openNewSession";
     openSurface: "openSurface";
@@ -104725,6 +104811,9 @@ const ProviderContributionV1Schema: z.ZodObject<{
                 token: "token";
             }>>>;
         }, z.core.$strict>>>;
+        connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+            minimumBound: z.ZodLiteral<1>;
+        }, z.core.$strict>>;
         requestAuthUses: z.ZodOptional<z.ZodArray<z.ZodObject<{
             purpose: z.ZodString;
             materialization: z.ZodObject<{
@@ -104857,6 +104946,26 @@ const ProviderLegacyProfileMigrationDescriptorV1Schema: z.ZodObject<{
 ```
 
 
+### `node_modules/@happier-dev/protocol/dist/providers/contributions/v1.d.ts` — `ProviderManagedConnectedAccountPurposeBindingPolicyV1`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ProviderManagedConnectedAccountPurposeBindingPolicyV1 = z.infer<typeof ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/providers/contributions/v1.d.ts` — `ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ProviderManagedConnectedAccountPurposeBindingPolicyV1Schema: z.ZodObject<{
+    minimumBound: z.ZodLiteral<1>;
+}, z.core.$strict>;
+```
+
+
 ### `node_modules/@happier-dev/protocol/dist/providers/contributions/v1.d.ts` — `ProviderManagedRuntimeDeclarationV1Schema`
 
 Reached from a published signature; not itself a published export.
@@ -104898,6 +105007,9 @@ const ProviderManagedRuntimeDeclarationV1Schema: z.ZodObject<{
             token: "token";
         }>>>;
     }, z.core.$strict>>>;
+    connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+        minimumBound: z.ZodLiteral<1>;
+    }, z.core.$strict>>;
     requestAuthUses: z.ZodOptional<z.ZodArray<z.ZodObject<{
         purpose: z.ZodString;
         materialization: z.ZodObject<{
@@ -107038,6 +107150,9 @@ const DaemonProviderBindingStatusRequestV1Schema: z.ZodObject<{
                                 token: "token";
                             }>>>;
                         }, z.core.$strict>>>;
+                        connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+                            minimumBound: z.ZodLiteral<1>;
+                        }, z.core.$strict>>;
                         requestAuthUses: z.ZodOptional<z.ZodArray<z.ZodObject<{
                             purpose: z.ZodString;
                             materialization: z.ZodObject<{
@@ -107155,6 +107270,7 @@ const DaemonProviderBindingStatusRequestV1Schema: z.ZodObject<{
                         kind: 'managed';
                         dependencies: string[];
                         connectedAccounts: import("../index.js").ResolvedProviderManagedConnectedAccountPurposeDeclarationV1[];
+                        connectedAccountPurposeBindingPolicy?: import("../index.js").ProviderManagedConnectedAccountPurposeBindingPolicyV1;
                         requestAuthUses: import("../index.js").ConnectedAccountRequestAuthUseV1[];
                         endpointTemplateIds: string[];
                     }>;
@@ -107181,6 +107297,9 @@ const DaemonProviderBindingStatusRequestV1Schema: z.ZodObject<{
                             materializationKinds?: ("environment" | "files" | "httpHeaders")[] | undefined;
                             credentialKinds?: ("oauth" | "token")[] | undefined;
                         }[] | undefined;
+                        connectedAccountPurposeBindingPolicy?: {
+                            minimumBound: 1;
+                        } | undefined;
                         requestAuthUses?: {
                             purpose: string;
                             materialization: {
@@ -107789,7 +107908,13 @@ const DaemonProviderConnectionMutationResponseV1Schema: z.ZodUnion<readonly [
                                 pluginId: string;
                                 localId: string;
                             }>>;
-                            title: z.ZodOptional<z.ZodString>;
+                            title: z.ZodOptional<z.ZodUnion<readonly [
+                                z.ZodString,
+                                z.ZodObject<{
+                                    key: z.ZodString;
+                                    fallback: z.ZodString;
+                                }, z.core.$strict>
+                            ]>>;
                             required: z.ZodBoolean;
                             materializationKinds: z.ZodOptional<z.ZodArray<z.ZodEnum<{
                                 environment: "environment";
@@ -107844,6 +107969,9 @@ const DaemonProviderConnectionMutationResponseV1Schema: z.ZodUnion<readonly [
                                 }, z.core.$strict>
                             ], "kind">;
                         }, z.core.$strict>>;
+                        connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+                            minimumBound: z.ZodLiteral<1>;
+                        }, z.core.$strict>>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>
             ], "kind">>;
@@ -107864,13 +107992,22 @@ const DaemonProviderConnectionMutationResponseV1Schema: z.ZodUnion<readonly [
                         pluginId: string;
                         localId: string;
                     }>>;
-                    title: z.ZodOptional<z.ZodString>;
+                    title: z.ZodOptional<z.ZodUnion<readonly [
+                        z.ZodString,
+                        z.ZodObject<{
+                            key: z.ZodString;
+                            fallback: z.ZodString;
+                        }, z.core.$strict>
+                    ]>>;
                     required: z.ZodBoolean;
                     materializationKinds: z.ZodOptional<z.ZodArray<z.ZodEnum<{
                         environment: "environment";
                         files: "files";
                         httpHeaders: "httpHeaders";
                     }>>>;
+                }, z.core.$strict>>;
+                connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+                    minimumBound: z.ZodLiteral<1>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>>;
             endpoints: z.ZodArray<z.ZodObject<{
@@ -108297,7 +108434,13 @@ const DaemonProviderConnectionsDescribeResponseV1Schema: z.ZodDiscriminatedUnion
                                 pluginId: string;
                                 localId: string;
                             }>>;
-                            title: z.ZodOptional<z.ZodString>;
+                            title: z.ZodOptional<z.ZodUnion<readonly [
+                                z.ZodString,
+                                z.ZodObject<{
+                                    key: z.ZodString;
+                                    fallback: z.ZodString;
+                                }, z.core.$strict>
+                            ]>>;
                             required: z.ZodBoolean;
                             materializationKinds: z.ZodOptional<z.ZodArray<z.ZodEnum<{
                                 environment: "environment";
@@ -108352,6 +108495,9 @@ const DaemonProviderConnectionsDescribeResponseV1Schema: z.ZodDiscriminatedUnion
                                 }, z.core.$strict>
                             ], "kind">;
                         }, z.core.$strict>>;
+                        connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+                            minimumBound: z.ZodLiteral<1>;
+                        }, z.core.$strict>>;
                     }, z.core.$strict>>;
                 }, z.core.$strict>
             ], "kind">>;
@@ -108372,13 +108518,22 @@ const DaemonProviderConnectionsDescribeResponseV1Schema: z.ZodDiscriminatedUnion
                         pluginId: string;
                         localId: string;
                     }>>;
-                    title: z.ZodOptional<z.ZodString>;
+                    title: z.ZodOptional<z.ZodUnion<readonly [
+                        z.ZodString,
+                        z.ZodObject<{
+                            key: z.ZodString;
+                            fallback: z.ZodString;
+                        }, z.core.$strict>
+                    ]>>;
                     required: z.ZodBoolean;
                     materializationKinds: z.ZodOptional<z.ZodArray<z.ZodEnum<{
                         environment: "environment";
                         files: "files";
                         httpHeaders: "httpHeaders";
                     }>>>;
+                }, z.core.$strict>>;
+                connectedAccountPurposeBindingPolicy: z.ZodOptional<z.ZodObject<{
+                    minimumBound: z.ZodLiteral<1>;
                 }, z.core.$strict>>;
             }, z.core.$strict>>>;
             endpoints: z.ZodArray<z.ZodObject<{
@@ -108888,6 +109043,7 @@ const DaemonProviderModelProjectionRequestV1Schema: z.ZodObject<{
         management: "management";
         picker: "picker";
     }>>;
+    forceRefresh: z.ZodOptional<z.ZodLiteral<true>>;
     currentSelection: z.ZodOptional<z.ZodUnion<readonly [
         z.ZodObject<{
             agentTargetKey: z.ZodString;

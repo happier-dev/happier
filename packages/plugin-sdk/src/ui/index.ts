@@ -55,6 +55,7 @@ export { MAX_COMPOSER_ATTACHMENT_DESCRIPTION_CODE_POINTS_V1 } from './hostApi.js
 export { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from './hostApi.js';
 export { MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 } from './hostApi.js';
 export { MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1 } from './hostApi.js';
+export type { OpenConnectedAccountsRequest } from './hostApi.js';
 export type { OpenNewSessionOptions } from './hostApi.js';
 export type { OpenNewSessionRequest } from './hostApi.js';
 export type { OpenSurfaceOptions } from './hostApi.js';

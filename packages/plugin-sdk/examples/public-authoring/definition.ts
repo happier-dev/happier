@@ -849,6 +849,15 @@ export const publicAuthoringDefinition: PublicAuthoringDefinition = {
                         schema: { type: 'string', maxLength: 512 },
                         default: 'synthetic-voice',
                         presentation: { control: 'select' },
+                    }, {
+                        id: 'format',
+                        title: 'Output format',
+                        schema: { type: 'string', enum: ['wav'] },
+                        default: 'wav',
+                        presentation: {
+                            control: 'select',
+                            options: [{ value: 'wav', title: 'WAV' }],
+                        },
                     }],
                     actions: [{
                         id: 'refresh-voices',

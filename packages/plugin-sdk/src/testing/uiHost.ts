@@ -24,6 +24,7 @@ import {
     PluginUiHostApiWireIdentityV1Schema,
     PluginUiJsonValueV1Schema,
     PluginUiOpenNewSessionRequestV1Schema,
+    PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiOpenSurfaceRequestV1Schema,
     PluginUiReplacePageLocationRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
@@ -95,6 +96,7 @@ import type {
     SelectActionInputRequest,
     SelectActionInputResult,
     EphemeralInputSettlement,
+    OpenConnectedAccountsRequest,
     OpenNewSessionRequest,
 } from '../ui/hostApi.js';
 import {
@@ -543,6 +545,12 @@ export type PluginUiTestkitOpenNewSessionInput = Readonly<{
     signal: AbortSignal;
 }>;
 
+/** One canonical Connected Accounts navigation request. */
+export type PluginUiTestkitOpenConnectedAccountsInput = Readonly<{
+    request: OpenConnectedAccountsRequest;
+    signal: AbortSignal;
+}>;
+
 export type PluginUiTestkitSettleEphemeralInputInput = Readonly<{
     settlement: EphemeralInputSettlement;
     signal: AbortSignal;
@@ -558,6 +566,9 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     ) => SelectActionInputResult | Promise<SelectActionInputResult>;
     openNewSession?: (
         input: PluginUiTestkitOpenNewSessionInput,
+    ) => void | Promise<void>;
+    openConnectedAccounts?: (
+        input: PluginUiTestkitOpenConnectedAccountsInput,
     ) => void | Promise<void>;
     settleEphemeralInput?: (
         input: PluginUiTestkitSettleEphemeralInputInput,
@@ -639,6 +650,7 @@ const hostMethodPolicies = {
     readOpenableContent: 'readOpenableContent',
     watchResource: 'watchResource',
     openSurface: 'openSurface',
+    openConnectedAccounts: 'openConnectedAccounts',
     replacePageLocation: 'replacePageLocation',
     notify: 'notify',
     confirm: 'confirm',
@@ -1459,6 +1471,17 @@ async function createPluginUiTestkitInternal<TSurface>(
                     ...(payload.data.instanceKey === undefined ? {} : { instanceKey: payload.data.instanceKey }),
                     signal,
                 });
+                return undefined;
+            }
+            case 'openConnectedAccounts': {
+                if (!handlers.openConnectedAccounts) {
+                    throw fixtureError('unsupported_method', 'openConnectedAccounts is not installed.');
+                }
+                const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(message.payload);
+                if (!payload.success) {
+                    throw fixtureError('invalid_payload', 'openConnectedAccounts payload is invalid.');
+                }
+                await handlers.openConnectedAccounts({ request: payload.data, signal });
                 return undefined;
             }
             case 'notify': {

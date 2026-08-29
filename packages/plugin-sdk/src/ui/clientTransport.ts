@@ -17,6 +17,7 @@ import {
     PluginUiInspectComposerContentRequestV1Schema,
     PluginUiJsonObjectV1Schema,
     PluginUiOpenNewSessionRequestV1Schema,
+    PluginUiOpenConnectedAccountsRequestV1Schema,
     PluginUiReadComposerRequestV1Schema,
     PluginUiPickComposerMediaRequestV1Schema,
     PluginUiPublishCurrentUiContextRequestV1Schema,
@@ -1172,6 +1173,16 @@ export async function createPluginUiHostApiClientFromTransport(
                 ...(requestOptions?.subPath === undefined ? {} : { subPath: requestOptions.subPath }),
                 ...(requestOptions?.instanceKey === undefined ? {} : { instanceKey: requestOptions.instanceKey }),
             }, requestOptions?.signal);
+        },
+        openConnectedAccounts: async (openRequest = {}, requestOptions) => {
+            const payload = PluginUiOpenConnectedAccountsRequestV1Schema.safeParse(openRequest);
+            if (!payload.success) {
+                throw new PluginUiHostApiClientError(
+                    'invalid_payload',
+                    'openConnectedAccounts request is invalid.',
+                );
+            }
+            await request('openConnectedAccounts', payload.data, requestOptions?.signal);
         },
         // The page's own location, replaced in place. The request schema is the
         // sole normalizer and bound: an illegal or over-long location is

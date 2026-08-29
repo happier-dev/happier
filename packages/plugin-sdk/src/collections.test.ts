@@ -34,7 +34,7 @@ import {
     defineProtocolString,
     type PluginJsonSchema,
 } from './protocol/index.js';
-import type { PluginAccountCollectionValue } from './collections.js';
+import type { PluginAccountCollection, PluginAccountCollectionValue } from './collections.js';
 import type { JsonValue } from './identity.js';
 
 // The source-only lane proves the author barrel itself. Generated inventory
@@ -102,6 +102,16 @@ describe('Account Collection declarations', () => {
 
         expectTypeOf<Extract<PluginCollectionMutation<Task>, Readonly<{ kind: 'assert' }>>>()
             .toEqualTypeOf<PluginCollectionBatchAssert>();
+    });
+
+    it('keeps physical forget on the typed Collection handle rather than a private host bridge', () => {
+        type Task = Readonly<{ id: string }>;
+        expectTypeOf<PluginAccountCollection<Task>['forget']>().parameters
+            .toEqualTypeOf<
+                [string, Readonly<{ expectedRevision: number; signal?: AbortSignal }>]
+            >();
+        expectTypeOf<Awaited<ReturnType<PluginAccountCollection<Task>['forget']>>>()
+            .toEqualTypeOf<Readonly<{ rowId: string; forgotten: true }>>();
     });
 
     it('preserves one typed static declaration for the Account storage service', () => {

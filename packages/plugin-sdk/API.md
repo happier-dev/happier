@@ -859,11 +859,15 @@
 | `./events` | `PluginEventEmitResult` | type | daemon |
 | `./events` | `PluginEventEnvelope` | type | any |
 | `./events` | `PluginEventHandler` | type | any |
+| `./events` | `PluginEventObservationScopeV1` | type | any |
 | `./events` | `PluginEventObservationV1` | type | any |
+| `./events` | `PluginEventSourceConnectionStatusProjectionV1` | type | any |
+| `./events` | `PluginEventSourceConnectionStatusV1` | type | any |
 | `./events` | `PluginEvents` | type | any |
 | `./events` | `admitCheckpointedPluginEventObservationV1` | value | any |
 | `./events` | `admitSessionSocketPluginEventObservationV1` | value | any |
 | `./events` | `createPluginEventAutomationSetupResultV1JsonSchema` | value | any |
+| `./events` | `projectPluginEventSourceConnectionStatusV1` | value | any |
 | `./exec` | `AgentCliReadinessRequest` | type | daemon |
 | `./exec` | `AgentCliReadinessResult` | type | daemon |
 | `./exec` | `AgentCliReadinessService` | type | daemon |
@@ -2040,6 +2044,7 @@
 | `./testing` | `PluginUiTestkitMountInput` | type | daemon |
 | `./testing` | `PluginUiTestkitMountOptions` | type | daemon |
 | `./testing` | `PluginUiTestkitMountResult` | type | daemon |
+| `./testing` | `PluginUiTestkitOpenConnectedAccountsInput` | type | daemon |
 | `./testing` | `PluginUiTestkitOpenNewSessionInput` | type | daemon |
 | `./testing` | `PluginUiTestkitOpenSurfaceInput` | type | daemon |
 | `./testing` | `PluginUiTestkitOptions` | type | daemon |
@@ -2118,6 +2123,7 @@
 | `./ui` | `MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1` | value | any |
 | `./ui` | `MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1` | value | any |
 | `./ui` | `MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1` | value | any |
+| `./ui` | `OpenConnectedAccountsRequest` | type | any |
 | `./ui` | `OpenNewSessionOptions` | type | any |
 | `./ui` | `OpenNewSessionRequest` | type | any |
 | `./ui` | `OpenSurfaceOptions` | type | any |

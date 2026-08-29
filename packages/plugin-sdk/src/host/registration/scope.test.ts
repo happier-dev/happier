@@ -68,6 +68,7 @@ function speechDeclaration(input: Readonly<{
     }
     if (input.roles.includes('conversation_tts')) {
         fieldIds.add(input.catalog === 'voices' ? 'voices' : 'voiceName');
+        fieldIds.add('format');
     }
     if (input.settingsAction) fieldIds.add('api-url');
     return VoiceProviderContributionSchema.parse({
@@ -78,13 +79,24 @@ function speechDeclaration(input: Readonly<{
         platforms: ['web'],
         settings: {
             schemaVersion: 2,
-            fields: [...fieldIds].map((id) => ({
-                id,
-                title: id === 'api-url' ? 'API URL' : 'Selection',
-                schema: { type: 'string' as const, minLength: 1, maxLength: 512 },
-                default: id === 'api-url' ? 'https://example.test' : 'default',
-                presentation: { control: id === catalogFieldId ? 'select' as const : 'text' as const },
-            })),
+            fields: [...fieldIds].map((id) => id === 'format'
+                ? {
+                    id,
+                    title: 'Format',
+                    schema: { type: 'string' as const, enum: ['wav'] },
+                    default: 'wav',
+                    presentation: {
+                        control: 'select' as const,
+                        options: [{ value: 'wav', title: 'WAV' }],
+                    },
+                }
+                : {
+                    id,
+                    title: id === 'api-url' ? 'API URL' : 'Selection',
+                    schema: { type: 'string' as const, minLength: 1, maxLength: 512 },
+                    default: id === 'api-url' ? 'https://example.test' : 'default',
+                    presentation: { control: id === catalogFieldId ? 'select' as const : 'text' as const },
+                }),
             ...(input.settingsAction
                 ? {
                     actions: [{
@@ -860,6 +872,49 @@ describe('plugin registration scope targets', () => {
         expect(scope.registrations()).toEqual([]);
         await scope.dispose();
         expect(dispose).toHaveBeenCalledOnce();
+    });
+
+    it('bounds each captured MCP cleanup attempt and continues after a hung disposer', async () => {
+        const attempts: string[] = [];
+        const mcpRuntime = (dispose: PluginMcpServerRuntime['dispose']) => ({
+            async listTools() { return { items: [] }; },
+            async callTool() { return { content: [] }; },
+            async listResources() { return { items: [] }; },
+            async listResourceTemplates() { return { items: [] }; },
+            async readResource() { return { contents: [] }; },
+            async subscribeResource() { return { dispose() {} }; },
+            async listPrompts() { return { items: [] }; },
+            async getPrompt() { return { messages: [] }; },
+            dispose,
+        } satisfies PluginMcpServerRuntime);
+        const hung = vi.fn((): Promise<void> => {
+            attempts.push('hung');
+            return new Promise<void>(() => undefined);
+        });
+        const older = vi.fn(async () => {
+            attempts.push('older');
+        });
+        const scope = createPluginRegistrationScope({
+            pluginId: 'acme.bounded-disposal',
+            target: { realm: 'daemon' },
+            rights: [
+                { family: 'mcp.servers', localId: 'older', target: { realm: 'daemon' } },
+                { family: 'mcp.servers', localId: 'hung', target: { realm: 'daemon' } },
+            ],
+            cleanupTimeoutMs: 20,
+        });
+        scope.api.mcp.registerServer('older', mcpRuntime(older));
+        scope.api.mcp.registerServer('hung', mcpRuntime(hung));
+        scope.commit();
+
+        // Reverse order is attempted, the hung newest disposer cannot starve
+        // the older cleanup, and the hung step is diagnosed by its identity.
+        await expect(scope.dispose()).rejects.toThrow(
+            /'mcp\.servers\/hung' cleanup timed out after 20ms/u,
+        );
+        expect(attempts).toEqual(['hung', 'older']);
+        expect(hung).toHaveBeenCalledTimes(1);
+        expect(older).toHaveBeenCalledTimes(1);
     });
 
     it('publishes no partial generation when plugin-owned capture code disposes during commit', async () => {

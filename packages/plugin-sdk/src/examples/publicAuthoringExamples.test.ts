@@ -287,6 +287,7 @@ function createReviewSessionStatusAccountStorage(summary: string | null) {
         async batch() { throw new Error('review_session_status_fixture_batch_not_expected'); },
         async limits() { throw new Error('review_session_status_fixture_limits_not_expected'); },
         async measureBatch() { throw new Error('review_session_status_fixture_measure_batch_not_expected'); },
+        async forget() { throw new Error('review_session_status_fixture_forget_not_expected'); },
         watch,
     };
     const kv: AccountKvService = {

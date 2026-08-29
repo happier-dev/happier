@@ -55,7 +55,7 @@ function externalSessionsSnapshotShape() {
 const takeover: AgentExternalSessionTakeoverContribution = {
     resolveLaunch: async () => ({
         ok: true,
-        value: { directory: '/workspace' },
+        value: { backendModeHint: 'resume' },
     }),
 };
 
@@ -175,7 +175,7 @@ describe('Agent External Session takeover registration staging', () => {
             resolveLaunchImplementation(_request: AgentExternalSessionTakeoverResolveLaunchRequest) {
                 return Promise.resolve({
                     ok: true as const,
-                    value: { directory: '/workspace', owner: this.owner },
+                    value: { backendModeHint: this.owner },
                 });
             }
         }
@@ -197,7 +197,7 @@ describe('Agent External Session takeover registration staging', () => {
         expect(Object.isFrozen(snapshot)).toBe(true);
         expect(snapshot).not.toHaveProperty('ignoredByRegistration');
         await expect(Reflect.apply(snapshot.resolveLaunch, { owner: 'foreign' }, [])).resolves.toMatchObject({
-            value: { directory: '/workspace', owner: 'structural-takeover' },
+            value: { backendModeHint: 'structural-takeover' },
         });
     });
 
