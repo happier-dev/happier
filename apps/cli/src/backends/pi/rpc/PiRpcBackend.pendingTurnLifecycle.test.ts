@@ -831,12 +831,14 @@ describe('PiRpcBackend pending turn lifecycle', () => {
   it.each([
     {
       name: 'server overload',
+      provider: 'openai',
       errorMessage: 'Codex error: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null},"sequence_number":3}',
       terminalStatus: null,
       env: {} as Record<string, string>,
     },
     {
       name: 'rate limit with a failed terminal marker',
+      provider: 'openai',
       errorMessage: '429: {"code":"1302","message":"Rate limit reached for requests"}',
       terminalStatus: 'failed',
       env: {
@@ -847,8 +849,16 @@ describe('PiRpcBackend pending turn lifecycle', () => {
         }]),
       },
     },
+    {
+      name: 'rate limit from the active model provider without a connected-service selection',
+      provider: 'zai',
+      errorMessage: '429: {"code":"1302","message":"Rate limit reached for requests"}',
+      terminalStatus: 'failed',
+      env: {} as Record<string, string>,
+    },
   ])('keeps the turn open when a recoverable $name is followed by resumed activity', async ({
     name,
+    provider,
     errorMessage,
     terminalStatus,
     env,
@@ -864,8 +874,8 @@ describe('PiRpcBackend pending turn lifecycle', () => {
       setTimeout(() => out({
         type: 'message_end',
         ${terminalStatus ? `terminalStatus: ${JSON.stringify(terminalStatus)},` : ''}
-        provider: 'openai',
-        message: { role: 'assistant', provider: 'openai', stopReason: 'error', errorMessage: recoverableError, content: [] }
+        provider: ${JSON.stringify(provider)},
+        message: { role: 'assistant', provider: ${JSON.stringify(provider)}, stopReason: 'error', errorMessage: recoverableError, content: [] }
       }), 10);
       setTimeout(() => out({ type: 'agent_end' }), 20);
       setTimeout(() => out({ type: 'tool_execution_start', toolCallId: 'recovered-after-capacity-error', toolName: 'read', args: { path: 'README.md' } }), 75);

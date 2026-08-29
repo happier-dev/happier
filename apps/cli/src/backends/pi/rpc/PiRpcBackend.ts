@@ -1762,16 +1762,12 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   private isRecoverablePiAssistantError(event: Record<string, unknown>): boolean {
-    const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
-    if (classification) {
-      if (classification.kind === 'capacity') return true;
-      if (classification.kind === 'rate_limit') {
-        const detail = this.readPiAssistantErrorMessage(event);
-        return detail !== null && PI_RPC_RATE_LIMIT_STATUS_TEXT_PATTERN.test(detail.toLowerCase());
-      }
-      return false;
-    }
     const detail = this.readPiAssistantErrorMessage(event);
+    if (detail !== null && PI_RPC_RATE_LIMIT_STATUS_TEXT_PATTERN.test(detail.toLowerCase())) {
+      return true;
+    }
+    const classification = this.classifyPiAssistantRuntimeAuthFailure(event);
+    if (classification?.kind === 'capacity') return true;
     return detail !== null && PI_RPC_RECOVERABLE_ASSISTANT_ERROR_PATTERN.test(detail);
   }
 
