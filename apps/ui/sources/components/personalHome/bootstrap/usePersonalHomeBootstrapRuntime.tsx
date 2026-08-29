@@ -18,6 +18,7 @@ import {
     setActiveServerId,
     type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
+import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 
 import { createPersonalHomeBootstrapFacts } from './personalHomeBootstrapFacts';
@@ -41,13 +42,14 @@ export class PersonalHomeBootstrapBlockedError extends Error {
 }
 
 function normalizeUrl(value: unknown): string {
-    return String(value ?? '').trim().replace(/\/+$/u, '');
+    const raw = String(value ?? '').trim();
+    return canonicalizeServerUrl(raw) || raw.replace(/\/+$/u, '');
 }
 
 function profileMatchesUrl(profile: ServerProfile, url: string): boolean {
-    const key = normalizeUrl(url);
-    return normalizeUrl(profile.serverUrl) === key
-        || normalizeUrl(profile.canonicalServerUrl) === key;
+    const key = createServerUrlComparableKey(url) || normalizeUrl(url);
+    return (createServerUrlComparableKey(profile.serverUrl) || normalizeUrl(profile.serverUrl)) === key
+        || (createServerUrlComparableKey(profile.canonicalServerUrl ?? '') || normalizeUrl(profile.canonicalServerUrl)) === key;
 }
 
 function mapRelayStatus(status: ReturnType<typeof useLocalRelayRuntimeControl>['status'], error: string | null): RelayRuntimeStatusSnapshot | null {
@@ -175,7 +177,6 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
         if (!await TokenStorage.setCredentialsForServerUrl(localUrl, { token, secret: encodedSecret }, profile.serverIdentityId ? { serverId: profile.serverIdentityId } : {})) {
             throw new Error('Failed to save Personal Home credentials.');
         }
-        if (unrelatedProfiles) return;
         await auth.login(token, encodedSecret);
     }, [auth, resolveLocalUrl]);
 
