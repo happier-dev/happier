@@ -577,7 +577,6 @@ export const V2_ZERO_INVENTORY_CATEGORY_SPECS: readonly V2ZeroInventoryCategoryS
       { filePathIncludes: 'apps/cli/src/agent/voice/agent/voiceAgentPrompts.ts' },
       { filePathIncludes: 'apps/cli/src/agent/voice/agent/voiceAgentTypes.ts' },
       { filePathIncludes: 'apps/cli/src/agent/voice/agent/voiceAgentStreamingDeltas.ts' },
-      { filePathIncludes: 'apps/ui/sources/voice/agent/VoiceAgentSessionController.ts' },
       { filePathIncludes: 'apps/ui/sources/voice/agent/initializeVoiceAgentHandle.ts' },
       { filePathIncludes: 'apps/ui/sources/voice/agent/daemonVoiceAgentClient.ts' },
       { filePathIncludes: 'apps/ui/sources/voice/agent/openaiCompatVoiceAgentClient.ts' },

@@ -70,6 +70,7 @@ test('candidate bridge preserves default local 0.2 execution through a guarded r
 
 test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', async () => {
   const calls = [];
+  let brokerCloseCount = 0;
   const result = await runExecutionHostBridge({
     profile: { ...profile, activation: 'active' },
     workspaceId: '0.2',
@@ -80,14 +81,21 @@ test('active bridge delegates 0.2 to its matching guest repo-local entrypoint', 
     platform: 'darwin',
     prepare: async () => {},
     boundary: boundaryWithExit(0, calls),
+    startCredentialBroker: async () => ({
+      socketPath: '/tmp/happier-ghops-test/broker.sock',
+      async close() { brokerCloseCount += 1; },
+    }),
   });
 
   assert.equal(result.delegated, true);
+  assert.equal(calls[0].args.some((arg) => arg.startsWith('HAPPIER_GHOPS_')), false);
+  assert.equal(calls[0].args.some((arg) => arg.startsWith('HAPPIER_GITHUB_BOT_TOKEN=')), false);
   assert.deepEqual(calls[0].args.slice(-5), [
     'node',
     '/home/example/.happier-stack/workspace/0.2/apps/stack/scripts/repo_local.mjs',
     'tui', '--json', '--rescue',
   ]);
+  assert.equal(brokerCloseCount, 1);
 });
 
 test('active bridge refuses a mismatched workspace path instead of executing in another checkout', async () => {

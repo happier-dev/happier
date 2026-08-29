@@ -13,6 +13,20 @@ const { resolveCliPublicationBuildSteps } = await import(
   resolve(repoRoot, 'apps', 'cli', 'scripts', 'buildPublication.mjs'),
 );
 
+test('pipeline CLI smoke consumes the mode-aware managed-runtime coherence assertion', async () => {
+  const smokeSource = fs.readFileSync(
+    resolve(repoRoot, 'scripts', 'pipeline', 'smoke', 'cli-smoke.mjs'),
+    'utf8',
+  );
+  assert.match(smokeSource, /import \{ assertCliManagedRuntimeTarballCoherence \} from '..\/npm\/cli-managed-runtime-tarball\.mjs';/u);
+  assert.doesNotMatch(smokeSource, /assertCliManagedRuntimeTarballPublication/u);
+  const packIndex = smokeSource.indexOf('resolvePackedTarball(raw,');
+  const assertIndex = smokeSource.indexOf('assertCliManagedRuntimeTarballCoherence(tgzPath)');
+  assert.notEqual(packIndex, -1);
+  assert.notEqual(assertIndex, -1);
+  assert.ok(assertIndex > packIndex, 'expected managed-runtime coherence validation after pack resolution');
+});
+
 test('pipeline CLI smoke dry-run schedules installed Provider verification on the canonical prefix', async () => {
   const out = execFileSync(
     process.execPath,

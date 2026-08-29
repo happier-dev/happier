@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { cp, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
@@ -195,6 +195,27 @@ describe('ensureCliDistBuilt', () => {
       },
     );
 
+    expect(rebuildCalls).toBe(0);
+  });
+
+  it('reuses the fresh rename-aside dist while the canonical dist path is absent', async () => {
+    const repoRoot = await createRepoRoot();
+    const distDir = join(repoRoot, 'apps', 'cli', 'dist');
+    const backupDir = join(repoRoot, 'apps', 'cli', '.dist.hstack-backup');
+    await rename(distDir, backupDir);
+
+    let rebuildCalls = 0;
+    const entrypoint = await ensureCliDistBuilt(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(entrypoint).toBe(join(backupDir, 'index.mjs'));
     expect(rebuildCalls).toBe(0);
   });
 

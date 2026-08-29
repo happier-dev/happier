@@ -295,7 +295,6 @@ export type ServerStartLaunchSpec = Readonly<{
 
 let sharedDepsReady = false;
 let sharedDepsBuildPromise: Promise<void> | null = null;
-let sharedGeneratedProvidersReady = false;
 let sharedGenerateProvidersPromise: Promise<void> | null = null;
 
 export function resolveTestDbProvider(
@@ -816,47 +815,58 @@ export function shouldSkipServerGenerateProviders(env: NodeJS.ProcessEnv): boole
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
 }
 
-async function ensureServerGeneratedProviders(params: { testDir: string; env: NodeJS.ProcessEnv; dbProvider: TestDbProvider }): Promise<void> {
-  if (shouldSkipServerGenerateProviders(params.env)) return;
-  const rootDir = repoRootDir();
-  if (hasServerGeneratedProviderOutputs(rootDir, params.dbProvider)) {
-    sharedGeneratedProvidersReady = true;
-    return;
-  }
-  if (sharedGeneratedProvidersReady) sharedGeneratedProvidersReady = false;
-  if (sharedGenerateProvidersPromise) {
-    await sharedGenerateProvidersPromise;
-    return;
-  }
-
-  sharedGenerateProvidersPromise = runLoggedCommand({
-    command: yarnCommand(),
-    args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'generate:providers'],
-    cwd: rootDir,
-    env: {
-      ...params.env,
-      PORT: '0',
-      PUBLIC_URL: 'http://127.0.0.1:0',
-      DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable',
-      HAPPIER_BUILD_DB_PROVIDERS: params.dbProvider,
-    },
-    stdoutPath: resolve(params.testDir, 'server.generate.stdout.log'),
-    stderrPath: resolve(params.testDir, 'server.generate.stderr.log'),
-    timeoutMs: 300_000,
-  }).then(() => {
-    if (!hasServerGeneratedProviderOutputs(rootDir, params.dbProvider)) {
-      throw new Error(`Generated server provider outputs missing or stale after generate:providers: ${rootDir}`);
+export async function ensureServerGeneratedProviderOutputs(params: Readonly<{
+  dbProvider: TestDbProvider;
+  hasOutputs: (provider: TestDbProvider) => boolean;
+  generate: (provider: TestDbProvider) => Promise<void>;
+}>): Promise<void> {
+  while (!params.hasOutputs(params.dbProvider)) {
+    if (sharedGenerateProvidersPromise) {
+      await sharedGenerateProvidersPromise;
+      continue;
     }
-    sharedGeneratedProvidersReady = true;
-  });
 
-  try {
-    await sharedGenerateProvidersPromise;
-  } finally {
-    sharedGenerateProvidersPromise = null;
+    const generation = params.generate(params.dbProvider).then(() => {
+      if (!params.hasOutputs(params.dbProvider)) {
+        throw new Error(`Generated server provider outputs missing or stale after generate:providers: ${repoRootDir()}`);
+      }
+    });
+    sharedGenerateProvidersPromise = generation;
+    try {
+      await generation;
+    } finally {
+      if (sharedGenerateProvidersPromise === generation) {
+        sharedGenerateProvidersPromise = null;
+      }
+    }
   }
 }
 
+async function ensureServerGeneratedProviders(params: { testDir: string; env: NodeJS.ProcessEnv; dbProvider: TestDbProvider }): Promise<void> {
+  if (shouldSkipServerGenerateProviders(params.env)) return;
+  const rootDir = repoRootDir();
+  await ensureServerGeneratedProviderOutputs({
+    dbProvider: params.dbProvider,
+    hasOutputs: (provider) => hasServerGeneratedProviderOutputs(rootDir, provider),
+    generate: async (provider) => {
+      await runLoggedCommand({
+        command: yarnCommand(),
+        args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'generate:providers'],
+        cwd: rootDir,
+        env: {
+          ...params.env,
+          PORT: '0',
+          PUBLIC_URL: 'http://127.0.0.1:0',
+          DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable',
+          HAPPIER_BUILD_DB_PROVIDERS: provider,
+        },
+        stdoutPath: resolve(params.testDir, 'server.generate.stdout.log'),
+        stderrPath: resolve(params.testDir, 'server.generate.stderr.log'),
+        timeoutMs: 300_000,
+      });
+    },
+  });
+}
 export async function startServerLight(params: {
   testDir: string;
   extraEnv?: NodeJS.ProcessEnv;

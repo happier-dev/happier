@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasServerSharedDepsOutputs,
   hasServerGeneratedProviderOutputs,
+  ensureServerGeneratedProviderOutputs,
   renderServerLightSqliteDatabaseUrl,
   resolveServerLightDatabaseUrlEnv,
   resolveServerStartLaunchSpec,
@@ -369,6 +370,32 @@ describe("startServerLight planning helpers", () => {
     writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
 
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
+  });
+
+  it("serializes generation and rechecks each requested provider", async () => {
+    const generated = new Set<TestDbProvider>();
+    const calls: TestDbProvider[] = [];
+    const generate = async (provider: TestDbProvider) => {
+      calls.push(provider);
+      await sleep(10);
+      generated.add(provider);
+    };
+
+    await Promise.all([
+      ensureServerGeneratedProviderOutputs({
+        dbProvider: "sqlite",
+        hasOutputs: (provider) => generated.has(provider),
+        generate,
+      }),
+      ensureServerGeneratedProviderOutputs({
+        dbProvider: "postgres",
+        hasOutputs: (provider) => generated.has(provider),
+        generate,
+      }),
+    ]);
+
+    expect(calls).toEqual(["sqlite", "postgres"]);
+    expect(generated).toEqual(new Set<TestDbProvider>(["sqlite", "postgres"]));
   });
 
   it("retries server start when startup failure tail contains EADDRINUSE", () => {

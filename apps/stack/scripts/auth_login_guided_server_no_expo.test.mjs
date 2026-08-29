@@ -184,6 +184,24 @@ async function spawnMetroLikeExpoWebServer({
   };
 }
 
+async function spawnStackOwnedRuntimeOwner({ stackName, envPath, cliHomeDir }) {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_PROCESS_KIND: 'orchestrator',
+    },
+    stdio: 'ignore',
+  });
+  await new Promise((resolvePromise, rejectPromise) => {
+    child.once('error', rejectPromise);
+    setTimeout(resolvePromise, 25);
+  });
+  return child;
+}
+
 function buildSuccessfulAuthBinScript() {
   return [
     `import { mkdirSync, writeFileSync } from 'node:fs';`,
@@ -632,6 +650,76 @@ test('resolveStackWebappTargetForAuth skips Expo probing when a runtime snapshot
     assert.match(resolved.webappUrl, new RegExp(`:${fixture.port}$`));
     assert.ok(elapsedMs < 1000, `expected runtime-backed auth target to resolve without waiting for Expo timeout (elapsed=${elapsedMs}ms)`);
   } finally {
+    if (fixture) await fixture.cleanup();
+  }
+});
+
+test('resolveStackWebappTargetForAuth prefers Expo declared by the active runtime snapshot', async (t) => {
+  let fixture;
+  let runtimeExpo;
+  let runtimeOwner;
+  try {
+    try {
+      fixture = await buildGuidedNoExpoFixture({
+        stackName: 'runtime-webapp-target-owned-expo',
+        runtimeSnapshot: true,
+        runtimeOwnerAlive: true,
+      });
+      runtimeExpo = await spawnMetroLikeExpoWebServer({
+        projectDir: join(fixture.tmp, 'runtime-ui'),
+      });
+      runtimeOwner = await spawnStackOwnedRuntimeOwner({
+        stackName: fixture.stackName,
+        envPath: join(fixture.storageDir, fixture.stackName, 'env'),
+        cliHomeDir: join(fixture.storageDir, fixture.stackName, 'cli'),
+      });
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'EPERM') {
+        t.skip('sandbox disallows binding localhost test server (EPERM)');
+        return;
+      }
+      throw e;
+    }
+    const restoreEnv = applyProcessEnv({
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+      HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_ENV_FILE: join(fixture.storageDir, fixture.stackName, 'env'),
+    });
+    t.after(restoreEnv);
+
+    await writeFile(
+      join(fixture.storageDir, fixture.stackName, 'stack.runtime.json'),
+      JSON.stringify({
+        version: 1,
+        stackName: fixture.stackName,
+        ownerPid: runtimeOwner.pid,
+        ports: { server: fixture.port },
+        expo: {
+          port: runtimeExpo.port,
+          webPort: runtimeExpo.port,
+          webEnabled: true,
+          remoteTarget: 'mac-host',
+        },
+      }) + '\n',
+      'utf-8',
+    );
+
+    const resolved = await resolveStackWebappTargetForAuth({
+      rootDir: join(fixture.tmp, 'happier'),
+      stackName: fixture.stackName,
+      env: {
+        ...fixture.env,
+        HAPPIER_STACK_RUNTIME_MODE: 'prefer',
+        HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '2000',
+      },
+    });
+
+    assert.equal(resolved.kind, 'expo');
+    assert.match(resolved.webappUrl, new RegExp(`:${runtimeExpo.port}$`));
+    assert.doesNotMatch(resolved.webappUrl, new RegExp(`:${fixture.port}$`));
+  } finally {
+    if (runtimeOwner) runtimeOwner.kill('SIGKILL');
+    if (runtimeExpo) await runtimeExpo.kill();
     if (fixture) await fixture.cleanup();
   }
 });

@@ -368,7 +368,11 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
+        ],
+        "placementBindings": [
+          "commandPalette"
         ],
         "dangerLevel": "safe",
         "id": "fixture/setup"
@@ -586,7 +590,11 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
+        ],
+        "placementBindings": [
+          "commandPalette"
         ],
         "dangerLevel": "safe",
         "id": "fixture/test"
@@ -978,7 +986,11 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
+        ],
+        "placementBindings": [
+          "commandPalette"
         ],
         "dangerLevel": "safe",
         "id": "fixture/endpoint"
@@ -1379,7 +1391,11 @@
           "global"
         ],
         "surfaces": [
-          "plugin"
+          "plugin",
+          "ui"
+        ],
+        "placementBindings": [
+          "commandPalette"
         ],
         "dangerLevel": "safe",
         "id": "fixture/principal"

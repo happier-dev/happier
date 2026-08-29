@@ -162,6 +162,7 @@ jobs:
     needs: [prepare_release_candidate]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       actions: read
       contents: read
@@ -182,10 +183,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           node scripts/pipeline/release/verify-existing-ci.mjs \
-            --repo "$GITHUB_REPOSITORY" \
+            --repository "$GITHUB_REPOSITORY" \
             --workflow tests.yml \
-            --sha "${{ needs.prepare_release_candidate.outputs.source_sha }}" \
-            --branch dev
+            --source-sha "${{ needs.prepare_release_candidate.outputs.source_sha }}" \
+            --source-branch dev
 
   nightly_noop:
     name: Nightly already current

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
 import { buildCliPublication } from '../../../../apps/cli/scripts/buildPublication.mjs';
+import { assertCliManagedRuntimeTarballCoherence } from '../../npm/cli-managed-runtime-tarball.mjs';
 import { resolveCoreE2eSlowSuiteCommand } from './core-e2e-slow-suite.mjs';
 
 const CLI_UPDATE_CONTINUITY_TEST_FILES = [
@@ -90,10 +91,10 @@ function assertCliPackHasRuntimeEntrypoints({ tarballPath, exec }) {
 }
 
 /**
- * @param {{ repoRoot: string; exec: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; exec: ExecFileSyncLike; assertCliManagedRuntimeTarballCoherenceImpl?: typeof assertCliManagedRuntimeTarballCoherence }} params
  * @returns {ReleaseValidationSource}
  */
-function packLocalBuildCliSource({ repoRoot, exec }) {
+function packLocalBuildCliSource({ repoRoot, exec, assertCliManagedRuntimeTarballCoherenceImpl }) {
   const packDir = createLocalBuildPackDir(repoRoot);
   // This gate reports on whatever the tarball contains, so the tarball must correspond to
   // current source. Only the canonical publication build guarantees that: it compiles every
@@ -123,20 +124,23 @@ function packLocalBuildCliSource({ repoRoot, exec }) {
   });
   const tarballPath = resolvePackedTarballPath(packDir, tarballRaw);
   assertCliPackHasRuntimeEntrypoints({ tarballPath, exec });
+  // Local update continuity accepts an honest source-only or complete pack. The
+  // canonical coherence owner proves its managed-runtime metadata matches its bytes.
+  (assertCliManagedRuntimeTarballCoherenceImpl ?? assertCliManagedRuntimeTarballCoherence)(tarballPath);
   return { kind: 'local-pack', ref: tarballPath };
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate; exec: ExecFileSyncLike; assertCliManagedRuntimeTarballCoherenceImpl?: typeof assertCliManagedRuntimeTarballCoherence }} params
  * @returns {ReleaseValidationUpdate}
  */
-function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec }) {
+function materializeCliUpdateSourcesForExecution({ repoRoot, update, exec, assertCliManagedRuntimeTarballCoherenceImpl }) {
   if (update.to.kind !== 'local-build') {
     return update;
   }
   return {
     ...update,
-    to: packLocalBuildCliSource({ repoRoot, exec }),
+    to: packLocalBuildCliSource({ repoRoot, exec, assertCliManagedRuntimeTarballCoherenceImpl }),
   };
 }
 
@@ -179,12 +183,13 @@ export function resolveCliUpdateExecution({ repoRoot, update }) {
 }
 
 /**
- * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike }} params
+ * @param {{ repoRoot: string; update: ReleaseValidationUpdate | null; exec?: ExecFileSyncLike; assertCliManagedRuntimeTarballCoherenceImpl?: typeof assertCliManagedRuntimeTarballCoherence }} params
  */
 export function runCliUpdateValidation({
   repoRoot,
   update,
   exec = execFileSync,
+  assertCliManagedRuntimeTarballCoherenceImpl,
 }) {
   const execution = resolveCliUpdateExecution({
     repoRoot,
@@ -192,6 +197,7 @@ export function runCliUpdateValidation({
       repoRoot,
       update: requireCliUpdateSources(update),
       exec,
+      assertCliManagedRuntimeTarballCoherenceImpl,
     }),
   });
   exec(execution.command, execution.args, {

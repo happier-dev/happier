@@ -380,9 +380,16 @@ export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env 
     (env.HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS ?? '180000').toString().trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
 
-  // Runtime-backed stacks already selected the server-served web UI as the canonical auth surface.
-  // Prefer that immediately so guided auth does not block on unrelated Expo state or pick a stray Expo instance.
+  // Runtime-backed stacks may place Expo on another target while the server remains API-only.
+  // Trust only the Expo endpoint published by the active runtime before falling back to its server UI.
   if (runtimeLaunchContext.snapshot) {
+    const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ stackName });
+    if (runtimeExpoUrl) {
+      return {
+        webappUrl: await preferStackLocalhostUrl(runtimeExpoUrl, { stackName }),
+        kind: 'expo',
+      };
+    }
     const runtimeServerUrl = await resolveServerWebappUrlForAuth({ stackName, env });
     if (runtimeServerUrl) {
       return { webappUrl: runtimeServerUrl, kind: 'server' };

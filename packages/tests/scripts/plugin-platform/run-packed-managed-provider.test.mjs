@@ -256,7 +256,7 @@ test('current-source external packaged runtime owns non-CPX bytes without a Go b
   );
   assert.match(composedSource, /const externalRuntimeProgram = \[/u);
   assert.match(composedSource, /CANDIDATE_HANDOFF_PROVIDER_BINARY_NAME =\s*'acme-packed-provider-runtime'/u);
-  assert.match(composedSource, /args: \['-e', \$\{JSON\.stringify\(externalRuntimeProgram\)\}\]/u);
+  assert.match(composedSource, /args: \['-e', externalRuntimeProgram\]/u);
   assert.doesNotMatch(
     composedSource,
     /CLIProxyAPI-LICENSE[\s\S]{0,500}?writeCandidateHandoffProviderSource/u,
@@ -602,6 +602,14 @@ test('keeps one canonical package command wired to the daemon continuity entrypo
       'test:plugin-platform:packed-channel-provider',
     ),
     false,
+  );
+  // Candidate QA is reachable through its own explicit package entrypoint into the
+  // SAME canonical runner: no mode flag is hardcoded, so an appended --candidate
+  // parses as the candidate run mode instead of colliding with the strict
+  // candidate-free parsing of the moving-source command.
+  assert.equal(
+    packageManifest.scripts['test:plugin-platform:packed-managed-provider-candidate'],
+    'node scripts/plugin-platform/run-packed-managed-provider.mjs',
   );
 
   const invocation = buildPackedManagedProviderEntrypointInvocation({

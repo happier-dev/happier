@@ -3,6 +3,7 @@ import { isAbsolute, posix } from 'node:path';
 
 import { shouldDelegateToActiveExecutionHost } from './controller.mjs';
 import { resolveHostWorkspaceMapping, runDelegatedHstackCommand } from './delegation.mjs';
+import { startGhopsCredentialBroker } from './ghops_credential_broker.mjs';
 
 function defaultBoundary() {
   return {
@@ -47,6 +48,7 @@ export async function runExecutionHostBridge({
   platform = process.platform,
   prepare,
   boundary = defaultBoundary(),
+  startCredentialBroker = startGhopsCredentialBroker,
 }) {
   const entrypoint = String(localEntrypoint ?? '').trim();
   if (!isAbsolute(entrypoint) || /[\0\r\n]/.test(entrypoint)) {
@@ -71,14 +73,19 @@ export async function runExecutionHostBridge({
     mapping.workspace.guestDir,
     'apps', 'stack', 'scripts', 'repo_local.mjs',
   );
-  const outcome = await runDelegatedHstackCommand({
-    profile,
-    argv,
-    cwd,
-    env,
-    prepare,
-    boundary,
-    guestInvocation: { command: 'node', args: [guestEntrypoint] },
-  });
-  return { ...outcome, delegated: true };
+  const credentialBroker = await startCredentialBroker();
+  try {
+    const outcome = await runDelegatedHstackCommand({
+      profile,
+      argv,
+      cwd,
+      env,
+      prepare,
+      boundary,
+      guestInvocation: { command: 'node', args: [guestEntrypoint] },
+    });
+    return { ...outcome, delegated: true };
+  } finally {
+    await credentialBroker.close();
+  }
 }

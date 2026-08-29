@@ -17,6 +17,9 @@ const executionNeutralEnv = Object.fromEntries(
     'HAPPIER_DEV_TARGET_EXECUTION',
     'HAPPIER_PREFERRED_EXECUTION',
     'HAPPIER_EXEC_CONFIG_PATH',
+    'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN',
+    'HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT',
+    'HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE',
   ].includes(key)),
 );
 
@@ -366,6 +369,235 @@ test('remote heavyweight admission starts from the configured repository when SS
   assert.equal(result.stdout, 'remote-tsc\n');
 });
 
+test('native launcher reuses one bounded SSH master across sequential commands for the same target', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-shared-ssh-'));
+  const binDir = join(root, 'bin');
+  const stackDir = join(root, 'stack');
+  const configPath = join(stackDir, 'dev-targets.json');
+  const masterStarts = join(root, 'master-starts');
+  const heldCommandStarted = join(root, 'held-command-started');
+  const releaseHeldCommand = join(root, 'release-held-command');
+  const runtimeDir = join(root, 'runtime');
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(configPath, '{}\n', 'utf8');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='error'",
+    "load_ttl_seconds='300'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='linux'",
+    "target_1_ssh='linux-host'",
+    "target_1_ssh_config=''",
+    `target_1_repo_dir='${repoRoot}'`,
+    `target_1_cli_home='${join(root, 'machine-home')}'`,
+    `target_1_remote_path='${binDir}:/usr/bin:/bin'`,
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 97\n');
+  await executable(join(binDir, 'mutagen'), '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n');
+  await executable(join(binDir, 'probe-command'), [
+    '#!/bin/sh',
+    'if [ "$1" = hold ]; then',
+    '  : > "$HELD_COMMAND_STARTED"',
+    '  while [ ! -e "$RELEASE_HELD_COMMAND" ]; do sleep 0.02; done',
+    'fi',
+    'printf "remote:%s\\n" "$1"',
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'control_path=',
+    'previous=',
+    'for argument in "$@"; do',
+    '  if [ "$previous" = -S ]; then control_path=$argument; fi',
+    '  previous=$argument',
+    'done',
+    'case "$*" in',
+    '  *getconf*) printf "8 0.5 0.8 22000000 20 0 18000000 25000000 0 0 0 0 0 0 0 linux\\n" ;;',
+    '  *"&& command -v "*) exit 0 ;;',
+    '  *-O\\ check*) [ -S "$control_path" ] || [ -f "$control_path" ] ;;',
+    '  *-MNf*) mkdir -p "${control_path%/*}"; : > "$control_path"; printf "start\\n" >> "$MASTER_STARTS" ;;',
+    '  *)',
+    '    remote_command=',
+    '    for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
+    '    /bin/sh -c "$remote_command"',
+    '    ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  const env = {
+    ...executionNeutralEnv,
+    HOME: root,
+    HAPPIER_EXEC_CONFIG_PATH: configPath,
+    HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+    PATH: `${binDir}:/usr/bin:/bin`,
+    TMPDIR: root,
+    XDG_RUNTIME_DIR: runtimeDir,
+    MASTER_STARTS: masterStarts,
+    HELD_COMMAND_STARTED: heldCommandStarted,
+    RELEASE_HELD_COMMAND: releaseHeldCommand,
+  };
+
+  for (const value of ['one', 'two']) {
+    const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', value], {
+      cwd: repoRoot,
+      env,
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, `remote:${value}\n`);
+  }
+
+  assert.equal((await readFile(masterStarts, 'utf8')).trim().split('\n').length, 1);
+
+  const held = spawn('/bin/sh', [launcher, '--', 'probe-command', 'hold'], {
+    cwd: repoRoot,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const heldOutput = { stdout: '', stderr: '' };
+  held.stdout.on('data', (chunk) => { heldOutput.stdout += chunk; });
+  held.stderr.on('data', (chunk) => { heldOutput.stderr += chunk; });
+  let heldExit;
+  try {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      try {
+        await readFile(heldCommandStarted);
+        break;
+      } catch {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+      }
+    }
+    await readFile(heldCommandStarted);
+    const concurrent = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'concurrent'], {
+      cwd: repoRoot,
+      env,
+      encoding: 'utf8',
+    });
+    assert.equal(concurrent.status, 0, concurrent.stderr);
+    assert.equal(concurrent.stdout, 'remote:concurrent\n');
+    assert.equal((await readFile(masterStarts, 'utf8')).trim().split('\n').length, 2);
+  } finally {
+    await writeFile(releaseHeldCommand, '', 'utf8');
+    heldExit = held.exitCode ?? await new Promise((resolveExit) => held.once('exit', resolveExit));
+  }
+  assert.equal(heldExit, 0, heldOutput.stderr);
+  assert.equal(heldOutput.stdout, 'remote:hold\n');
+});
+
+test('native launcher waits for worker heavyweight capacity before opening a command transport', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-pretransport-admission-'));
+  const binDir = join(root, 'bin');
+  const stackDir = join(root, 'stack');
+  const cacheDir = join(stackDir, 'dev-target-command-load-native');
+  const configPath = join(stackDir, 'dev-targets.json');
+  const masterStarted = join(root, 'master-started');
+  const runtimeDir = join(root, 'runtime');
+  const owners = [
+    spawn('/bin/sleep', ['300'], { stdio: 'ignore' }),
+    spawn('/bin/sleep', ['300'], { stdio: 'ignore' }),
+  ];
+  t.after(async () => {
+    for (const owner of owners) {
+      if (owner.exitCode == null) owner.kill('SIGTERM');
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await mkdir(cacheDir, { recursive: true });
+  await mkdir(runtimeDir, { recursive: true });
+  await writeFile(configPath, '{}\n', 'utf8');
+  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='error'",
+    "load_ttl_seconds='300'",
+    "unavailable_ttl_seconds='120'",
+    "dependency_direct_commands='node npm npx pnpm tsc vitest yarn'",
+    "validation_direct_commands='tsc vitest'",
+    "target_count='1'",
+    "target_1_name='linux'",
+    "target_1_ssh='linux-host'",
+    "target_1_ssh_config=''",
+    `target_1_repo_dir='${repoRoot}'`,
+    `target_1_cli_home='${join(root, 'machine-home')}'`,
+    `target_1_remote_path='${binDir}:/usr/bin:/bin'`,
+    '',
+  ].join('\n'));
+  const now = Math.floor(Date.now() / 1_000);
+  await writeFile(join(cacheDir, 'linux.cache'), `${now} 1 0.062500 8\n`, 'utf8');
+  await writeFile(
+    join(cacheDir, 'linux.telemetry'),
+    '8 0.5 0.8 22000000 20 0 18000000 26000000 0 0 0 0 0 0 0 linux\n',
+    'utf8',
+  );
+  for (const owner of owners) {
+    await writeFile(join(cacheDir, `linux.active.${owner.pid}`), `${owner.pid}\nvalidation\nexisting\n`, 'utf8');
+  }
+  await executable(join(binDir, 'node'), '#!/bin/sh\nexit 0\n');
+  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Darwin\\n"\n');
+  await executable(join(binDir, 'mutagen'), '#!/bin/sh\nprintf "%s|Watching|7||false|0\\n" "$3"\n');
+  await executable(join(binDir, 'tsc'), '#!/bin/sh\nprintf "remote-tsc\\n"\n');
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'control_path=',
+    'previous=',
+    'for argument in "$@"; do',
+    '  if [ "$previous" = -S ]; then control_path=$argument; fi',
+    '  previous=$argument',
+    'done',
+    'case "$*" in',
+    '  *"&& command -v "*) exit 0 ;;',
+    '  *-O\\ check*) [ -f "$control_path" ] ;;',
+    '  *-MNf*) mkdir -p "${control_path%/*}"; : > "$control_path"; : > "$MASTER_STARTED" ;;',
+    '  *) remote_command=; for ssh_argument in "$@"; do remote_command=$ssh_argument; done; /bin/sh -c "$remote_command" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  const env = {
+    ...executionNeutralEnv,
+    HOME: root,
+    HAPPIER_EXEC_CONFIG_PATH: configPath,
+    HAPPIER_STACK_STORAGE_DIR: join(root, 'stacks'),
+    PATH: `${binDir}:/usr/bin:/bin`,
+    TMPDIR: root,
+    XDG_RUNTIME_DIR: runtimeDir,
+    MASTER_STARTED: masterStarted,
+  };
+  const child = spawn('/bin/sh', [launcher, '--', 'tsc', '--version'], {
+    cwd: repoRoot,
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const output = { stdout: '', stderr: '' };
+  child.stdout.on('data', (chunk) => { output.stdout += chunk; });
+  child.stderr.on('data', (chunk) => { output.stderr += chunk; });
+  try {
+    for (let attempt = 0; attempt < 200 && !/waiting for heavyweight capacity/.test(output.stderr); attempt += 1) {
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    assert.match(output.stderr, /waiting for heavyweight capacity/);
+    await assert.rejects(readFile(masterStarted), { code: 'ENOENT' });
+    await rm(join(cacheDir, `linux.active.${owners[0].pid}`));
+    const exitCode = child.exitCode ?? await new Promise((resolveExit) => child.once('exit', resolveExit));
+    assert.equal(exitCode, 0, output.stderr);
+    assert.equal(output.stdout, 'remote-tsc\n');
+    await readFile(masterStarted);
+  } finally {
+    if (child.exitCode == null) child.kill('SIGTERM');
+  }
+});
+
 test('native launcher ignores an inherited local preference and dispatches to the least-loaded host without Node', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-native-target-'));
   const binDir = join(root, 'bin');
@@ -432,6 +664,7 @@ test('native launcher ignores an inherited local preference and dispatches to th
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /selected mac2/);
+  assert.doesNotMatch(result.stderr, /cannot open .*provenance\.jsonl/);
   assert.match(result.stdout, /remote:.*mac2-host.*probe-command.*ok/);
 });
 
@@ -2190,7 +2423,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     "command_mode='auto'",
     "include_local='0'",
     "fallback_mode='error'",
-    "load_ttl_seconds='0'",
+    "load_ttl_seconds='300'",
     "unavailable_ttl_seconds='120'",
     "target_count='1'",
     "target_1_name='linux'",
@@ -2274,10 +2507,18 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
   ].join('\n'));
   await executable(join(binDir, 'ssh'), [
     '#!/bin/sh',
+    'control_path=',
+    'previous=',
+    'for argument in "$@"; do',
+    '  if [ "$previous" = -S ]; then control_path=$argument; fi',
+    '  previous=$argument',
+    'done',
     'case "$*" in',
     '  *getconf*) printf "4 0 0.8 22000000 20 0 48000000 72000000 0 0 0 0 0 0 0 linux\\n" ;;',
     '  *"&& command -v "*) exit 0 ;;',
-    '  *-MNf*|*-O\\ exit*) exit 0 ;;',
+    '  *-O\\ check*) [ -f "$control_path" ] ;;',
+    '  *-MNf*) mkdir -p "${control_path%/*}"; : > "$control_path" ;;',
+    '  *-O\\ exit*) rm -f -- "$control_path" ;;',
     '  *)',
     '    remote_command=',
     '    for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
@@ -2323,6 +2564,8 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     if (child.exitCode != null) return child.exitCode;
     return await new Promise((resolveExit) => child.once('exit', resolveExit));
   };
+  const remoteSchedulingWait = /waiting for (?:heavyweight (?:admission|capacity)|dispatch reservation)/;
+  const remoteAdmissionEvidence = /(?:admitted heavyweight command|waiting for (?:heavyweight (?:admission|capacity)|dispatch reservation))/;
 
   const first = spawn('/bin/sh', [launcher, '--local', '--script=test:local-first'], {
     cwd: repoRoot,
@@ -2378,13 +2621,13 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     });
     const nodeBundledPluginGeneratorOutput = collect(nodeBundledPluginGenerator);
     await waitFor(
-      () => /waiting for heavyweight admission/.test(nodeBundledPluginGeneratorOutput.stderr)
+      () => remoteSchedulingWait.test(nodeBundledPluginGeneratorOutput.stderr)
         || nodeBundledPluginGenerator.exitCode != null,
       'a direct bundled-plugin generator admission wait behind the local job',
     );
     assert.match(
       nodeBundledPluginGeneratorOutput.stderr,
-      /waiting for heavyweight admission/,
+      remoteSchedulingWait,
       `Direct bundled-plugin generator output\nstdout: ${nodeBundledPluginGeneratorOutput.stdout}\nstderr: ${nodeBundledPluginGeneratorOutput.stderr}`,
     );
     await assert.rejects(readFile(collisionMarker), { code: 'ENOENT' });
@@ -2409,7 +2652,15 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     const remoteOutput = collect(remote);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
     await assert.rejects(readFile(collisionMarker), { code: 'ENOENT' });
-    await waitFor(() => /waiting for heavyweight admission/.test(remoteOutput.stderr), 'a remote admission wait behind the local job');
+    await waitFor(
+      () => remoteSchedulingWait.test(remoteOutput.stderr) || remote.exitCode != null,
+      'a remote scheduling wait behind the local job',
+    );
+    assert.match(
+      remoteOutput.stderr,
+      remoteSchedulingWait,
+      `Remote TypeScript output\nstdout: ${remoteOutput.stdout}\nstderr: ${remoteOutput.stderr}`,
+    );
     for (const argumentsForInstall of [
       ['corepack', 'yarn', 'install', '--immutable'],
       ['yarn', 'install', '--immutable'],
@@ -2423,7 +2674,7 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
       });
       const output = collect(install);
       await waitFor(
-        () => /waiting for heavyweight admission/.test(output.stderr),
+        () => remoteSchedulingWait.test(output.stderr),
         `a remote dependency-install admission wait (stdout=${output.stdout}; stderr=${output.stderr})`,
       );
       installs.push({ install, output });
@@ -2442,14 +2693,17 @@ test('native launcher admits heavyweight local and remote jobs, reclaims stale o
     await assert.rejects(readFile(staleWaiter), { code: 'ENOENT' });
     for (const { install, output } of installs) {
       assert.equal(await waitForExit(install), 0, output.stderr);
-      assert.match(output.stderr, /admitted heavyweight command.*class=dependency-install/);
+      assert.match(
+        output.stderr,
+        /(?:admitted heavyweight command.*class=dependency-install|waiting for heavyweight capacity)/,
+      );
     }
     assert.match(firstOutput.stdout, /local-first/);
     assert.match(remoteOutput.stdout, /remote-heavy/);
-    assert.match(remoteOutput.stderr, /admitted heavyweight command/);
+    assert.match(remoteOutput.stderr, remoteAdmissionEvidence);
     assert.match(nodeVitestOutput.stdout, /remote-heavy/);
     assert.match(nodeBundledPluginGeneratorOutput.stdout, /remote-heavy/);
-    assert.match(nodeVitestOutput.stderr, /admitted heavyweight command/);
+    assert.match(nodeVitestOutput.stderr, remoteAdmissionEvidence);
     assert.match(
       await readFile(scopeMarker, 'utf8'),
       /--user --scope --quiet --slice=happier-jobs\.slice --nice=10 -- bash -c .*remote_dependency_bootstrap\.mjs.*remote_validation_preparation\.mjs.*tsc.*remote-third/s,
@@ -2597,6 +2851,153 @@ test('native launcher derives two heavyweight admission slots from an 8 CPU, 24 
   } finally {
     await writeFile(releaseMarker, '', 'utf8');
     for (const child of [first, second, third]) {
+      if (child && child.exitCode == null) child.kill('SIGTERM');
+    }
+  }
+});
+
+test('native launcher reuses a validated parent heavyweight reservation only for the exact root and machine', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-reentrant-'));
+  const binDir = join(root, 'bin');
+  const admissionRoot = join(root, '.happier', 'heavyweight-admission-v1');
+  const otherAdmissionRoot = join(root, 'other', '.happier', 'heavyweight-admission-v1');
+  const outerScript = join(root, 'outer.sh');
+  const inheritedMarker = join(root, 'inherited-token');
+  const outerReady = join(root, 'outer-ready');
+  const releaseMarker = join(root, 'release');
+  t.after(async () => await rm(root, { recursive: true, force: true }));
+
+  await mkdir(binDir, { recursive: true });
+  await executable(join(binDir, 'uname'), '#!/bin/sh\nprintf "Linux\\n"\n');
+  await executable(join(binDir, 'getconf'), '#!/bin/sh\nprintf "4\\n"\n');
+  await executable(join(binDir, 'awk'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  */proc/loadavg*) printf "0\\n" ;;',
+    '  */proc/meminfo*) case "$1" in *MemAvailable*) printf "16777216 25165824\\n" ;; *) printf "25165824\\n" ;; esac ;;',
+    '  */proc/pressure/memory*) printf "0\\n" ;;',
+    '  *) exec /usr/bin/awk "$@" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  await executable(join(binDir, 'vitest'), '#!/bin/sh\nexit 0\n');
+  await executable(outerScript, [
+    '#!/bin/sh',
+    'set -eu',
+    'printf "%s|%s|%s\\n" "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" "$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT" "$HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE" > "$INHERITED_MARKER"',
+    `HAPPIER_DEV_TARGET_EXECUTION=1 "${launcher}" -- vitest run nested-reentrant.test.ts`,
+    ': > "$OUTER_READY"',
+    'while [ ! -e "$RELEASE_MARKER" ]; do sleep 0.02; done',
+    '',
+  ].join('\n'));
+
+  const env = {
+    ...executionNeutralEnv,
+    HOME: root,
+    PATH: `${binDir}:/usr/bin:/bin`,
+    TMPDIR: root,
+    INHERITED_MARKER: inheritedMarker,
+    OUTER_READY: outerReady,
+    RELEASE_MARKER: releaseMarker,
+  };
+  const waitForFile = async (path, label) => {
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      try {
+        await readFile(path);
+        return;
+      } catch {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+      }
+    }
+    throw new Error(`timed out waiting for ${label}`);
+  };
+  const waitForExit = async (child) => {
+    if (child.exitCode != null) return child.exitCode;
+    return await new Promise((resolveExit) => child.once('exit', resolveExit));
+  };
+  const runAdmission = ({ rootPath, machine, token, inheritedRoot = rootPath, inheritedMachine = machine }) => spawn('/bin/sh', [
+    launcher,
+    '--heavyweight-admission',
+    `--admission-root=${rootPath}`,
+    '--class=validation',
+    `--machine=${machine}`,
+    '--',
+    '/usr/bin/true',
+  ], {
+    cwd: repoRoot,
+    env: {
+      ...env,
+      HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: token,
+      HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: inheritedRoot,
+      HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: inheritedMachine,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const outer = spawn('/bin/sh', [
+    launcher,
+    '--heavyweight-admission',
+    `--admission-root=${admissionRoot}`,
+    '--class=validation',
+    '--machine=machine-a',
+    '--',
+    outerScript,
+  ], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stale;
+  let crossMachine;
+  let crossRoot;
+  try {
+    await waitForFile(outerReady, 'the outer admission after its nested invocation');
+    const inherited = (await readFile(inheritedMarker, 'utf8')).trim().split('|');
+    assert.match(inherited[0], /^[0-9]+:[0-9]+$/);
+    assert.equal(inherited[1], admissionRoot);
+    assert.equal(inherited[2], 'machine-a');
+    const [ownerIdentity] = await readdir(join(admissionRoot, 'owners'));
+    const [ownerPid, ownerToken] = (await readFile(join(admissionRoot, 'owners', ownerIdentity, 'process'), 'utf8')).trim().split(' ');
+    assert.equal(inherited[0], `${ownerPid}:${ownerToken}`);
+
+    stale = runAdmission({
+      rootPath: admissionRoot,
+      machine: 'machine-a',
+      token: `${ownerPid}:0`,
+    });
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      if ((await readdir(join(admissionRoot, 'waiters'))).length >= 1) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    const staleWaiterCount = (await readdir(join(admissionRoot, 'waiters'))).length;
+    assert.ok(staleWaiterCount >= 1, 'stale process token must not bypass the active reservation');
+    crossMachine = runAdmission({
+      rootPath: admissionRoot,
+      machine: 'machine-b',
+      token: `${ownerPid}:${ownerToken}`,
+      inheritedMachine: 'machine-b',
+    });
+    for (let attempt = 0; attempt < 250; attempt += 1) {
+      if ((await readdir(join(admissionRoot, 'waiters'))).length >= staleWaiterCount + 1) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    assert.ok(
+      (await readdir(join(admissionRoot, 'waiters'))).length >= staleWaiterCount + 1,
+      'a different machine must follow ordinary capacity admission',
+    );
+    crossRoot = runAdmission({
+      rootPath: otherAdmissionRoot,
+      machine: 'machine-a',
+      token: `${ownerPid}:${ownerToken}`,
+      inheritedRoot: otherAdmissionRoot,
+    });
+    assert.equal(await waitForExit(crossRoot), 0);
+    assert.equal(outer.exitCode, null);
+    assert.equal(await readdir(join(admissionRoot, 'owners')).then((entries) => entries.length), 1);
+
+    await writeFile(releaseMarker, '', 'utf8');
+    assert.equal(await waitForExit(outer), 0);
+    assert.equal(await waitForExit(stale), 0);
+    assert.equal(await waitForExit(crossMachine), 0);
+  } finally {
+    await writeFile(releaseMarker, '', 'utf8');
+    for (const child of [outer, stale, crossMachine, crossRoot]) {
       if (child && child.exitCode == null) child.kill('SIGTERM');
     }
   }

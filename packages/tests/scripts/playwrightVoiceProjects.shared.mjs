@@ -35,10 +35,22 @@ export function buildVoicePlaywrightProjects({ fixturePath, browserChannel }) {
 
   return [
     {
+      name: 'voice-product',
+      testMatch: /voice\.(?!media\.|permissions\.|output\.).*\.spec\.ts/,
+      metadata: {
+        voiceQaLayer: 'ordinary Voice product journeys',
+        voiceQaSpecFamily: 'product',
+      },
+      use: {
+        ...(channel ? { channel } : {}),
+      },
+    },
+    {
       name: 'voice-q2-fake-mic',
       testMatch: /voice\.media\..*\.spec\.ts/,
       metadata: {
         voiceQaLayer: 'file-backed microphone input',
+        voiceQaSpecFamily: 'media',
         voiceQaFixturePath: fixturePath,
       },
       use: {
@@ -51,7 +63,10 @@ export function buildVoicePlaywrightProjects({ fixturePath, browserChannel }) {
       name: 'voice-q3-permissions-denied',
       testMatch: /voice\.permissions\..*\.spec\.ts/,
       grep: /explicit denial|prompt\/unknown|device removal|contention/,
-      metadata: { voiceQaLayer: 'browser permission denial, revocation, and device lifecycle' },
+      metadata: {
+        voiceQaLayer: 'browser permission denial, revocation, and device lifecycle',
+        voiceQaSpecFamily: 'permissions',
+      },
       use: {
         ...(channel ? { channel } : {}),
         permissions: [],
@@ -62,7 +77,10 @@ export function buildVoicePlaywrightProjects({ fixturePath, browserChannel }) {
       name: 'voice-q3-permissions-granted',
       testMatch: /voice\.permissions\..*\.spec\.ts/,
       grep: /explicit grant|revoking permission/,
-      metadata: { voiceQaLayer: 'browser permission grant and production capture lifecycle' },
+      metadata: {
+        voiceQaLayer: 'browser permission grant and production capture lifecycle',
+        voiceQaSpecFamily: 'permissions',
+      },
       use: {
         ...(channel ? { channel } : {}),
         permissions: [],
@@ -74,6 +92,7 @@ export function buildVoicePlaywrightProjects({ fixturePath, browserChannel }) {
       testMatch: /voice\.output\..*\.spec\.ts/,
       metadata: {
         voiceQaLayer: 'unmuted browser output sink',
+        voiceQaSpecFamily: 'output',
         happierVoiceOutputCapture: true,
       },
       use: {

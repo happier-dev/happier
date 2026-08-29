@@ -43,6 +43,23 @@ function readGeneratedJsonExport<T>(source: string, exportName: string): T {
   return JSON.parse(source.slice(start + prefix.length, end)) as T;
 }
 
+/**
+ * Pack-time source-artifact integrities live in the build-owned generated JSON
+ * beside the publisher, not in the shipped runtime module. The runtime export of
+ * this payload is retired; readers must consume the JSON the sole publisher emits.
+ */
+function readGeneratedSourceIntegrities<T>(repoRoot: string): T {
+  const sourceIntegritiesPath = resolve(
+    repoRoot,
+    'apps/cli/scripts/build-owned/generatedBundledPluginSourceIntegrities.json',
+  );
+  const parsed = JSON.parse(readFileSync(sourceIntegritiesPath, 'utf8')) as {
+    BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES: T;
+  };
+  assert.ok(parsed && typeof parsed === 'object');
+  return parsed.BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES;
+}
+
 test('historical publisher wrapper re-exports only the canonical generator entrypoint', () => {
   assert.equal(historicalBundledPluginPublisher.main, canonicalBundledPluginPublisher.main);
   assert.deepEqual(Object.keys(historicalBundledPluginPublisher), ['main']);
@@ -1539,10 +1556,10 @@ test('separates structural bundled generation records from pack-time source arti
   assert.doesNotMatch(JSON.stringify(firstRecord), /digest|fingerprint|manifestDigest|packageDigest|runtimeDigest|installedArtifactRecord/u);
   assert.doesNotMatch(JSON.stringify(firstRecord), /\.tsbuildinfo/u);
 
-  const [firstSourceIntegrity] = readGeneratedJsonExport<readonly Readonly<{
+  const [firstSourceIntegrity] = readGeneratedSourceIntegrities<readonly Readonly<{
     files: readonly Readonly<{ byteLength: number; digest: string; relativePath: string }>[];
     packageName: string;
-  }>[]>(first, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+  }>(repoRoot);
   assert.ok(firstSourceIntegrity, 'expected one pack-time source-artifact integrity entry');
   assert.equal(firstSourceIntegrity.packageName, '@happier-dev/plugins-resource-owner');
   const firstManifestDigest = firstSourceIntegrity.files.find(
@@ -1598,7 +1615,7 @@ test('separates structural bundled generation records from pack-time source arti
     firstRecordWithoutPublicationGenerationId,
   );
   assert.deepEqual(
-    readGeneratedJsonExport(afterCompilerCacheChange, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES'),
+    readGeneratedSourceIntegrities<typeof firstSourceIntegrity[]>(repoRoot),
     [firstSourceIntegrity],
   );
 
@@ -1612,10 +1629,7 @@ test('separates structural bundled generation records from pack-time source arti
     second,
     'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS',
   );
-  const [secondSourceIntegrity] = readGeneratedJsonExport<typeof firstSourceIntegrity[]>(
-    second,
-    'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES',
-  );
+  const [secondSourceIntegrity] = readGeneratedSourceIntegrities<typeof firstSourceIntegrity[]>(repoRoot);
   assert.notEqual(
     secondArtifact.record.immutableGenerationId,
     afterCompilerCacheArtifact.record.immutableGenerationId,
@@ -1728,11 +1742,11 @@ test('rotates the CPX bundled daemon generation identity when its staged bytes c
     assert.ok(artifact, 'expected a CPX immutable bundled artifact');
     return artifact;
   };
-  const readSourceIntegrity = (source: string) => {
-    const integrities = readGeneratedJsonExport<readonly Readonly<{
+  const readSourceIntegrity = (currentRepoRoot: string) => {
+    const integrities = readGeneratedSourceIntegrities<readonly Readonly<{
       files: readonly Readonly<{ digest: string; relativePath: string }>[];
       packageName: string;
-    }>[]>(source, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+    }>[]>(currentRepoRoot);
     const integrity = integrities.find(
       (candidate) => candidate.packageName === '@happier-dev/plugins-cliproxyapi',
     );
@@ -1746,7 +1760,7 @@ test('rotates the CPX bundled daemon generation identity when its staged bytes c
     'utf8',
   );
   const firstArtifact = readArtifact(firstSource);
-  const firstIntegrity = readSourceIntegrity(firstSource);
+  const firstIntegrity = readSourceIntegrity(repoRoot);
   const firstDaemonBytes = readFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), 'utf8');
   const legacyGenerationId = `bundled-${firstArtifact.record.pluginId}`;
   const legacySource = firstSource.replace(
@@ -1768,7 +1782,7 @@ test('rotates the CPX bundled daemon generation identity when its staged bytes c
     'utf8',
   );
   const secondArtifact = readArtifact(secondSource);
-  const secondIntegrity = readSourceIntegrity(secondSource);
+  const secondIntegrity = readSourceIntegrity(repoRoot);
   const secondDaemonBytes = readFileSync(resolve(packageRoot, '.happier-plugin/daemon.js'), 'utf8');
 
   assert.notEqual(firstDaemonBytes, secondDaemonBytes);
@@ -1797,7 +1811,7 @@ test('rotates the CPX bundled daemon generation identity when its staged bytes c
     'utf8',
   );
   assert.deepEqual(readArtifact(thirdSource), secondArtifact);
-  assert.deepEqual(readSourceIntegrity(thirdSource), secondIntegrity);
+  assert.deepEqual(readSourceIntegrity(repoRoot), secondIntegrity);
 });
 
 test('emits immutable artifacts for executable and descriptor-only bundled owners', async () => {
@@ -3233,10 +3247,10 @@ test('emits pack-time source integrity for a bundled package without an immutabl
   const immutableArtifacts = readGeneratedJsonExport<readonly Readonly<{
     packageName: string;
   }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS');
-  const sourceIntegrities = readGeneratedJsonExport<readonly Readonly<{
+  const sourceIntegrities = readGeneratedSourceIntegrities<readonly Readonly<{
     packageName: string;
     files: readonly Readonly<{ relativePath: string }>[];
-  }>[]>(artifactSource, 'BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES');
+  }>[]>(repoRoot);
 
   // Provider-only and Voice packages have this same shape: no immutable runtime
   // generation, yet packed files that require source-integrity admission.
@@ -7714,7 +7728,6 @@ test('scoped workspace publication reports every requested plugin failure', asyn
       artifactsOutPath,
       [
         'export const BUNDLED_FIRST_PARTY_IMMUTABLE_ARTIFACTS = Object.freeze([] satisfies readonly unknown[]);',
-        'export const BUNDLED_FIRST_PARTY_SOURCE_ARTIFACT_INTEGRITIES = Object.freeze([] satisfies readonly unknown[]);',
         '',
       ].join('\n'),
       'utf8',

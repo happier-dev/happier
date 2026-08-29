@@ -424,6 +424,7 @@ test('release-validate plans cli-update continuity against the core e2e lane', a
 
 test('release-validate materializes cli-update local-build targets before running the continuity lane', async () => {
   const calls = [];
+  const managedRuntimeCoherenceChecks = [];
   runCliUpdateValidation({
     repoRoot,
     update: {
@@ -448,6 +449,9 @@ test('release-validate materializes cli-update local-build targets before runnin
           'package/package-dist/index.mjs',
         ].join('\n');
       }
+    },
+    assertCliManagedRuntimeTarballCoherenceImpl(tarballPath) {
+      managedRuntimeCoherenceChecks.push(tarballPath);
     },
   });
 
@@ -474,6 +478,11 @@ test('release-validate materializes cli-update local-build targets before runnin
 
   const packDestinationFlagIndex = calls[2].args.indexOf('--dest-dir');
   assert.notEqual(packDestinationFlagIndex, -1);
+  // The update pack must bind the managed-runtime mode-coherence claim from the exact
+  // packed bytes before the continuity lane installs it.
+  assert.deepEqual(managedRuntimeCoherenceChecks, [
+    resolve(calls[2].args[packDestinationFlagIndex + 1], 'happier-dev-cli-0.0.0.tgz'),
+  ]);
   assert.deepEqual(calls[4].options.env, {
     ...process.env,
     HAPPIER_RELEASE_VALIDATION_CLI_UPDATE_FROM_SOURCE_KIND: 'published-channel',
@@ -511,6 +520,9 @@ test('release-validate rejects malformed cli-update local-build packs before run
           if (args[0] === '-tzf') {
             return 'package/bin/happier.mjs\n';
           }
+        },
+        assertCliManagedRuntimeTarballCoherenceImpl() {
+          assert.fail('a malformed pack must fail before the managed-runtime coherence assertion');
         },
       }),
     /missing required runtime entries/i,

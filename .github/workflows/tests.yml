@@ -402,6 +402,10 @@ jobs:
           fi
           yarn -s test:e2e:ui -- "${specs[@]}"
 
+      - name: Run dedicated Voice UI E2E
+        if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && matrix.shard == 1 && env.UI_E2E_SPECS == ''
+        run: yarn -s test:e2e:ui:voice
+
       - name: Upload UI E2E artifacts (Playwright)
         if: (github.event_name == 'workflow_call' || steps.changes.outputs.ui_e2e == 'true') && failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -774,6 +778,7 @@ jobs:
           yarn workspace @happier-dev/ssh-native test
           yarn workspace @happier-dev/audio-stream-native test
           yarn workspace docs test
+          yarn workspace docs check:content
           yarn --cwd packages/relay-server test
 
       - name: Run current-source Plugin Platform author and runtime contracts
@@ -931,12 +936,15 @@ jobs:
 
   cli:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_cli }}
+    needs: [trusted_ref_guard]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         part: [1, 2]
-    runs-on: ubuntu-22.04
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 25
     env:
       # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
@@ -1024,8 +1032,11 @@ jobs:
 
   stack:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_stack }}
+    needs: [trusted_ref_guard]
     name: Stack Tests (unit + integration)
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 45
     steps:
       - name: Checkout

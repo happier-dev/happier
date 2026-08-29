@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -14,13 +14,14 @@ const fixturePath = resolve('fixtures/voice/phrases/long-utterance.16k.wav');
 test('voice browser projects prove distinct input, permission, and output layers', () => {
   const projects = buildVoicePlaywrightProjects({ fixturePath });
   assert.deepEqual(projects.map((project) => project.name), [
+    'voice-product',
     'voice-q2-fake-mic',
     'voice-q3-permissions-denied',
     'voice-q3-permissions-granted',
     'voice-q4-output',
   ]);
 
-  const fakeMic = projects[0];
+  const fakeMic = projects[1];
   assert.deepEqual(fakeMic.use.permissions, ['microphone']);
   assert.equal(fakeMic.metadata.voiceQaFixturePath, fixturePath);
   assert.ok(fakeMic.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
@@ -31,7 +32,7 @@ test('voice browser projects prove distinct input, permission, and output layers
   ));
   assert.ok(!fakeMic.use.launchOptions.args.includes('--mute-audio'));
 
-  const deniedPermissions = projects[1];
+  const deniedPermissions = projects[2];
   assert.deepEqual(deniedPermissions.use.permissions, []);
   assert.ok(!deniedPermissions.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
   assert.ok(deniedPermissions.use.launchOptions.args.includes('--use-fake-device-for-media-stream'));
@@ -43,7 +44,7 @@ test('voice browser projects prove distinct input, permission, and output layers
   assert.doesNotMatch('explicit grant', deniedPermissions.grep);
   assert.doesNotMatch('revoking permission', deniedPermissions.grep);
 
-  const grantedPermissions = projects[2];
+  const grantedPermissions = projects[3];
   assert.deepEqual(grantedPermissions.use.permissions, []);
   assert.ok(grantedPermissions.use.launchOptions.args.includes('--use-fake-ui-for-media-stream'));
   assert.ok(grantedPermissions.use.launchOptions.args.includes('--use-fake-device-for-media-stream'));
@@ -55,7 +56,7 @@ test('voice browser projects prove distinct input, permission, and output layers
   assert.doesNotMatch('explicit denial', grantedPermissions.grep);
   assert.match('revoking permission', grantedPermissions.grep);
 
-  const output = projects[3];
+  const output = projects[4];
   assert.deepEqual(output.use.permissions, ['microphone']);
   assert.ok(output.use.launchOptions.args.includes(`--use-file-for-fake-audio-capture=${fixturePath}`));
   assert.ok(output.use.launchOptions.args.includes(
@@ -65,9 +66,40 @@ test('voice browser projects prove distinct input, permission, and output layers
   assert.equal(output.metadata.happierVoiceOutputCapture, true);
 });
 
+test('every Voice product spec belongs to exactly one dedicated execution family', async () => {
+  const projects = buildVoicePlaywrightProjects({ fixturePath });
+  const voiceSpecs = (await readdir(resolve('suites/ui-e2e')))
+    .filter((fileName) => /^voice\..*\.spec\.ts$/.test(fileName))
+    .sort();
+
+  assert.ok(voiceSpecs.length > 0, 'the dedicated Voice config must discover Voice product specs');
+
+  for (const fileName of voiceSpecs) {
+    const matchingFamilies = new Set(
+      projects
+        .filter((project) => project.testMatch.test(fileName))
+        .map((project) => project.metadata.voiceQaSpecFamily),
+    );
+    assert.deepEqual(
+      [...matchingFamilies],
+      [
+        /^voice\.media\./.test(fileName)
+          ? 'media'
+          : /^voice\.permissions\./.test(fileName)
+            ? 'permissions'
+            : /^voice\.output\./.test(fileName)
+              ? 'output'
+              : 'product',
+      ],
+      `${fileName} must belong to exactly one Voice execution family`,
+    );
+  }
+});
+
 test('the canonical Voice E2E scripts select the dedicated Playwright config', async () => {
   const testsPackage = JSON.parse(await readFile(resolve('package.json'), 'utf8'));
   const rootPackage = JSON.parse(await readFile(resolve('../..', 'package.json'), 'utf8'));
+  const testsWorkflow = await readFile(resolve('../..', '.github/workflows/tests.yml'), 'utf8');
 
   assert.equal(
     testsPackage.scripts['test:ui:e2e:voice'],
@@ -77,6 +109,7 @@ test('the canonical Voice E2E scripts select the dedicated Playwright config', a
     rootPackage.scripts['test:e2e:ui:voice'],
     'yarn --cwd packages/tests -s test:ui:e2e:voice',
   );
+  assert.match(testsWorkflow, /yarn -s test:e2e:ui:voice/);
 });
 
 test('voice browser projects require an absolute fixture path', () => {
@@ -117,7 +150,7 @@ test('voice browser projects fail before Playwright launch when the fixture is m
 
     const fixturePath = join(testDir, 'fixture.wav');
     await writeFile(fixturePath, Buffer.from('fixture'));
-    assert.equal(buildVoicePlaywrightProjects({ fixturePath }).length, 4);
+    assert.equal(buildVoicePlaywrightProjects({ fixturePath }).length, 5);
     assert.throws(
       () => buildVoicePlaywrightProjects({ fixturePath: testDir }),
       /regular file/,

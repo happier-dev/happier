@@ -19,6 +19,12 @@ test('bootstrap-minisign script uses portable find grouping syntax', async () =>
   );
 });
 
+test('bootstrap-minisign retries transient download failures without weakening checksum verification', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'actions', 'bootstrap-minisign', 'bootstrap-minisign.sh'), 'utf8');
+  assert.match(raw, /curl -fsSL[\s\S]*?--retry 4[\s\S]*?--retry-all-errors[\s\S]*?--connect-timeout 30[\s\S]*?--max-time 300/);
+  assert.match(raw, /actual_sha=.*sha256sum[\s\S]*?actual_sha.*expected_sha/, 'retrying downloads must remain checksum-pinned');
+});
+
 test('bootstrap-minisign script selects linux minisign binary by runner architecture first', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'actions', 'bootstrap-minisign', 'bootstrap-minisign.sh'), 'utf8');
   assert.match(raw, /case "\$\{arch\}" in[\s\S]*?x86_64\|amd64\)[\s\S]*?linux_arch="x86_64"/);

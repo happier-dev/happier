@@ -422,6 +422,7 @@ test('non-main stack rejects runtime dev proxy maintenance port when proxy pid i
       stackName,
       runtimeStatePath,
       defaultPort: 3005,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
     });
 
     assert.notEqual(out, port);
@@ -492,6 +493,7 @@ test('non-main stack ignores occupied non-happier runtime port even when the rec
       stackName: 'repo-test-abc',
       runtimeStatePath,
       defaultPort: 3005,
+      waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
     });
 
     assert.notEqual(out, port);
@@ -511,6 +513,7 @@ test('non-main stack errors when pinned server port is occupied by a non-happier
           stackName: 'repo-test-abc',
           runtimeStatePath: null,
           defaultPort: 3005,
+          waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
         }),
       /HAPPIER_STACK_SERVER_PORT/
     );
@@ -530,6 +533,7 @@ test('non-main stack errors when pinned server port health responds 200 for anot
           stackName: 'repo-test-abc',
           runtimeStatePath: null,
           defaultPort: 3005,
+          waitForTcpPortFreeImpl: async () => ({ status: 'occupied' }),
         }),
       /HAPPIER_STACK_SERVER_PORT/
     );

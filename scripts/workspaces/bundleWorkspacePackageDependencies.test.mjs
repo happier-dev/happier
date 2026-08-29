@@ -124,8 +124,9 @@ test('prepared readers stay inside the shared publication lock and inherit its l
       ]);
       return {
         resolveWorkspaceBundlesFromPackageJson: () => [{ packageName: '@happier-dev/protocol' }],
-        bundleWorkspacePackagesWithRuntimeDependencies: () => {
+        bundleWorkspacePackagesWithRuntimeDependencies: (options) => {
           assert.equal(sharedPublicationLockHeld, true);
+          assert.equal(options.pruneStale, true);
           observedLeases.push(['publish-shared-dependencies']);
         },
       };
@@ -143,6 +144,7 @@ test('prepared readers stay inside the shared publication lock and inherit its l
         preparedWorkspaceEnv.HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY,
       ]);
     },
+    pruneStale: true,
   });
 
   assert.deepEqual(observedLeases, [

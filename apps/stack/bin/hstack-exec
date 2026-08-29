@@ -90,6 +90,33 @@ heavyweight_command_class() {
   return 1
 }
 
+heavyweight_capacity_from_resources() {
+  heavyweight_capacity_cpu=$1
+  heavyweight_capacity_memory_kib=$2
+  case "$heavyweight_capacity_cpu" in ''|*[!0-9]*|0) heavyweight_capacity_cpu=1 ;; esac
+  heavyweight_cpu_slots=$((heavyweight_capacity_cpu / 4))
+  [ "$heavyweight_cpu_slots" -gt 0 ] || heavyweight_cpu_slots=1
+  case "$heavyweight_capacity_memory_kib" in
+    ''|*[!0-9]*|0) heavyweight_memory_slots=$heavyweight_cpu_slots ;;
+    *)
+      heavyweight_memory_slots=$((heavyweight_capacity_memory_kib / 12582912))
+      [ "$heavyweight_memory_slots" -gt 0 ] || heavyweight_memory_slots=1
+      ;;
+  esac
+  if [ "$heavyweight_memory_slots" -lt "$heavyweight_cpu_slots" ]; then
+    printf '%s' "$heavyweight_memory_slots"
+  else
+    printf '%s' "$heavyweight_cpu_slots"
+  fi
+}
+
+is_heavyweight_dispatch_class() {
+  case "$1" in
+    validation|targeted-validation|full-validation|dependency-install) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 resolve_heavyweight_admission_root() {
   heavyweight_admission_home=
   if [ -n "${HOME-}" ]; then
@@ -124,6 +151,40 @@ heavyweight_process_is_current() {
   [ "$heavyweight_observed_token" = "$heavyweight_current_token" ]
 }
 
+heavyweight_try_reentrant_admission() {
+  heavyweight_inherited_token=${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}
+  heavyweight_inherited_root=${HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT-}
+  heavyweight_inherited_machine=${HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE-}
+  [ -n "$heavyweight_inherited_token" ] || return 1
+  [ "$heavyweight_admission_root" = "$heavyweight_inherited_root" ] || return 1
+  [ "$heavyweight_admission_machine" = "$heavyweight_inherited_machine" ] || return 1
+
+  # The inherited value identifies the original owner as PID plus Linux
+  # process start token. An environment value alone is not authority: require
+  # the matching live owner record as well, so stale PID reuse and forged
+  # values cannot silently bypass a reservation.
+  case "$heavyweight_inherited_token" in
+    *:*)
+      heavyweight_owner_pid=${heavyweight_inherited_token%%:*}
+      heavyweight_owner_token=${heavyweight_inherited_token#*:}
+      ;;
+    *) return 1 ;;
+  esac
+  case "$heavyweight_owner_pid:$heavyweight_owner_token" in
+    ''|*[!0-9:]*|*:*:*) return 1 ;;
+  esac
+  [ "$heavyweight_owner_token" != 0 ] || return 1
+  heavyweight_owner_path="$heavyweight_admission_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
+  [ -d "$heavyweight_owner_path" ] || return 1
+  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token < "$heavyweight_owner_path/process" 2>/dev/null || return 1
+  [ "$heavyweight_recorded_pid" = "$heavyweight_owner_pid" ] || return 1
+  [ "$heavyweight_recorded_token" = "$heavyweight_owner_token" ] || return 1
+  heavyweight_recorded_machine=$(sed -n '1p' "$heavyweight_owner_path/machine" 2>/dev/null || true)
+  [ "$heavyweight_recorded_machine" = "$heavyweight_admission_machine" ] || return 1
+  heavyweight_process_is_current "$heavyweight_owner_pid" "$heavyweight_owner_token" || return 1
+  return 0
+}
+
 run_heavyweight_admission() {
   heavyweight_admission_root=$1
   heavyweight_admission_class=$2
@@ -141,6 +202,12 @@ run_heavyweight_admission() {
     printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
     exit 1
   }
+
+  if heavyweight_try_reentrant_admission; then
+    # This wrapper is a descendant of the owner and therefore must not create
+    # a waiter, acquire the capacity lock, or release the owner's reservation.
+    exec "$@"
+  fi
 
   umask 077
   heavyweight_owners_dir="$heavyweight_admission_root/owners"
@@ -181,25 +248,10 @@ run_heavyweight_admission() {
 
   heavyweight_admission_capacity() {
     heavyweight_capacity_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf 1)
-    case "$heavyweight_capacity_cpu" in ''|*[!0-9]*|0) heavyweight_capacity_cpu=1 ;; esac
-    heavyweight_cpu_slots=$((heavyweight_capacity_cpu / 4))
-    [ "$heavyweight_cpu_slots" -gt 0 ] || heavyweight_cpu_slots=1
     heavyweight_capacity_memory_kib=$(awk '/MemTotal:/ {print $2; exit}' /proc/meminfo 2>/dev/null || true)
-    case "$heavyweight_capacity_memory_kib" in
-      ''|*[!0-9]*) heavyweight_memory_slots=$heavyweight_cpu_slots ;;
-      *)
-        # One heavyweight validation or dependency install gets a 4 CPU / 12
-        # GiB envelope. That yields three slots on a 14-core/72 GiB primary
-        # and two on an 8-core/24 GiB worker without a separate scheduler.
-        heavyweight_memory_slots=$((heavyweight_capacity_memory_kib / 12582912))
-        [ "$heavyweight_memory_slots" -gt 0 ] || heavyweight_memory_slots=1
-        ;;
-    esac
-    if [ "$heavyweight_memory_slots" -lt "$heavyweight_cpu_slots" ]; then
-      printf '%s' "$heavyweight_memory_slots"
-    else
-      printf '%s' "$heavyweight_cpu_slots"
-    fi
+    # One heavyweight validation or dependency install gets a 4 CPU / 12 GiB
+    # envelope. The dispatcher uses this same calculation before transport.
+    heavyweight_capacity_from_resources "$heavyweight_capacity_cpu" "$heavyweight_capacity_memory_kib"
   }
 
   heavyweight_limit=$(heavyweight_admission_capacity)
@@ -213,7 +265,7 @@ run_heavyweight_admission() {
 
   heavyweight_release_admission() {
     rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
-    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" 2>/dev/null || true
+    rm -f -- "$heavyweight_owner_path/process" "$heavyweight_owner_path/class" "$heavyweight_owner_path/machine" 2>/dev/null || true
     rmdir -- "$heavyweight_owner_path" 2>/dev/null || true
     heavyweight_release_lock
   }
@@ -228,7 +280,7 @@ run_heavyweight_admission() {
       # making every queued waiter fork an awk per live owner on each pass.
       if ! kill -0 "$heavyweight_entry_pid" 2>/dev/null \
         || { [ "$heavyweight_check_owner_identity" = 1 ] && ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; }; then
-        rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" 2>/dev/null || true
+        rm -f -- "$heavyweight_entry/process" "$heavyweight_entry/class" "$heavyweight_entry/machine" 2>/dev/null || true
         rmdir -- "$heavyweight_entry" 2>/dev/null || true
       fi
     done
@@ -353,6 +405,7 @@ EOF
     if [ "$heavyweight_active_count" -lt "$heavyweight_limit" ] && [ "$heavyweight_ready" -eq 1 ] && mkdir "$heavyweight_owner_path" 2>/dev/null; then
       printf '%s %s\n' "$heavyweight_pid" "$heavyweight_token" > "$heavyweight_owner_path/process"
       printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class"
+      printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine"
       rm -f -- "$heavyweight_waiter_path" 2>/dev/null || true
       heavyweight_cleanup_waiters
       heavyweight_count_entries
@@ -380,6 +433,9 @@ EOF
     fi
     sleep "$heavyweight_wait_delay_seconds"
   done
+  export HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN="$heavyweight_pid:$heavyweight_token"
+  export HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT="$heavyweight_admission_root"
+  export HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE="$heavyweight_admission_machine"
   heavyweight_run_admitted_command "$@" <&0 &
   heavyweight_child_pid=$!
   wait "$heavyweight_child_pid"
@@ -447,8 +503,13 @@ run_local() {
       printf '%s\n' '[preferred-execution] heavyweight admission has no machine state directory' >&2
       exit 1
     }
+    # A remote admitted command may invoke this wrapper again with
+    # HAPPIER_DEV_TARGET_EXECUTION=1. Preserve the parent's machine identity so
+    # the descendant can take the validated reentrant path instead of relabeling
+    # itself as a separate local reservation.
+    heavyweight_local_machine=${HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE-local}
     exec "$launcher_path" --heavyweight-admission "--admission-root=$heavyweight_local_root" \
-      "--class=$heavyweight_local_class" --machine=local -- "$@"
+      "--class=$heavyweight_local_class" "--machine=$heavyweight_local_machine" -- "$@"
   fi
   exec "$@"
 }
@@ -1023,7 +1084,10 @@ probe_target() {
   if mkdir "$lock_path" 2>/dev/null; then
     lock_acquired=1
   else
-    lock_mtime=$(stat -f %m "$lock_path" 2>/dev/null || stat -c %Y "$lock_path" 2>/dev/null || true)
+    lock_mtime=$(stat -c %Y "$lock_path" 2>/dev/null || true)
+    case "$lock_mtime" in
+      ''|*[!0-9]*) lock_mtime=$(stat -f %m "$lock_path" 2>/dev/null || true) ;;
+    esac
     case "$lock_mtime" in
       ''|*[!0-9]*) ;;
       *)
@@ -1186,6 +1250,7 @@ count_active_dispatches() {
   target_name=$1
   active_count=0
   active_class_count=0
+  active_heavyweight_count=0
   for reservation in "$cache_dir/$target_name.active."*; do
     [ -f "$reservation" ] || continue
     reservation_pid=$(sed -n '1p' "$reservation" 2>/dev/null || true)
@@ -1196,28 +1261,51 @@ count_active_dispatches() {
           active_count=$((active_count + 1))
           reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
           [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
+          is_heavyweight_dispatch_class "$reservation_class" && active_heavyweight_count=$((active_heavyweight_count + 1))
         else
           rm -f -- "$reservation" 2>/dev/null || true
         fi
         ;;
     esac
   done
-  printf '%s %s\n' "$active_count" "$active_class_count"
+  printf '%s %s %s\n' "$active_count" "$active_class_count" "$active_heavyweight_count"
 }
 
 candidates="$probe_tmp/candidates"
 : > "$candidates"
+healthy_heavyweight_candidates=0
+saturated_heavyweight_candidates=0
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache < "$result_path" || continue
   if [ "$candidate_available" = 1 ]; then
     active_counts=$(count_active_dispatches "$candidate_name")
     candidate_active=${active_counts%% *}
-    candidate_class_active=${active_counts#* }
+    remaining_active_counts=${active_counts#* }
+    candidate_class_active=${remaining_active_counts%% *}
+    candidate_heavyweight_active=${remaining_active_counts#* }
+    candidate_heavyweight_limit=
+    if [ "$heavyweight_admission_required" -eq 1 ] && [ "$candidate_number" != 0 ]; then
+      candidate_telemetry_platform=
+      candidate_mem_total_kib=
+      if [ -r "$cache_dir/$candidate_name.telemetry" ]; then
+        candidate_telemetry_platform=$(awk '{print $16}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
+        candidate_mem_total_kib=$(awk '{print $8}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
+      fi
+      if [ "$candidate_telemetry_platform" = linux ]; then
+        healthy_heavyweight_candidates=$((healthy_heavyweight_candidates + 1))
+        candidate_heavyweight_limit=$(heavyweight_capacity_from_resources "$candidate_capacity" "$candidate_mem_total_kib")
+        if [ "$candidate_heavyweight_active" -ge "$candidate_heavyweight_limit" ]; then
+          saturated_heavyweight_candidates=$((saturated_heavyweight_candidates + 1))
+          continue
+        fi
+      fi
+    fi
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + (active / capacity)}')
   else
     candidate_active=0
     candidate_class_active=0
+    candidate_heavyweight_active=0
     candidate_effective=$candidate_score
   fi
   printf '%s %s %s %s %s %s %s %s %s\n' \
@@ -1245,6 +1333,26 @@ selected=$(awk '
 ' "$candidates")
 if [ -z "$selected" ]; then
   rmdir "$dispatch_lock" 2>/dev/null || true
+  if [ "$heavyweight_admission_required" -eq 1 ] \
+    && [ "$healthy_heavyweight_candidates" -gt 0 ] \
+    && [ "$healthy_heavyweight_candidates" -eq "$saturated_heavyweight_candidates" ]; then
+    printf '%s\n' '[preferred-execution] waiting for heavyweight capacity before opening a remote command transport' >&2
+    cleanup_probe_tmp
+    trap - EXIT HUP INT TERM
+    sleep "$dispatch_retry_seconds" &
+    dispatch_wait_pid=$!
+    trap 'cancel_dispatch_wait' HUP INT TERM
+    wait "$dispatch_wait_pid" 2>/dev/null || true
+    dispatch_wait_pid=
+    trap - HUP INT TERM
+    if [ -n "$explicit_target" ]; then
+      if [ "$explicit_tty" = 1 ]; then
+        exec "$0" "--target=$explicit_target" --tty -- "$@"
+      fi
+      exec "$0" "--target=$explicit_target" -- "$@"
+    fi
+    exec "$0" -- "$@"
+  fi
   if [ "${fallback_mode-local}" = error ]; then
     printf '%s\n' '[preferred-execution] no healthy execution target is available' >&2
     exit 1
@@ -1389,7 +1497,11 @@ fi
 execution_provenance_schema_version=${execution_provenance_schema_version-1}
 execution_provenance_filename=${execution_provenance_filename-provenance.jsonl}
 provenance_path="$cache_dir/$execution_provenance_filename"
-provenance_size=$(wc -c < "$provenance_path" 2>/dev/null || printf 0)
+if [ -r "$provenance_path" ]; then
+  provenance_size=$(wc -c < "$provenance_path" 2>/dev/null || printf 0)
+else
+  provenance_size=0
+fi
 case "$provenance_size" in ''|*[!0-9]*) provenance_size=0 ;; esac
 if [ "$provenance_size" -ge 1048576 ]; then
   mv -f -- "$provenance_path" "$provenance_path.previous" 2>/dev/null || true
@@ -1506,7 +1618,9 @@ fi
 remote_script="$remote_script command_status=\$?; set +e; exit \"\$command_status\""
 remote_command="bash -lc $(quote_remote "$remote_script")"
 
-control_dir=$(mktemp -d /tmp/hstack-ssh.XXXXXX) || {
+ssh_control_root="${XDG_RUNTIME_DIR:-/tmp}/happier-ssh-$(id -u)"
+umask 077
+mkdir -p -- "$ssh_control_root" || {
   release_reservation
   if [ "${fallback_mode-local}" = error ]; then
     printf '%s\n' '[preferred-execution] could not allocate the SSH control connection' >&2
@@ -1515,28 +1629,103 @@ control_dir=$(mktemp -d /tmp/hstack-ssh.XXXXXX) || {
   printf '%s\n' '[preferred-execution] could not allocate the SSH control connection; running locally' >&2
   run_local "$@"
 }
-control_path="$control_dir/control"
+chmod 700 "$ssh_control_root" 2>/dev/null || true
+ssh_config_identity=
+if [ -n "$ssh_config" ] && [ -r "$ssh_config" ]; then
+  ssh_config_identity=$(cksum < "$ssh_config" 2>/dev/null | awk '{print $1 "." $2}' || true)
+fi
+control_key=$(printf '%s\n%s\n%s\n%s\n' "$stack_dir" "$selected_name" "$ssh_target" "$ssh_config_identity" | cksum | awk '{print $1}')
+case "$control_key" in ''|*[!0-9]*) control_key=$$ ;; esac
+control_pool_size=$(( (selected_capacity + 3) / 4 ))
+[ "$control_pool_size" -gt 0 ] || control_pool_size=1
+[ "$control_pool_size" -le 4 ] || control_pool_size=4
+control_path=
 
-open_selected_control() {
+check_selected_control() {
+  checked_control_path=$1
+  [ -e "$checked_control_path" ] || return 1
   if [ -n "$ssh_config" ]; then
-    ssh -MNf -F "$ssh_config" -S "$control_path" \
-      -o ControlMaster=yes -o ControlPersist=60 -o BatchMode=yes -o ConnectTimeout=5 \
-      "$ssh_target" >/dev/null
+    ssh -F "$ssh_config" -S "$checked_control_path" -O check "$ssh_target" >/dev/null 2>&1
   else
-    ssh -MNf -S "$control_path" \
-      -o ControlMaster=yes -o ControlPersist=60 -o BatchMode=yes -o ConnectTimeout=5 \
-      "$ssh_target" >/dev/null
+    ssh -S "$checked_control_path" -O check "$ssh_target" >/dev/null 2>&1
   fi
 }
 
-close_selected_control() {
-  if [ -n "$ssh_config" ]; then
-    ssh -F "$ssh_config" -S "$control_path" -O exit "$ssh_target" >/dev/null 2>&1 || true
-  else
-    ssh -S "$control_path" -O exit "$ssh_target" >/dev/null 2>&1 || true
+open_selected_control() {
+  # Sequential work starts at slot zero and reuses it. Concurrent dispatcher
+  # reservations spread over the bounded pool so one OpenSSH MaxSessions limit
+  # cannot serialize or reject every active agent channel.
+  preferred_control_slot=$(( selected_active % control_pool_size ))
+  preferred_control_path="$ssh_control_root/$control_key-$preferred_control_slot"
+  if check_selected_control "$preferred_control_path"; then
+    control_path=$preferred_control_path
+    return 0
   fi
-  rm -f -- "$control_path" 2>/dev/null || true
-  rmdir -- "$control_dir" 2>/dev/null || true
+  control_attempt=0
+  while [ "$control_attempt" -lt "$control_pool_size" ]; do
+    control_slot=$(( (preferred_control_slot + control_attempt) % control_pool_size ))
+    candidate_control_path="$ssh_control_root/$control_key-$control_slot"
+    control_lock="$candidate_control_path.lock"
+    if mkdir "$control_lock" 2>/dev/null; then
+      printf '%s\n' "$$" > "$control_lock/pid" 2>/dev/null || true
+      control_path=$candidate_control_path
+      if check_selected_control "$control_path"; then
+        rm -f -- "$control_lock/pid" 2>/dev/null || true
+        rmdir -- "$control_lock" 2>/dev/null || true
+        return 0
+      fi
+      rm -f -- "$control_path" 2>/dev/null || true
+      if [ -n "$ssh_config" ]; then
+        ssh -MNf -F "$ssh_config" -S "$control_path" \
+          -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
+          "$ssh_target" >/dev/null
+      else
+        ssh -MNf -S "$control_path" \
+          -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
+          "$ssh_target" >/dev/null
+      fi
+      control_status=$?
+      rm -f -- "$control_lock/pid" 2>/dev/null || true
+      rmdir -- "$control_lock" 2>/dev/null || true
+      [ "$control_status" -eq 0 ] && return 0
+      rm -f -- "$control_path" 2>/dev/null || true
+      return "$control_status"
+    fi
+    control_lock_pid=$(sed -n '1p' "$control_lock/pid" 2>/dev/null || true)
+    case "$control_lock_pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        if ! kill -0 "$control_lock_pid" 2>/dev/null; then
+          rm -f -- "$control_lock/pid" 2>/dev/null || true
+          rmdir -- "$control_lock" 2>/dev/null || true
+        fi
+        ;;
+    esac
+    control_attempt=$((control_attempt + 1))
+  done
+
+  control_wait_attempt=0
+  while [ "$control_wait_attempt" -lt 50 ]; do
+    control_slot=0
+    while [ "$control_slot" -lt "$control_pool_size" ]; do
+      candidate_control_path="$ssh_control_root/$control_key-$control_slot"
+      if check_selected_control "$candidate_control_path"; then
+        control_path=$candidate_control_path
+        return 0
+      fi
+      control_slot=$((control_slot + 1))
+    done
+    sleep 0.05
+    control_wait_attempt=$((control_wait_attempt + 1))
+  done
+  return 1
+}
+
+close_selected_control() {
+  # Masters are shared across independent launcher processes and expire after
+  # ten idle minutes. Per-command teardown recreated the transport storm that
+  # multiplexing is intended to prevent.
+  :
 }
 
 cleanup_probe_tmp
@@ -1569,8 +1758,7 @@ fi
 
 if ! open_selected_control; then
   release_reservation
-  rm -f -- "$control_path" 2>/dev/null || true
-  rmdir -- "$control_dir" 2>/dev/null || true
+  [ -n "$control_path" ] && rm -f -- "$control_path" 2>/dev/null || true
   now=$(date +%s)
   unavailable_cache="$cache_dir/$selected_name.cache"
   unavailable_temporary="$unavailable_cache.$$.tmp"
@@ -1615,9 +1803,9 @@ cancel_remote() {
   cancel_script="execution_id=$(quote_remote "$execution_id"); pid_file=$(quote_remote "$pid_file"); [ -f \"\$pid_file\" ] || exit 0; pid=\$(sed -n '1p' \"\$pid_file\"); case \"\$pid\" in ''|*[!0-9]*) exit 0;; esac; command=\$(ps -p \"\$pid\" -o command= 2>/dev/null || true); case \"\$command\" in *\"\$execution_id\"*) ;; *) rm -f -- \"\$pid_file\"; exit 0;; esac; descendants() { for child in \$(ps -eo pid=,ppid= | awk -v p=\"\$1\" '\$2 == p {print \$1}'); do descendants \"\$child\"; done; printf '%s\\n' \"\$1\"; }; for pid in \$(descendants \"\$pid\"); do kill -TERM \"\$pid\" 2>/dev/null || true; done; rm -f -- \"\$pid_file\""
   cancel_command="bash -lc $(quote_remote "$cancel_script")"
   if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+    ssh -T -F "$ssh_config" -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
   else
-    ssh -T -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
+    ssh -T -S "$control_path" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$cancel_command" >/dev/null 2>&1 || true
   fi
   kill -TERM "$ssh_pid" 2>/dev/null || true
   close_selected_control

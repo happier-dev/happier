@@ -87,6 +87,7 @@ export async function bundleWorkspacePackageDependencies(options) {
     workspaceModule.bundleWorkspacePackagesWithRuntimeDependencies({
       bundles,
       publicationMode,
+      pruneStale: options.pruneStale,
     });
     if (options.consumePreparedWorkspace) {
       // The reader keeps the caller's staging, prerequisite, and package-lock context, plus the

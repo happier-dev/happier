@@ -110,7 +110,9 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
 
   const internaldev = build?.internaldev ?? null;
   assert.equal(typeof internaldev, 'object');
-  assert.equal(internaldev.extends, 'base');
+  // internaldev retains the shared internal distribution carrier; validated
+  // TERM native gates now come from base for both internal and public builds.
+  assert.equal(internaldev.extends, 'internal-native-gates');
   assert.equal(internaldev.environment, 'development');
   assert.equal(internaldev.developmentClient, true);
   assert.equal(internaldev.distribution, 'internal');
@@ -126,6 +128,14 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
   assert.equal(internaldev?.env?.HAPPIER_EXPO_USE_NATIVE_DEBUG, 'true');
   assert.equal(internaldev?.env?.EX_UPDATES_NATIVE_DEBUG, '1');
 
+  const internalNativeGates = build?.['internal-native-gates'] ?? null;
+  assert.equal(typeof internalNativeGates, 'object');
+  assert.equal(internalNativeGates.extends, 'base');
+  assert.equal(internalNativeGates.distribution, 'internal');
+  assert.equal(internalNativeGates?.env?.APP_ENV, 'internaldev');
+  assert.equal(internalNativeGates?.env?.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED, undefined);
+  assert.equal(internalNativeGates?.env?.HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE, undefined);
+
   const internaldevDevClient = build?.['internaldev-dev-client'] ?? null;
   assert.ok(internaldevDevClient, 'expected internaldev-dev-client build profile');
   assert.equal(internaldevDevClient.extends, 'internaldev');
@@ -134,7 +144,7 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
 
   const internaldevStore = build?.['internaldev-store'] ?? null;
   assert.equal(typeof internaldevStore, 'object');
-  assert.equal(internaldevStore.extends, 'base');
+  assert.equal(internaldevStore.extends, 'internal-native-gates');
   assert.equal(internaldevStore.environment, 'development');
   assert.equal(internaldevStore.developmentClient, true);
   assert.equal(internaldevStore.distribution, 'store');

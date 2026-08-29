@@ -9,7 +9,10 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
-import { assertCliManagedRuntimeTarballPublication } from './cli-managed-runtime-tarball.mjs';
+import {
+  assertCliManagedRuntimeTarballCoherence,
+  assertCliManagedRuntimeTarballPublication,
+} from './cli-managed-runtime-tarball.mjs';
 
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const cliRoot = join(repoRoot, 'apps', 'cli');
@@ -72,6 +75,13 @@ async function createCliPackFixture({
     await writeFile(join(packageRoot, 'package.json'), `${JSON.stringify({
       name: '@happier-dev/cli',
       version: '0.0.0-test',
+      happier: {
+        managedRuntimePublication: {
+          v: 1,
+          mode: 'complete',
+          unavailableProviderRefs: [],
+        },
+      },
       // Exercise npm's real CLI file-selection list instead of a test-local
       // approximation. The fixture only supplies the runtime-asset corridor.
       files: cliPackageManifest.files,
@@ -114,12 +124,61 @@ async function createCliPackFixture({
   }
 }
 
-async function createUnpackedTarball() {
+
+function expectedUnavailableProviderRefs() {
+  const refs = [];
+  const seen = new Set();
+  for (const runtimeAsset of getCliRuntimeAssetArchiveManifest()) {
+    const ref = runtimeAsset.managedProviderRef;
+    assert.ok(ref?.pluginId && ref?.providerId);
+    const key = `${ref.pluginId}\u0000${ref.providerId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push({ pluginId: ref.pluginId, providerId: ref.providerId });
+  }
+  return refs;
+}
+
+async function createSourceOnlyCliPackFixture({
+  unavailableProviderRefs = expectedUnavailableProviderRefs(),
+  managedArchiveName = '',
+  checksumManifest = false,
+} = {}) {
+  const packageRoot = await mkdtemp(join(tmpdir(), 'happier-cli-runtime-source-only-'));
+  try {
+    const cliPackageManifest = JSON.parse(await readFile(join(cliRoot, 'package.json'), 'utf8'));
+    await writeFile(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.0.0-test',
+      happier: { managedRuntimePublication: { v: 1, mode: 'source-only', unavailableProviderRefs } },
+      files: cliPackageManifest.files,
+    })}\n`, 'utf8');
+    await writeFile(join(packageRoot, '.npmignore'), await readFile(join(cliRoot, '.npmignore'), 'utf8'), 'utf8');
+    if (managedArchiveName || checksumManifest) {
+      const archivesDir = join(packageRoot, 'tools', 'archives');
+      await mkdir(archivesDir, { recursive: true });
+      if (managedArchiveName) await writeFile(join(archivesDir, managedArchiveName), 'managed bytes\n', 'utf8');
+      if (checksumManifest) await writeFile(join(archivesDir, RUNTIME_ASSET_CHECKSUM_MANIFEST_NAME), '\n', 'utf8');
+    }
+    return { packageRoot, tarballPath: packWithNpm(packageRoot) };
+  } catch (error) {
+    await rm(packageRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function createUnpackedTarball(managedRuntimePublication = { v: 1, mode: 'complete', unavailableProviderRefs: [] }) {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-runtime-unpacked-'));
   try {
     const packageDir = join(root, 'package');
     await mkdir(join(packageDir, 'tools', 'unpacked'), { recursive: true });
-    await writeFile(join(packageDir, 'package.json'), '{"name":"@happier-dev/cli","version":"0.0.0-test"}\n', 'utf8');
+    await writeFile(join(packageDir, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.0.0-test',
+      happier: {
+        managedRuntimePublication,
+      },
+    })}\n`, 'utf8');
     await writeFile(join(packageDir, 'tools', 'unpacked', 'should-not-ship'), 'leak\n', 'utf8');
     const tarballPath = join(root, 'unpacked-cli.tgz');
     execFileSync('tar', ['-czf', tarballPath, 'package'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -152,6 +211,7 @@ test('CLI publication validates the real npm packlist of every runtime archive a
       false,
       'the effective npm packlist must never include unpacked runtime bytes',
     );
+    assert.doesNotThrow(() => assertCliManagedRuntimeTarballCoherence(fixture.tarballPath));
     assert.doesNotThrow(() => assertCliManagedRuntimeTarballPublication(fixture.tarballPath));
   } finally {
     await rm(fixture.packageRoot, { recursive: true, force: true });
@@ -202,5 +262,46 @@ test('CLI publication fails closed for an incomplete archive inventory or unpack
       rm(extraArchive.packageRoot, { recursive: true, force: true }),
       rm(extraChecksum.packageRoot, { recursive: true, force: true }),
     ]);
+  }
+});
+
+
+test('CLI source-only pack coherence proves exact unavailable facets and zero managed runtime bytes', async () => {
+  const refs = expectedUnavailableProviderRefs();
+  const valid = await createSourceOnlyCliPackFixture();
+  const reorderedObjectKeys = await createSourceOnlyCliPackFixture({
+    unavailableProviderRefs: refs.map(({ pluginId, providerId }) => ({ providerId, pluginId })),
+  });
+  const missingRefs = await createSourceOnlyCliPackFixture({ unavailableProviderRefs: [] });
+  const wrongRef = await createSourceOnlyCliPackFixture({
+    unavailableProviderRefs: refs.map((ref, index) => index === 0 ? { ...ref, providerId: `${ref.providerId}-wrong` } : ref),
+  });
+  const duplicateRef = await createSourceOnlyCliPackFixture({ unavailableProviderRefs: [...refs, refs[0]] });
+  const knownArchive = await createSourceOnlyCliPackFixture({
+    managedArchiveName: getCliRuntimeAssetArchiveManifest()[0].archiveName,
+  });
+  const unknownArchive = await createSourceOnlyCliPackFixture({
+    managedArchiveName: 'happier-cliproxyapi-managed-riscv64-linux.tar.gz',
+  });
+  const checksum = await createSourceOnlyCliPackFixture({ checksumManifest: true });
+  const unpacked = await createUnpackedTarball({ v: 1, mode: 'source-only', unavailableProviderRefs: refs });
+  try {
+    assert.doesNotThrow(() => assertCliManagedRuntimeTarballCoherence(valid.tarballPath));
+    assert.doesNotThrow(() => assertCliManagedRuntimeTarballCoherence(reorderedObjectKeys.tarballPath));
+    assert.throws(() => assertCliManagedRuntimeTarballPublication(valid.tarballPath), /complete publication metadata/u);
+    for (const fixture of [missingRefs, wrongRef]) {
+      assert.throws(() => assertCliManagedRuntimeTarballCoherence(fixture.tarballPath), /exact unavailable managed Provider references/u);
+    }
+    assert.throws(() => assertCliManagedRuntimeTarballCoherence(duplicateRef.tarballPath), /must not contain duplicates/u);
+    for (const fixture of [knownArchive, unknownArchive]) {
+      assert.throws(() => assertCliManagedRuntimeTarballCoherence(fixture.tarballPath), /must not contain managed runtime archives/u);
+    }
+    assert.throws(() => assertCliManagedRuntimeTarballCoherence(checksum.tarballPath), /must not contain the managed runtime checksum manifest/u);
+    assert.throws(() => assertCliManagedRuntimeTarballCoherence(unpacked.tarballPath), /must not contain tools\/unpacked runtime content/u);
+  } finally {
+    await Promise.all([
+      valid, reorderedObjectKeys, missingRefs, wrongRef, duplicateRef, knownArchive, unknownArchive, checksum,
+    ].map((fixture) => rm(fixture.packageRoot, { recursive: true, force: true })));
+    await rm(unpacked.root, { recursive: true, force: true });
   }
 });

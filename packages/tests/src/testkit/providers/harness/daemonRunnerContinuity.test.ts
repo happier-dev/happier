@@ -95,7 +95,7 @@ describe('daemon runner continuity evidence', () => {
         pluginId: 'happier.agent.claude',
         pluginVersion: '1.0.0',
         agentId: 'claude',
-        qualifiedAgentId: 'happier.agent.claude/claude',
+        qualifiedAgentId: 'happier.agent.claude/agents/claude',
         localAgentId: 'claude',
         immutableGenerationId: `bundled-${'c'.repeat(64)}`,
       },

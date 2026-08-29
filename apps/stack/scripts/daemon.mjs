@@ -1373,13 +1373,72 @@ function authCopyFromSeedHint({ stackName, cliIdentity, env = process.env }) {
   return `hstack stack auth ${stackName} copy-from ${seed}`;
 }
 
+export function resolveDevTargetControllerReauthHint({
+  stackName,
+  cliIdentity,
+  cliHomeDir,
+  internalServerUrl,
+  env = process.env,
+}) {
+  if (String(env.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() !== '1') return null;
+  const identity = String(cliIdentity ?? '').trim();
+  if (identity && identity !== 'default') return null;
+
+  const requestedSeed = resolveAuthSeedFromEnv(env);
+  const { seed } = resolveReusableAuthSeedSource({
+    env,
+    requestedSeed,
+    excludeStackNames: [stackName],
+  });
+  if (!seed) return null;
+
+  const seedCliHomeDir = resolveStackCliHomeDirFromStackEnv({ stackName: seed, env });
+  const seedScopedEnv = applyStackActiveServerScopeEnv({
+    env: { ...env },
+    stackName: seed,
+    cliIdentity: 'default',
+  });
+  const seedCredentialPath =
+    findExistingStackCredentialPath({
+      cliHomeDir: seedCliHomeDir,
+      serverUrl: internalServerUrl,
+      env: seedScopedEnv,
+    }) ?? findAnyCredentialPathInCliHome({ cliHomeDir: seedCliHomeDir });
+  const targetCredentialPath =
+    findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl, env }) ??
+    findAnyCredentialPathInCliHome({ cliHomeDir });
+  const seedToken = readAuthTokenFromCredentialFile(seedCredentialPath);
+  const targetToken = readAuthTokenFromCredentialFile(targetCredentialPath);
+  if (!seedToken || seedToken !== targetToken) return null;
+
+  return `${authLoginHint({ stackName: seed, cliIdentity: 'default' })} --force`;
+}
+
 function logInvalidDaemonCredentialsGuidance({
   stackName,
   cliIdentity,
+  cliHomeDir,
+  internalServerUrl,
   env = process.env,
   skippedReason = null,
   staleSeed = null,
 }) {
+  const controllerReauthHint = resolveDevTargetControllerReauthHint({
+    stackName,
+    cliIdentity,
+    cliHomeDir,
+    internalServerUrl,
+    env,
+  });
+  if (controllerReauthHint) {
+    console.error(
+      `[local] daemon credentials were rejected by the server (401).\n` +
+        `[local] This derived dev-target already has the controller stack's credential, so copying it again cannot recover authentication.\n` +
+        `[local] On the controller, re-authenticate the source stack:\n` +
+        `- ${controllerReauthHint}`
+    );
+    return;
+  }
   const copyHint = authCopyFromSeedHint({ stackName, cliIdentity, env });
   if (staleSeed) {
     console.error(
@@ -2298,6 +2357,8 @@ export async function startLocalDaemonWithAuth({
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
+        cliHomeDir,
+        internalServerUrl,
         env: daemonEnv,
       });
       throw error;
@@ -2307,6 +2368,8 @@ export async function startLocalDaemonWithAuth({
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
+        cliHomeDir,
+        internalServerUrl,
         env: daemonEnv,
         skippedReason: reseedResult?.reason ?? 'unknown',
       });
@@ -2327,6 +2390,8 @@ export async function startLocalDaemonWithAuth({
       logInvalidDaemonCredentialsGuidance({
         stackName: resolvedStackName,
         cliIdentity: resolvedCliIdentity,
+        cliHomeDir,
+        internalServerUrl,
         env: daemonEnv,
         staleSeed: reseedResult.seed,
       });
@@ -2680,6 +2745,8 @@ export async function startLocalDaemonWithAuth({
         logInvalidDaemonCredentialsGuidance({
           stackName: resolvedStackName,
           cliIdentity: resolvedCliIdentity,
+          cliHomeDir,
+          internalServerUrl,
           env: baseEnv,
         });
         throw e;
@@ -2689,6 +2756,8 @@ export async function startLocalDaemonWithAuth({
         logInvalidDaemonCredentialsGuidance({
           stackName: resolvedStackName,
           cliIdentity: resolvedCliIdentity,
+          cliHomeDir,
+          internalServerUrl,
           env: baseEnv,
           skippedReason,
         });
@@ -2702,6 +2771,8 @@ export async function startLocalDaemonWithAuth({
           logInvalidDaemonCredentialsGuidance({
             stackName: resolvedStackName,
             cliIdentity: resolvedCliIdentity,
+            cliHomeDir,
+            internalServerUrl,
             env: baseEnv,
             staleSeed: reseedResult.seed,
           });

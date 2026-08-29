@@ -257,7 +257,7 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,terminal-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         uses: ./.github/actions/install-yarn-dependencies
@@ -346,7 +346,7 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
           # Keep builds mobile-focused (desktop/web builds happen elsewhere).
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,terminal-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         uses: ./.github/actions/install-yarn-dependencies
@@ -411,7 +411,7 @@ jobs:
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native"
+          HAPPIER_INSTALL_SCOPE: "ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor,audio-stream-native,sherpa-native,terminal-native"
           HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ (inputs.environment == 'production' && 'production') || ((inputs.environment == 'dev' || inputs.environment == 'preview' || inputs.environment == 'internalpreview') && 'preview') || '' }}
         uses: ./.github/actions/install-yarn-dependencies

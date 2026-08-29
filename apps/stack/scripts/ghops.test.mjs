@@ -121,12 +121,21 @@ function createMacHostCredentialFixture(dir, { token = 'mac-host-keychain-token'
     `#!/usr/bin/env node
 const { appendFileSync } = require('node:fs');
 const args = process.argv.slice(2);
-appendFileSync(process.env.GHOPS_TEST_SSH_LOG, JSON.stringify(args) + '\\n');
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => {
+appendFileSync(process.env.GHOPS_TEST_SSH_LOG, JSON.stringify({ args, input }) + '\\n');
 if (process.env.GHOPS_TEST_SSH_FAIL === '1') {
   process.stderr.write('host credential route unavailable\\n');
   process.exit(255);
 }
-process.stdout.write(JSON.stringify({ HAPPIER_GITHUB_BOT_TOKEN: process.env.GHOPS_TEST_MAC_HOST_TOKEN }));
+process.stdout.write(JSON.stringify({
+  version: 1,
+  ok: true,
+  credential: { HAPPIER_GITHUB_BOT_TOKEN: process.env.GHOPS_TEST_MAC_HOST_TOKEN },
+}) + '\\n');
+});
 `,
     'utf8',
   );
@@ -297,7 +306,7 @@ test('fails closed when token is missing', () => {
   assert.match(res.stderr, /HAPPIER_GITHUB_BOT_TOKEN/);
 });
 
-test('uses the configured mac-host Keychain credential when the VM has no environment token', () => {
+test('uses the execution-host credential broker when the VM has no environment token', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ghops-mac-host-token-test-'));
   const { fakeGh } = createFakeBotAuthTools(dir);
   const fixture = createMacHostCredentialFixture(dir);
@@ -312,10 +321,12 @@ test('uses the configured mac-host Keychain credential when the VM has no enviro
 
   assert.equal(res.status, 0, res.stderr);
   assert.equal(JSON.parse(res.stdout).token, fixture.token);
-  const sshArgs = JSON.parse(readFileSync(fixture.sshLog, 'utf8').trim());
+  const { args: sshArgs, input } = JSON.parse(readFileSync(fixture.sshLog, 'utf8').trim());
   assert.deepEqual(sshArgs.slice(0, 3), ['-T', '-F', fixture.sshConfigFile]);
   assert.ok(sshArgs.includes('happier-dev-target-mac-host'));
-  assert.match(sshArgs.at(-1), /security find-generic-password/);
+  assert.match(sshArgs.at(-1), /happier-ghops-brokers-/);
+  assert.match(sshArgs.at(-1), /\/usr\/bin\/nc -U/);
+  assert.deepEqual(JSON.parse(input), { version: 1, operation: 'read-ghops-credential' });
 });
 
 test('keeps bot Git pushes on the authoritative checkout when the credential comes from mac-host', () => {

@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
+import { assertCliManagedRuntimeTarballCoherence } from '../npm/cli-managed-runtime-tarball.mjs';
 import { resolveCliPublicationBuildSteps } from '../../../apps/cli/scripts/buildPublication.mjs';
 import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
 
@@ -355,6 +356,9 @@ function npmPack(pkgDir, destDir, opts) {
     if (!tgzPath.endsWith('.tgz') || !fs.existsSync(tgzPath) || !fs.statSync(tgzPath).isFile()) {
       throw new Error(`CLI pack helper did not produce an expected .tgz file (cwd: ${pkgDir}): ${tgzPath}`);
     }
+    // Ordinary smoke accepts either an honest source-only pack or a complete installable
+    // pack. The canonical coherence owner proves the declared mode matches the exact bytes.
+    assertCliManagedRuntimeTarballCoherence(tgzPath);
     return tgzPath;
   }
 

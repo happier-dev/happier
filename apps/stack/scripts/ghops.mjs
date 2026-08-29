@@ -35,7 +35,7 @@ Optional:
   HAPPIER_GHOPS_CONFIG_DIR   Override GH_CONFIG_DIR (default: <repo>/.happier/local/ghops/gh)
 
 Behavior:
-  - Prefers HAPPIER_GITHUB_BOT_TOKEN, then macOS Keychain service '${KEYCHAIN_SERVICE}' locally or through the active mac-host target
+  - Prefers HAPPIER_GITHUB_BOT_TOKEN, then macOS Keychain service '${KEYCHAIN_SERVICE}' locally or through the active execution-host broker
   - Forces GH_TOKEN from the resolved bot token (no fallback to stored gh auth)
   - Disables interactive prompts (GH_PROMPT_DISABLED=1)
   - Uses an isolated GH_CONFIG_DIR by default
@@ -108,6 +108,15 @@ async function readMacHostBotToken(repoRoot) {
   ));
   if (!target) return null;
 
+  const brokerCommand = [
+    'broker_dir="/tmp/happier-ghops-brokers-$(/usr/bin/id -u)"',
+    'for broker_socket in "$broker_dir"/broker-*.sock',
+    'do [ -S "$broker_socket" ] || continue',
+    '/usr/bin/nc -U "$broker_socket" && exit 0',
+    'done',
+    'exit 1',
+  ].join('; ');
+
   const result = spawnSync('ssh', [
     '-T',
     ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
@@ -115,28 +124,34 @@ async function readMacHostBotToken(repoRoot) {
     '-o', 'BatchMode=yes',
     '-o', 'ConnectTimeout=10',
     target.ssh,
-    `security find-generic-password -s ${KEYCHAIN_SERVICE} -w -a ${KEYCHAIN_ACCOUNT}`,
+    brokerCommand,
   ], {
     encoding: 'utf8',
     env: process.env,
+    input: `${JSON.stringify({ version: 1, operation: 'read-ghops-credential' })}\n`,
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
   });
   if (result.error || result.status !== 0) {
-    throw new Error(`mac-host Keychain credential retrieval failed for stack '${stackName}'.`);
+    throw new Error(
+      `mac-host credential broker is unavailable or failed for stack '${stackName}'; restart the Stack from its Mac execution host.`,
+    );
   }
 
-  let bundle;
+  let response;
   try {
-    bundle = JSON.parse(String(result.stdout ?? '').trim());
+    response = JSON.parse(String(result.stdout ?? '').trim());
   } catch {
-    throw new Error('mac-host Keychain credential bundle is invalid.');
+    throw new Error('mac-host credential broker response is invalid.');
   }
-  const token = String(bundle?.[BOT_TOKEN_ENV_KEY] ?? '').trim();
+  if (response?.version !== 1 || response?.ok !== true || !response.credential) {
+    throw new Error('mac-host credential broker could not provide the happier-bot credential.');
+  }
+  const token = String(response.credential[BOT_TOKEN_ENV_KEY] ?? '').trim();
   if (!token) {
-    throw new Error('mac-host Keychain credential is missing the happier-bot token.');
+    throw new Error('mac-host credential broker response is missing the happier-bot token.');
   }
-  return { token, source: 'mac-host keychain' };
+  return { token, source: 'mac-host credential broker' };
 }
 
 async function resolveBotToken(repoRoot) {

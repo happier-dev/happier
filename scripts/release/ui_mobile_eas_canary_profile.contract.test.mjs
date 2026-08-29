@@ -15,7 +15,9 @@ test('apps/ui/eas.json defines internalpreview profiles for release-like private
 
   const internalpreview = build?.internalpreview ?? null;
   assert.equal(typeof internalpreview, 'object');
-  assert.equal(internalpreview.extends, 'base');
+  // internalpreview retains the shared internal distribution carrier; validated
+  // TERM native gates now come from base for both internal and public builds.
+  assert.equal(internalpreview.extends, 'internal-native-gates');
   assert.equal(internalpreview.environment, 'preview');
   assert.equal(internalpreview.distribution, 'internal');
   assert.equal(internalpreview.channel, 'internalpreview');
@@ -27,7 +29,7 @@ test('apps/ui/eas.json defines internalpreview profiles for release-like private
 
   const internalpreviewApk = build?.['internalpreview-apk'] ?? null;
   assert.equal(typeof internalpreviewApk, 'object');
-  assert.equal(internalpreviewApk.extends, 'base');
+  assert.equal(internalpreviewApk.extends, 'internal-native-gates');
   assert.equal(internalpreviewApk.environment, 'preview');
   assert.equal(internalpreviewApk.distribution, 'internal');
   assert.equal(internalpreviewApk.channel, 'internalpreview');

@@ -223,6 +223,12 @@ test('native plan serializes full verification before installer effects and uses
     ],
   );
   assert.equal(
+    plan.steps[3].args.includes(
+      'test:plugin-platform:packed-managed-provider-candidate',
+    ),
+    true,
+  );
+  assert.equal(
     plan.steps[3].args.at(-1),
     '/transferred/run/candidate.json',
   );

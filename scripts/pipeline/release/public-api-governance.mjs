@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
-import { renderDeclarationDiffSample, summarizeDeclarationDiff } from '../../api-governance/declarationDiff.mjs';
+import { classifyDeclarationDiff, renderDeclarationDiffSample } from '../../api-governance/declarationDiff.mjs';
 import { resolveWindowsCommandInvocation } from '../lib/windows/resolveWindowsCommandInvocation.mjs';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
 import {
@@ -190,14 +190,17 @@ export function comparePublicApiReleaseRecords({
     if (!candidateSymbols.has(key)) removedSymbols.push(key);
   }
 
-  const changedDeclarationBlocks = summarizeDeclarationDiff(previousDeclarations, candidateDeclarations);
+  const declarationDiff = classifyDeclarationDiff(previousDeclarations, candidateDeclarations);
+  const addedDeclarationBlocks = declarationDiff.added;
+  const removedDeclarationBlocks = declarationDiff.removed;
+  const changedDeclarationBlocks = declarationDiff.changed;
   const requiresHumanReview = (
     removedSymbols.length > 0
     || deprecatedSymbols.length > 0
     || changedSymbols.length > 0
+    || removedDeclarationBlocks.length > 0
     || changedDeclarationBlocks.length > 0
   );
-  const hasMechanicalDifference = addedSymbols.length > 0 || requiresHumanReview;
   return Object.freeze({
     status: 'comparison',
     packageName,
@@ -209,6 +212,8 @@ export function comparePublicApiReleaseRecords({
       deprecatedSymbols: Object.freeze(deprecatedSymbols.sort((left, right) => left.localeCompare(right))),
       changedSymbols: Object.freeze(changedSymbols.sort((left, right) => left.localeCompare(right))),
       unchangedSymbols: Object.freeze(unchangedSymbols.sort((left, right) => left.localeCompare(right))),
+      addedDeclarationBlocks,
+      removedDeclarationBlocks,
       changedDeclarationBlocks,
     }),
     disposition: Object.freeze({
@@ -599,6 +604,8 @@ export function summarizePublicApiReleaseComparison(report) {
     removedSymbols: report.facts.removedSymbols.length,
     deprecatedSymbols: report.facts.deprecatedSymbols.length,
     changedSymbols: report.facts.changedSymbols.length,
+    addedDeclarationBlocks: report.facts.addedDeclarationBlocks.length,
+    removedDeclarationBlocks: report.facts.removedDeclarationBlocks.length,
     changedDeclarationBlocks: report.facts.changedDeclarationBlocks.length,
     removedSymbolsAreBreaking: report.disposition.removedSymbolsAreBreaking,
     humanReviewRequired: report.disposition.humanReviewRequired,
@@ -617,8 +624,10 @@ export function renderPublicApiReleaseComparison(report) {
   const facts = report.facts;
   return [
     `[pipeline] public API comparison: ${report.packageName}@${report.candidateVersion} vs ${report.previousVersion}`,
-    `  added=${facts.addedSymbols.length} removed=${facts.removedSymbols.length} deprecated=${facts.deprecatedSymbols.length} changed-symbols=${facts.changedSymbols.length} changed-declaration-blocks=${facts.changedDeclarationBlocks.length}`,
+    `  added=${facts.addedSymbols.length} removed=${facts.removedSymbols.length} deprecated=${facts.deprecatedSymbols.length} changed-symbols=${facts.changedSymbols.length} added-declaration-blocks=${facts.addedDeclarationBlocks.length} removed-declaration-blocks=${facts.removedDeclarationBlocks.length} changed-declaration-blocks=${facts.changedDeclarationBlocks.length}`,
     ...(facts.removedSymbols.length > 0 ? [`  removed (breaking): ${facts.removedSymbols.join(', ')}`] : []),
+    ...(facts.addedDeclarationBlocks.length > 0 ? [`  declaration additions: ${renderDeclarationDiffSample(facts.addedDeclarationBlocks, 5, 'added declaration blocks').join(', ')}`] : []),
+    ...(facts.removedDeclarationBlocks.length > 0 ? [`  declaration removals: ${renderDeclarationDiffSample(facts.removedDeclarationBlocks, 5, 'removed declaration blocks').join(', ')}`] : []),
     ...(facts.changedDeclarationBlocks.length > 0 ? [`  declaration review: ${renderDeclarationDiffSample(facts.changedDeclarationBlocks).join(', ')}`] : []),
     `  human review required: ${report.disposition.humanReviewRequired ? 'yes' : 'no'}; compatibility classification and version selection remain human release decisions.`,
     '',

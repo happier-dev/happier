@@ -647,14 +647,10 @@ test.describe('ui e2e: automations authoring', () => {
                 token: authToken,
             })).find((automation) => automation.id === existingAutomationId);
             if (!found) return null;
-            return {
-                triggerKinds: found.triggers.map((candidate) => candidate.kind),
-                retiredTriggerIds: found.retiredTriggers.map((candidate) => candidate.id),
-            };
-        }, { timeout: 60_000 }).toEqual({
-            triggerKinds: [],
-            retiredTriggerIds: [savedLifecycleTriggerId],
-        });
+            // The ordinary definition no longer carries a retired-trigger
+            // census; per-Run retired truth below stays the history evidence.
+            return found.triggers.map((candidate) => candidate.kind);
+        }, { timeout: 60_000 }).toEqual([]);
         await expect.poll(async () => (
             (await listPersistedAutomationRuns({
                 baseUrl: server.baseUrl,

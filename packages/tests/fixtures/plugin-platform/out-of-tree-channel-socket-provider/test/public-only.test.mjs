@@ -103,14 +103,32 @@ test('fixture is a public-only packed provider shape', async () => {
       'fixture/reconcile',
     ],
   );
+  // Surfaces are protocol-owned per role, not a fixture-wide decision: the
+  // Channels setup/test/resolve roles declare the human-invocable surfaces
+  // (`plugin` + `ui`), so the SDK projects its command-palette placement
+  // default for them, while the delivery roles stay programmatic `plugin`-only
+  // with no placement decision at all. `placement` itself stays retired.
+  const humanInvocableRoleActionIds = new Set([
+    'fixture/setup',
+    'fixture/test',
+    'fixture/endpoint',
+    'fixture/principal',
+  ]);
   for (const action of manifest.contributes.actions) {
-    assert.deepEqual(action.surfaces, ['plugin']);
+    if (humanInvocableRoleActionIds.has(action.id)) {
+      assert.deepEqual(action.surfaces, ['plugin', 'ui']);
+      assert.deepEqual(action.placementBindings, ['commandPalette']);
+    } else {
+      assert.deepEqual(action.surfaces, ['plugin']);
+      assert.equal(action.placementBindings, undefined);
+    }
     assert.equal(action.placement, undefined);
   }
   const actionsById = new Map(manifest.contributes.actions.map((action) => [action.id, action]));
   assert.equal(actionsById.get('fixture/deliver')?.dangerLevel, 'writesRemote');
   assert.equal(actionsById.get('fixture/stop')?.dangerLevel, 'writesRemote');
-  assert.deepEqual(manifest.contributes.actions[0].surfaces, ['plugin']);
+  assert.deepEqual(manifest.contributes.actions[0].surfaces, ['plugin', 'ui']);
+  assert.deepEqual(manifest.contributes.actions[0].placementBindings, ['commandPalette']);
   assert.equal(manifest.contributes.actions[0].placement, undefined);
   assert.equal(
     manifest.contributes.actions.some(({ id }) => id === 'fixture/observations-poll'),

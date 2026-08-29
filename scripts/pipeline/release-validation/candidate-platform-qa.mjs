@@ -391,7 +391,7 @@ export function resolveCandidatePlatformQaPlan({
     [
       'workspace',
       '@happier-dev/tests',
-      'test:plugin-platform:packed-managed-provider',
+      'test:plugin-platform:packed-managed-provider-candidate',
       '--candidate',
       resolvedCandidateManifestPath,
     ],
