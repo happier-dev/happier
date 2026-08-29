@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import type {
+  HostExternalSessionActionId,
+  PluginExternalSessionActionId,
+} from './executor/types.js';
 
 function createDeps(
   externalSessionAction: NonNullable<ActionExecutorDeps['externalSessionAction']>,
@@ -37,6 +41,20 @@ function createDeps(
 }
 
 describe('createActionExecutor (public External Session actions)', () => {
+  // Registration contract: the plugin-provenance External Session union must
+  // never re-expose the low-level ephemeral lease ids excluded by the
+  // canonical plugin-surface projection owner
+  // (PLUGIN_SURFACE_EXCLUSION_REASONS), while the host union retains their
+  // released RPC/API route.
+  it('keeps the excluded ephemeral lease ids off the plugin registration union', () => {
+    expectTypeOf<PluginExternalSessionActionId>()
+      .extract<'sessions.external.follow' | 'sessions.external.unfollow'>()
+      .toBeNever();
+    expectTypeOf<HostExternalSessionActionId>()
+      .extract<'sessions.external.follow' | 'sessions.external.unfollow'>()
+      .toEqualTypeOf<'sessions.external.follow' | 'sessions.external.unfollow'>();
+  });
+
   it('routes validated semantic input through the canonical daemon owner', async () => {
     const externalSessionAction = vi.fn(async () => ({
       ok: true as const,
@@ -134,6 +152,32 @@ describe('createActionExecutor (public External Session actions)', () => {
       actionId,
       input,
     }));
+  });
+
+  // The plugin projection excludes the low-level ephemeral lease Actions, so
+  // the plugin surface fails closed before the execution registration and the
+  // plugin-provenance executor is never reached; authors use the contextual
+  // SessionsService.external.followTranscript subscription instead. If the
+  // projection or the registration ever re-exposes these ids, this test fails.
+  it.each([
+    ['sessions.external.follow', { sessionId: 'session-1' }],
+    ['sessions.external.unfollow', { sessionId: 'session-1', leaseId: 'lease-1' }],
+  ] as const)('fails closed on the excluded plugin-surface seam %s', async (actionId, input) => {
+    const externalSessionAction = vi.fn(async () => ({
+      ok: true as const,
+      result: { ok: false, error: { code: 'fixture', message: 'fixture' } },
+    }));
+    const executor = createActionExecutor(createDeps(externalSessionAction));
+
+    await expect(executor.execute(actionId, input, {
+      surface: 'plugin',
+      actionCaller: { kind: 'plugin', pluginId: 'author.example' },
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'action_disabled',
+      details: { reason: 'unsupported_surface', surface: 'plugin' },
+    });
+    expect(externalSessionAction).not.toHaveBeenCalled();
   });
 
   it('fails closed before dispatch when the plugin principal is missing', async () => {

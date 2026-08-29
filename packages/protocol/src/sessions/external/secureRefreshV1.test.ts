@@ -5,6 +5,7 @@ import {
   ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
   ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
   decideExternalSessionTranscriptRefreshApplicationV1,
+  shouldResyncExternalSessionTranscriptReadAfterV1,
   type ExternalSessionTranscriptRefreshBindingV1,
 } from './index.js';
 
@@ -102,6 +103,46 @@ describe('External Sessions secure refresh contract', () => {
       binding,
       items: [],
     }).success).toBe(false);
+  });
+
+  it('applies the one read-after continuation decision to an advanced read', () => {
+    const nextCursor = 'happier_external_cursor_v1:opaque-next-cursor';
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor,
+      hasMore: false,
+    })).toBe(false);
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor,
+      hasMore: true,
+    })).toBe(true);
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor: requestCursor,
+      hasMore: false,
+    })).toBe(true);
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor,
+      hasMore: false,
+      diagnostics: [
+        { severity: 'benign' },
+        { severity: 'required' },
+      ],
+    })).toBe(true);
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor,
+      hasMore: false,
+      diagnostics: [{ severity: 'benign' }],
+    })).toBe(false);
+    expect(shouldResyncExternalSessionTranscriptReadAfterV1({
+      requestCursor,
+      nextCursor,
+      hasMore: false,
+      diagnostics: undefined,
+    })).toBe(false);
   });
 
   it.each([

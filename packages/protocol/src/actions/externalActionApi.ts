@@ -55,6 +55,7 @@ const ExternalActionHttpErrorCodeV1Schema = z.enum([
   'invalid_action',
   'invalid_envelope',
   'request_too_large',
+  'internal_error',
 ]);
 export type ExternalActionHttpErrorCodeV1 = z.infer<typeof ExternalActionHttpErrorCodeV1Schema>;
 
@@ -98,11 +99,11 @@ export function projectExternalActionExecutionResultV1(value: unknown): ActionEx
 
 /** Maps a protocol transport failure to its complete HTTP representation. */
 export function projectExternalActionHttpErrorV1(code: ExternalActionHttpErrorCodeV1): Readonly<{
-  statusCode: 400 | 413;
+  statusCode: 400 | 413 | 500;
   payload: ExternalActionHttpErrorV1;
 }> {
   return {
-    statusCode: code === 'request_too_large' ? 413 : 400,
+    statusCode: code === 'request_too_large' ? 413 : code === 'internal_error' ? 500 : 400,
     payload: { error: 'invalid_request', code },
   };
 }
@@ -378,7 +379,41 @@ function measureSerializedUtf8Bytes(
 function projectStrictJsonExternalActionResponseEnvelopeV1(
   response: ExternalActionResponseEnvelopeV1,
 ): ExternalActionResponseEnvelopeV1 | null {
-  const strictJson = StrictJsonValueSchema.safeParse(response);
+  // JSON.stringify omits undefined/function/symbol object members and emits
+  // null for those values in arrays. Apply that native projection before the
+  // strict-data validation so an otherwise valid Action result is not turned
+  // into invalid_action_output merely because it contains an optional field.
+  const omitted = Symbol('omitted');
+  const invalid = Symbol('invalid');
+  const project = (value: unknown, ancestors: Set<object>, depth = 0): unknown => {
+    // Keep the projection itself stack-safe; the response will be replaced
+    // with invalid_action_output rather than allowing a deeply nested result
+    // to overflow the process before the existing serializer guard runs.
+    if (depth > 1_000) return invalid;
+    if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return omitted;
+    if (value === null || typeof value !== 'object') return value;
+    if (ancestors.has(value)) return invalid;
+    const nextAncestors = new Set(ancestors).add(value);
+    if (Array.isArray(value)) {
+      return value.map((item) => {
+        const projected = project(item, nextAncestors, depth + 1);
+        return projected === omitted ? null : projected;
+      });
+    }
+    const output: Record<string, unknown> = Object.create(null);
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      // Accessors are not JSON data and must not be invoked at this boundary.
+      if (!descriptor || !('value' in descriptor)) return invalid;
+      const projected = project(descriptor.value, nextAncestors, depth + 1);
+      if (projected !== omitted) output[key] = projected;
+    }
+    return output;
+  };
+  const projected = project(response, new Set());
+  const strictJson = projected === invalid
+    ? { success: false as const }
+    : StrictJsonValueSchema.safeParse(projected);
   return strictJson.success
     ? parseExternalActionResponseEnvelopeV1(strictJson.data)
     : null;
@@ -402,7 +437,8 @@ function invalidActionOutputResponse(
 /** Measures exactly the strict JSON envelope that an external transport sends. */
 export function measureExternalActionResponseEnvelopeUtf8BytesV1(value: unknown): number {
   const parsed = parseExternalActionResponseEnvelopeV1(value);
-  const response = parsed && projectStrictJsonExternalActionResponseEnvelopeV1(parsed);
+  const strictJson = parsed && StrictJsonValueSchema.safeParse(parsed);
+  const response = strictJson?.success ? parseExternalActionResponseEnvelopeV1(strictJson.data) : null;
   if (!response) {
     throw new TypeError('External Action response envelope must contain strict JSON data');
   }

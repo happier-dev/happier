@@ -76,6 +76,31 @@ export {
 } from './handoffTypes.js';
 
 export {
+  DeleteWorkspaceSyncConflictLoserV1Schema,
+  HandoffWorkspaceActionV1Schema,
+  WorkspaceContentPolicyV1Schema,
+  WorkspaceSyncEndpointEntryKindV1Schema,
+  WorkspaceSyncConflictListV1Schema,
+  WorkspaceSyncConflictV1Schema,
+  WorkspaceSyncCopyOnceV1Schema,
+  WorkspaceSyncRelationshipV1Schema,
+  WorkspaceSyncStatusV1Schema,
+  WorkspaceSyncModeV1Schema,
+  WorkspaceSyncPersistentModeV1Schema,
+  type DeleteWorkspaceSyncConflictLoserV1,
+  type HandoffWorkspaceActionV1,
+  type WorkspaceContentPolicyV1,
+  type WorkspaceSyncConflictListV1,
+  type WorkspaceSyncConflictV1,
+  type WorkspaceSyncCopyOnceV1,
+  type WorkspaceSyncModeV1,
+  type WorkspaceSyncPersistentModeV1,
+  type WorkspaceSyncEndpointEntryKindV1,
+  type WorkspaceSyncRelationshipV1,
+  type WorkspaceSyncStatusV1,
+} from './workspaceSyncSchemas.js';
+
+export {
   MachineTransferReceiveEnvelopeSchema,
   MachineTransferSendEnvelopeSchema,
   TransferChunkEnvelopeSchema,

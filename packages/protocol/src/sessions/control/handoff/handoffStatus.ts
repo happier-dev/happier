@@ -180,7 +180,6 @@ export const SessionHandoffStatusSchema = z
     status: SessionHandoffStatusCodeSchema,
     phase: SessionHandoffPhaseSchema,
     jobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
-    workspaceReplicationJobId: z.string().min(1).max(MAX_JOB_ID_LENGTH).optional(),
     progress: SessionHandoffProgressSchema.optional(),
     workspacePreflightSummary: SessionHandoffWorkspacePreflightSummarySchema.optional(),
     transportStrategy: SessionHandoffStatusTransportStrategySchema.nullable().optional(),

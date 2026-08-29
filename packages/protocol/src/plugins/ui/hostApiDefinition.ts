@@ -38,6 +38,7 @@ export const PLUGIN_UI_HOST_METHODS_V1 = Object.freeze([
   'readOpenableContent',
   'watchResource',
   'openSurface',
+  'openConnectedAccounts',
   'replacePageLocation',
   'notify',
   'confirm',

@@ -51,6 +51,7 @@ import {
 } from './connectedServicesSettings.js';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { WorkspaceRefV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { WorkspaceSyncRelationshipV1Schema } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import {
   AttentionDeliveryPolicyV1Schema,
   DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
@@ -1067,6 +1068,12 @@ const ACCOUNT_LEGACY_ROOT_CATALOG_DEFINITIONS = {
     [],
     'workspace references',
     64 * 1024,
+  ),
+  workspaceSyncRelationshipsV1: accountLegacy(
+    z.array(WorkspaceSyncRelationshipV1Schema).max(32).catch([]).default([]),
+    [],
+    'workspace sync relationships',
+    128 * 1024,
   ),
   pinnedWorkspaceRefIdsV1: accountLegacy(z.array(z.string().max(1024)).max(256), [], 'workspace pins', 32 * 1024),
   pinnedSessionKeysV1: accountLegacy(z.array(z.string().max(1024)).max(256), [], 'session organization pins', 32 * 1024),

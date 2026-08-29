@@ -11,13 +11,13 @@ describe('ActionsSettingsV1Schema', () => {
       actions: {
         'session.message.send': { enabled: false },
         'session.stop': { disabledSurfaces: 'api' },
-        'unknown.action': { enabled: false },
+        'unknown.action': { enabled: false, futurePolicy: { mode: 'ask' } },
       },
     });
 
     expect(parsed.actions['session.message.send' as keyof typeof parsed.actions]).toMatchObject({ enabled: false });
     expect(parsed.actions['session.stop' as keyof typeof parsed.actions]).toMatchObject({ enabled: false });
-    expect(parsed.actions).not.toHaveProperty('unknown.action');
+    expect(parsed.actions['unknown.action']).toMatchObject({ enabled: false, futurePolicy: { mode: 'ask' } });
     expect(isActionEnabledByActionsSettings('session.message.send', parsed)).toBe(false);
     expect(isActionEnabledByActionsSettings('session.stop', parsed)).toBe(false);
   });
@@ -48,7 +48,7 @@ describe('ActionsSettingsV1Schema', () => {
       },
     });
     expect(parsed.v).toBe(1);
-    expect(Object.keys(parsed.actions)).toEqual(['review.start', 'subagents.plan.start', 'subagents.delegate.start']);
+    expect(Object.keys(parsed.actions)).toEqual(['review.start', 'subagents.plan.start', 'subagents.delegate.start', 'unknown.action']);
 
     expect(isActionEnabledByActionsSettings('review.start' as any, parsed)).toBe(false);
     expect(isActionEnabledByActionsSettings('subagents.plan.start' as any, parsed)).toBe(true);

@@ -1229,6 +1229,13 @@ describe('Automation event V1 contracts', () => {
     } as const;
 
     expect(AutomationEventSourceStatusReportV1Schema.parse(source)).toEqual(source);
+    const {
+      lastObservedAt: _lastObservedAt,
+      lastDispositionAt: _lastDispositionAt,
+      ...connectionOnlySource
+    } = source;
+    expect(AutomationEventSourceStatusReportV1Schema.parse(connectionOnlySource))
+      .toEqual(connectionOnlySource);
     expect(AutomationEventSourceStatusReportV1Schema.safeParse({
       ...source,
       observedDelta: 101,

@@ -899,7 +899,27 @@ export const VoiceProviderContributionSchema = z.discriminatedUnion('kind', [
       }
     };
     if (hasSttRole) validateRequiredRequestString(modelsFieldId, ['settings', 'fields']);
-    if (hasTtsRole) validateRequiredRequestString(voicesFieldId, ['settings', 'fields']);
+    if (hasTtsRole) {
+      validateRequiredRequestString(voicesFieldId, ['settings', 'fields']);
+      const formatField = fieldById.get('format');
+      const formats = formatField?.schema.type === 'string' && Array.isArray(formatField.schema.enum)
+        ? formatField.schema.enum
+        : null;
+      if (
+        !formatField
+        || !formats
+        || formats.length < 1
+        || formats.some((format) => format !== 'mp3' && format !== 'wav')
+        || (formatField.default !== 'mp3' && formatField.default !== 'wav')
+        || !formats.includes(formatField.default)
+      ) {
+        context.addIssue({
+          code: 'custom',
+          path: ['settings', 'fields'],
+          message: 'Voice TTS contributions require a reserved format setting with an mp3 or wav default.',
+        });
+      }
+    }
   }
 });
 export type VoiceProviderContribution = z.infer<typeof VoiceProviderContributionSchema>;

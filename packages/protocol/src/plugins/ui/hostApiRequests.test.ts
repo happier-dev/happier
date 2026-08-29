@@ -18,6 +18,7 @@ import {
   PluginUiHostApiRequestEnvelopeV1Schema,
   PluginUiHostApiDiagnosticV1Schema,
   PluginUiLaunchInputV1Schema,
+  PluginUiOpenConnectedAccountsRequestV1Schema,
   PluginUiOpenSurfaceRequestV1Schema,
   PluginUiOpenNewSessionRequestV1Schema,
   PluginUiPreparedReviewWorkspaceResultV1Schema,
@@ -614,6 +615,29 @@ describe('plugin UI open and Action components', () => {
     expect(samePlugin.subPath).toBe('activity/recent');
     expect(crossPlugin.destination).toEqual({ pluginId: 'acme.provider', localId: 'repair' });
     expect(PluginUiOpenSurfaceRequestV1Schema.safeParse({ destination: 'details' }).success).toBe(false);
+  });
+
+  it('admits only the Connected Accounts root, one exact service, or one exact qualified account', () => {
+    expect(PluginUiOpenConnectedAccountsRequestV1Schema.parse({})).toEqual({});
+    expect(PluginUiOpenConnectedAccountsRequestV1Schema.parse({
+      service: { pluginId: 'com.acme.github', localId: 'account' },
+    })).toEqual({
+      service: { pluginId: 'com.acme.github', localId: 'account' },
+    });
+    expect(PluginUiOpenConnectedAccountsRequestV1Schema.parse({
+      service: { pluginId: 'com.acme.github', localId: 'account' },
+      accountId: 'github:work',
+    })).toEqual({
+      service: { pluginId: 'com.acme.github', localId: 'account' },
+      accountId: 'github:work',
+    });
+    expect(PluginUiOpenConnectedAccountsRequestV1Schema.safeParse({
+      accountId: 'github:work',
+    }).success).toBe(false);
+    expect(PluginUiOpenConnectedAccountsRequestV1Schema.safeParse({
+      service: { pluginId: 'com.acme.github', localId: 'account' },
+      route: '/settings/connected-services',
+    }).success).toBe(false);
   });
 
   it('keeps declarative selectors and mounted concrete requests distinct', () => {

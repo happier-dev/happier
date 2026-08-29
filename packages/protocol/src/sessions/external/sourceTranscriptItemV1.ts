@@ -4,6 +4,8 @@ import { SidechainIdSchema } from '../idsV1.js';
 import { ExternalSessionUserProjectionSchema } from '../messages/agentExternalSessionTranscriptRawRecord.js';
 import { SessionMessageRoleSchema } from '../messages/sessionMessageRole.js';
 
+export { SidechainIdSchema };
+
 /**
  * The one External Session transcript-item identity contract. The id is an
  * opaque producer value: nonempty, already trimmed (noncanonical whitespace is

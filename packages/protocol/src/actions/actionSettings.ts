@@ -104,7 +104,9 @@ const ActionSettingsOverrideSchema = z.preprocess(
       approvalRequiredSurfaces: z.array(ActionSurfaceKeySchema).default([]),
       toolExposureModes: ActionSettingsToolExposureModesSchema,
     })
-    .strict(),
+    // Preserve fields introduced by newer clients so older clients can
+    // round-trip an unknown Action policy without erasing it.
+    .passthrough(),
 );
 export type ActionSettingsOverride = z.infer<typeof ActionSettingsOverrideSchema>;
 
@@ -120,11 +122,13 @@ function normalizeActionSettingsActionId(rawId: string): ActionSettingsActionId 
 
 function projectKnownActionSettings(
   actions: Record<string, ActionSettingsOverride>,
-): Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> {
-  const next: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
+): Record<string, ActionSettingsOverride> {
+  // Keep well-formed unknown rows losslessly. Older clients must be able to
+  // round-trip settings authored by newer clients without re-enabling them.
+  const next: Record<string, ActionSettingsOverride> = {};
   for (const [rawId, override] of Object.entries(actions)) {
     const actionId = normalizeActionSettingsActionId(rawId);
-    if (actionId) next[actionId] = override;
+    next[actionId ?? rawId] = override;
   }
   return next;
 }
@@ -132,8 +136,7 @@ function projectKnownActionSettings(
 export const ActionsSettingsV1Schema = z
   .object({
     v: z.literal(1),
-    // Accept unknown keys but filter them down to known ActionIds during transform so settings
-    // survive action id additions without failing strict parsing.
+    // Accept unknown Action ids so older clients can round-trip newer policy rows.
     actions: z.record(z.string(), ActionSettingsOverrideSchema).default({}),
   })
   .passthrough()
@@ -142,7 +145,10 @@ export const ActionsSettingsV1Schema = z
     actions: projectKnownActionSettings(value.actions ?? {}),
   }));
 
-export type ActionsSettingsV1 = z.infer<typeof ActionsSettingsV1Schema>;
+export type ActionsSettingsV1 = Readonly<{
+  v: 1;
+  actions: Record<string, ActionSettingsOverride>;
+}>;
 
 const EMPTY_ACTIONS_SETTINGS_V1 = Object.freeze({
   v: 1 as const,
@@ -153,8 +159,9 @@ const MALFORMED_ACTION_SETTINGS_OVERRIDE = ActionSettingsOverrideSchema.parse({ 
 
 /**
  * Normalizes persisted/settings transport values without allowing one malformed
- * row to erase unrelated Action policy. Unknown Actions are ignored; malformed
- * known Action overrides fail closed while valid sibling policy is preserved.
+ * row to erase unrelated Action policy. Unknown well-formed Actions are kept
+ * for lossless round-tripping; malformed known overrides fail closed while
+ * valid sibling policy is preserved.
  */
 function isActionsSettingsV1Document(value: unknown): value is Readonly<{ v: 1; actions?: Record<string, unknown> }> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -171,12 +178,12 @@ export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1
   if (parsed.success) return parsed.data;
   if (!isActionsSettingsV1Document(value)) return null;
 
-  const actions: Partial<Record<ActionSettingsActionId, ActionSettingsOverride>> = {};
+  const actions: Record<string, ActionSettingsOverride> = {};
   for (const [rawId, rawOverride] of Object.entries(value.actions ?? {})) {
     const actionId = normalizeActionSettingsActionId(rawId);
-    if (!actionId) continue;
     const override = ActionSettingsOverrideSchema.safeParse(rawOverride);
-    actions[actionId] = override.success ? override.data : MALFORMED_ACTION_SETTINGS_OVERRIDE;
+    const key = actionId ?? rawId;
+    actions[key] = override.success ? override.data : MALFORMED_ACTION_SETTINGS_OVERRIDE;
   }
   return { v: 1, actions };
 }

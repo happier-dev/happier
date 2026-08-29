@@ -6,7 +6,10 @@ import {
 } from '../contributionIdentity.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
+import {
+  QualifiedConnectedAccountIdSchema,
+  QualifiedConnectedAccountRefSchema,
+} from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { PluginUiJsonValueV1Schema, type PluginUiJsonValueV1 } from '../contributions/ui/json.js';
 import { measureSerializedStrictPluginJsonUtf8Bytes } from '../contributions/strictJsonValue.js';
 import { PluginUiHostApiRequestMethodV1Schema } from './hostApiDefinition.js';
@@ -348,6 +351,24 @@ export const PluginUiOpenSurfaceRequestV1Schema = z.object({
 }).strict();
 export type PluginUiOpenSurfaceRequestV1 =
   z.infer<typeof PluginUiOpenSurfaceRequestV1Schema>;
+
+/**
+ * Open Happier's canonical Connected Accounts experience.
+ *
+ * The request names semantic identity only. It cannot carry an app route,
+ * arbitrary query parameters, credential material, or a plugin surface id.
+ * Account focus is valid only beside its exact service because connected
+ * account ids are qualified by the producing contribution.
+ */
+export const PluginUiOpenConnectedAccountsRequestV1Schema = z.union([
+  z.object({}).strict(),
+  z.object({
+    service: asProtocolZod(PluginContributionIdentityV1Schema),
+    accountId: asProtocolZod(QualifiedConnectedAccountIdSchema).optional(),
+  }).strict(),
+]);
+export type PluginUiOpenConnectedAccountsRequestV1 =
+  z.infer<typeof PluginUiOpenConnectedAccountsRequestV1Schema>;
 
 /**
  * Same-page location replacement, and the one page-internal Back step it may

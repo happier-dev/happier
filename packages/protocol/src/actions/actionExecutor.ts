@@ -233,6 +233,12 @@ const SESSION_TRANSCRIPT_ACTION_ID_SET: ReadonlySet<ActionId> = new Set(
   ACTION_ID_FAMILIES_V1.session_transcripts,
 );
 
+// Plugin-provenance External Session registration. The low-level ephemeral
+// viewer-lease Actions (`sessions.external.follow`/`unfollow`) are excluded
+// from the plugin projection by the canonical owner
+// (`PLUGIN_SURFACE_EXCLUSION_REASONS`), so they must not be registered here;
+// authors use `SessionsService.external.followTranscript`, and the retained
+// host route lives in HOST_EXTERNAL_SESSION_ACTION_ID_SET below.
 const PLUGIN_EXTERNAL_SESSION_ACTION_ID_SET: ReadonlySet<ActionId> = new Set([
   'sessions.external.materialize.start',
   'sessions.external.status.get',
@@ -241,13 +247,15 @@ const PLUGIN_EXTERNAL_SESSION_ACTION_ID_SET: ReadonlySet<ActionId> = new Set([
   'sessions.external.operation.resume',
   'sessions.external.operation.retry',
   'sessions.external.operation.discard',
-  'sessions.external.follow',
-  'sessions.external.unfollow',
   'sessions.external.backgroundFollow.set',
 ]);
 
 const HOST_EXTERNAL_SESSION_ACTION_ID_SET: ReadonlySet<ActionId> = new Set([
   ...PLUGIN_EXTERNAL_SESSION_ACTION_ID_SET,
+  // Released RPC/API clients reach the ephemeral lease seams through the host
+  // external-session owner; that domain/RPC implementation stays here.
+  'sessions.external.follow',
+  'sessions.external.unfollow',
   'sessions.external.candidates.list',
   'sessions.external.link.ensure',
   'sessions.external.transcript.page',

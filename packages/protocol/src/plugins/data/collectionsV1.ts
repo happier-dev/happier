@@ -413,26 +413,33 @@ export type PluginCollectionProjectionV1 = z.infer<typeof PluginCollectionProjec
 const PluginCollectionRevisionV1Schema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 /** One compact currentness floor per Account/plugin/Collection. */
 export const PluginCollectionAbsenceEpochV1Schema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const PluginCollectionExpectedRevisionV1Schema = z.union([
-  z.literal('absent'),
-  PluginCollectionRevisionV1Schema,
-]);
-
-export const PluginCollectionPutMutationV1Schema = z.object({
+const PluginCollectionPutMutationBaseV1Schema = {
   kind: z.literal('put'),
   rowId: PluginCollectionRowIdV1Schema,
-  expectedRevision: PluginCollectionExpectedRevisionV1Schema,
-  expectedAbsenceEpoch: PluginCollectionAbsenceEpochV1Schema.optional(),
   content: PluginCollectionContentEnvelopeV1Schema,
   projection: PluginCollectionProjectionV1Schema,
-}).strict().superRefine((value, context) => {
-  if (value.expectedRevision === 'absent' && value.expectedAbsenceEpoch === undefined) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedAbsenceEpoch'], message: 'An absent create needs the observed Collection absence epoch.' });
-  }
-  if (value.expectedRevision !== 'absent' && value.expectedAbsenceEpoch !== undefined) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['expectedAbsenceEpoch'], message: 'Only an absent create carries a Collection absence epoch.' });
-  }
-});
+} as const;
+
+const PluginCollectionAbsentPutMutationV1Schema = z.object({
+  ...PluginCollectionPutMutationBaseV1Schema,
+  expectedRevision: z.literal('absent'),
+  expectedAbsenceEpoch: PluginCollectionAbsenceEpochV1Schema,
+}).strict();
+
+const PluginCollectionCurrentPutMutationV1Schema = z.object({
+  ...PluginCollectionPutMutationBaseV1Schema,
+  expectedRevision: PluginCollectionRevisionV1Schema,
+}).strict();
+
+/**
+ * An absent create and an exact-current put have different currentness
+ * witnesses. Keep that distinction in the inferred wire type, rather than
+ * recovering it with a server-side cast after schema validation.
+ */
+export const PluginCollectionPutMutationV1Schema = z.union([
+  PluginCollectionAbsentPutMutationV1Schema,
+  PluginCollectionCurrentPutMutationV1Schema,
+]);
 export type PluginCollectionPutMutationV1 = z.infer<typeof PluginCollectionPutMutationV1Schema>;
 
 export const PluginCollectionDeleteMutationV1Schema = z.object({
@@ -450,7 +457,7 @@ export const PluginCollectionBatchAssertV1Schema = z.object({
 }).strict();
 export type PluginCollectionBatchAssertV1 = z.infer<typeof PluginCollectionBatchAssertV1Schema>;
 
-export const PluginCollectionMutationOperationV1Schema = z.discriminatedUnion('kind', [
+export const PluginCollectionMutationOperationV1Schema = z.union([
   PluginCollectionPutMutationV1Schema,
   PluginCollectionDeleteMutationV1Schema,
   PluginCollectionBatchAssertV1Schema,

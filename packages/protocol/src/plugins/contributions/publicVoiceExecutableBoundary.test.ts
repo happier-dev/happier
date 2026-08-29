@@ -403,6 +403,15 @@ describe('public voice executable contribution boundary', () => {
         settings: {
           schemaVersion: 2,
           fields: [{
+            id: 'format',
+            title: 'Format',
+            schema: { type: 'string', enum: ['mp3', 'wav'] },
+            default: 'mp3',
+            presentation: {
+              control: 'select',
+              options: [{ value: 'mp3', title: 'MP3' }, { value: 'wav', title: 'WAV' }],
+            },
+          }, {
             id: 'model',
             title: 'Model',
             schema: { type: 'string', minLength: 1, maxLength: 128 },

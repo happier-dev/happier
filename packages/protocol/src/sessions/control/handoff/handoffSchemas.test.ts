@@ -233,20 +233,22 @@ describe('session handoff schemas', () => {
         },
         futureHandoffMetadataField: 'keep-me',
       },
-      workspaceTransfer: {
-        enabled: true,
-        strategy: 'transfer_snapshot',
-        conflictPolicy: 'create_sibling_copy',
-        includeIgnoredMode: 'include_selected',
-        ignoredIncludeGlobs: ['dist/**'],
-        futureWorkspaceTransferField: 'keep-me',
+      workspaceAction: {
+        kind: 'copy_once',
+        contentPolicy: {
+          v: 1,
+          selection: 'git_worktree',
+          extraIgnorePatterns: [],
+          extraIncludePatterns: [],
+          includeGitDirectory: false,
+          policyDigest: 'sha256:policy',
+        },
       },
       futurePrepareTargetField: 'keep-me',
     });
 
     expect((request as any).futurePrepareTargetField).toBe('keep-me');
     expect((request.handoffMetadataV2 as any).futureHandoffMetadataField).toBe('keep-me');
-    expect((request.workspaceTransfer as any).futureWorkspaceTransferField).toBe('keep-me');
     expect((request.endpointCandidates[0] as any).futureEndpointField).toBe('keep-me');
     expect((request.handoffMetadataV2?.agentBundleTransferPublication as any).futurePublicationField).toBe('keep-me');
     expect((request.handoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates?.[0] as any).futureEndpointField).toBe('keep-me');
@@ -434,21 +436,30 @@ describe('session handoff schemas', () => {
       targetMachineId: 'machine_target',
       sessionStorageMode: 'persisted',
       preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
-      workspaceTransfer: {
-        enabled: true,
-        conflictPolicy: 'create_sibling_copy',
-        includeIgnoredMode: 'include_selected',
-        ignoredIncludeGlobs: ['dist/**'],
+      workspaceAction: {
+        kind: 'copy_once',
+        contentPolicy: {
+          v: 1,
+          selection: 'git_worktree',
+          extraIgnorePatterns: [],
+          extraIncludePatterns: [],
+          includeGitDirectory: false,
+          policyDigest: 'sha256:policy',
+        },
       },
     });
     expect(startParsed.success).toBe(true);
     if (!startParsed.success) return;
-    expect(startParsed.data.workspaceTransfer).toEqual({
-      enabled: true,
-      strategy: 'transfer_snapshot',
-      conflictPolicy: 'create_sibling_copy',
-      includeIgnoredMode: 'include_selected',
-      ignoredIncludeGlobs: ['dist/**'],
+    expect(startParsed.data.workspaceAction).toEqual({
+      kind: 'copy_once',
+      contentPolicy: {
+        v: 1,
+        selection: 'git_worktree',
+        extraIgnorePatterns: [],
+        extraIncludePatterns: [],
+        includeGitDirectory: false,
+        policyDigest: 'sha256:policy',
+      },
     });
 
         expect(
@@ -1039,7 +1050,7 @@ describe('session handoff schemas', () => {
     expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('plugin_backend')).success).toBe(true);
     expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload(' plugin_backend')).success).toBe(false);
     expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('')).success).toBe(false);
-    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('a'.repeat(129))).success).toBe(false);
+    expect(mod.SessionHandoffPrepareTargetResultGetResponseSchema.safeParse(buildPayload('a'.repeat(600))).success).toBe(false);
   });
 
   it('validates runtimeDescriptorV1 as a schema-owned field', async () => {

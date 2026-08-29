@@ -475,6 +475,13 @@ export type RuntimeActionExecuteArgs = RuntimeActionExecuteArgsFor<RuntimeAction
 
 export type RuntimeActionExecute = (args: RuntimeActionExecuteArgs) => Promise<unknown>;
 
+/**
+ * Plugin-provenance External Session Action family. The low-level ephemeral
+ * viewer-lease ids (`sessions.external.follow`/`unfollow`) are excluded from
+ * the plugin projection by the canonical owner
+ * (`PLUGIN_SURFACE_EXCLUSION_REASONS`) and therefore stay off this union;
+ * `HostExternalSessionActionId` below retains their host route.
+ */
 export type PluginExternalSessionActionId =
   | 'sessions.external.materialize.start'
   | 'sessions.external.status.get'
@@ -483,8 +490,6 @@ export type PluginExternalSessionActionId =
   | 'sessions.external.operation.resume'
   | 'sessions.external.operation.retry'
   | 'sessions.external.operation.discard'
-  | 'sessions.external.follow'
-  | 'sessions.external.unfollow'
   | 'sessions.external.backgroundFollow.set';
 
 /**
@@ -492,9 +497,13 @@ export type PluginExternalSessionActionId =
  * adapter. This intentionally extends, but does not replace, the narrower
  * plugin-provenance Action family: API callers never manufacture a plugin
  * identity merely to reach discovery, linking, transcript, or takeover Start.
+ * The ephemeral viewer-lease ids are listed here explicitly so the released
+ * host RPC/API route survives their plugin-projection exclusion.
  */
 export type HostExternalSessionActionId =
   | PluginExternalSessionActionId
+  | 'sessions.external.follow'
+  | 'sessions.external.unfollow'
   | 'sessions.external.candidates.list'
   | 'sessions.external.link.ensure'
   | 'sessions.external.transcript.page'

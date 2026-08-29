@@ -16,7 +16,10 @@ import {
 import {
   LinkedExternalSessionQualifiedIdentityV1Schema,
 } from './linkedSessionMetadata.js';
-import { ExternalSessionRefreshCursorV1Schema } from './secureRefreshV1.js';
+import {
+  ExternalSessionRefreshCursorV1Schema,
+  ExternalSessionRefreshReadDiagnosticV1Schema,
+} from './secureRefreshV1.js';
 import { createExternalSessionTranscriptSourceItemV1Schema } from './sourceTranscriptItemV1.js';
 
 export {
@@ -600,6 +603,14 @@ export const ExternalSessionTranscriptReadAfterResponseSchema = z.union([
       items: z.array(ExternalSessionTranscriptRawMessageV1Schema),
       nextCursor: z.string().min(1).nullish(),
       truncated: z.boolean(),
+      // Additive rich read-after continuation facts (open/drop for released
+      // readers). Released daemons never emit them; the current UI applies
+      // the shared Protocol read-after decision when present and degrades to
+      // the released lossy semantics when absent.
+      hasMore: z.boolean().optional(),
+      diagnostics: z.array(
+        ExternalSessionRefreshReadDiagnosticV1Schema,
+      ).max(32).optional(),
     })
     .passthrough(),
   z

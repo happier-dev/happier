@@ -14,6 +14,7 @@ import {
   ExternalSessionsCandidatesListRequestSchema,
   ExternalSessionTranscriptPageRequestSchema,
   ExternalSessionTranscriptReadAfterRequestSchema,
+  ExternalSessionTranscriptReadAfterResponseSchema,
   ExternalSessionTranscriptRawMessageV1Schema,
   ExternalSessionsSourceSchema,
 } from './daemonRpcV1';
@@ -45,6 +46,46 @@ describe('external-session transcript schemas', () => {
     expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptPageResponseSchema?.safeParse).toBe('function');
     expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptReadAfterRequestSchema?.safeParse).toBe('function');
     expect(typeof (daemonRpcV1 as any).ExternalSessionTranscriptReadAfterResponseSchema?.safeParse).toBe('function');
+  });
+
+  it('admits additive rich continuation facts on the released read-after shape and keeps the released shape valid', () => {
+    const releasedShape = {
+      ok: true as const,
+      items: [{
+        id: 'external-1',
+        createdAtMs: 1_700,
+        raw: { role: 'agent', content: { type: 'output', data: { type: 'assistant' } } },
+      }],
+      nextCursor: 'cursor-2',
+      truncated: false,
+    };
+    expect(ExternalSessionTranscriptReadAfterResponseSchema.parse(releasedShape)).toMatchObject({
+      ok: true,
+      truncated: false,
+    });
+    expect(ExternalSessionTranscriptReadAfterResponseSchema.parse({
+      ...releasedShape,
+      hasMore: true,
+      diagnostics: [{
+        code: 'external_session_source_diagnostic',
+        severity: 'required',
+        count: 1,
+        positions: [0],
+      }],
+    })).toMatchObject({ hasMore: true });
+    expect(ExternalSessionTranscriptReadAfterResponseSchema.safeParse({
+      ...releasedShape,
+      hasMore: 'yes',
+    }).success).toBe(false);
+    expect(ExternalSessionTranscriptReadAfterResponseSchema.safeParse({
+      ...releasedShape,
+      diagnostics: [{
+        code: 'external_session_source_diagnostic',
+        severity: 'fatal',
+        count: 1,
+        positions: [0],
+      }],
+    }).success).toBe(false);
   });
 
   it('validates canonical message-role metadata on raw transcript items', () => {

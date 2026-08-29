@@ -45,6 +45,20 @@ const reservedSttSettings = Object.freeze({
   })]),
 });
 
+const reservedTtsFormatField = Object.freeze({
+  id: 'format',
+  title: 'Format',
+  schema: Object.freeze({ type: 'string' as const, enum: Object.freeze(['mp3', 'wav'] as const) }),
+  default: 'wav',
+  presentation: Object.freeze({
+    control: 'select' as const,
+    options: Object.freeze([
+      Object.freeze({ value: 'mp3', title: 'MP3' }),
+      Object.freeze({ value: 'wav', title: 'WAV' }),
+    ]),
+  }),
+});
+
 const hostOperation = Object.freeze({
   id: 'catalog',
   purpose: 'voice.catalog',
@@ -334,7 +348,7 @@ describe('canonical Voice provider declarations', () => {
             id: 'voiceName', title: 'Voice',
             schema: { type: 'string', minLength: 1, maxLength: 512 },
             default: 'voice-default', presentation: { control: 'text' },
-          }],
+          }, reservedTtsFormatField],
         },
       },
     })).toBeNull();
@@ -344,6 +358,38 @@ describe('canonical Voice provider declarations', () => {
     expect(VoiceProviderContributionSchema.safeParse({
       id: 'missing-settings', title: 'Missing settings', kind: 'speech',
       roles: ['dictation_stt'], platforms: ['web'],
+    }).success).toBe(false);
+
+    expect(VoiceProviderContributionSchema.safeParse({
+      id: 'missing-output-format', title: 'Missing output format', kind: 'speech',
+      roles: ['conversation_tts'], platforms: ['web'],
+      settings: {
+        schemaVersion: 2,
+        fields: [{
+          id: 'voiceName', title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 512 },
+          default: 'voice-default', presentation: { control: 'text' },
+        }],
+      },
+    }).success).toBe(false);
+
+    expect(VoiceProviderContributionSchema.safeParse({
+      id: 'unsupported-output-format', title: 'Unsupported output format', kind: 'speech',
+      roles: ['conversation_tts'], platforms: ['web'],
+      settings: {
+        schemaVersion: 2,
+        fields: [{
+          id: 'voiceName', title: 'Voice',
+          schema: { type: 'string', minLength: 1, maxLength: 512 },
+          default: 'voice-default', presentation: { control: 'text' },
+        }, {
+          id: 'format', title: 'Format',
+          schema: { type: 'string', enum: ['flac'] },
+          default: 'flac', presentation: {
+            control: 'select', options: [{ value: 'flac', title: 'FLAC' }],
+          },
+        }],
+      },
     }).success).toBe(false);
 
     const declaration = VoiceProviderContributionSchema.parse({
@@ -359,7 +405,7 @@ describe('canonical Voice provider declarations', () => {
           id: 'catalogVoice', title: 'Voice',
           schema: { type: 'string', minLength: 1, maxLength: 512 }, default: 'voice-default',
           presentation: { control: 'select' },
-        }],
+        }, reservedTtsFormatField],
         readiness: [{ kind: 'setting_nonempty', settingId: 'catalogModel' }],
       },
       catalogs: [
@@ -367,7 +413,7 @@ describe('canonical Voice provider declarations', () => {
         { kind: 'voices', settingFieldId: 'catalogVoice', allowCustom: true },
       ],
     });
-    const mutable = { catalogModel: '  model-selected  ', catalogVoice: 'voice-selected' };
+    const mutable = { catalogModel: '  model-selected  ', catalogVoice: 'voice-selected', format: 'wav' };
     const resolved = resolveVoiceSpeechSettingsCorrespondence({
       contribution: declaration,
       settings: mutable,
@@ -378,7 +424,7 @@ describe('canonical Voice provider declarations', () => {
       model: 'model-selected',
       voiceName: 'voice-selected',
       languageCode: null,
-      format: null,
+      format: 'wav',
       speakingRate: null,
       pitch: null,
     });
@@ -388,14 +434,14 @@ describe('canonical Voice provider declarations', () => {
     expect(resolved.settings.catalogModel).toBe('  model-selected  ');
     expect(resolveVoiceSpeechSettingsCorrespondence({
       contribution: declaration,
-      settings: { catalogModel: '   ', catalogVoice: 'voice-selected' },
+      settings: { catalogModel: '   ', catalogVoice: 'voice-selected', format: 'wav' },
     })).toMatchObject({
       transcribe: null,
       synthesize: {
         model: null,
         voiceName: 'voice-selected',
         languageCode: null,
-        format: null,
+        format: 'wav',
         speakingRate: null,
         pitch: null,
       },
@@ -416,7 +462,7 @@ describe('canonical Voice provider declarations', () => {
           id: 'voiceName', title: 'Voice',
           schema: { type: 'string', minLength: 1, maxLength: 512 },
           default: 'voice-default', presentation: { control: 'text' },
-        }],
+        }, reservedTtsFormatField],
       },
     });
 
@@ -429,12 +475,12 @@ describe('canonical Voice provider declarations', () => {
     });
     expect(resolveVoiceSpeechSettingsCorrespondence({
       contribution: tts,
-      settings: { voiceName: 'reserved-voice' },
+      settings: { voiceName: 'reserved-voice', format: 'wav' },
     }).synthesize).toEqual({
       model: null,
       voiceName: 'reserved-voice',
       languageCode: null,
-      format: null,
+      format: 'wav',
       speakingRate: null,
       pitch: null,
     });
@@ -560,7 +606,7 @@ describe('canonical Voice provider declarations', () => {
           schema: { type: 'string', maxLength: 512 },
           default: 'en-US-Neural2-A',
           presentation: { control: 'select' },
-        }],
+        }, reservedTtsFormatField],
         readiness: [{ kind: 'setting_nonempty', settingId: 'voice' }],
       },
       catalogs: [{ kind: 'voices', settingFieldId: 'voice', allowCustom: false }],
@@ -609,7 +655,7 @@ describe('canonical Voice provider declarations', () => {
         fields: [{
           id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 512 },
           default: 'voice-default', presentation: { control: 'text' },
-        }],
+        }, reservedTtsFormatField],
       },
     };
 
@@ -642,7 +688,7 @@ describe('canonical Voice provider declarations', () => {
         fields: [{
           id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 512 },
           default: 'voice-default', presentation: { control: 'text' },
-        }],
+        }, reservedTtsFormatField],
       },
     };
 
@@ -741,7 +787,7 @@ describe('canonical Voice provider declarations', () => {
         fields: [{
           id: 'voiceName', title: 'Voice', schema: { type: 'string', minLength: 1, maxLength: 512 },
           default: 'voice-default', presentation: { control: 'text' },
-        }],
+        }, reservedTtsFormatField],
       },
     };
     expect(VoiceProviderContributionSchema.safeParse(contribution).success).toBe(true);

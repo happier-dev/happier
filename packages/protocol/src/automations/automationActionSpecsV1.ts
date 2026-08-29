@@ -511,8 +511,11 @@ export const AutomationEventSourceStatusReportV1Schema = z.discriminatedUnion('k
     sourceSelectorId: AutomationSourceSelectorIdV1Schema,
     state: AutomationEventSourceStatusStateV1Schema,
     code: AutomationEventSourceStatusCodeV1Schema,
-    lastObservedAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable(),
-    lastDispositionAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable(),
+    // Connection-health projections do not own occurrence history. Omitting
+    // these fields preserves the current-revision timestamps, while an
+    // occurrence report still supplies the exact nullable values it owns.
+    lastObservedAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable().optional(),
+    lastDispositionAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable().optional(),
     nextRetryAt: NONNEGATIVE_SAFE_INTEGER_SCHEMA.nullable(),
     observedDelta: NONNEGATIVE_SAFE_INTEGER_SCHEMA.max(100),
     admittedDelta: NONNEGATIVE_SAFE_INTEGER_SCHEMA.max(100),

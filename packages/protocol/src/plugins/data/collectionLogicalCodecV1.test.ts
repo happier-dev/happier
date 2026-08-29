@@ -78,6 +78,15 @@ describe('plugin Collection logical row codec', () => {
             attention: true,
           },
         },
+        {
+          kind: 'put',
+          expectedRevision: 7,
+          value: {
+            id: 'delivery-batch-current',
+            connectionId: 'connection-1',
+            attention: false,
+          },
+        },
         { kind: 'assert', rowId: 'delivery-batch-2', expectedRevision: 4 },
       ],
       encryptionMode: 'plain',
@@ -100,10 +109,21 @@ describe('plugin Collection logical row codec', () => {
             kind: 'put',
             rowId: 'delivery-batch-1',
             expectedRevision: 'absent',
+            expectedAbsenceEpoch: 0,
             projection: {
               connectionId: 'connection-1',
               bindingId: null,
               attention: true,
+            },
+          },
+          {
+            kind: 'put',
+            rowId: 'delivery-batch-current',
+            expectedRevision: 7,
+            projection: {
+              connectionId: 'connection-1',
+              bindingId: null,
+              attention: false,
             },
           },
           { kind: 'assert', rowId: 'delivery-batch-2', expectedRevision: 4 },
@@ -111,6 +131,8 @@ describe('plugin Collection logical row codec', () => {
       },
     });
     if (prepared.status !== 'prepared') return;
+    expect(prepared.request.operations[0]).toHaveProperty('expectedAbsenceEpoch', 0);
+    expect(prepared.request.operations[1]).not.toHaveProperty('expectedAbsenceEpoch');
     expect(prepared.encodedBytes).toBe(
       measurePluginCollectionMutationRequestEncodedBytesV1(prepared.request),
     );

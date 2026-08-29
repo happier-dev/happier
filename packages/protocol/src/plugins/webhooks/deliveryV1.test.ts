@@ -244,6 +244,11 @@ describe('PluginWebhookClaimResultV1Schema', () => {
     const result = {
       kind: 'delivery',
       deliveryId: 'delivery-1',
+      target: {
+        materialization: { machineId: 'machine-1', materializationId: 'materialization-1', pluginId: 'example.github' },
+        machineInstallationId: 'installation-1',
+      },
+      pluginVersion: 'plugin-version-1',
       endpoint: {
         webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
         revision: 3,

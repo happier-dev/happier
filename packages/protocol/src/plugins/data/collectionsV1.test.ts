@@ -236,6 +236,14 @@ describe('Plugin Account Collection contracts', () => {
       ...base,
       operations: [{ ...base.operations[0], expectedAbsenceEpoch: 0 }],
     }).success).toBe(true);
+    expect(PluginCollectionMutationRequestV1Schema.safeParse({
+      ...base,
+      operations: [{ ...base.operations[0], expectedRevision: 4 }],
+    }).success).toBe(true);
+    expect(PluginCollectionMutationRequestV1Schema.safeParse({
+      ...base,
+      operations: [{ ...base.operations[0], expectedRevision: 4, expectedAbsenceEpoch: 0 }],
+    }).success).toBe(false);
     expect(PluginCollectionForgetRequestV1Schema.safeParse({
       pluginId: 'example.tasks',
       collectionId: 'tasks',

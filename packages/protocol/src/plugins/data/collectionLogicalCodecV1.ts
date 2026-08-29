@@ -260,14 +260,27 @@ export function preparePluginCollectionLogicalMutationRequestV1<
       randomBytes: input.randomBytes,
     });
     if (encoded.status === 'failed') return encoded;
-    operations.push({
+    const put = {
       kind: 'put',
       rowId: encoded.rowId,
-      expectedRevision: operation.expectedRevision,
-      ...(operation.expectedRevision === 'absent' ? { expectedAbsenceEpoch: input.absenceEpoch } : {}),
       content: encoded.content,
       projection: encoded.projection,
-    });
+    } as const;
+    if (operation.expectedRevision === 'absent') {
+      if (input.absenceEpoch === undefined) {
+        return { status: 'failed', reason: 'mutation-request-invalid' };
+      }
+      operations.push({
+        ...put,
+        expectedRevision: 'absent',
+        expectedAbsenceEpoch: input.absenceEpoch,
+      });
+    } else {
+      operations.push({
+        ...put,
+        expectedRevision: operation.expectedRevision,
+      });
+    }
   }
   const request = PluginCollectionMutationRequestV1Schema.safeParse({
     pluginId: input.contract.pluginId,

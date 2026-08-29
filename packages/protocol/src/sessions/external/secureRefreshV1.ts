@@ -35,7 +35,7 @@ export type ExternalSessionRefreshCursorIdentityV1 = z.infer<
   typeof ExternalSessionRefreshCursorIdentityV1Schema
 >;
 const ExternalSessionRefreshBoundaryV1Schema = z.string().trim().min(1).max(2_000);
-const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
+export const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
   code: z.string().trim().min(1).max(128),
   severity: z.enum(['benign', 'required']),
   count: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -44,6 +44,9 @@ const ExternalSessionRefreshReadDiagnosticV1Schema = z.object({
   (diagnostic) => diagnostic.count >= diagnostic.positions.length,
   'Diagnostic count must cover every reported position.',
 );
+export type ExternalSessionRefreshReadDiagnosticV1 = z.infer<
+  typeof ExternalSessionRefreshReadDiagnosticV1Schema
+>;
 
 /**
  * Opaque routing/currentness identity shared by the content-free invalidation
@@ -189,6 +192,29 @@ export type ExternalSessionTranscriptRefreshApplicationDecisionV1 =
 
 const EMPTY_REFRESH_ITEMS = Object.freeze([]) as readonly [];
 
+/**
+ * The one read-after continuation decision, shared by the encrypted secure
+ * refresh exchange and the released direct-session read-after surface: a
+ * stalled cursor, an unfinished page stream, or a required diagnostic must
+ * resync instead of silently advancing the applied tail. Only a caller that
+ * has already classified the outcome as an `advanced` read consumes this; the
+ * envelope decision below owns that classification for the refresh contract.
+ */
+export function shouldResyncExternalSessionTranscriptReadAfterV1(params: Readonly<{
+  requestCursor: string;
+  nextCursor: string;
+  hasMore: boolean;
+  diagnostics?: readonly Readonly<{ severity: 'benign' | 'required' }>[];
+}>): boolean {
+  return params.nextCursor === params.requestCursor
+    || params.hasMore
+    || (
+      params.diagnostics?.some(
+        (diagnostic) => diagnostic.severity === 'required',
+      ) ?? false
+    );
+}
+
 export function externalSessionTranscriptRefreshBindingsEqualV1(
   left: ExternalSessionTranscriptRefreshBindingV1,
   right: ExternalSessionTranscriptRefreshBindingV1,
@@ -236,11 +262,12 @@ export function decideExternalSessionTranscriptRefreshApplicationV1(
   switch (response.result.outcome) {
     case 'advanced':
       if (
-        response.result.nextCursor === requestCursor
-        || response.result.hasMore
-        || response.result.diagnostics?.some(
-          (diagnostic) => diagnostic.severity === 'required',
-        )
+        shouldResyncExternalSessionTranscriptReadAfterV1({
+          requestCursor,
+          nextCursor: response.result.nextCursor,
+          hasMore: response.result.hasMore,
+          diagnostics: response.result.diagnostics,
+        })
       ) {
         return Object.freeze({
           kind: 'no_apply',

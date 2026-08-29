@@ -80,8 +80,10 @@ import {
   PluginsCapabilitiesSchema,
 } from './pluginsCapabilities.js';
 import { PluginDataCollectionsCapabilitiesSchema } from './pluginDataCollectionsCapabilities.js';
+import { AccountDirectoryCapabilitiesSchema } from './accountDirectoryCapabilities.js';
 
 export const CapabilitiesSchema = z.object({
+  accountDirectory: AccountDirectoryCapabilitiesSchema.optional(),
   accountStoredContentCompatibility:
     AccountStoredContentCompatibilityServerRequirementsV1Schema.optional(),
   bugReports: BugReportsCapabilitiesSchema.optional().default(DEFAULT_BUG_REPORTS_CAPABILITIES),
