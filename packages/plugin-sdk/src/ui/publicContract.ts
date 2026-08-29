@@ -120,7 +120,9 @@ export type PluginUiIconTokenV1 =
     | 'external'
     | 'forward'
     | 'more'
-    | 'search';
+    | 'search'
+    | 'change-open'
+    | 'change-complete';
 
 /** Protocol's sole producer-backed Host API vocabulary; never copied here. */
 export type PluginUiHostMethodV1 = ProtocolPluginUiHostMethodV1;
@@ -368,16 +370,23 @@ export type PluginUiNewSessionSeedV1 = {
      * `serverStartDraft` projection. This is deliberately not a singular
      * placement: callers with an ambiguous repository join cannot turn the
      * first candidate into an unattended launch.
+     *
+     * Readonly by contract: a seed is a caller-authored request, so a plugin
+     * hands over its own frozen candidate answers and keeps array ownership.
      */
-    candidates?: PluginUiSessionPlacementCandidateV1[];
+    candidates?: readonly PluginUiSessionPlacementCandidateV1[];
     /**
      * Composer attachments, as the AUTHOR half only — the same
      * `{ attachmentLocalId, value }` a live `attachment.add` carries. The host
      * qualifies the identity, resolves the type label and mints the instance id
      * when its New Session composer mounts, so a seed never holds an attachment
      * record and never becomes a second attachment owner.
+     *
+     * Readonly by contract: callers build these from their own readonly
+     * delivery plans and must not need a defensive array copy to seed the
+     * host's New Session screen.
      */
-    attachments?: { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
+    attachments?: readonly { attachmentLocalId: string; value: ComposerAttachmentAuthorValueV1 }[];
 };
 
 /** Input for the dedicated, navigation-owning `openNewSession` Host method. */

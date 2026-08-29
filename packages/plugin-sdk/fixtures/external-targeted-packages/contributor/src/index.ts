@@ -78,7 +78,7 @@ export const contributorProtocol = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: inspectionResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
     },
   },
   surfaces: {
@@ -293,7 +293,7 @@ export const contributorPlugin = definePlugin({
     'non-protocol-local-action': {
       title: 'Inspect an external source',
       execution: { target: 'daemon' },
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'ui'],
       inputSchema: inspectionInputSchema,
       resultSchema: inspectionResultSchema,
       run: async (input) => ({ inspected: true, entryId: input.entryId }),

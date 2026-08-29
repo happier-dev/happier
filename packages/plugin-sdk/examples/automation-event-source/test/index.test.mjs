@@ -27,14 +27,16 @@ test('emits a manifest accepted by canonical external-plugin ingestion', async (
   );
 
   // The setup binding survived canonical ingestion: same-plugin, exact setup
-  // Action reference, and the declared renderer chain intact.
+  // Action reference, and the declared renderer chain intact. Canonical
+  // ingestion returns frozen plain-data projections, so the structural
+  // comparison goes through the JSON round-trip rather than identity-of-kind.
   const source = parsed.manifest.contributes.events[0]?.automation?.source;
   assert.ok(source);
-  assert.deepEqual(source.setupActionRef, {
+  assert.deepEqual(JSON.parse(JSON.stringify(source.setupActionRef)), {
     pluginId: manifest.id,
     localId: 'setup-repository',
   });
-  assert.deepEqual(source.setupSurface, {
+  assert.deepEqual(JSON.parse(JSON.stringify(source.setupSurface)), {
     renderer: 'repository-picker',
     fallbackRenderers: ['repository-picker-fallback'],
   });

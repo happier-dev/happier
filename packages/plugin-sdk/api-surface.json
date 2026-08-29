@@ -6559,6 +6559,14 @@
     },
     {
       "specifier": "./connected-accounts",
+      "exportName": "ConnectedAccountServiceKey",
+      "kind": "type",
+      "sourceModule": "src/connectedAccounts.ts",
+      "sourceExport": "ConnectedAccountServiceKey",
+      "realm": "any"
+    },
+    {
+      "specifier": "./connected-accounts",
       "exportName": "ConnectedAccountState",
       "kind": "type",
       "sourceModule": "src/services/connectedAccounts.ts",
@@ -11007,6 +11015,14 @@
     },
     {
       "specifier": "./reviews",
+      "exportName": "ReviewCommentPublicationMarkerMatchV1",
+      "kind": "type",
+      "sourceModule": "src/reviews/comments.ts",
+      "sourceExport": "ReviewCommentPublicationMarkerMatchV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./reviews",
       "exportName": "ReviewCommentPublicationPlanV1",
       "kind": "type",
       "sourceModule": "src/reviews/comments.ts",
@@ -11043,6 +11059,14 @@
       "kind": "type",
       "sourceModule": "src/reviews/comments.ts",
       "sourceExport": "ReviewCommentPublicationRoutingV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./reviews",
+      "exportName": "ReviewCommentPublicationTargetExpectationV1",
+      "kind": "type",
+      "sourceModule": "src/reviews/comments.ts",
+      "sourceExport": "ReviewCommentPublicationTargetExpectationV1",
       "realm": "any"
     },
     {
@@ -11359,6 +11383,22 @@
     },
     {
       "specifier": "./reviews",
+      "exportName": "formatReviewCommentPublicationMarkerV1",
+      "kind": "value",
+      "sourceModule": "src/reviews/comments.ts",
+      "sourceExport": "formatReviewCommentPublicationMarkerV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./reviews",
+      "exportName": "matchReviewCommentPublicationMarkerV1",
+      "kind": "value",
+      "sourceModule": "src/reviews/comments.ts",
+      "sourceExport": "matchReviewCommentPublicationMarkerV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./reviews",
       "exportName": "parseReviewCommentPublicationPlanV1",
       "kind": "value",
       "sourceModule": "src/reviews/comments.ts",
@@ -11403,6 +11443,14 @@
       "kind": "value",
       "sourceModule": "src/reviews/comments.ts",
       "sourceExport": "reviewCommentPublicationEntryIsDiffLessV1",
+      "realm": "any"
+    },
+    {
+      "specifier": "./reviews",
+      "exportName": "reviewCommentPublicationTargetMatchesV1",
+      "kind": "value",
+      "sourceModule": "src/reviews/comments.ts",
+      "sourceExport": "reviewCommentPublicationTargetMatchesV1",
       "realm": "any"
     },
     {

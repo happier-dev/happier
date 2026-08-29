@@ -42,7 +42,7 @@ export const triageSourcesV1 = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: triageSourceInspectionResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
   surfaces: {

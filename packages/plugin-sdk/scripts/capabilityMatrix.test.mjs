@@ -348,7 +348,7 @@ test('declares session info sections with the maintained Channels resource autho
   });
 });
 
-test('derives targeted contribution availability through the maintained external-author consumer', () => {
+test('derives targeted contribution availability through the maintained external target/contributor fixture consumer', () => {
   const targetedContributionCatalogEntry = PLUGIN_CONTRIBUTION_CATALOG_V2.find(
     (entry) => entry.manifestKey === 'targetedPluginContributions',
   );
@@ -367,9 +367,9 @@ test('derives targeted contribution availability through the maintained external
     specialistOwner: 'packages/protocol/src/plugins/contributions/catalog.ts#targetedPluginContributions',
     predecessorRemoval: `catalog-disposition:${targetedContributionCatalogEntry.disposition}`,
     availabilityDisposition: 'available',
-    provingConsumer: 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts',
+    provingConsumer: 'packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts',
     sourceApiAvailability: 'present',
-    sourceConsumer: 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts',
+    sourceConsumer: 'packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts',
     loadedPlatformProof: 'not-recorded',
     releaseAvailability: 'not-published',
   });
@@ -881,7 +881,7 @@ test('selects each distinct available proving-consumer source path for package s
   assert.equal(Object.isFrozen(paths), true);
 });
 
-test('stages the maintained external author proof for available browser and request-policy capability rows', async () => {
+test('stages the maintained external author proof for available browser, request-policy, and targeted-contribution capability rows', async () => {
   const packageRoot = resolve(import.meta.dirname, '..');
   const paths = await resolveAvailableCapabilityMatrixProvingConsumerSourcePaths({ packageRoot });
 
@@ -893,6 +893,8 @@ test('stages the maintained external author proof for available browser and requ
   assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/out-of-tree-channel-socket-provider/src/index.mjs'), true);
   assert.equal(paths.includes('packages/tests/fixtures/plugin-platform/packed-targeted-contribution-projection/public-protocol.ts'), true);
   assert.equal(paths.includes('packages/plugin-sdk/examples/action-contract-producer/src/index.ts'), true);
+  assert.equal(paths.includes('packages/plugin-sdk/fixtures/external-targeted-packages/target/src/index.ts'), true);
+  assert.equal(paths.includes('packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts'), true);
   assert.equal(new Set(paths).size, paths.length);
   assert.deepEqual(paths, [...paths].sort());
 });

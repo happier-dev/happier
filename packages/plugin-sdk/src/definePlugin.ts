@@ -1209,10 +1209,12 @@ function projectAction(localId: string, definition: PluginActionDefinition): Act
         : [...surfaces];
     // A programmatic Action has no human destination, so supplying a human
     // placement binding for it makes the serialized declaration claim a UI
-    // destination it cannot use. The placement vocabulary has no empty value —
-    // `placementBindings` is `min(1)` — so an author cannot take a manufactured
-    // one back, which is why the decision is made from the declared surfaces
-    // rather than defaulted and overridden.
+    // destination it cannot use. An author's explicit empty list is the
+    // canonical mounted-UI-only decision and is preserved on the wire exactly;
+    // only omission on a human-invocable Action takes the author-friendly
+    // command-palette default, and programmatic omission projects no placement
+    // decision at all. The Protocol grammar rejects a raw UI declaration that
+    // omitted the decision, so this default is the sole placement inference.
     const projectedPlacementBindings = placementBindings ?? (
         projectedSurfaces.some((surface) => HUMAN_INVOCATION_ACTION_SURFACES.has(surface))
             ? ['commandPalette']

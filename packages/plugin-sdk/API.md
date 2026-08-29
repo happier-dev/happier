@@ -764,6 +764,7 @@
 | `./connected-accounts` | `ConnectedAccountRuntime` | type | any |
 | `./connected-accounts` | `ConnectedAccountRuntimeConfiguration` | type | daemon |
 | `./connected-accounts` | `ConnectedAccountRuntimeConfigurationTarget` | type | daemon |
+| `./connected-accounts` | `ConnectedAccountServiceKey` | type | any |
 | `./connected-accounts` | `ConnectedAccountState` | type | daemon |
 | `./connected-accounts` | `ConnectedAccountsService` | type | any |
 | `./connected-accounts` | `ConnectedServiceCredentialRecordV1` | type | any |
@@ -1308,11 +1309,13 @@
 | `./reviews` | `ReviewCommentPublicationCorrelationV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationEntryResultV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationEntryV1` | type | any |
+| `./reviews` | `ReviewCommentPublicationMarkerMatchV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationPlanV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationPlanV1ProtocolSchema` | value | any |
 | `./reviews` | `ReviewCommentPublicationResultV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationResultV1ProtocolSchema` | value | any |
 | `./reviews` | `ReviewCommentPublicationRoutingV1` | type | any |
+| `./reviews` | `ReviewCommentPublicationTargetExpectationV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationTargetV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationVerdictResultV1` | type | any |
 | `./reviews` | `ReviewCommentPublicationVerdictV1` | type | any |
@@ -1352,12 +1355,15 @@
 | `./reviews` | `createReviewCommentLinkedIssueIdV1` | value | any |
 | `./reviews` | `defineReviewCommentRevisionedPublicationPlanV1ProtocolSchema` | value | any |
 | `./reviews` | `defineReviewCommentRevisionedSingleEntryPublicationPlanV1ProtocolSchema` | value | any |
+| `./reviews` | `formatReviewCommentPublicationMarkerV1` | value | any |
+| `./reviews` | `matchReviewCommentPublicationMarkerV1` | value | any |
 | `./reviews` | `parseReviewCommentPublicationPlanV1` | value | any |
 | `./reviews` | `parseReviewFindingsV2` | value | daemon |
 | `./reviews` | `preflightReviewCommentPublicationRoutingV1` | value | any |
 | `./reviews` | `produceScmPullRequestReviewScope` | value | daemon |
 | `./reviews` | `redactReviewCommentSensitiveText` | value | any |
 | `./reviews` | `reviewCommentPublicationEntryIsDiffLessV1` | value | any |
+| `./reviews` | `reviewCommentPublicationTargetMatchesV1` | value | any |
 | `./reviews` | `validateReviewCommentPublicationClaimAgainstPlanV1` | value | any |
 | `./reviews` | `validateReviewCommentPublicationResultAgainstPlanV1` | value | any |
 | `./scm` | `ParsedScmRemoteUrl` | type | any |

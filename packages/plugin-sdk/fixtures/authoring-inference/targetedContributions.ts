@@ -22,7 +22,7 @@ const providersV1 = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
 });
@@ -35,7 +35,7 @@ const providersV2 = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
 });

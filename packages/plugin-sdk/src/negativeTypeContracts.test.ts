@@ -101,6 +101,11 @@ describe('SDK negative type contracts', () => {
                 guardedDeclaration: 'void clientApi.hooks;',
             },
             {
+                fileName: 'actions/actionContracts.test.ts',
+                reason: "The contract's declaration requires a title string.",
+                guardedDeclaration: "void actions.execute(contract, { id: 'release-1' });",
+            },
+            {
                 fileName: 'agentRuntimeSurfaceContract.ts',
                 reason: 'CORE.T2A: RuntimeCoreV1 is a retired shadow runtime ABI.',
                 guardedDeclaration: "import type { RuntimeCoreV1 } from './agent-runtime.js';",
@@ -139,6 +144,11 @@ describe('SDK negative type contracts', () => {
                 fileName: 'agentUiGrammar.contract.test-d.ts',
                 reason: 'only the `static` spawn-extras form is authorable.',
                 guardedDeclaration: "payload: { spawnSessionExtras: { kind: 'adapter', adapterId: 'codex.backendMode' } },",
+            },
+            {
+                fileName: 'agentUiGrammar.contract.test-d.ts',
+                reason: 'static spawn configuration is scalar-only.',
+                guardedDeclaration: 'value: { acmeMode: { nested: true } },',
             },
             {
                 fileName: 'agentUiGrammar.contract.test-d.ts',
@@ -240,7 +250,7 @@ describe('SDK negative type contracts', () => {
                 message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),
             }));
 
-        expect(cases).toHaveLength(297);
+        expect(cases).toHaveLength(298);
         expect(syntacticDiagnostics.map((diagnostic) => ({
             fileName: diagnostic.file?.fileName ?? '<global>',
             message: ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'),

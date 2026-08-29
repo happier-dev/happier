@@ -37,7 +37,7 @@ import {
   projectPreparedDeclarationSurface,
 } from '../../../scripts/api-governance/emittedDeclarationSurface.mjs';
 import { assertVendoredWorkspaceDeclarationsAreCurrent } from './vendoredWorkspaceDeclarations.mjs';
-import { summarizeDeclarationDiff } from '../../../scripts/api-governance/declarationDiff.mjs';
+import { renderDeclarationDiffSample, summarizeDeclarationDiff } from '../../../scripts/api-governance/declarationDiff.mjs';
 import { parseStructuredDeprecationTags } from '../../../scripts/api-governance/structuredDeprecation.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -2436,7 +2436,7 @@ async function finalizeApiSurfaceMaterialization(
       changed: output.changed,
       written: options.write && output.changed,
       summary: output.relativePath === PUBLIC_DECLARATION_REPORT_PATH
-        ? summarizeDeclarationDiff(output.originalContents, output.contents)
+        ? renderDeclarationDiffSample(summarizeDeclarationDiff(output.originalContents, output.contents))
         : Object.freeze([]),
     }))),
     generationPlan,

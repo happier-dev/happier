@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import { PUBLIC_TOOLCHAIN_COMPATIBILITY_V1 } from '@happier-dev/plugin-sdk/browser';
 
@@ -7,7 +8,7 @@ const repositoryInputSchema = {
   properties: { repository: { type: 'string', minLength: 1 } },
   required: ['repository'],
   additionalProperties: false,
-} as const;
+} satisfies PluginJsonSchema;
 
 export const { manifest, activate } = definePlugin({
   id: 'examples.automation-event-source',
@@ -31,13 +32,18 @@ export const { manifest, activate } = definePlugin({
         fields: [{ path: 'repository', title: 'Repository', widget: 'text', required: true }],
       },
       resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, repositoryInputSchema),
-      run: async (input: Readonly<{ repository: string }>) => ({
-        v: 1 as const,
-        sourceInstanceId: input.repository,
-        sourceContractVersion: 1 as const,
-        sourceConfig: { repository: input.repository },
-        displayLabel: input.repository,
-      }),
+      run: async (input) => {
+        // The host validates this input against `inputSchema` before dispatch;
+        // the narrowing below mirrors that admitted shape.
+        const { repository } = input as Readonly<{ repository: string }>;
+        return {
+          v: 1,
+          sourceInstanceId: repository,
+          sourceContractVersion: 1,
+          sourceConfig: { repository },
+          displayLabel: repository,
+        };
+      },
     },
   },
   events: {

@@ -10,9 +10,11 @@ import {
   defineProtocolUnion,
 } from '../../src/protocol/index.js';
 import type {
+  ActionContract,
   AdmittedTargetedOperationExecutionHandle,
   ActionsService,
   ContributedActionExecutionWithOriginOptions,
+  ContributedActionExecutionWithOriginResult,
   PluginActionInputById,
   PluginActionResultById,
   PluginInvocableActionId,
@@ -123,11 +125,17 @@ class ActionsBoundaryFixture implements ActionsService {
     });
   }
 
-  async executeWithExecutionOrigin(
-    action: FixtureContributionRef,
-    input: JsonValue,
-    options?: FixtureCancellationOptions,
-  ) {
+  async executeWithExecutionOrigin<TRef extends FixtureContributionRef>(
+    action: TRef,
+    input: NoInfer<
+      TRef extends ActionContract<infer TInput, JsonValue | void> ? TInput : JsonValue
+    >,
+    options?: ContributedActionExecutionWithOriginOptions,
+  ): Promise<
+    ContributedActionExecutionWithOriginResult<
+      TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void
+    >
+  > {
     const result = await this.execute(action, input, options);
     return Object.freeze({
       result: result ?? null,
@@ -139,7 +147,9 @@ class ActionsBoundaryFixture implements ActionsService {
           materializationId: `materialization-${action.pluginId}`,
         }),
       }),
-    });
+    }) as ContributedActionExecutionWithOriginResult<
+      TRef extends ActionContract<JsonValue, infer TResult> ? TResult : JsonValue | void
+    >;
   }
 
   async executeAdmittedTargetedOperation<TInput extends JsonValue, TResult extends JsonValue | void>(

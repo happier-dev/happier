@@ -18,7 +18,7 @@ const protocol = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
 });

@@ -49,6 +49,17 @@ describe('author signature closure source contract', () => {
         );
     });
 
+    it('publishes every named type referenced by Connected Account and review helper signatures', async () => {
+        const [connectedAccountsPublicSource, reviewsPublicSource] = await Promise.all([
+            readFile(new URL('./connected-accounts/index.public.ts', import.meta.url), 'utf8'),
+            readFile(new URL('./reviews/index.public.ts', import.meta.url), 'utf8'),
+        ]);
+
+        expect(connectedAccountsPublicSource).toContain('ConnectedAccountServiceKey');
+        expect(reviewsPublicSource).toContain('ReviewCommentPublicationMarkerMatchV1');
+        expect(reviewsPublicSource).toContain('ReviewCommentPublicationTargetExpectationV1');
+    });
+
     it('names targeted-contribution selector signatures through Protocol-owned public aliases', async () => {
         const [publicContractText, uiPublicSource] = await Promise.all([
             readFile(new URL('./ui/publicContract.ts', import.meta.url), 'utf8'),

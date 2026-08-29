@@ -460,6 +460,59 @@ test('keeps every generated example and external-fixture package dependency on t
   assert.equal(current.status, 0, current.stderr);
 });
 
+test('leaves materialized dependencies and managed build operations outside the generated package owner', async () => {
+  const root = await createFixtureRoot();
+  const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });
+  const outputPath = join(root, 'packages', 'plugin-sdk', 'src', 'ui', 'build', 'publicToolchainCompatibility.generated.ts');
+  await mkdir(join(outputPath, '..'), { recursive: true });
+  await writeFile(outputPath, renderPublicToolchainCompatibilityModule(packet), 'utf8');
+
+  const installedPackagePath = join(
+    root,
+    'packages',
+    'plugin-sdk',
+    'examples',
+    'current-source',
+    'node_modules',
+    'zod',
+    'locales',
+    'package.json',
+  );
+  const installedBytes = `${JSON.stringify({
+    name: 'zod-locales-installed-copy',
+    dependencies: { react: 'materialized-owner-version' },
+  }, null, 2)}\n`;
+  await mkdir(join(installedPackagePath, '..'), { recursive: true });
+  await writeFile(installedPackagePath, installedBytes, 'utf8');
+  const operationPackagePath = join(
+    root,
+    'packages',
+    'plugin-sdk',
+    'examples',
+    'current-source',
+    '.happier-plugin-ui-build-operation',
+    'package.json',
+  );
+  const operationBytes = `${JSON.stringify({
+    private: true,
+    name: 'happier-plugin-ui-build-operation',
+  }, null, 2)}\n`;
+  await mkdir(join(operationPackagePath, '..'), { recursive: true });
+  await writeFile(operationPackagePath, operationBytes, 'utf8');
+
+  const write = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--write'], {
+    encoding: 'utf8',
+  });
+  assert.equal(write.status, 0, write.stderr);
+  assert.equal(await readFile(installedPackagePath, 'utf8'), installedBytes);
+  assert.equal(await readFile(operationPackagePath, 'utf8'), operationBytes);
+
+  const current = spawnSync(process.execPath, [GENERATOR_PATH, '--repo-root', root, '--check'], {
+    encoding: 'utf8',
+  });
+  assert.equal(current.status, 0, current.stderr);
+});
+
 test('adds project-local TypeScript for every package using the managed Plugin UI builder', async () => {
   const root = await createFixtureRoot();
   const packet = await derivePublicToolchainCompatibilityV1({ repoRoot: root });

@@ -14,9 +14,11 @@ import type {
     ReviewCommentPublicationEntryV1,
     ReviewCommentPublicationEntryResultV1,
     ReviewCommentPublicationPlanV1,
+    ReviewCommentPublicationMarkerMatchV1,
     ReviewCommentPublicationResultV1,
     ReviewCommentPublicationRoutingV1,
     ReviewCommentPublicationTargetV1,
+    ReviewCommentPublicationTargetExpectationV1,
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 } from '@happier-dev/protocol';
@@ -499,9 +501,11 @@ export type {
     ReviewCommentPublicationEntryV1,
     ReviewCommentPublicationEntryResultV1,
     ReviewCommentPublicationPlanV1,
+    ReviewCommentPublicationMarkerMatchV1,
     ReviewCommentPublicationResultV1,
     ReviewCommentPublicationRoutingV1,
     ReviewCommentPublicationTargetV1,
+    ReviewCommentPublicationTargetExpectationV1,
     ReviewCommentPublicationVerdictV1,
     ReviewCommentPublicationVerdictResultV1,
 };

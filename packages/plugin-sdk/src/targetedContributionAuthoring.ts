@@ -94,7 +94,7 @@ type ProjectedContributionOperation = Readonly<{
         | Readonly<{ kind: 'protocolDefined'; schema: PluginJsonSchema }>;
     resultSchema: PluginJsonSchema;
     action: Readonly<{
-        surface: ContributionActionSurface;
+        surfaces: readonly ContributionActionSurface[];
         dangerLevel: ContributionActionDangerLevel;
     }>;
 }>;
@@ -125,7 +125,7 @@ export type ContributionProtocolManifest = Readonly<{
             | Readonly<{ kind: 'protocolDefined'; schema: PluginJsonSchema }>;
         resultSchema: PluginJsonSchema;
         action: Readonly<{
-            surface: ContributionActionSurface;
+            surfaces: readonly ContributionActionSurface[];
             dangerLevel: ContributionActionDangerLevel;
         }>;
     }>>>;
@@ -158,7 +158,11 @@ export type DescriptorFields<TDescriptorSchema> =
         ? Readonly<{ descriptor: ReturnType<TDescriptorSchema['parse']> }>
         : Readonly<{ descriptor?: never }>;
 
-/** The Action presentation surface accepted by one cross-plugin operation role. */
+/**
+ * The Action presentation surface accepted by one cross-plugin operation role.
+ * SDK targeted authoring exposes the runtime-supported surfaces; the broader
+ * manifest Action vocabulary (including `voice`) remains Protocol-owned.
+ */
 export type ContributionActionSurface = 'cli' | 'mcp' | 'agent' | 'ui' | 'plugin';
 
 /** The side-effect level accepted by one cross-plugin operation role. */
@@ -199,7 +203,9 @@ export type ContributionSurfaceIcon =
     | 'external'
     | 'forward'
     | 'more'
-    | 'search';
+    | 'search'
+    | 'change-open'
+    | 'change-complete';
 
 /**
  * The one state-node form a symbolic contribution surface can carry as a
@@ -229,7 +235,7 @@ export type ContributionOperationDefinition<
         }>;
     resultSchema: ProtocolComposableSchema<JsonValue, TResult>;
     action: Readonly<{
-        surface: ContributionActionSurface;
+        surfaces: readonly [ContributionActionSurface, ...ContributionActionSurface[]];
         dangerLevel: ContributionActionDangerLevel;
     }>;
 }>;
@@ -423,7 +429,7 @@ export type ContributionOperationRole<
         input: TOperation['input'];
         resultSchema: TOperation['resultSchema'];
         dangerLevel: TOperation['action']['dangerLevel'];
-        surfaces: readonly [TOperation['action']['surface']];
+        surfaces: TOperation['action']['surfaces'];
     }>;
     bind<TActionLocalId extends string>(actionLocalId: TActionLocalId): TActionLocalId;
 }>;
@@ -696,7 +702,7 @@ function projectOperation(operation: ContributionOperationDefinition): Projected
         input,
         resultSchema: requireExecutableProtocolSchema(operation.resultSchema, 'Operation result schema').jsonSchema,
         action: Object.freeze({
-            surface: operation.action.surface,
+            surfaces: Object.freeze([...operation.action.surfaces]),
             dangerLevel: operation.action.dangerLevel,
         }),
     });
@@ -741,6 +747,8 @@ function readRuntimeProtocolIdentity(value: unknown): Readonly<{
 }
 
 function isContributionActionSurface(value: unknown): value is ContributionActionSurface {
+    // Runtime-supported targeted-authoring surfaces only; `voice` remains part
+    // of the Protocol-owned manifest Action vocabulary.
     return value === 'cli'
         || value === 'mcp'
         || value === 'agent'
@@ -771,8 +779,8 @@ function readStructuralContributionOperation(
         || !isSemanticRecord(rawInput)
         || !isContributionActionDangerLevel(dangerLevel)
         || !Array.isArray(surfaces)
-        || surfaces.length !== 1
-        || !isContributionActionSurface(surfaces[0])) {
+        || surfaces.length === 0
+        || !surfaces.every(isContributionActionSurface)) {
         return null;
     }
 
@@ -801,9 +809,10 @@ function readStructuralContributionOperation(
     } catch {
         return null;
     }
-    const surface = surfaces[0];
-    if (!isContributionActionSurface(surface)) return null;
-    const action = Object.freeze({ surface, dangerLevel });
+    const action = Object.freeze({
+        surfaces: Object.freeze([...surfaces]),
+        dangerLevel,
+    });
     return Object.freeze({
         required,
         input,
@@ -1034,6 +1043,9 @@ export function defineContributionProtocol<
             projectOperation(operation),
         ]),
     )) as Readonly<Record<string, ProjectedContributionOperation>>;
+    // Validate the changed operation carrier at its canonical parser without
+    // broadening this cut into unrelated protocol-level authoring semantics.
+    PluginContributionPointProtocolV1Schema.shape.operations.parse(projectedOperations);
     const projectedSurfaces = definition.surfaces === undefined
         ? undefined
         : Object.freeze(Object.fromEntries(Object.entries(definition.surfaces).map(([role, surface]) => [
@@ -1056,7 +1068,7 @@ export function defineContributionProtocol<
                 input,
                 resultSchema: requireExecutableProtocolSchema(operation.resultSchema, 'Operation result schema'),
                 dangerLevel: operation.action.dangerLevel,
-                surfaces: Object.freeze([operation.action.surface]),
+                surfaces: Object.freeze([...operation.action.surfaces]),
             });
             return [role, Object.freeze({
                 declaration,

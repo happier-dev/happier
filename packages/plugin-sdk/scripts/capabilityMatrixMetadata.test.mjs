@@ -6,8 +6,8 @@ import test from 'node:test';
 import { CAPABILITY_MATRIX_DECLARATIONS_V1 } from './capabilityMatrixMetadata.mjs';
 
 const EXTERNAL_AUTHOR_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
-const EXTERNAL_TARGET_PROOF = 'packages/plugin-sdk/examples/action-contract-producer/src/index.ts';
-const EXTERNAL_CONTRIBUTOR_PROOF = 'packages/plugin-sdk/examples/action-contract-consumer/src/index.ts';
+const EXTERNAL_TARGET_PROOF = 'packages/plugin-sdk/fixtures/external-targeted-packages/target/src/index.ts';
+const EXTERNAL_CONTRIBUTOR_PROOF = 'packages/plugin-sdk/fixtures/external-targeted-packages/contributor/src/index.ts';
 const EXTERNAL_COMPOSER_AUTHOR_PROOF = 'packages/plugin-ui/fixtures/external-authoring/src/index.ts';
 const TRIAGE_COMPOSER_PROOF = 'packages/plugins/triage/src/manifest.ts';
 const CHANNELS_COMPOSER_PROOF = 'packages/plugins/channels/src/manifest.ts';
@@ -195,7 +195,7 @@ test('records current Composer and Session-header source consumers without promo
   );
 });
 
-test('attributes contribution-point and targeted-contribution availability to the maintained external-author example pair', () => {
+test('attributes contribution-point and targeted-contribution availability to the maintained external target/contributor fixture pair', async () => {
   assert.deepEqual(CAPABILITY_MATRIX_DECLARATIONS_V1.manifestFamilies.pluginContributionPoints, {
     availabilityDisposition: 'available',
     provingConsumer: EXTERNAL_TARGET_PROOF,
@@ -204,4 +204,21 @@ test('attributes contribution-point and targeted-contribution availability to th
     availabilityDisposition: 'available',
     provingConsumer: EXTERNAL_CONTRIBUTOR_PROOF,
   });
+
+  // The staged proof must be the physically independent external target and
+  // contributor sources: the target owns descriptor and embedded-surface
+  // roles and the contributor binds them through the same public protocol
+  // value, which is exactly the r0.69 Developer Preview tier the matrix row
+  // advertises.
+  const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
+  const [target, contributor] = await Promise.all([
+    readFile(resolve(repoRoot, EXTERNAL_TARGET_PROOF), 'utf8'),
+    readFile(resolve(repoRoot, EXTERNAL_CONTRIBUTOR_PROOF), 'utf8'),
+  ]);
+  assert.match(target, /defineContributionPoint\(/u);
+  assert.match(target, /descriptor:\s*\w+Schema,/u);
+  assert.match(target, /surfaces:\s*\{/u);
+  assert.match(contributor, /defineContributionProtocol\(/u);
+  assert.match(contributor, /contributesTo:/u);
+  assert.match(contributor, /surfaces:\s*\{/u);
 });

@@ -97,7 +97,7 @@ export const targetProtocol = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: inspectionResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
     },
   },
   surfaces: {
@@ -137,7 +137,7 @@ const targetProtocolV2 = defineContributionProtocol({
       required: true,
       input: { kind: 'contributorDefined' },
       resultSchema: deliverResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
 });
@@ -190,7 +190,7 @@ export const sourceContributor = definePlugin({
     'source-only-inspect': {
       title: 'Inspect a source-only contribution',
       execution: { target: 'daemon' },
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'ui'],
       inputSchema: inspectionInputSchema,
       resultSchema: inspectionResultSchema,
       run: async (input) => ({ inspected: true, entryId: input.entryId }),

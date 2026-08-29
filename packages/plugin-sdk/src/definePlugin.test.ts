@@ -1533,6 +1533,26 @@ describe('definePlugin', () => {
         ]);
     });
 
+    it('preserves an explicit empty mounted-only placement while preserving nonempty placements', () => {
+        const plugin = definePlugin({
+            id: 'example.mounted-ui-action',
+            version: '0.1.0',
+            actions: {
+                inspect: {
+                    title: 'Inspect mounted detail',
+                    execution: { target: 'daemon' },
+                    surfaces: ['ui'],
+                    placementBindings: [],
+                    run: async () => undefined,
+                },
+            },
+        });
+
+        const [inspect] = plugin.manifest.contributes.actions ?? [];
+        expect(inspect).toMatchObject({ id: 'inspect', surfaces: ['ui'] });
+        expect(inspect?.placementBindings).toEqual([]);
+    });
+
     it('projects one Action through every declared semantic Composer and message placement in order', () => {
         const plugin = definePlugin({
             id: 'example.composer-action',
@@ -3053,7 +3073,7 @@ void 0; /* @sdk-negative-type-case-end */
                         input: { kind: 'contributorDefined' },
                         // A raw JSON Schema is manifest data, not executable authoring input.
                         resultSchema: { jsonSchema: { type: 'object' } },
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
             });
@@ -3080,7 +3100,7 @@ void 0; /* @sdk-negative-type-case-end */
                         required: true,
                         input: { kind: 'contributorDefined' },
                         resultSchema: incompleteComposableSchema,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
             });
@@ -3132,7 +3152,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3155,7 +3175,7 @@ void 0; /* @sdk-negative-type-case-end */
                         required: true,
                         input: { kind: 'contributorDefined' },
                         resultSchema: contributionResultSchema,
-                        action: { surface: 'plugin', dangerLevel: 'safe' },
+                        action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                     },
                 },
             }), id).toThrow();
@@ -3167,7 +3187,7 @@ void 0; /* @sdk-negative-type-case-end */
             required: true,
             input: { kind: 'contributorDefined' as const },
             resultSchema: contributionResultSchema,
-            action: { surface: 'plugin' as const, dangerLevel: 'safe' as const },
+            action: { surfaces: ['plugin'] as const, dangerLevel: 'safe' as const },
         };
 
         const protocol = defineContributionProtocol({
@@ -3213,7 +3233,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'protocolDefined', schema: setupInputSchema },
                     resultSchema: setupResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3325,7 +3345,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3382,7 +3402,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3471,13 +3491,13 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'protocolDefined', schema: connectionTestInputSchema },
                     resultSchema: connectionTestResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'writesRemote' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'writesRemote' },
                 },
                 setup: {
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3571,7 +3591,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
             surfaces: {
@@ -3832,7 +3852,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3844,7 +3864,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3856,7 +3876,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3868,7 +3888,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -3880,7 +3900,7 @@ void 0; /* @sdk-negative-type-case-end */
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: contributionResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });

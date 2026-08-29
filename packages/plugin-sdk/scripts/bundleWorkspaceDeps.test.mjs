@@ -178,8 +178,8 @@ test('plugin-sdk keeps publication preparation separate from ordinary source val
   assert.doesNotMatch(packageJson.scripts['test:local:adjacent'], /bundleWorkspaceDeps|prepare:declarations/u);
   assert.match(
     packageJson.scripts['test:local:adjacent'],
-    /^yarn --cwd examples\/public-authoring build && node --test .*examples\/public-authoring\/test\/index\.test\.mjs/u,
-    'the managed public-authoring build must immediately precede its dist-import test in the SDK unit lane',
+    /^yarn --cwd examples\/automation-event-source build && yarn --cwd examples\/action-contract-producer build && yarn --cwd examples\/public-authoring build && node --test .*examples\/public-authoring\/test\/index\.test\.mjs/u,
+    'the managed build for every dist-importing example must immediately precede the SDK unit lane test batch',
   );
   assert.equal(
     packageJson.scripts['typecheck:source'],

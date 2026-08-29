@@ -102,6 +102,7 @@ const VOICE_PUBLIC_EXPORTS_BY_ENTRYPOINT = Object.freeze({
   './voice': Object.freeze([
     'ConnectedAccountHttpHeadersRequest',
     'PluginVoiceProviderDefinition',
+    'RegisteredVoiceProviderRuntime',
     'VoiceAccountOperationService',
     'VoiceAvailabilityPlatform',
     'VoiceCredentialAccess',
@@ -1468,6 +1469,29 @@ test('plans the capability matrix through the same atomic output corridor', asyn
   assert.equal(capabilityFile?.path, 'capability-matrix.json');
   assert.equal(typeof capabilityFile?.changed, 'boolean');
   assert.equal(capabilityFile?.written, false);
+});
+
+test('the finite governance transaction fails on capability-matrix-only drift', async () => {
+  const packageRoot = resolve(import.meta.dirname, '..');
+  const matrixPath = join(packageRoot, 'capability-matrix.json');
+  const tracked = await readFile(matrixPath, 'utf8');
+  // Mutate only the tracked matrix bytes; every declaration input stays untouched.
+  await writeFile(matrixPath, `${tracked}\n`, 'utf8');
+  try {
+    const drift = await runApiSurfaceCli({ packageRoot, write: false, check: true });
+    assert.equal(drift.status, 'drift');
+    const matrixFile = drift.files.find((file) => file.owner === 'capabilityMatrix');
+    assert.equal(matrixFile?.path, 'capability-matrix.json');
+    assert.equal(matrixFile?.changed, true);
+  } finally {
+    await writeFile(matrixPath, tracked, 'utf8');
+  }
+
+  const restored = await runApiSurfaceCli({ packageRoot, write: false, check: true });
+  assert.equal(
+    restored.files.find((file) => file.owner === 'capabilityMatrix')?.changed,
+    false,
+  );
 });
 
 test('plans the public declaration record through the same atomic output corridor', async () => {
@@ -4064,6 +4088,13 @@ test('current Actions canonical source does not reach its generated entrypoint b
     await writeFixtureFile(root, 'src/host/fs/json-owner-file-lock/index.public.ts', [
       "export { reclaimJsonOwnerFileLockSnapshot } from '../../../apiSurfaceLockProbe.js';",
       "export { withJsonOwnerFileLock } from '../../../apiSurfaceLockProbe.js';",
+      '',
+    ].join('\n'));
+    // The fixture declares four entrypoints and publication specs are the
+    // topology owner, so ./host/ui needs its own spec after the sweep above.
+    await writeFixtureFile(root, 'src/host/ui/index.public.ts', [
+      "export { decodePluginUiClipboardReadResult, decodePluginUiResourceContent } from './hostApiCodecs.js';",
+      "export type { PluginUiHostApiDecodeResult } from './hostApiCodecs.js';",
       '',
     ].join('\n'));
     const result = runJsonCli(root, ['--write']);

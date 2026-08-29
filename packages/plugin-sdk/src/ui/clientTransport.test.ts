@@ -26,7 +26,9 @@ const identity = {
 } as const;
 
 const preparedOperation = {
-    point: { pointId: 'triage.sources', protocol: { id: 'triage.sources', version: 1 } },
+    // Grammar-valid local id: the Protocol contribution-id grammar admits
+    // lower-case alphanumerics with `-`/`/` separators, not dots.
+    point: { pointId: 'sources', protocol: { id: 'sources', version: 1 } },
     contributor: {
         pluginId: 'happier.scm.github',
         contributionId: 'github',
@@ -1869,6 +1871,91 @@ describe('plugin UI domain client transport adapter', () => {
         controller.abort();
         await expect(operation).rejects.toMatchObject({ code: 'aborted' });
         expect(sent.map((message) => message.kind)).toEqual(['negotiate', 'request', 'cancel']);
+    });
+
+    // The hosted-web carrier settles caller withdrawal promptly for EVERY
+    // method — this matrix pins that policy across the settlement families
+    // (an outward navigation, an Action execution, a Composer transaction, a
+    // decision, a read, and an outward effect), mirroring the direct RN
+    // carrier's matrix so neither carrier can regress to a per-method
+    // allowlist. Probes are named here but classified by the canonical
+    // outward-effect owner on the RN side; this client has no per-method
+    // settlement policy to duplicate.
+    it.each([
+        {
+            method: 'openNewSession',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.openNewSession({ prompt: 'Repair CI' }, { signal }),
+        },
+        {
+            method: 'executeAction',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.executeAction('slow-action', null, { signal }),
+        },
+        {
+            method: 'applyComposer',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.applyComposer(
+                    { kind: 'session', sessionId: 'session-1' },
+                    { expectedRevision: 3, operations: [{ kind: 'text.clear' }] },
+                    { signal },
+                ),
+        },
+        {
+            method: 'confirm',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.confirm('Delete the preview?', { signal }),
+        },
+        {
+            method: 'readResource',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.readResource('plugin.preview.resource', { signal }),
+        },
+        {
+            method: 'openSurface',
+            invoke: (api: Awaited<ReturnType<typeof createPluginUiHostApiClientFromTransport>>, signal: AbortSignal) =>
+                api.openSurface('plugin.preview.details', undefined, { signal }),
+        },
+    ] as const)('cancels a parked $method at caller withdrawal and ignores the late host answer', async ({ method, invoke }) => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const controller = new AbortController();
+        let requestSequence = 0;
+        const api = await createPluginUiHostApiClientFromTransport({
+            identity,
+            createRequestId: () => `withdrawal-${method}-${++requestSequence}`,
+            transport: {
+                subscribe(listener) { receive = listener; return { dispose: () => undefined }; },
+                send(message) {
+                    sent.push(message);
+                    if (message.kind === 'negotiate') {
+                        receive?.({
+                            wireVersion: 1, kind: 'negotiated', identity, apiVersion: '1.0.0',
+                            methods: ['openNewSession', 'executeAction', 'applyComposer', 'confirm', 'readResource', 'openSurface'],
+                            surface,
+                        });
+                    }
+                },
+            },
+        });
+
+        const operation = invoke(api, controller.signal);
+        controller.abort();
+        await expect(operation).rejects.toMatchObject({ code: 'aborted' });
+
+        // Withdrawal is forwarded to the host beside the prompt local
+        // settlement, and a host answer that arrives after it is inert.
+        expect(sent.filter((message) => message.kind === 'cancel')).toHaveLength(1);
+        const requestEnvelope = sent.find((message) => message.kind === 'request' && message.method === method);
+        expect(requestEnvelope).toBeDefined();
+        if (requestEnvelope?.kind !== 'request') throw new Error('request envelope missing');
+        receive?.({
+            wireVersion: 1, kind: 'result', identity,
+            requestId: requestEnvelope.requestId,
+            method,
+            result: null,
+        });
+        await expect(operation).rejects.toMatchObject({ code: 'aborted' });
     });
 
     it('preserves shared PluginError details, remediation, and diagnostics from the wire', async () => {

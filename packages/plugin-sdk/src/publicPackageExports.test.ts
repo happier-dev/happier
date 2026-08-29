@@ -521,6 +521,7 @@ describe('CORE-A curated package exports', () => {
             'ConnectedAccountAuthFailure',
             'ConnectedAccountMaterialization',
             'ConnectedAccountRuntime',
+            'ConnectedAccountServiceKey',
             'ConnectedServiceCredentialRecordV1',
             'ConnectedServiceId',
             'PluginConnectedAccountDescriptorContributionV2',
@@ -765,6 +766,8 @@ describe('CORE-A curated package exports', () => {
             'PluginJsonSchemaValidator',
         ]);
         await expectCanonicalInventoryBarrelClosure('./reviews', [
+            'ReviewCommentPublicationMarkerMatchV1',
+            'ReviewCommentPublicationTargetExpectationV1',
             'ScmPullRequestReviewScopeProductionV1',
             'ScmPullRequestReviewScopeV1',
             'produceScmPullRequestReviewScope',

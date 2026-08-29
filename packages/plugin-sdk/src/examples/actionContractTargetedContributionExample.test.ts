@@ -198,7 +198,7 @@ describe('cross-plugin contribution public authoring example', () => {
                             listInstances: {
                                 required: true,
                                 input: { kind: 'protocolDefined' },
-                                action: { surface: 'plugin', dangerLevel: 'safe' },
+                                action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                             },
                             scan: { required: true },
                             get: { required: true },

@@ -7,6 +7,7 @@ const RELEASE_AVAILABILITY = new Set(['not-published', 'published']);
 const MAINTAINED_PUBLIC_CONSUMER_PREFIXES = Object.freeze([
   'packages/plugins/',
   'packages/plugin-sdk/examples/',
+  'packages/plugin-sdk/fixtures/external-targeted-packages/',
   'packages/plugin-ui/fixtures/',
   'packages/tests/fixtures/plugin-platform/',
 ]);

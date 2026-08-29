@@ -55,6 +55,7 @@ export type { ConnectedAccountRequestAuthClientSourceParams } from './requestAut
 export type { ConnectedAccountRuntime } from '../connectedAccounts.js';
 export type { ConnectedAccountRuntimeConfiguration } from '../connectedAccounts.js';
 export type { PluginConnectedAccountRuntimeConfigurationTarget as ConnectedAccountRuntimeConfigurationTarget } from '../services/connectedAccounts.js';
+export type { ConnectedAccountServiceKey } from '../connectedAccounts.js';
 export type { PluginConnectedAccountState as ConnectedAccountState } from '../services/connectedAccounts.js';
 export type { ConnectedAccountsService } from '../connectedAccounts.js';
 export type { ConnectedServiceCredentialRecordV1 } from '../connectedAccounts.js';

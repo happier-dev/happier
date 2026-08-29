@@ -232,6 +232,7 @@ const EXPECTED_EXPORTS = [
     'ConnectedAccountRequestAuthUsesV1Schema',
     'ConnectedAccountRuntime',
     'ConnectedAccountRuntimeConfiguration',
+    'ConnectedAccountServiceKey',
     'ConnectedAccountsService',
     'ConnectedServiceAuthGroupId',
     'ConnectedServiceAuthGroupIdSchema',

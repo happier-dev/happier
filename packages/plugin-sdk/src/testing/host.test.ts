@@ -164,7 +164,7 @@ const testkitTargetedOperationProtocol = defineContributionProtocol({
       required: true,
       input: { kind: 'protocolDefined', schema: testkitTargetedOperationInputSchema },
       resultSchema: testkitTargetedOperationResultSchema,
-      action: { surface: 'plugin', dangerLevel: 'safe' },
+      action: { surfaces: ['plugin'], dangerLevel: 'safe' },
     },
   },
 });
@@ -1193,7 +1193,7 @@ describe('createPluginTestkit', () => {
           required: true,
           input: { kind: 'contributorDefined' },
           resultSchema,
-          action: { surface: 'plugin', dangerLevel: 'safe' },
+          action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
       },
     });

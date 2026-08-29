@@ -39,6 +39,7 @@ import type {
     PluginConnectedAccountMaterializationKind,
 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type {
+    ConnectedAccountServiceKey,
     ConnectedServiceId,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
@@ -195,6 +196,7 @@ export type {
 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 export type { QualifiedConnectedAccountRef as ConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 export type {
+    ConnectedAccountServiceKey,
     ConnectedServiceAuthGroupId,
     ConnectedServiceBindingsV1 as ConnectedServiceBindings,
     ConnectedServiceId,

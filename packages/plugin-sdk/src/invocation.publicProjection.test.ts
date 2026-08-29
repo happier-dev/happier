@@ -44,10 +44,12 @@ describe('invocation provenance public projections', () => {
         expect(root).toEqual(expect.arrayContaining([
             'PluginInvocationCaller',
             'PluginInvocationOriginSurface',
+            'PluginAutomationRunCause',
         ]));
         expect(agentRuntime).not.toEqual(expect.arrayContaining([
             'PluginInvocationCaller',
             'PluginInvocationOriginSurface',
+            'PluginAutomationRunCause',
         ]));
     });
 });

@@ -292,7 +292,8 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).toContain('context.services.notifications.send');
         expect(guide).toContain('context.ui.notify(');
         expect(guide).toContain('examples/action-contract-producer');
-        expect(guide).toContain('external-author source-consumer evidence');
+        // Markdown line wrapping must not hide the distinguishing phrase.
+        expect(guide.replace(/\s+/gu, ' ')).toContain('external-author source-consumer evidence');
         expect(guide).toContain('Loaded availability remains deferred');
         expect(guide).toContain('nonbundled action-contract pair');
         expect(guide).not.toContain('first-party Preview');

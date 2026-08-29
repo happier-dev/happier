@@ -107,6 +107,8 @@ import type {
   AgentConnectedAccountStateSharingDescriptorTransformV1,
   AgentConnectedAccountStateSharingDescriptorV1,
   AgentConnectedAccountStateSharingDynamicEntryPatternV1,
+  AgentConnectedAccountSwitchContinuityV1,
+  AgentConnectedAccountSwitchTransitionV1,
   AgentConnectedAccountTransitionVerificationResultV1,
   AgentDeferredStartupEligibilityInputV1,
   AgentExecutionRunEvent,

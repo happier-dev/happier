@@ -23,6 +23,13 @@ const GENERATED_CONSUMER_SOURCE_PATHS = Object.freeze([
   'packages/tests/scripts/plugin-platform/run-packed-composer-external-dogfood.mjs',
   'packages/tests/pluginSdkConsumers/run-probes.mjs',
 ]);
+const GENERATED_CONSUMER_IGNORED_DIRECTORY_NAMES = new Set(['dist', 'node_modules']);
+
+function isGeneratedConsumerSourceDirectory(entry) {
+  return entry.isDirectory()
+    && !GENERATED_CONSUMER_IGNORED_DIRECTORY_NAMES.has(entry.name)
+    && !entry.name.startsWith('.happier-plugin-ui-build-');
+}
 const GENERATED_DOCUMENTATION_OUTPUTS = Object.freeze([
   Object.freeze({
     endMarker: '{/* public-toolchain-compatibility:versioning-facts:end */}',
@@ -290,7 +297,7 @@ async function collectConsumerPackagePaths(root) {
     throw cause;
   }
   const nested = await Promise.all(entries
-    .filter((entry) => entry.isDirectory())
+    .filter(isGeneratedConsumerSourceDirectory)
     .map((entry) => collectConsumerPackagePaths(resolve(root, entry.name))));
   return [
     ...entries
@@ -309,7 +316,7 @@ async function collectConsumerSourcePaths(root) {
     throw cause;
   }
   const nested = await Promise.all(entries
-    .filter((entry) => entry.isDirectory() && entry.name !== 'dist' && entry.name !== 'node_modules')
+    .filter(isGeneratedConsumerSourceDirectory)
     .map((entry) => collectConsumerSourcePaths(resolve(root, entry.name))));
   const sources = await Promise.all(entries
     .filter((entry) => entry.isFile() && AUTHORING_SOURCE_FILE_PATTERN.test(entry.name))

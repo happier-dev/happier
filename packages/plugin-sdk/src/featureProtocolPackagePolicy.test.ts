@@ -440,7 +440,7 @@ const featureProtocolFixture = {
             '            required: true,',
             "            input: { kind: 'protocolDefined', schema: exampleSchema },",
             '            resultSchema: exampleSchema,',
-            "            action: { surface: 'plugin', dangerLevel: 'safe' },",
+            "            action: { surfaces: ['plugin'], dangerLevel: 'safe' },",
             '        },',
             '    },',
             '});',

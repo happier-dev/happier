@@ -115,7 +115,7 @@ describe('targeted contribution point semantics', () => {
                     required: true,
                     input: { kind: 'protocolDefined', schema: input },
                     resultSchema: result,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -130,8 +130,14 @@ describe('targeted contribution point semantics', () => {
         expect(defineContributionPoint([externalProtocol]).protocols).toMatchObject([{
             id: 'structural-targeted-protocol',
             version: 1,
-            operations: { inspect: { required: true } },
+            operations: {
+                inspect: {
+                    required: true,
+                    action: { surfaces: ['plugin', 'ui'], dangerLevel: 'safe' },
+                },
+            },
         }]);
+        expect(builtInProtocol.operations.inspect.declaration.surfaces).toEqual(['plugin', 'ui']);
     });
 
     it('projects parser-equivalent byte and safe-integer bounds into targeted descriptor schemas', () => {
@@ -195,7 +201,7 @@ describe('targeted contribution point semantics', () => {
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: emptyResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
         });
@@ -222,7 +228,7 @@ describe('targeted contribution point semantics', () => {
                     required: true,
                     input: { kind: 'contributorDefined' },
                     resultSchema: emptyResultSchema,
-                    action: { surface: 'plugin', dangerLevel: 'safe' },
+                    action: { surfaces: ['plugin'], dangerLevel: 'safe' },
                 },
             },
             surfaces: {

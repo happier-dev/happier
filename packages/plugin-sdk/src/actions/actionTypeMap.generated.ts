@@ -1131,7 +1131,7 @@ export type PluginActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'info' | 'warning' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'refresh' | 'add' | 'back' | 'close' | 'forward' | 'more' | undefined;
+                        icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'info' | 'warning' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'refresh' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | undefined;
                         tone?: 'success' | 'danger' | 'neutral' | 'info' | 'warning' | undefined;
                     };
                 };
@@ -1199,6 +1199,7 @@ export type PluginActionInputById = {
         agentId?: string | undefined;
         backendTargetKey?: string | undefined;
         machineId?: string | undefined;
+        serverId?: string | undefined;
         limit?: number | undefined;
     };
     readonly "agents.config_options.list": {
@@ -1208,6 +1209,7 @@ export type PluginActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
         modelId?: string | undefined;
+        serverId?: string | undefined;
     };
     readonly "agents.session_modes.list": {
         [x: string]: unknown;
@@ -1215,6 +1217,7 @@ export type PluginActionInputById = {
         backendTargetKey?: string | undefined;
         machineId?: string | undefined;
         limit?: number | undefined;
+        serverId?: string | undefined;
     };
     readonly "sessions.spawn.profiles.list": {
         [x: string]: unknown;
@@ -1230,6 +1233,7 @@ export type PluginActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
         includeUnavailable?: boolean | undefined;
+        serverId?: string | undefined;
     };
     readonly "sessions.spawn.mcp_servers.preview": {
         [x: string]: unknown;
@@ -1264,7 +1268,7 @@ export type PluginActionInputById = {
                 presentation: {
                     label: string;
                     description?: string | undefined;
-                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'info' | 'warning' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'refresh' | 'add' | 'back' | 'close' | 'forward' | 'more' | undefined;
+                    icon?: 'error' | 'check' | 'file' | 'external' | 'settings' | 'action' | 'info' | 'warning' | 'search' | 'preview' | 'terminal' | 'browser' | 'copy' | 'globe' | 'refresh' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | undefined;
                     tone?: 'success' | 'danger' | 'neutral' | 'info' | 'warning' | undefined;
                 };
             };
@@ -2124,22 +2128,6 @@ export type PluginActionInputById = {
             kind: 'comment' | 'approve' | 'requestChanges';
             body: string;
         } | null;
-    };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        groupId?: string | null | undefined;
-        limit?: number | undefined;
-    };
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId?: string | undefined;
-    };
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        parentSessionId?: string | undefined;
-        id?: string | undefined;
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -10322,184 +10310,6 @@ export type PluginActionResultById = {
         verdict: {
             publicationCorrelationId: string;
         } | null;
-    };
-    readonly "sessions.subagents.list": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    }[];
-    readonly "sessions.subagents.get": {
-        [x: string]: unknown;
-        id: string;
-        parentSessionId: string;
-        origin: 'plugin' | 'agent' | 'happier';
-        kind: 'custom' | 'native' | 'execution-run';
-        status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-        createdAt: number;
-        agentRef?: {
-            [x: string]: unknown;
-            agentId: string;
-            agentKind?: string | undefined;
-        } | undefined;
-        lifecycleDetail?: {
-            [x: string]: unknown;
-            agentState?: string | undefined;
-            reason?: string | undefined;
-        } | undefined;
-        completedAt?: number | undefined;
-        transcript?: {
-            [x: string]: unknown;
-            parentSessionId: string;
-            sidechainId: string;
-        } | undefined;
-        spawnRef?: {
-            [x: string]: unknown;
-            toolCallId?: string | undefined;
-        } | undefined;
-        runRef?: {
-            [x: string]: unknown;
-            runId: string;
-        } | undefined;
-        groupRef?: {
-            [x: string]: unknown;
-            groupId: string;
-            groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-            memberId: string;
-            providerGroupKind?: string | undefined;
-            groupLabel?: string | undefined;
-            memberLabel?: string | undefined;
-            memberRole?: string | undefined;
-            supportsBroadcast?: boolean | undefined;
-        } | undefined;
-        vendorRef?: {
-            [x: string]: unknown;
-            agentSessionId: string;
-            vendorSource?: string | undefined;
-            resumeMetadata?: Record<string, unknown> | undefined;
-        } | undefined;
-        label?: string | undefined;
-        display?: {
-            [x: string]: unknown;
-            label?: string | undefined;
-            iconRef?: string | undefined;
-            colorToken?: string | undefined;
-        } | undefined;
-        agentMetadata?: Record<string, unknown> | undefined;
-    } | null;
-    readonly "sessions.subagents.watch": {
-        [x: string]: unknown;
-        kind: 'snapshot';
-        subagents: {
-            [x: string]: unknown;
-            id: string;
-            parentSessionId: string;
-            origin: 'plugin' | 'agent' | 'happier';
-            kind: 'custom' | 'native' | 'execution-run';
-            status: 'completed' | 'failed' | 'running' | 'pending' | 'aborted';
-            createdAt: number;
-            agentRef?: {
-                [x: string]: unknown;
-                agentId: string;
-                agentKind?: string | undefined;
-            } | undefined;
-            lifecycleDetail?: {
-                [x: string]: unknown;
-                agentState?: string | undefined;
-                reason?: string | undefined;
-            } | undefined;
-            completedAt?: number | undefined;
-            transcript?: {
-                [x: string]: unknown;
-                parentSessionId: string;
-                sidechainId: string;
-            } | undefined;
-            spawnRef?: {
-                [x: string]: unknown;
-                toolCallId?: string | undefined;
-            } | undefined;
-            runRef?: {
-                [x: string]: unknown;
-                runId: string;
-            } | undefined;
-            groupRef?: {
-                [x: string]: unknown;
-                groupId: string;
-                groupKind: 'custom' | 'team' | 'pool' | 'workflow';
-                memberId: string;
-                providerGroupKind?: string | undefined;
-                groupLabel?: string | undefined;
-                memberLabel?: string | undefined;
-                memberRole?: string | undefined;
-                supportsBroadcast?: boolean | undefined;
-            } | undefined;
-            vendorRef?: {
-                [x: string]: unknown;
-                agentSessionId: string;
-                vendorSource?: string | undefined;
-                resumeMetadata?: Record<string, unknown> | undefined;
-            } | undefined;
-            label?: string | undefined;
-            display?: {
-                [x: string]: unknown;
-                label?: string | undefined;
-                iconRef?: string | undefined;
-                colorToken?: string | undefined;
-            } | undefined;
-            agentMetadata?: Record<string, unknown> | undefined;
-        }[];
     };
     readonly "execution.run.start": {
         [x: string]: unknown;
@@ -27662,7 +27472,7 @@ export type PluginActionResultById = {
             checkpointSafe: false;
         } | {
             kind: 'blocked';
-            reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict';
+            reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'noEnabledAssignment';
             checkpointSafe: false;
         })[];
     };
@@ -27694,7 +27504,7 @@ export type PluginActionResultById = {
         checkpointSafe: true;
     } | {
         kind: 'blocked';
-        reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'resultDeliveryUnsupported';
+        reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'noEnabledAssignment' | 'resultDeliveryUnsupported';
         checkpointSafe: false;
     };
     readonly "scm.pullRequest.list": {

@@ -24,6 +24,7 @@ export type { ConnectedAccountAuthenticationContext } from '../connectedAccounts
 export type { ConnectedAccountAuthenticationModeRuntime } from '../connectedAccounts.js';
 export type { PluginConnectedAccountBindingEvent as ConnectedAccountBindingEvent } from '../services/connectedAccounts.js';
 export type { ConnectedAccountBindingSummary } from '../connectedAccounts.js';
+export type { ConnectedAccountServiceKey } from '../connectedAccounts.js';
 export type { ConnectedAccountCredentialStore } from '../connectedAccounts.js';
 export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../connectedAccounts.js';
 export {

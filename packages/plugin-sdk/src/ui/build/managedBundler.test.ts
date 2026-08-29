@@ -556,6 +556,10 @@ describe('createManagedRuntimeBundlerRunner (real vite build)', () => {
             join(projectRoot, 'src', 'transitive.tsx'),
             [
                 "import { jsx } from 'react/jsx-runtime';",
+                // The dev-runtime specifier joins the graph through author code,
+                // so the host-runtime shim coverage for it is exercised directly
+                // instead of depending on the bundler's JSX dev-mode selection.
+                "export { jsxDEV as exportDevJsx } from 'react/jsx-dev-runtime';",
                 '',
                 'export function renderAutomaticJsx() {',
                 '  return <section data-owner="host-jsx-runtime">shared</section>;',

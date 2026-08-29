@@ -253,6 +253,8 @@ describe('plugin UI public surface', () => {
             'forward',
             'more',
             'search',
+            'change-open',
+            'change-complete',
         ]);
     });
 

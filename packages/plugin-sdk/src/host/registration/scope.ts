@@ -702,15 +702,6 @@ function snapshotAgentConnectedAccountLaunchContribution(
                     : { verifyResumeReachable: source.verifyResumeReachable }),
             });
         })() as AgentConnectedAccountContinuityV1;
-    if (
-        continuity?.verifyResumeReachable !== undefined
-        && (
-            stateSharingDescriptor?.state.supported !== true
-            || stateSharingDescriptor.state.entries.length === 0
-        )
-    ) {
-        throw new TypeError('Agent connected-account launch continuity.verifyResumeReachable requires a supported stateSharingDescriptor with declared state entries');
-    }
     if (requestAuthUses === undefined && fileEnvironmentUses === undefined && environmentUses === undefined && switchContinuity === undefined && stateSharingDescriptor === undefined && continuity === undefined) {
         throw new TypeError('Agent connected-account launch contribution must declare at least one launch fact');
     }
@@ -1177,6 +1168,10 @@ function snapshotAgentExternalSessionsContribution(
         contribution,
         'Agent External Sessions contribution',
     );
+    // Unknown enumerable callbacks are rejected through an attributable
+    // diagnostic; unrelated non-function extension data is ignored, never
+    // invoked, and never snapshotted: the snapshot below copies only the
+    // declared operations.
     const approvedCallbacks = new Set<string>([
         ...AGENT_EXTERNAL_SESSIONS_KEYS,
         ...AGENT_EXTERNAL_SESSIONS_OPTIONAL_KEYS,
@@ -1925,6 +1920,33 @@ export function createPluginRegistrationScope(
                     fail(
                         `Plugin '${params.pluginId}' registered an invalid '${staged.family}/${staged.localId}' runtime`,
                     );
+                }
+                if (staged.family === REGISTRATION_FAMILY.agents) {
+                    // Semantic coherence is attributable, not masked: resume
+                    // reachability without a host-owned state-sharing
+                    // descriptor is a declared-contract conflict, not a
+                    // structural snapshot failure.
+                    const launch = (
+                        capturedValue as {
+                            connectedAccountLaunch?: {
+                                continuity?: { verifyResumeReachable?: unknown };
+                                stateSharingDescriptor?: {
+                                    state?: { supported?: boolean; entries?: readonly unknown[] };
+                                };
+                            };
+                        }
+                    ).connectedAccountLaunch;
+                    const launchState = launch?.stateSharingDescriptor?.state;
+                    const hasSupportedStateSharing = (
+                        launchState?.supported === true
+                        && (launchState.entries?.length ?? 0) > 0
+                    );
+                    if (
+                        launch?.continuity?.verifyResumeReachable !== undefined
+                        && !hasSupportedStateSharing
+                    ) {
+                        fail('Agent connected-account launch continuity.verifyResumeReachable requires a supported stateSharingDescriptor with declared state entries');
+                    }
                 }
                 assertCommitActive();
                 if (staged.family === REGISTRATION_FAMILY.mcpServers) {

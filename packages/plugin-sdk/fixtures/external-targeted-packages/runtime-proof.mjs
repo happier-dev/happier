@@ -143,6 +143,15 @@ if (targetOperationRoles.length !== 1
   || contributorOperationRoles[0] !== 'inspect') {
   throw new Error('Physical-copy target and contributor did not agree on the inspect operation-role census');
 }
+if (targetProtocolDeclaration.operations.inspect?.action?.surfaces?.join(',') !== 'plugin,ui') {
+  throw new Error('Cross-copy target protocol lost its plural plugin/ui Action surfaces');
+}
+const contributorAction = contributor.manifest.contributes?.actions?.find((action) => (
+  action.id === contribution.operations.inspect
+));
+if (contributorAction?.surfaces?.join(',') !== 'plugin,ui') {
+  throw new Error('Cross-copy contributor Action lost its plural plugin/ui surfaces');
+}
 const detailPresentation = targetProtocolDeclaration.surfaces?.detail?.presentation;
 if (contribution.descriptor?.kind !== 'issue'
   || contribution.descriptor.label !== 'Physical package source'
