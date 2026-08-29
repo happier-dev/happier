@@ -6,6 +6,7 @@ import {
     PLUGIN_COLLECTION_CANDIDATE_PREPARATION_SOURCE_PAGE_HTTP_PATH_V1,
     PLUGIN_COLLECTION_CANDIDATE_PREPARATION_STAGE_HTTP_PATH_V1,
     PLUGIN_COLLECTION_GET_HTTP_PATH_V1,
+    PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1,
     PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1,
     PLUGIN_COLLECTION_QUERY_HTTP_PATH_V1,
     PluginAccountDataEraseActionInputV1Schema,
@@ -22,6 +23,8 @@ import {
     PluginCollectionCandidatePreparationStageResultV1Schema,
     PluginCollectionGetRequestV1Schema,
     PluginCollectionGetResultV1Schema,
+    PluginCollectionForgetRequestV1Schema,
+    PluginCollectionForgetResultV1Schema,
     PluginCollectionMutationErrorV1Schema,
     PluginCollectionMutationRequestV1Schema,
     PluginCollectionMutationResultV1Schema,
@@ -35,6 +38,7 @@ import {
 
 import {
     PluginCollectionMutationOperationError,
+    forgetPluginCollection,
     mutatePluginCollection,
 } from "@/app/plugins/data/collections/mutation";
 import {
@@ -234,6 +238,39 @@ export function pluginDataRoutes(app: Fastify): void {
         } catch (error) {
             if (error instanceof PluginCollectionReadOperationError) {
                 return await reply.code(statusForReadError(error.code)).send({ error: error.code });
+            }
+            throw error;
+        }
+    });
+
+    app.post(PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1, {
+        preHandler: app.authenticate,
+        attachValidation: true,
+        schema: {
+            body: PluginCollectionForgetRequestV1Schema,
+            response: {
+                200: PluginCollectionForgetResultV1Schema,
+                400: PluginCollectionMutationErrorV1Schema,
+                404: PluginCollectionMutationErrorV1Schema,
+                409: PluginCollectionMutationErrorV1Schema,
+                426: AccountStoredContentUpgradeRequiredV1Schema,
+            },
+        },
+    }, async (request, reply) => {
+        if (request.validationError) {
+            return await reply.code(400).send({ error: "collection_mutation_invalid" });
+        }
+        if (!readAccountStoredContentCompatibilityForHttpRequest(request).supportsPluginDataProtocol) {
+            return await reply.code(426).send(buildPluginDataAccountStoredContentUpgradeRequired());
+        }
+        try {
+            return await reply.send(await forgetPluginCollection({
+                accountId: request.userId,
+                request: request.body,
+            }));
+        } catch (error) {
+            if (error instanceof PluginCollectionMutationOperationError) {
+                return await reply.code(statusForMutationError(error.code)).send({ error: error.code });
             }
             throw error;
         }

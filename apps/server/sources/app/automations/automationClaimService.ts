@@ -7,9 +7,15 @@ import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGua
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
 import {
     AutomationAccountCurrentnessWitnessV1Schema,
+    AutomationV3WorkerClaimResponseSchema,
+    AutomationV3WorkerClaimedAutomationSchema,
+    AutomationV3WorkerClaimedRunSchema,
     parseAutomationRunExecutionRecipeV1,
     validateAutomationRunExecutionRecipeOuterV1,
     type AutomationAccountCurrentnessWitnessV1,
+    type AutomationV3WorkerClaimResponse,
+    type AutomationV3WorkerClaimedAutomation,
+    type AutomationV3WorkerClaimedRun,
 } from "@happier-dev/protocol";
 
 import { emitAutomationRunTransition } from "./automationChangePublisher";
@@ -37,6 +43,11 @@ type ClaimCandidateState = "queued" | "claimed" | "running";
 type AutomationClaimResult = Readonly<{
     run: AutomationRunWithAutomation | null;
     accountCurrentness: AutomationAccountCurrentnessWitnessV1 | null;
+    /** Exact frozen V3 wire payload when this result rejoins a receipt. */
+    receiptReplay?: Readonly<{
+        run: AutomationV3WorkerClaimedRun;
+        automation: AutomationV3WorkerClaimedAutomation;
+    }>;
 }>;
 
 type AutomationClaimRequest = Readonly<{
@@ -63,94 +74,105 @@ function deriveClaimRequestNonceDigest(params: Readonly<{
 
 class AutomationClaimReceiptConflictError extends Error {}
 
-const AUTOMATION_CLAIM_REQUIRED_DATE_FIELDS = [
-    "scheduledAt",
-    "dueAt",
-    "createdAt",
-    "updatedAt",
-] as const;
-
-const AUTOMATION_CLAIM_NULLABLE_DATE_FIELDS = [
-    "causeOccurredAt",
-    "causeScheduledFor",
-    "executionDispatchCommittedAt",
-    "executionDispatchDueAt",
-    "replyHandoffDueAt",
-    "claimedAt",
-    "startedAt",
-    "finishedAt",
-    "leaseExpiresAt",
-] as const;
-
-type AutomationClaimReceiptResultV1 = Readonly<{
-    v: 1;
-    run: Readonly<Record<string, unknown>> | null;
+type AutomationClaimReceiptResultV2 = Readonly<{
+    v: 2;
+    run: AutomationV3WorkerClaimedRun | null;
+    automation: AutomationV3WorkerClaimedAutomation | null;
 }>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
+function projectAutomationV3ClaimReceiptResult(
+    result: AutomationClaimResult,
+    accountId?: string,
+): AutomationClaimReceiptResultV2 {
+    if (result.receiptReplay) {
+        return {
+            v: 2,
+            run: result.receiptReplay.run,
+            automation: result.receiptReplay.automation,
+        };
+    }
+    if (!result.run) return { v: 2, run: null, automation: null };
+    const cause = decodeAutomationRunCause(result.run);
+    return {
+        v: 2,
+        run: AutomationV3WorkerClaimedRunSchema.parse({
+            id: result.run.id,
+            automationId: result.run.automationId,
+            triggerId: result.run.triggerId,
+            triggerRetired: result.run.triggerRetired ?? false,
+            attempt: result.run.attempt,
+            executionInputEnvelope: result.run.executionInputEnvelope,
+            cause,
+            ...(cause.kind === "conversation"
+                && result.run.replyHandoffState === "awaitingResult"
+                && typeof result.run.replyHandoffId === "string"
+                && result.run.replyHandoffId.trim().length > 0
+                ? {
+                    resultDelivery: {
+                        kind: "finalResult" as const,
+                        accountId: accountId ?? result.run.accountId,
+                        handoffId: result.run.replyHandoffId,
+                    },
+                }
+                : {}),
+        }),
+        automation: AutomationV3WorkerClaimedAutomationSchema.parse({
+            id: result.run.automation.id,
+            name: result.run.automation.name,
+            enabled: result.run.automation.enabled,
+        }),
+    };
 }
 
 /**
  * The receipt is the one idempotency owner for a signed claim. Persist the
- * exact bounded Run projection selected for that response rather than a
- * pointer back to mutable Run state. Dates are the only non-JSON values in the
- * canonical selection and are encoded explicitly as epoch milliseconds.
+ * exact bounded V3 wire projection selected for that response rather than the
+ * broad internal Run row or a pointer back to mutable Run state.
  */
-function serializeAutomationClaimReceiptResultV1(result: AutomationClaimResult): string {
-    if (!result.run) return JSON.stringify({ v: 1, run: null } satisfies AutomationClaimReceiptResultV1);
-    const run: Record<string, unknown> = { ...result.run };
-    for (const field of AUTOMATION_CLAIM_REQUIRED_DATE_FIELDS) {
-        run[field] = result.run[field].getTime();
-    }
-    for (const field of AUTOMATION_CLAIM_NULLABLE_DATE_FIELDS) {
-        run[field] = result.run[field]?.getTime() ?? null;
-    }
-    return JSON.stringify({ v: 1, run } satisfies AutomationClaimReceiptResultV1);
+function serializeAutomationClaimReceiptResultV2(result: AutomationClaimResult): string {
+    return JSON.stringify(projectAutomationV3ClaimReceiptResult(result));
 }
 
-function parseAutomationClaimReceiptResultV1(
+function parseAutomationClaimReceiptResultV2(
     serialized: string,
-): Readonly<{ ok: true; run: AutomationRunWithAutomation | null }> | Readonly<{ ok: false }> {
+): Readonly<{ ok: true; result: AutomationClaimReceiptResultV2 }> | Readonly<{ ok: false }> {
     let parsed: unknown;
     try {
         parsed = JSON.parse(serialized);
     } catch {
         return { ok: false };
     }
-    if (!isRecord(parsed) || parsed.v !== 1 || !(parsed.run === null || isRecord(parsed.run))) {
-        return { ok: false };
-    }
-    if (parsed.run === null) return { ok: true, run: null };
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return { ok: false };
+    const record = parsed as Record<string, unknown>;
+    if (record.v !== 2) return { ok: false };
+    const run = record.run === null
+        ? null
+        : AutomationV3WorkerClaimedRunSchema.safeParse(record.run);
+    const automation = record.automation === null
+        ? null
+        : AutomationV3WorkerClaimedAutomationSchema.safeParse(record.automation);
+    if (run !== null && !run.success) return { ok: false };
+    if (automation !== null && !automation.success) return { ok: false };
+    const parsedRun = run === null ? null : run.data;
+    const parsedAutomation = automation === null ? null : automation.data;
+    if ((parsedRun === null) !== (parsedAutomation === null)) return { ok: false };
+    return {
+        ok: true,
+        result: { v: 2, run: parsedRun, automation: parsedAutomation },
+    };
+}
 
-    const run = { ...parsed.run };
-    for (const field of AUTOMATION_CLAIM_REQUIRED_DATE_FIELDS) {
-        const value = run[field];
-        if (typeof value !== "number" || !Number.isSafeInteger(value)) return { ok: false };
-        run[field] = new Date(value);
-    }
-    for (const field of AUTOMATION_CLAIM_NULLABLE_DATE_FIELDS) {
-        const value = run[field];
-        if (value !== null && (typeof value !== "number" || !Number.isSafeInteger(value))) {
-            return { ok: false };
-        }
-        run[field] = value === null ? null : new Date(value);
-    }
-    if (
-        typeof run.id !== "string"
-        || typeof run.accountId !== "string"
-        || typeof run.automationId !== "string"
-        || typeof run.claimedByMachineId !== "string"
-        || !Number.isSafeInteger(run.attempt)
-        || !Array.isArray(run.assignments)
-        || !isRecord(run.automation)
-        || typeof run.automation.id !== "string"
-        || typeof run.automation.name !== "string"
-        || typeof run.automation.enabled !== "boolean"
-    ) {
-        return { ok: false };
-    }
-    return { ok: true, run: run as unknown as AutomationRunWithAutomation };
+/** The sole V3 claim wire projector, shared by first response and receipt replay. */
+export function toAutomationV3WorkerClaimResponse(
+    result: AutomationClaimResult,
+    accountId?: string,
+): AutomationV3WorkerClaimResponse {
+    const projected = projectAutomationV3ClaimReceiptResult(result, accountId);
+    return AutomationV3WorkerClaimResponseSchema.parse({
+        run: projected.run,
+        automation: projected.automation,
+        accountCurrentness: projected.run ? result.accountCurrentness : null,
+    });
 }
 
 function isClaimCandidateState(state: string): state is ClaimCandidateState {
@@ -450,11 +472,11 @@ async function resolveClaimReceiptTx(params: Readonly<{
         return { run: null, accountCurrentness: null };
     }
     const committedResult = typeof receipt.claimResultJson === "string"
-        ? parseAutomationClaimReceiptResultV1(receipt.claimResultJson)
+        ? parseAutomationClaimReceiptResultV2(receipt.claimResultJson)
         : { ok: false as const };
     if (!committedResult.ok) return { run: null, accountCurrentness: null };
     if (receipt.runId === null || receipt.claimedAttempt === null) {
-        return committedResult.run === null
+        return committedResult.result.run === null
             ? { run: null, accountCurrentness: null }
             : { run: null, accountCurrentness: null };
     }
@@ -470,21 +492,27 @@ async function resolveClaimReceiptTx(params: Readonly<{
     }
     if (!committedWitness) return { run: null, accountCurrentness: null };
 
-    const run = committedResult.run;
+    const run = committedResult.result.run;
+    const automation = committedResult.result.automation;
     if (
         !run
+        || !automation
         || run.id !== receipt.runId
-        || run.accountId !== params.accountId
-        || run.claimedByMachineId !== params.machineId
         || run.attempt !== receipt.claimedAttempt
-        || (params.expectedTriggerKind !== undefined && run.causeTriggerKind !== params.expectedTriggerKind)
+        || (params.expectedTriggerKind !== undefined && (
+            run.cause.kind !== "trigger"
+            || run.cause.triggerKind !== params.expectedTriggerKind
+        ))
     ) return { run: null, accountCurrentness: null };
     // A newer lease attempt supersedes the old claim authority. Read only that
     // currentness fact from the live row; every response field still comes
     // from the frozen receipt so normal state/revision/settlement changes
     // cannot rewrite the result of the original signed request.
     const currentAttempt = await params.tx.automationRun.findFirst({
-        where: { id: run.id, accountId: params.accountId },
+        where: {
+            id: run.id,
+            accountId: params.accountId,
+        },
         select: { attempt: true },
     });
     if (!currentAttempt || currentAttempt.attempt !== receipt.claimedAttempt) {
@@ -493,15 +521,20 @@ async function resolveClaimReceiptTx(params: Readonly<{
     if (
         !hasClaimableFrozenRecipe({
             executionInputEnvelope: run.executionInputEnvelope,
-            retainedV2OriginKind: retainedV2OriginKindForRun(run),
+            retainedV2OriginKind: run.cause.kind === "manual"
+                ? "manual"
+                : run.cause.kind === "trigger" && run.cause.triggerKind === "schedule"
+                    ? "scheduled"
+                    : undefined,
             accountCurrentness: committedWitness,
         })
     ) {
         return { run: null, accountCurrentness: null };
     }
     return {
-        run,
+        run: null,
         accountCurrentness: committedWitness,
+        receiptReplay: { run, automation },
     };
 }
 
@@ -530,7 +563,7 @@ async function createClaimReceiptTx(params: Readonly<{
                 accountCurrentnessWitnessJson: params.result.accountCurrentness
                     ? JSON.stringify(params.result.accountCurrentness)
                     : null,
-                claimResultJson: serializeAutomationClaimReceiptResultV1(params.result),
+                claimResultJson: serializeAutomationClaimReceiptResultV2(params.result),
                 expiresAt: params.expiresAt,
             },
         });

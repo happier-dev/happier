@@ -9,7 +9,8 @@ import {
 
 import {
     isAutomationDefinitionRepresentableInV2,
-    isAutomationRunV2Compatible,
+    isAutomationRunV2ExecutionRepresentable,
+    isAutomationRunV2HistoryRepresentable,
     toAutomationV2ApiDto,
     toAutomationDefinitionDetailApiDto,
     toAutomationDefinitionListItemApiDto,
@@ -433,21 +434,8 @@ describe("Automation API projections", () => {
             ACCOUNT_CURRENTNESS,
             new Map([["trigger-event", eventStatusProjection()]]),
             new Map(),
-            [{
-                id: "trigger-retired",
-                automationId: "automation-event",
-                kind: "sessionLifecycle",
-                revision: 7,
-                retiredAt: DATE,
-            }],
         )).toEqual(expect.objectContaining({
             id: "automation-event",
-            retiredTriggers: [{
-                id: "trigger-retired",
-                kind: "sessionLifecycle",
-                revision: 7,
-                retiredAt: DATE.getTime(),
-            }],
             triggers: [expect.objectContaining({
                 id: "trigger-event",
                 kind: "pluginEvent",
@@ -503,24 +491,24 @@ describe("Automation API projections", () => {
         const run = eventRun();
         const manual = manualRun();
 
-        expect(isAutomationRunV2Compatible(run)).toBe(false);
-        expect(isAutomationRunV2Compatible(manual)).toBe(true);
-        expect(isAutomationRunV2Compatible({
+        expect(isAutomationRunV2ExecutionRepresentable(run)).toBe(false);
+        expect(isAutomationRunV2ExecutionRepresentable(manual)).toBe(true);
+        expect(isAutomationRunV2ExecutionRepresentable({
             ...scheduledRun(),
             executionInputEnvelope: null,
         })).toBe(false);
-        expect(isAutomationRunV2Compatible({
+        expect(isAutomationRunV2ExecutionRepresentable({
             ...scheduledRun(),
             executionInputEnvelope: "{\"kind\":\"happier_automation_run_execution_recipe_v1\"}",
         })).toBe(false);
-        expect(isAutomationRunV2Compatible({
+        expect(isAutomationRunV2ExecutionRepresentable({
             ...scheduledRun(),
             executionInputEnvelope: frozenV2ExecutionInput({
                 kind: "manual",
                 invokedAt: SCHEDULE_DUE_AT.getTime(),
             }),
         })).toBe(false);
-        expect(isAutomationRunV2Compatible({
+        expect(isAutomationRunV2ExecutionRepresentable({
             ...scheduledRun(),
             executionInputEnvelope: JSON.stringify({
                 kind: "happier_automation_run_execution_input_v1",
@@ -529,6 +517,28 @@ describe("Automation API projections", () => {
                 templateCiphertext: V2_TEMPLATE_CIPHERTEXT,
                 origin: { kind: "scheduled", scheduledFor: SCHEDULE_DUE_AT.getTime() },
             }),
+        })).toBe(false);
+
+        const migratedTerminalRun = {
+            ...scheduledRun(),
+            state: "succeeded" as const,
+            executionInputEnvelope: null,
+            finishedAt: DATE,
+        };
+        expect(isAutomationRunV2ExecutionRepresentable(migratedTerminalRun)).toBe(false);
+        expect(isAutomationRunV2HistoryRepresentable(migratedTerminalRun)).toBe(true);
+        expect(toAutomationRunV2ApiDto(migratedTerminalRun)).toMatchObject({
+            id: "run-scheduled",
+            state: "succeeded",
+        });
+        expect(isAutomationRunV2HistoryRepresentable({
+            ...migratedTerminalRun,
+            state: "queued",
+            finishedAt: null,
+        })).toBe(false);
+        expect(isAutomationRunV2HistoryRepresentable({
+            ...migratedTerminalRun,
+            state: "outcome_uncertain",
         })).toBe(false);
         const v2Manual = toAutomationRunV2ApiDto(manual);
         expect(v2Manual.scheduledAt).toBe(DATE.getTime());
@@ -695,7 +705,7 @@ describe("Automation API projections", () => {
             executionInputEnvelope,
         };
 
-        expect(isAutomationRunV2Compatible(run)).toBe(false);
+        expect(isAutomationRunV2ExecutionRepresentable(run)).toBe(false);
         expect(toAutomationRunV3DetailApiDto(run, "plain")).toEqual(expect.objectContaining({
             executionInputEnvelope,
         }));

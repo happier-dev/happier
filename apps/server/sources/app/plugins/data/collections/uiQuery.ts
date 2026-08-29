@@ -969,10 +969,19 @@ export async function getPluginCollection(input: Readonly<{
             },
         },
     });
+    const absenceEpoch = await db.pluginCollectionAbsenceEpoch.findUnique({
+        where: { accountId_pluginId_collectionId: {
+            accountId: input.accountId,
+            pluginId: current.contract.pluginId,
+            collectionId: current.contract.collectionId,
+        } },
+        select: { epoch: true },
+    });
     const result = PluginCollectionGetResultV1Schema.parse({
         row: row
             ? materializeDirectCollectionRow({ current, row })
             : null,
+        absenceEpoch: absenceEpoch?.epoch ?? 0,
     });
     await readCurrentAccountChangeCursor({
         accountId: input.accountId,

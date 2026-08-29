@@ -183,7 +183,10 @@ const deleteAutomationTrigger = vi.fn(async () => eventAutomation);
 const getAutomation = vi.fn(async () => scheduleAutomation);
 const getAutomationRun = vi.fn(async () => null);
 const listAutomationRuns = vi.fn(async () => ({ runs: [], nextCursor: null }));
-const listAutomations = vi.fn(async () => [scheduleAutomation]);
+const listAutomationDefinitionsPage = vi.fn(async () => ({
+    automations: [scheduleAutomation],
+    nextCursor: null,
+}));
 const runAutomationNow = vi.fn(async () => null);
 const setAutomationEnabled = vi.fn(async () => scheduleAutomation);
 const updateAutomation = vi.fn(async () => scheduleAutomation);
@@ -227,7 +230,7 @@ vi.mock("@/app/automations/automationCrudService", () => ({
     getAutomation,
     getAutomationRun,
     listAutomationRuns,
-    listAutomations,
+    listAutomationDefinitionsPage,
     runAutomationNow,
     reconcileAutomationDefinition,
     setAutomationEnabled,
@@ -250,10 +253,14 @@ vi.mock("@/app/automations/automationEventStatusProjection", () => ({
 vi.mock("@/app/automations/automationSessionLifecycleStatusProjection", () => ({
     loadAutomationSessionLifecycleStatusProjections,
 }));
-vi.mock("@/app/automations/automationClaimService", () => ({
-    claimAutomationRun,
-    heartbeatAutomationRun,
-}));
+vi.mock("@/app/automations/automationClaimService", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@/app/automations/automationClaimService")>();
+    return {
+        ...actual,
+        claimAutomationRun,
+        heartbeatAutomationRun,
+    };
+});
 vi.mock("@/app/automations/automationRunService", () => ({
     cancelAutomationRun,
     failAutomationRun,
@@ -714,7 +721,10 @@ describe("registerAutomationV3Routes", () => {
             sourceStatus: null,
             sourceCatalogStatus,
         };
-        listAutomations.mockResolvedValueOnce([eventAutomation] as any);
+        listAutomationDefinitionsPage.mockResolvedValueOnce({
+            automations: [eventAutomation],
+            nextCursor: null,
+        } as any);
         getAutomation.mockResolvedValueOnce(eventAutomation as any);
         loadAutomationEventStatusProjections
             .mockResolvedValueOnce(new Map([[eventAutomation.triggers[0]!.id, projection]]))
@@ -741,6 +751,11 @@ describe("registerAutomationV3Routes", () => {
             automations: [expect.objectContaining({
                 triggers: [expect.objectContaining({ sourceCatalogStatus })],
             })],
+            nextCursor: null,
+        });
+        expect(listAutomationDefinitionsPage).toHaveBeenCalledWith({
+            accountId: "account-1",
+            limit: 100,
         });
         expect(detailResponse).toEqual(expect.objectContaining({
             triggers: [expect.objectContaining({ sourceCatalogStatus })],

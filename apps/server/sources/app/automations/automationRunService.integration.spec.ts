@@ -423,7 +423,7 @@ describe("automationRunService (integration)", () => {
 
     async function seedExecutionDispatchRun(params: Readonly<{
         id: string;
-        state?: "claimed" | "running";
+        state?: "queued" | "claimed" | "running";
         executionDispatchState?: "notStarted" | "retryWaiting" | "dispatchPermitted";
         executionAttempt?: number;
     }>) {
@@ -486,6 +486,96 @@ describe("automationRunService (integration)", () => {
                 claimedByMachineId: machine.id,
                 leaseExpiresAt: new Date(Date.now() + 30_000),
                 attempt: 1,
+            },
+            select: { id: true },
+        });
+        return { account, machine, automation, run };
+    }
+
+    /**
+     * Seeds one Run for each strict target arm in an ordinary nonterminal
+     * lifecycle state. Session-targeted Runs intentionally keep no execution
+     * dispatch state; detached runs start at `notStarted`.
+     */
+    async function seedOrdinaryCancelRun(params: Readonly<{
+        id: string;
+        targetKind: "newSession" | "existingSession" | "executionRun";
+        state: "queued" | "claimed" | "running";
+    }>) {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const machine = await db.machine.create({
+            data: { id: `machine-${params.id}`, accountId: account.id, metadata: "{}" },
+            select: { id: true },
+        });
+        const executionInputEnvelope = params.targetKind === "newSession"
+            ? TEST_STRICT_PLAIN_RECIPE
+            : params.targetKind === "existingSession"
+                ? strictPlainExistingSessionRecipe(`session-${params.id}`)
+                : TEST_STRICT_PLAIN_EXECUTION_RECIPE;
+        if (params.targetKind === "existingSession") {
+            await db.session.create({
+                data: {
+                    id: `session-${params.id}`,
+                    accountId: account.id,
+                    tag: `ordinary-cancel-${params.id}`,
+                    metadata: "{}",
+                },
+                select: { id: true },
+            });
+        }
+        const automation = await db.automation.create({
+            data: {
+                id: `automation-${params.id}`,
+                accountId: account.id,
+                name: `Ordinary cancel ${params.id}`,
+                enabled: true,
+                targetType: params.targetKind === "newSession"
+                    ? "new_session"
+                    : params.targetKind === "existingSession"
+                        ? "existing_session"
+                        : "execution_run",
+                templateCiphertext: executionInputEnvelope,
+                templateVersion: 1,
+                triggers: {
+                    create: {
+                        kind: "schedule",
+                        scheduleKind: "interval",
+                        everyMs: 120_000,
+                    },
+                },
+                assignments: {
+                    create: {
+                        machineId: machine.id,
+                        enabled: true,
+                        priority: 0,
+                    },
+                },
+            },
+            select: { id: true, triggers: { select: { id: true } } },
+        });
+        const run = await db.automationRun.create({
+            data: {
+                id: params.id,
+                automationId: automation.id,
+                ...scheduleRunCause(automation.triggers[0]!.id),
+                accountId: account.id,
+                state: params.state,
+                executionInputEnvelope,
+                executionDispatchState: params.targetKind === "executionRun" ? "notStarted" : null,
+                scheduledAt: new Date(Date.now() - 60_000),
+                dueAt: new Date(Date.now() - 30_000),
+                ...(params.state === "queued"
+                    ? { attempt: 0 }
+                    : {
+                        claimedAt: new Date(Date.now() - 20_000),
+                        claimedByMachineId: machine.id,
+                        leaseExpiresAt: new Date(Date.now() + 30_000),
+                        attempt: 1,
+                        ...(params.state === "running" ? { startedAt: new Date(Date.now() - 10_000) } : {}),
+                    }),
             },
             select: { id: true },
         });
@@ -1512,6 +1602,112 @@ describe("automationRunService (integration)", () => {
         ]);
     });
 
+    it.each([
+        ["newSession", "queued", "cancelled"],
+        ["newSession", "claimed", "cancelled"],
+        ["newSession", "running", "outcome_uncertain"],
+        ["existingSession", "queued", "cancelled"],
+        ["existingSession", "claimed", "cancelled"],
+        ["existingSession", "running", "outcome_uncertain"],
+        ["executionRun", "queued", "cancelled"],
+        ["executionRun", "claimed", "cancelled"],
+        ["executionRun", "running", "outcome_uncertain"],
+    ] as const)("cancels a %s Run in the %s state as %s through the ordinary cancel owner", async (targetKind, state, expectedState) => {
+        const seeded = await seedOrdinaryCancelRun({
+            id: `run-ordinary-cancel-${targetKind}-${state}`,
+            targetKind,
+            state,
+        });
+        const cancelled = await cancelAutomationRun({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+        });
+        expect(cancelled).toEqual(expect.objectContaining({
+            id: seeded.run.id,
+            state: expectedState,
+        }));
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                finishedAt: true,
+                errorCode: true,
+                executionDispatchState: true,
+                executionDispatchDueAt: true,
+            },
+        })).resolves.toEqual({
+            state: expectedState,
+            finishedAt: expect.any(Date),
+            // Waiting Runs never started, so cancellation is clean. A running
+            // Run may have an external effect, so only its outcome stays
+            // unknown — for detached rows in the dispatch vocabulary, and
+            // without inventing dispatch state for session-targeted rows.
+            errorCode: expectedState === "cancelled"
+                ? null
+                : "execution_run_outcome_unknown",
+            executionDispatchState: targetKind !== "executionRun"
+                ? null
+                : state === "running"
+                    ? "outcomeUnknown"
+                    : "notStarted",
+            executionDispatchDueAt: null,
+        });
+        await expect(db.automationRunEvent.findFirstOrThrow({
+            where: { runId: seeded.run.id },
+            orderBy: { ts: "desc" },
+            select: { type: true, payload: true },
+        })).resolves.toEqual(expectedState === "cancelled"
+            ? { type: "run_cancelled", payload: null }
+            : { type: "run_outcome_uncertain", payload: { reason: "cancelled_while_running" } });
+    });
+
+    it("publishes the authoritative cancellation cause when a retained dispatchPermitted Run is cancelled without ever starting", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-retained-dispatch-permitted-queued",
+            state: "queued",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 0,
+        });
+        const cancelled = await cancelAutomationRun({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+        });
+        // Retained/malformed dispatchPermitted bytes mean an external start
+        // may exist even though the row never reached running.
+        expect(cancelled?.state).toBe("outcome_uncertain");
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: { state: true, errorCode: true, executionDispatchState: true },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            errorCode: "execution_run_cancelled_outcome_unknown",
+            executionDispatchState: "outcomeUnknown",
+        });
+    });
+
+    it("leaves an already-terminal Run unchanged by ordinary cancellation", async () => {
+        const seeded = await seedOrdinaryCancelRun({
+            id: "run-ordinary-cancel-terminal",
+            targetKind: "newSession",
+            state: "queued",
+        });
+        const finishedAt = new Date(Date.now() - 5_000);
+        await db.automationRun.update({
+            where: { id: seeded.run.id },
+            data: { state: "succeeded", finishedAt },
+        });
+        const before = await db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+        });
+        await expect(cancelAutomationRun({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+        })).resolves.toEqual(before);
+    });
+
     it("projects a committed Run state transition only to Account machine observers", async () => {
         const seeded = await createAccountMachineAutomation({
             publicKey: "pk-automation-run-state-observer",
@@ -1610,7 +1806,7 @@ describe("automationRunService (integration)", () => {
         }
     });
 
-    it("publishes no cancellation cause when the Run had not been permitted to dispatch", async () => {
+    it("publishes no cancellation cause when a running Run kept no dispatch permission", async () => {
         const seeded = await seedExecutionDispatchRun({
             id: "run-execution-dispatch-cancel-no-cause",
             state: "running",
@@ -1625,19 +1821,23 @@ describe("automationRunService (integration)", () => {
         });
         eventRouter.addConnection(seeded.account.id, observer);
         try {
+            // Running past the target boundary is exactly what dispatch
+            // permission would have marked: the outcome may not be cleanly
+            // cancellable, so the Run settles uncertain without the
+            // authoritative cancelled-after-dispatch cause.
             const cancelled = await cancelAutomationRun({
                 accountId: seeded.account.id,
                 runId: seeded.run.id,
             });
-            expect(cancelled?.state).toBe("cancelled");
+            expect(cancelled?.state).toBe("outcome_uncertain");
             const cancelledTransition = updates
                 .map((update) => update.body as Record<string, unknown>)
                 .find((body) => body.t === "automation-run-state-changed"
                     && body.runId === seeded.run.id);
             expect(cancelledTransition).toEqual(expect.objectContaining({
-                currentState: "cancelled",
+                currentState: "outcome_uncertain",
             }));
-            expect(cancelledTransition).not.toHaveProperty("cause");
+            expect(cancelledTransition).not.toHaveProperty("transitionCause");
         } finally {
             eventRouter.removeConnection(seeded.account.id, observer);
         }

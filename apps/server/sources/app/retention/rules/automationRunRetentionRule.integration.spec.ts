@@ -141,6 +141,11 @@ describe("automationRunRetentionRule", () => {
                     accountId: account.id,
                     machineId: "machine-receipt",
                     machineInstallationId: "installation-receipt",
+                    claimResultJson: JSON.stringify({
+                        v: 2,
+                        run: null,
+                        automation: null,
+                    }),
                     expiresAt: new Date("2026-08-11T23:59:59.000Z"),
                 },
                 {
@@ -148,6 +153,11 @@ describe("automationRunRetentionRule", () => {
                     accountId: account.id,
                     machineId: "machine-receipt",
                     machineInstallationId: "installation-receipt",
+                    claimResultJson: JSON.stringify({
+                        v: 2,
+                        run: null,
+                        automation: null,
+                    }),
                     expiresAt: new Date("2026-08-12T00:05:00.000Z"),
                 },
             ],

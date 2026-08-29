@@ -258,10 +258,30 @@ export async function forwardRpcCall(params: Readonly<{
             }
             const targetEmitter = selection.target.timeout(timeoutMs);
             requestSubmitted = true;
-            return await targetEmitter.emitWithAck(
+            const response = targetEmitter.emitWithAck(
                 SOCKET_RPC_EVENTS.REQUEST,
                 request,
             );
+            const cancellationSignal = params.cancellation?.signal;
+            if (!cancellationSignal) return await response;
+
+            let removeAbortListener: (() => void) | undefined;
+            const aborted = new Promise<never>((_resolve, reject) => {
+                const onAbort = (): void => {
+                    reject(new Error('RPC request cancelled by caller'));
+                };
+                cancellationSignal.addEventListener('abort', onAbort, { once: true });
+                removeAbortListener = () => {
+                    cancellationSignal.removeEventListener('abort', onAbort);
+                };
+                if (cancellationSignal.aborted) onAbort();
+            });
+
+            try {
+                return await Promise.race([response, aborted]);
+            } finally {
+                removeAbortListener?.();
+            }
         };
         const guarded = params.targetGuard
             ? await params.targetGuard.runOperation({

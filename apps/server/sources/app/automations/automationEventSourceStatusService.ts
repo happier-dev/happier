@@ -111,6 +111,7 @@ async function assertCurrentEventContribution(params: Readonly<{
     sourceContractVersion: number;
 }>): Promise<Readonly<{
     supportsCheckpointedPull: boolean;
+    supportsSocket: boolean;
     durablePushWebhookContribution: Readonly<{ pluginId: string; localId: string }> | null;
 }>> {
     let event;
@@ -123,6 +124,8 @@ async function assertCurrentEventContribution(params: Readonly<{
     return {
         supportsCheckpointedPull: event.automation.source.supportedObservationTransports
             .includes("checkpointedPull"),
+        supportsSocket: event.automation.source.supportedObservationTransports
+            .includes("socket"),
         durablePushWebhookContribution:
             readCurrentAutomationEventDurablePushWebhookContributionV1(event),
     };
@@ -134,11 +137,35 @@ async function assertCurrentCheckpointedPullCatalogScope(params: Readonly<{
     pluginId: string;
     version: string;
 }>): Promise<void> {
-    const manifest = await resolveCurrentEventManifest(params);
+    await assertCurrentCatalogScopeSupports({ ...params, transport: "checkpointedPull" });
+}
+
+async function assertCurrentSocketCatalogScope(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    pluginId: string;
+    version: string;
+}>): Promise<void> {
+    await assertCurrentCatalogScopeSupports({ ...params, transport: "socket" });
+}
+
+async function assertCurrentCatalogScopeSupports(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    pluginId: string;
+    version: string;
+    transport: "checkpointedPull" | "socket";
+}>): Promise<void> {
+    const manifest = await resolveCurrentEventManifest({
+        tx: params.tx,
+        accountId: params.accountId,
+        pluginId: params.pluginId,
+        version: params.version,
+    });
     const supported = manifest.contributes.events.some((event) => (
         event.kind === "event"
         && event.automation?.eligible === true
-        && event.automation.source.supportedObservationTransports.includes("checkpointedPull")
+        && event.automation.source.supportedObservationTransports.includes(params.transport)
     ));
     if (!supported) fail("event_contribution_not_current");
 }
@@ -267,11 +294,15 @@ async function reportSourceStatus(params: Readonly<{
             )
         ) fail("observation_target_changed");
     } else {
-        if (!eventContribution.supportsCheckpointedPull) {
+        const requiredSupport = trigger.observationTransport === "socket"
+            ? eventContribution.supportsSocket
+            : eventContribution.supportsCheckpointedPull;
+        if (!requiredSupport) {
             fail("event_contribution_not_current");
         }
         if (
-            trigger.observationTransport !== "checkpointedPull"
+            (trigger.observationTransport !== "checkpointedPull"
+                && trigger.observationTransport !== "socket")
             || !sourceTargetMatchesCaller(trigger, params.caller)
         ) fail("observation_target_changed");
     }
@@ -338,10 +369,18 @@ async function reportCatalogStatus(params: Readonly<{
     callerVersion: string;
     input: Extract<AutomationEventSourceStatusReportV1, { kind: "catalogReconciliation" }>;
 }>): Promise<void> {
-    let scopeKey: "checkpointedPull" | `durablePush:${string}`;
+    let scopeKey: "checkpointedPull" | "socket" | `durablePush:${string}`;
     if (params.input.scope.kind === "checkpointedPull") {
         scopeKey = "checkpointedPull";
         await assertCurrentCheckpointedPullCatalogScope({
+            tx: params.tx,
+            accountId: params.accountId,
+            pluginId: params.caller.pluginId,
+            version: params.callerVersion,
+        });
+    } else if (params.input.scope.kind === "socket") {
+        scopeKey = "socket";
+        await assertCurrentSocketCatalogScope({
             tx: params.tx,
             accountId: params.accountId,
             pluginId: params.caller.pluginId,

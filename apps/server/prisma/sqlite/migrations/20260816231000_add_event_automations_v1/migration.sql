@@ -87,6 +87,10 @@ CREATE TABLE "AutomationTrigger" (
                             AND "watcherPluginId" IS NULL AND "watcherMaterializationId" IS NULL)
                         OR ("watcherMachineId" IS NOT NULL AND "watcherMachineInstallationId" IS NOT NULL
                             AND "watcherPluginId" IS NOT NULL AND "watcherMaterializationId" IS NOT NULL)))
+                OR ("observationTransport" = 'socket' AND "webhookEndpointId" IS NULL
+                    AND "observationStartsAt" IS NULL
+                    AND "watcherMachineId" IS NOT NULL AND "watcherMachineInstallationId" IS NOT NULL
+                    AND "watcherPluginId" IS NOT NULL AND "watcherMaterializationId" IS NOT NULL)
                 OR ("observationTransport" = 'durablePush' AND "webhookEndpointId" IS NOT NULL
                     AND "observationStartsAt" IS NOT NULL AND "watcherMachineId" IS NULL
                     AND "watcherMachineInstallationId" IS NULL AND "watcherPluginId" IS NULL

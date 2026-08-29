@@ -286,7 +286,7 @@ describe("Automation Event source status", () => {
                 sourceInstanceId: "repository-source-status",
                 ensureIdempotencyKey: "automation-source-status-endpoint-key",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: MACHINE_ID,
@@ -1314,12 +1314,8 @@ describe("Automation Event source status", () => {
 
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: ACCOUNT_ID,
-            target: {
-                materialization: {
-                    machineId: caller.machineId,
-                    materializationId: caller.materializationId,
-                    pluginId: caller.pluginId,
-                },
+            machine: {
+                machineId: caller.machineId,
                 machineInstallationId: caller.machineInstallationId,
             },
             now: invocationNow,

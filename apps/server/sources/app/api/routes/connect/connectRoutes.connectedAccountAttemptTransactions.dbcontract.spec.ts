@@ -232,4 +232,43 @@ describe("Connected Account attempt transaction provider db contract", () => {
             });
         }
     });
+
+    it("commits concurrent distinct exact-key admissions without a cross-domain Account fence", async () => {
+        const account = await db.account.create({
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+            select: { id: true },
+        });
+        cleanupAccountIds.add(account.id);
+        const app = createTestApp();
+        await app.ready();
+        const marker = `connected-attempt-${provider}-concurrency-${randomUUID()}`;
+        cleanupMarkers.add(marker);
+        const headers = {
+            "content-type": "application/json",
+            "x-test-user-id": account.id,
+        };
+        const responses = await Promise.all(
+            Array.from({ length: 20 }, (_, index) => app.inject({
+                method: "POST",
+                url: `/v2/connect/connected-account-attempt-transactions/oauth/concurrent-${index}`,
+                headers,
+                payload: {
+                    content: measuredOpaqueEnvelope({
+                        marker: `${marker}-${index}`,
+                        ciphertextBytes: 1_200,
+                    }),
+                    expiresAtMs: Date.now() + 15 * 60_000,
+                },
+            })),
+        );
+        for (const response of responses) {
+            expect(response.statusCode, response.body).toBe(200);
+        }
+        expect(await db.repeatKey.count({
+            where: { value: { contains: marker } },
+        })).toBe(20);
+    });
 });

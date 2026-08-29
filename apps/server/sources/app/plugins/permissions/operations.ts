@@ -62,6 +62,17 @@ export type PluginPermissionGrantOperations = Readonly<{
         accountId: string;
         userId: string;
         input: PluginPermissionGrantRevokeActionInputV1;
+        /**
+         * Verified exact caller for plugin self-revocation. The operation
+         * owner binds this authority to the loaded grant atomically: only a
+         * grant of the same plugin, requested by this exact machine
+         * installation, may be revoked through it.
+         */
+        selfRevokeAuthority?: Readonly<{
+            pluginId: string;
+            machineId: string;
+            installationId: string;
+        }>;
     }>): Promise<PluginPermissionGrantRevokeActionOutputV1>;
     dismissRequest(params: Readonly<{
         accountId: string;
@@ -503,17 +514,37 @@ export function createPluginPermissionGrantOperations(
                 accountId: params.accountId,
                 grantId: params.input.grantId,
             });
+            if (params.selfRevokeAuthority) {
+                // Atomic ownership binding: the authority decision reads the
+                // exact row this call revokes, so no admission/revocation race
+                // can substitute a different grant.
+                const authority = params.selfRevokeAuthority;
+                const owned = storedGrant !== null
+                    && storedGrant.pluginId === authority.pluginId
+                    && storedGrant.authoritySource.kind === "machine_installation"
+                    && storedGrant.authoritySource.machineId === authority.machineId
+                    && storedGrant.authoritySource.installationId === authority.installationId;
+                if (!owned) {
+                    throw new PluginPermissionGrantOperationError(
+                        "plugin_permission_grant_not_owned",
+                        "Plugin self-revocation requires a grant owned by the proven caller",
+                    );
+                }
+            }
             if (storedGrant?.status === "revoked") {
                 return PluginPermissionGrantRevokeActionOutputV1Schema.parse({
                     grant: storedGrant,
                 });
             }
             const existing = assertActiveGrant(storedGrant);
+            const actor: PluginPermissionGrantActorV1 = params.selfRevokeAuthority
+                ? { kind: "plugin", pluginId: params.selfRevokeAuthority.pluginId }
+                : userActor(params.userId);
             const now = runtime.now();
             const grant: PluginPermissionGrantV1 = {
                 ...existing,
                 status: "revoked",
-                revokedByUserId: params.userId,
+                ...(params.selfRevokeAuthority ? {} : { revokedByUserId: params.userId }),
                 revokedAt: now,
                 updatedAt: now,
             };
@@ -526,7 +557,7 @@ export function createPluginPermissionGrantOperations(
                 targetScope: grant.targetScope,
                 subject: grant.subject,
                 authoritySource: grant.authoritySource,
-                actor: userActor(params.userId),
+                actor,
                 requestId: grant.requestId,
                 grantId: grant.id,
                 previousState: { grantStatus: existing.status },

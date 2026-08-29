@@ -46,7 +46,7 @@ const accountEndpointInput = {
     webhookContribution: contribution,
     targetMaterialization: target,
     sourceInstanceId: "source-1",
-    setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+    setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
 } as const;
 
 describe("plugin webhook endpoint correspondence", () => {
@@ -81,7 +81,7 @@ describe("plugin webhook endpoint correspondence", () => {
                 id: endpointId,
                 accountId: "account-1",
                 sourceInstanceId: "source-1",
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 providerInstallationId: null,
                 targetMachineInstallationId: "install-2",
                 targetPluginVersion: "1.0.0",

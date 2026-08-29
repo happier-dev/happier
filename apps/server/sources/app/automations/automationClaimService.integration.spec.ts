@@ -9,7 +9,11 @@ import { db } from "@/storage/db";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
-import { claimAutomationRun, heartbeatAutomationRun } from "./automationClaimService";
+import {
+    claimAutomationRun,
+    heartbeatAutomationRun,
+    toAutomationV3WorkerClaimResponse,
+} from "./automationClaimService";
 import { listDaemonAssignments } from "./automationAssignmentService";
 import {
     automationAccountCurrentnessSelect,
@@ -540,8 +544,13 @@ describe("automationClaimService (integration)", () => {
                 claimRequest,
             }),
         ]);
+        const firstResponse = toAutomationV3WorkerClaimResponse(first);
+        const concurrentResponse = toAutomationV3WorkerClaimResponse(concurrentReplay);
+        expect(firstResponse.run?.id).toBeTruthy();
+        expect(concurrentResponse).toEqual(firstResponse);
+        const claimedRunId = firstResponse.run!.id;
         const claimedBeforeReplay = await db.automationRun.findUnique({
-            where: { id: first.run!.id },
+            where: { id: claimedRunId },
             select: { attempt: true, revision: true, leaseExpiresAt: true },
         });
         const responseLossReplay = await claimAutomationRun({
@@ -551,16 +560,14 @@ describe("automationClaimService (integration)", () => {
             claimRequest,
         });
 
-        expect(first.run?.id).toBeTruthy();
-        expect(concurrentReplay).toEqual(first);
         // The replay rejoins the original claim decision without any new
         // effect: same Run, same attempt, untouched lease/revision.
-        expect(responseLossReplay.run).toMatchObject({
-            id: first.run!.id,
+        expect(toAutomationV3WorkerClaimResponse(responseLossReplay).run).toMatchObject({
+            id: claimedRunId,
             attempt: claimedBeforeReplay!.attempt,
         });
         await db.automationRun.update({
-            where: { id: first.run!.id },
+            where: { id: claimedRunId },
             data: {
                 state: "running",
                 startedAt: new Date(),
@@ -570,26 +577,48 @@ describe("automationClaimService (integration)", () => {
         // The signed nonce identifies the already-committed claim response,
         // not a later read of the mutable Run. Advancing the same attempt must
         // therefore leave replay byte-for-byte equivalent to the first result.
-        await expect(claimAutomationRun({
+        const advancedStateReplay = await claimAutomationRun({
             accountId,
             machineId,
             leaseDurationMs: 30_000,
             claimRequest,
-        })).resolves.toEqual(first);
+        });
+        expect(toAutomationV3WorkerClaimResponse(advancedStateReplay))
+            .toEqual(firstResponse);
         await expect(db.automationRun.findUnique({
-            where: { id: first.run!.id },
+            where: { id: claimedRunId },
             select: { attempt: true, revision: true, leaseExpiresAt: true },
         })).resolves.toEqual({
             ...claimedBeforeReplay,
             revision: claimedBeforeReplay!.revision + 1,
         });
-        expect([firstRun.id, secondRun.id]).toContain(first.run?.id);
+        expect([firstRun.id, secondRun.id]).toContain(claimedRunId);
         await expect(db.automationRun.count({
             where: { id: { in: [firstRun.id, secondRun.id] }, state: { in: ["claimed", "running"] } },
         })).resolves.toBe(1);
         await expect(db.automationWorkerClaimReceipt.count({
             where: { accountId, machineId },
         })).resolves.toBe(1);
+        const persistedReceipt = await db.automationWorkerClaimReceipt.findFirstOrThrow({
+            where: { accountId, machineId },
+            select: { claimResultJson: true },
+        });
+        const persistedResult = JSON.parse(persistedReceipt.claimResultJson) as {
+            run: Record<string, unknown> | null;
+            automation?: Record<string, unknown> | null;
+        };
+        expect(persistedResult.run).not.toBeNull();
+        expect(persistedResult.automation).toEqual(expect.objectContaining({
+            id: automation.id,
+            name: "Idempotent claim",
+            enabled: true,
+        }));
+        expect(persistedResult.run).not.toHaveProperty("assignments");
+        expect(persistedResult.run).not.toHaveProperty("triggerEvidenceEnvelope");
+        expect(persistedResult.run).not.toHaveProperty("resultEnvelope");
+        expect(persistedResult.run).not.toHaveProperty("replyContextEnvelope");
+        expect(persistedResult.run).not.toHaveProperty("errorMessage");
+        expect(persistedResult.automation).not.toHaveProperty("templateCiphertext");
     });
 
     it("replays an empty signed V3 claim without claiming work that appeared later", async () => {
@@ -721,12 +750,14 @@ describe("automationClaimService (integration)", () => {
         // committed post-claim witness, never a freshly minted one.
         await db.account.update({ where: { id: accountId }, data: { seq: { increment: 1 } } });
 
-        await expect(claimAutomationRun({
+        const witnessReplay = await claimAutomationRun({
             accountId,
             machineId,
             leaseDurationMs: 30_000,
             claimRequest,
-        })).resolves.toEqual(first);
+        });
+        expect(toAutomationV3WorkerClaimResponse(witnessReplay))
+            .toEqual(toAutomationV3WorkerClaimResponse(first));
     });
 
     it("claims a released-V2 run queued behind current strict-recipe runs", async () => {

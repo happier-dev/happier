@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-import { AccountSettingsStoredContentEnvelopeSchema } from "@happier-dev/protocol";
+import {
+    AccountSettingsV2HistoryDetailResponseSchema,
+    AccountSettingsV2HistoryListResponseSchema,
+    AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
+} from "@happier-dev/protocol";
 
 import {
     accountSettingsSnapshotToContent,
@@ -22,27 +26,6 @@ const AccountSettingsHistoryVersionParamsSchema = z.object({
     version: z.coerce.number().int().min(0),
 });
 
-const AccountSettingsHistoryContentKindSchema = z.enum(["encrypted", "plain", "empty"]);
-
-const AccountSettingsHistoryListResponseSchema = z.object({
-    snapshots: z.array(z.object({
-        version: z.number().int().min(0),
-        createdAt: z.string(),
-        contentKind: AccountSettingsHistoryContentKindSchema,
-        byteLength: z.number().int().min(0),
-    })),
-});
-
-const AccountSettingsHistoryDetailResponseSchema = z.object({
-    content: AccountSettingsStoredContentEnvelopeSchema.nullable(),
-    version: z.number().int().min(0),
-    createdAt: z.string(),
-});
-
-const AccountSettingsHistoryRestoreClientUpdateRequiredResponseSchema = z.object({
-    error: z.literal("account_settings_restore_client_update_required"),
-}).strict();
-
 const AccountSettingsHistoryErrorResponseSchema = z.object({
     error: z.union([
         z.literal("invalid-params"),
@@ -59,7 +42,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         },
         schema: {
             response: {
-                200: AccountSettingsHistoryListResponseSchema,
+                200: AccountSettingsV2HistoryListResponseSchema,
                 503: AccountSettingsStorageUnavailableResponseSchema,
                 500: AccountSettingsHistoryErrorResponseSchema,
             },
@@ -125,7 +108,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         schema: {
             params: AccountSettingsHistoryVersionParamsSchema,
             response: {
-                200: AccountSettingsHistoryDetailResponseSchema,
+                200: AccountSettingsV2HistoryDetailResponseSchema,
                 404: AccountSettingsHistoryErrorResponseSchema,
                 503: AccountSettingsStorageUnavailableResponseSchema,
                 500: AccountSettingsHistoryErrorResponseSchema,
@@ -196,7 +179,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         schema: {
             params: AccountSettingsHistoryVersionParamsSchema,
             response: {
-                426: AccountSettingsHistoryRestoreClientUpdateRequiredResponseSchema,
+                426: AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
             },
         },
     }, async (_request, reply) => {

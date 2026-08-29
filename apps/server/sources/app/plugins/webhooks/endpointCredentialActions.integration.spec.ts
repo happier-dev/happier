@@ -56,7 +56,7 @@ describe("plugin webhook endpoint credential Actions", () => {
                 webhookContributionId: "github-events",
                 handlerActionId: "handle-webhook",
                 sourceInstanceId: "source-1",
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: ROUTE_ID,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-1",

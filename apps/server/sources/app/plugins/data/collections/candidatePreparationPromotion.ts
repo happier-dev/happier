@@ -58,6 +58,7 @@ type CandidatePromotionMaterializationInput = Readonly<{
     rows: readonly CandidatePromotionMaterializedRow[];
     relations: PluginCollectionPreparedRelationReplacement;
     maximumBatchRows: number;
+    finalizeDerivedState?: boolean;
 }>;
 
 function jsonParameter(value: unknown): string {
@@ -419,10 +420,12 @@ export async function materializeCandidatePromotionSetwiseInTx(
             await input.tx.pluginCollectionIndexEntry.createMany({ data: batch });
         }
     }
-    await finalizePluginCollectionDerivedStateForPromotionInTx({
-        tx: input.tx,
-        accountId: input.accountId,
-        resolved: input.resolved,
-    });
+    if (input.finalizeDerivedState !== false) {
+        await finalizePluginCollectionDerivedStateForPromotionInTx({
+            tx: input.tx,
+            accountId: input.accountId,
+            resolved: input.resolved,
+        });
+    }
     return true;
 }

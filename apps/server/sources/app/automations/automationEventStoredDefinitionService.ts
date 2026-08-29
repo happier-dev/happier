@@ -146,10 +146,11 @@ function eventDefinitionWhere(params: Readonly<{
         eventPluginId: params.caller.pluginId,
         ...(params.lastTriggerId === undefined ? {} : { id: { gt: params.lastTriggerId } }),
     };
-    if (params.input.transport.kind === "checkpointedPull") {
+    if (params.input.transport.kind === "checkpointedPull"
+        || params.input.transport.kind === "socket") {
         return {
             ...base,
-            observationTransport: "checkpointedPull" as const,
+            observationTransport: params.input.transport.kind,
             watcherMachineId: params.caller.machineId,
             watcherMachineInstallationId: params.caller.machineInstallationId,
             watcherPluginId: params.caller.pluginId,
@@ -498,7 +499,23 @@ export async function readAutomationEventStoredDefinitionsV1(params: Readonly<{
                         },
                     };
                 })()
-                : (() => {
+                : input.transport.kind === "socket"
+                    ? (() => {
+                        if (
+                            row.observationTransport !== "socket"
+                            || row.watcherMachineId === null
+                            || row.watcherMaterializationId === null
+                        ) fail("event_contribution_not_current");
+                        return {
+                            kind: "socket" as const,
+                            watcherMaterializationRef: {
+                                pluginId: params.caller.pluginId,
+                                machineId: row.watcherMachineId,
+                                materializationId: row.watcherMaterializationId,
+                            },
+                        };
+                    })()
+                    : (() => {
                     const endpoint = row.webhookEndpointId === null
                         ? null
                         : durablePushEndpointsById.get(row.webhookEndpointId) ?? null;

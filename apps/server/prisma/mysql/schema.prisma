@@ -85,6 +85,7 @@ model Account {
     UserFeedItem           UserFeedItem[]
     UserKVStore            UserKVStore[]
     PluginCollectionRows   PluginCollectionRow[]
+    PluginCollectionAbsenceEpochs PluginCollectionAbsenceEpoch[]
     PluginCollectionIndexStates PluginCollectionIndexState[]
     PluginCollectionRelations PluginCollectionRelation[]
     PluginCollectionCandidatePreparationStages PluginCollectionCandidatePreparationStage[]
@@ -1178,6 +1179,7 @@ enum AutomationSessionLifecycleEvent {
 enum AutomationObservationTransport {
     checkpointedPull
     durablePush
+    socket
 }
 
 enum AutomationRunCauseKind {
@@ -1238,6 +1240,7 @@ model Automation {
     runs             AutomationRun[]
 
     @@index([accountId, enabled, updatedAt])
+    @@index([accountId, deletedAt, updatedAt, id], map: "Automation_account_deleted_updated_id_idx")
 }
 
 model AutomationTrigger {
@@ -2187,6 +2190,19 @@ model PluginCollectionRow {
     /// all lead with the collection identity, so without this one the census
     /// falls back to the primary key and filters out every other tenant's rows.
     @@index([accountId, deletedAt, id], map: "PluginCollectionRow_account_live_scan_idx")
+}
+
+model PluginCollectionAbsenceEpoch {
+    id           String   @id @default(cuid())
+    accountId    String
+    account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    pluginId     String
+    collectionId String
+    epoch        Int      @default(0)
+    createdAt    DateTime @default(now())
+    updatedAt    DateTime @updatedAt
+
+    @@unique([accountId, pluginId, collectionId], map: "PluginCollectionAbsenceEpoch_account_collection_key")
 }
 
 /// The authoritative server-readable values for a collection row. Index and relation records are

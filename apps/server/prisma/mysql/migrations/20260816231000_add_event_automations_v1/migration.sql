@@ -74,7 +74,7 @@ CREATE TABLE `AutomationTrigger` (
     `eventLocalId` VARCHAR(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
     `sourceSelectorId` VARCHAR(191) NULL,
     `sourceContractVersion` INTEGER NULL,
-    `observationTransport` ENUM('checkpointedPull', 'durablePush') NULL,
+    `observationTransport` ENUM('checkpointedPull', 'durablePush', 'socket') NULL,
     `webhookEndpointId` VARCHAR(191) NULL,
     `observationStartsAt` DATETIME(3) NULL,
     `watcherMachineId` VARCHAR(191) NULL,
@@ -133,6 +133,10 @@ CREATE TABLE `AutomationTrigger` (
                             AND `watcherPluginId` IS NULL AND `watcherMaterializationId` IS NULL)
                         OR (`watcherMachineId` IS NOT NULL AND `watcherMachineInstallationId` IS NOT NULL
                             AND `watcherPluginId` IS NOT NULL AND `watcherMaterializationId` IS NOT NULL)))
+                OR (`observationTransport` = 'socket' AND `webhookEndpointId` IS NULL
+                    AND `observationStartsAt` IS NULL
+                    AND `watcherMachineId` IS NOT NULL AND `watcherMachineInstallationId` IS NOT NULL
+                    AND `watcherPluginId` IS NOT NULL AND `watcherMaterializationId` IS NOT NULL)
                 OR (`observationTransport` = 'durablePush' AND `webhookEndpointId` IS NOT NULL
                     AND `observationStartsAt` IS NOT NULL AND `watcherMachineId` IS NULL
                     AND `watcherMachineInstallationId` IS NULL AND `watcherPluginId` IS NULL

@@ -231,7 +231,7 @@ async function ensureEndpoint(accountId: string, idempotencyKey: string) {
             webhookContribution: { pluginId: PLUGIN_ID, localId: WEBHOOK_LOCAL_ID },
             targetMaterialization: MATERIALIZATION_REF,
             sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
-            setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+            setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
             idempotencyKey,
         }),
         contribution: RESOLVED_CONTRIBUTION,
@@ -260,7 +260,7 @@ function pushTrigger(params: Readonly<{
             endpointMaterializationRef: MATERIALIZATION_REF,
             webhookRoutingSourceInstanceId:
                 params.routingSourceInstanceId ?? ROUTING_SOURCE_INSTANCE_ID,
-            setup: { kind: "githubAccountEndpointV1" as const, credential: "serverGenerated" as const },
+            setup: { kind: "accountEndpointV1" as const, credential: "serverGenerated" as const },
         },
         filter: null,
         maximumObservationAgeMs: 60_000,

@@ -600,6 +600,311 @@ describe("automation trigger-set CRUD", () => {
         expect(retargetError).toMatchObject({ code: "sourceMatchesExecutionTarget" });
     });
 
+    it("rejects a same-source recipe retarget even when the exact-turn trigger patch is unchanged", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const source = await seedActiveSourceTurn(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Same-source retarget",
+                enabled: false,
+                executionRecipe: executionRecipe(1),
+                triggers: [{
+                    triggerId: automationTriggerId(),
+                    trigger: lifecycleTrigger({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                        enabled: true,
+                    }),
+                }],
+            },
+        });
+        const trigger = created.triggers[0]!;
+
+        // The explicit trigger patch resubmits the exact unchanged
+        // registration, so registration-freshness alone must not skip the
+        // effective source/target inequality proof.
+        await expect(reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Same-source retarget",
+                description: null,
+                enabled: false,
+                assignments: [],
+                triggers: [{
+                    kind: "existing",
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: trigger.revision,
+                    enabled: true,
+                    trigger: lifecycleDefinition({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                    }),
+                }],
+                removedTriggers: [],
+                executionRecipe: existingSessionExecutionRecipe(2, source.sessionId),
+            },
+        })).rejects.toMatchObject({ code: "sourceMatchesExecutionTarget" });
+        await expect(db.automation.findUniqueOrThrow({
+            where: { id: created.id },
+            select: { targetType: true, templateVersion: true },
+        })).resolves.toMatchObject({ targetType: "new_session", templateVersion: 1 });
+    });
+
+    it("does not block unrelated editor edits on an unchanged terminal exact-turn trigger", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const source = await seedActiveSourceTurn(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Terminal trigger edit",
+                enabled: false,
+                executionRecipe: executionRecipe(1),
+                triggers: [{
+                    triggerId: automationTriggerId(),
+                    trigger: lifecycleTrigger({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                        enabled: true,
+                    }),
+                }],
+            },
+        });
+        const trigger = created.triggers[0]!;
+        await db.sessionTurn.update({
+            where: { sessionId_turnId: { sessionId: source.sessionId, turnId: source.turnId } },
+            data: { status: "completed", terminalAt: 2n, updatedAt: 2n },
+        });
+
+        const edited = await reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Terminal trigger edited",
+                description: "Unrelated copy edit",
+                enabled: false,
+                assignments: [],
+                triggers: [{
+                    kind: "existing",
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: trigger.revision,
+                    enabled: true,
+                    trigger: lifecycleDefinition({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                    }),
+                }],
+                removedTriggers: [],
+            },
+        });
+        expect(edited).toMatchObject({ name: "Terminal trigger edited" });
+        expect(edited?.triggers[0]).toMatchObject({
+            id: trigger.id,
+            enabled: true,
+            sourceSessionId: source.sessionId,
+            sourceTurnId: source.turnId,
+        });
+    });
+
+    it("retargets to a present distinct existing-Session target while the unchanged exact-turn registration is retained", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const source = await seedActiveSourceTurn(account.id);
+        const target = await seedActiveSourceTurn(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Distinct existing target",
+                enabled: false,
+                executionRecipe: executionRecipe(1),
+                triggers: [{
+                    triggerId: automationTriggerId(),
+                    trigger: lifecycleTrigger({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                        enabled: true,
+                    }),
+                }],
+            },
+        });
+        const trigger = created.triggers[0]!;
+
+        const retargeted = await reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Distinct existing target",
+                description: null,
+                enabled: false,
+                assignments: [],
+                triggers: [{
+                    kind: "existing",
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: trigger.revision,
+                    enabled: true,
+                    trigger: lifecycleDefinition({
+                        sourceSessionId: source.sessionId,
+                        sourceTurnId: source.turnId,
+                    }),
+                }],
+                removedTriggers: [],
+                executionRecipe: existingSessionExecutionRecipe(2, target.sessionId),
+            },
+        });
+        expect(retargeted).toMatchObject({ targetType: "existing_session" });
+        expect(retargeted?.triggers[0]).toMatchObject({
+            id: trigger.id,
+            enabled: true,
+            sourceSessionId: source.sessionId,
+            sourceTurnId: source.turnId,
+        });
+    });
+
+    it("pauses and resumes a schedule identically across request shapes without missed backfill", async () => {
+        const account = await db.account.create({
+            data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const machineId = await seedExecutionMachine(account.id);
+        const created = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Pause shapes",
+                enabled: true,
+                executionRecipe: executionRecipe(1),
+                assignments: [{ machineId }],
+                triggers: [{ triggerId: automationTriggerId(), trigger: intervalTrigger(60_000) }],
+            },
+        });
+        const trigger = created.triggers[0]!;
+        expect(trigger.nextRunAt).not.toBeNull();
+
+        // Enablement-only pause is the canonical paused shape: cursor null.
+        const pausedOnly = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: trigger.id,
+            expectedRevision: trigger.revision,
+            enabled: false,
+        });
+        expect(pausedOnly?.triggers[0]).toMatchObject({
+            enabled: false,
+            revision: trigger.revision + 1,
+            nextRunAt: null,
+        });
+
+        // Resuming while redundantly supplying the unchanged definition
+        // initializes the cursor from the transaction clock, never backfilling
+        // paused time.
+        const beforeResume = new Date();
+        const resumed = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: trigger.id,
+            expectedRevision: trigger.revision + 1,
+            enabled: true,
+            trigger: intervalDefinition(60_000),
+        });
+        expect(resumed?.triggers[0]).toMatchObject({ enabled: true });
+        expect(resumed?.triggers[0]?.nextRunAt?.getTime() ?? 0)
+            .toBeGreaterThanOrEqual(beforeResume.getTime() + 60_000);
+        const resumedRevision = resumed!.triggers[0]!.revision;
+
+        // Pausing while redundantly supplying the unchanged definition must
+        // produce the same paused shape as the enablement-only patch.
+        const pausedWithDefinition = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: trigger.id,
+            expectedRevision: resumedRevision,
+            enabled: false,
+            trigger: intervalDefinition(60_000),
+        });
+        expect(pausedWithDefinition?.triggers[0]).toMatchObject({
+            enabled: false,
+            revision: resumedRevision + 1,
+            nextRunAt: null,
+        });
+
+        // The whole-editor shape follows the same pause contract.
+        const reconcilePaused = await reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Pause shapes",
+                description: null,
+                enabled: true,
+                assignments: [{ machineId }],
+                triggers: [{
+                    kind: "existing",
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: pausedWithDefinition!.triggers[0]!.revision,
+                    enabled: false,
+                    trigger: intervalDefinition(60_000),
+                }],
+                removedTriggers: [],
+            },
+        });
+        expect(reconcilePaused?.triggers[0]).toMatchObject({
+            enabled: false,
+            nextRunAt: null,
+        });
+
+        // Whole-editor resume also initializes from the transaction clock.
+        const beforeReconcileResume = new Date();
+        const reconcileResumed = await reconcileAutomationDefinition({
+            accountId: account.id,
+            automationId: created.id,
+            input: {
+                expectedTemplateVersion: 1,
+                name: "Pause shapes",
+                description: null,
+                enabled: true,
+                assignments: [{ machineId }],
+                triggers: [{
+                    kind: "existing",
+                    triggerId: AutomationTriggerIdSchema.parse(trigger.id),
+                    expectedRevision: reconcilePaused!.triggers[0]!.revision,
+                    enabled: true,
+                    trigger: intervalDefinition(60_000),
+                }],
+                removedTriggers: [],
+            },
+        });
+        expect(reconcileResumed?.triggers[0]?.nextRunAt?.getTime() ?? 0)
+            .toBeGreaterThanOrEqual(beforeReconcileResume.getTime() + 60_000);
+
+        // A cadence change still resets and reinitializes from now.
+        const beforeCadenceEdit = new Date();
+        const cadenceEdited = await updateAutomationTrigger({
+            accountId: account.id,
+            automationId: created.id,
+            triggerId: trigger.id,
+            expectedRevision: reconcileResumed!.triggers[0]!.revision,
+            trigger: intervalDefinition(180_000),
+        });
+        expect(cadenceEdited?.triggers[0]).toMatchObject({ everyMs: 180_000 });
+        expect(cadenceEdited?.triggers[0]?.nextRunAt?.getTime() ?? 0)
+            .toBeGreaterThanOrEqual(beforeCadenceEdit.getTime() + 180_000);
+    });
+
     it("pages Run history by stable trigger-aware anchors while triggers are edited and removed between reads", async () => {
         const account = await db.account.create({
             data: { id: `account-${randomUUID()}`, encryptionMode: "plain" },

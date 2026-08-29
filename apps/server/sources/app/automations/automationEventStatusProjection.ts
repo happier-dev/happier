@@ -26,12 +26,12 @@ type CatalogStatusLookup = Readonly<{
     reporterMachineId: string;
     reporterMachineInstallationId: string;
     reporterMaterializationId: string;
-    scopeKey: "checkpointedPull" | `durablePush:${string}`;
+    scopeKey: "checkpointedPull" | "socket" | `durablePush:${string}`;
 }>;
 
 /**
  * The one reporter identity an Event Automation's current observation can carry:
- * its current watcher for `checkpointedPull`, or its current durable-push
+ * its current watcher for `checkpointedPull`/`socket`, or its current durable-push
  * endpoint target. Resolved once and reused by both summaries.
  */
 type CurrentSourceReporter = Pick<
@@ -111,9 +111,12 @@ function catalogStatusFromRow(row: Readonly<{
     });
 }
 
-function checkpointedPullCatalogLookup(accountId: string, trigger: PluginEventTrigger): CatalogStatusLookup | null {
+function assignedWatcherCatalogLookup(accountId: string, trigger: PluginEventTrigger): CatalogStatusLookup | null {
+    // Checkpointed-pull and session-socket triggers both report through one
+    // exact assigned watcher materialization; the scope key is the transport.
     if (
-        trigger.observationTransport !== "checkpointedPull"
+        (trigger.observationTransport !== "checkpointedPull"
+            && trigger.observationTransport !== "socket")
         || trigger.eventPluginId === null
         || trigger.watcherMachineId === null
         || trigger.watcherMachineInstallationId === null
@@ -127,7 +130,7 @@ function checkpointedPullCatalogLookup(accountId: string, trigger: PluginEventTr
         reporterMachineId: trigger.watcherMachineId,
         reporterMachineInstallationId: trigger.watcherMachineInstallationId,
         reporterMaterializationId: trigger.watcherMaterializationId,
-        scopeKey: "checkpointedPull",
+        scopeKey: trigger.observationTransport,
     };
 }
 
@@ -241,9 +244,9 @@ export async function loadAutomationEventStatusProjections(params: Readonly<{
         });
     };
     for (const { automation, trigger } of eventEntries) {
-        const checkpointedPull = checkpointedPullCatalogLookup(automation.accountId, trigger);
-        if (checkpointedPull !== null) {
-            registerCatalogLookup(checkpointedPull);
+        const assignedWatcher = assignedWatcherCatalogLookup(automation.accountId, trigger);
+        if (assignedWatcher !== null) {
+            registerCatalogLookup(assignedWatcher);
             continue;
         }
         if (

@@ -65,7 +65,7 @@ function endpointRow(overrides: Record<string, unknown> = {}) {
         webhookContributionId: "issues",
         handlerActionId: "receive",
         sourceInstanceId: "source-1",
-        setupKind: "githubAccountEndpointV1",
+        setupKind: "accountEndpointV1",
         routingKind: "accountEndpoint",
         providerInstallationId: null,
         revision: 2,
@@ -169,7 +169,7 @@ describe("plugin webhook endpoint store", () => {
             webhookContribution: contribution,
             targetMaterialization: target,
             sourceInstanceId: "source-1",
-            setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+            setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
             idempotencyKey: "ensure-operation-1",
         });
 
@@ -209,7 +209,7 @@ describe("plugin webhook endpoint store", () => {
             webhookContribution: contribution,
             targetMaterialization: target,
             sourceInstanceId: "source-1",
-            setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+            setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
             idempotencyKey: "ensure-unexplained-unique-conflict-1",
         })).rejects.toMatchObject({ code: "P2002" });
 

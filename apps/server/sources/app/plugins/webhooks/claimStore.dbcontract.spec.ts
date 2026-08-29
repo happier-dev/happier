@@ -188,7 +188,7 @@ describe("plugin webhook unresolved Automation native database contract", () => 
                     sourceInstanceId: `source-webhook-native-${suffix}`,
                     ensureIdempotencyKey: `idempotency-webhook-native-${suffix}`,
                     ensureRequestFingerprint: randomBytes(32).toString("hex"),
-                    setupKind: "githubAccountEndpointV1",
+                    setupKind: "accountEndpointV1",
                     routeId,
                     routingKind: "accountEndpoint",
                     targetMachineId: TARGET.materialization.machineId,

@@ -19,6 +19,7 @@ import {
     MachineRegistrationReplacementError,
     type MachineRegistrationReplacementResult,
 } from "@/app/machines/applyVerifiedMachineRegistrationReplacement";
+import { removeAutomationMachineAssignmentsTx } from "@/app/automations/automationMachineAssignmentRemoval";
 import {
     computeContentPublicKeyFingerprint,
     normalizeContentPublicKeyFingerprint,
@@ -801,24 +802,37 @@ export function machinesRoutes(app: Fastify) {
             const now = new Date();
             const revokedAt = machine.revokedAt ?? now;
 
-            const updated = await tx.machine.update({
-                where: { accountId_id: { accountId: userId, id } },
-                data: {
-                    active: false,
-                    revokedAt,
-                },
-            });
+            let updated = machine;
 
-            await tx.accessKey.deleteMany({
-                where: {
-                    accountId: userId,
-                    machineId: id,
-                },
-            });
-
-            await tx.automationAssignment.deleteMany({
-                where: {
-                    machineId: id,
+            // Assignment removal goes through the canonical Automation-owned
+            // composition: an enabled Automation that loses its last enabled
+            // execution assignment is disabled atomically (with schedule
+            // cursors cleared, Event catalog/source projection advanced, and
+            // post-commit publication) instead of staying enabled with no
+            // executable placement. Frozen admitted-Run assignment snapshots
+            // are preserved untouched. The composition acquires the Account
+            // fence before it invokes the revocation/access-key mutation, then
+            // the same composition settles the nonterminal Runs whose complete
+            // frozen snapshot has no eligible machine left: queued/claimed Runs
+            // cancel, running Runs settle outcome-uncertain.
+            await removeAutomationMachineAssignmentsTx({
+                tx,
+                accountId: userId,
+                machineId: id,
+                markMachineUnavailableTx: async (fencedTx) => {
+                    updated = await fencedTx.machine.update({
+                        where: { accountId_id: { accountId: userId, id } },
+                        data: {
+                            active: false,
+                            revokedAt,
+                        },
+                    });
+                    await fencedTx.accessKey.deleteMany({
+                        where: {
+                            accountId: userId,
+                            machineId: id,
+                        },
+                    });
                 },
             });
 

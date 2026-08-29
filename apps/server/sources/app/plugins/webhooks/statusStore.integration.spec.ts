@@ -169,7 +169,7 @@ describe("plugin webhook Account status projection", () => {
                 sourceInstanceId: "source-status",
                 ensureIdempotencyKey: "status-idempotency-key-0001",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-1",

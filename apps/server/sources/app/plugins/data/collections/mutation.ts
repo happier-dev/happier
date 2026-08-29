@@ -20,6 +20,9 @@ import {
     type PluginCollectionMutationOperationV1,
     type PluginCollectionMutationRequestV1,
     type PluginCollectionMutationResultV1,
+    PluginCollectionForgetRequestV1Schema,
+    PluginCollectionForgetResultV1Schema,
+    type PluginCollectionForgetResultV1,
     type PluginCollectionProjectionV1,
     type PluginCollectionRelationV1,
     type PluginDataCollectionsCapabilities,
@@ -255,8 +258,54 @@ function fieldIsRequired(input: Readonly<{
         && input.contract.schema.required?.includes(input.field) === true;
 }
 
+/**
+ * The AJV validators one resolved contract needs, prepared lazily once per
+ * operation and reused across every row and projection field inside it. A
+ * fresh AJV instance per compiled schema is the dominant admission cost; the
+ * admitted contract is immutable for the operation, so re-preparing it per
+ * field per row only lengthens the write transaction. This holder lives for
+ * exactly one operation — the caller creates it at the resolved-contract
+ * boundary; there is deliberately no persistent cross-operation cache.
+ */
+export type PluginCollectionContractValidators = Readonly<{
+    fieldValidator(field: string): ReturnType<typeof compilePluginJsonSchema>;
+    logicalRowValidator(): ReturnType<typeof compilePluginJsonSchema>;
+}>;
+
+export function createPluginCollectionContractValidators(
+    contract: NormalizedPluginAccountCollectionContractV1,
+): PluginCollectionContractValidators {
+    const fieldValidators = new Map<string, ReturnType<typeof compilePluginJsonSchema>>();
+    let logicalRow: ReturnType<typeof compilePluginJsonSchema> | null = null;
+    return Object.freeze({
+        fieldValidator(field) {
+            const existing = fieldValidators.get(field);
+            if (existing) return existing;
+            let validate: ReturnType<typeof compilePluginJsonSchema>;
+            try {
+                validate = compilePluginJsonSchema(fieldSchemaForContract({ contract, field }));
+            } catch {
+                throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
+            }
+            fieldValidators.set(field, validate);
+            return validate;
+        },
+        logicalRowValidator() {
+            if (!logicalRow) {
+                try {
+                    logicalRow = compilePluginJsonSchema(contract.schema);
+                } catch {
+                    throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
+                }
+            }
+            return logicalRow;
+        },
+    });
+}
+
 function validateProjection(input: Readonly<{
     contract: NormalizedPluginAccountCollectionContractV1;
+    validators: PluginCollectionContractValidators;
     rowId: string;
     projection: PluginCollectionProjectionV1;
 }>): PluginCollectionProjectionV1 {
@@ -280,12 +329,7 @@ function validateProjection(input: Readonly<{
             }
             continue;
         }
-        let validate: ReturnType<typeof compilePluginJsonSchema>;
-        try {
-            validate = compilePluginJsonSchema(fieldSchemaForContract({ contract: input.contract, field }));
-        } catch {
-            throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
-        }
+        const validate = input.validators.fieldValidator(field);
         if (!isValidPluginJsonSchemaValue(validate, value)) {
             throw new PluginCollectionMutationOperationError("collection_mutation_invalid");
         }
@@ -307,6 +351,7 @@ function validateProjection(input: Readonly<{
 
 function validatePlainLogicalRow(input: Readonly<{
     contract: NormalizedPluginAccountCollectionContractV1;
+    validators: PluginCollectionContractValidators;
     operation: Extract<PluginCollectionMutationOperationV1, { kind: "put" }>;
     projection: PluginCollectionProjectionV1;
 }>): void {
@@ -352,12 +397,7 @@ function validatePlainLogicalRow(input: Readonly<{
             configurable: false,
         });
     }
-    let validate: ReturnType<typeof compilePluginJsonSchema>;
-    try {
-        validate = compilePluginJsonSchema(input.contract.schema);
-    } catch {
-        throw new PluginCollectionMutationOperationError("collection_contract_inconsistent");
-    }
+    const validate = input.validators.logicalRowValidator();
     if (!isValidPluginJsonSchemaValue(validate, logical)) {
         throw new PluginCollectionMutationOperationError("collection_mutation_invalid");
     }
@@ -365,6 +405,7 @@ function validatePlainLogicalRow(input: Readonly<{
 
 function validateCollectionContentAndProjection(input: Readonly<{
     contract: NormalizedPluginAccountCollectionContractV1;
+    validators: PluginCollectionContractValidators;
     encryptionMode: "plain" | "e2ee";
     rowId: string;
     content: unknown;
@@ -384,12 +425,14 @@ function validateCollectionContentAndProjection(input: Readonly<{
     }
     const projection = validateProjection({
         contract: input.contract,
+        validators: input.validators,
         rowId: input.rowId,
         projection: input.projection,
     });
     if (input.encryptionMode === "plain") {
         validatePlainLogicalRow({
             contract: input.contract,
+            validators: input.validators,
             operation: {
                 kind: "put",
                 rowId: input.rowId,
@@ -405,11 +448,13 @@ function validateCollectionContentAndProjection(input: Readonly<{
 
 function validatePutContent(input: Readonly<{
     contract: NormalizedPluginAccountCollectionContractV1;
+    validators: PluginCollectionContractValidators;
     encryptionMode: "plain" | "e2ee";
     operation: Extract<PluginCollectionMutationOperationV1, { kind: "put" }>;
 }>): PluginCollectionProjectionV1 {
     return validateCollectionContentAndProjection({
         contract: input.contract,
+        validators: input.validators,
         encryptionMode: input.encryptionMode,
         rowId: input.operation.rowId,
         content: input.operation.content,
@@ -527,7 +572,7 @@ async function resolveWritableCollectionInTx(input: Readonly<{
     tx: Tx;
     accountId: string;
     encryptionMode: "plain" | "e2ee";
-    request: PluginCollectionMutationRequestV1;
+    request: Pick<PluginCollectionMutationRequestV1, "pluginId" | "collectionId" | "writerContext">;
 }>): Promise<ResolvedWritableCollection> {
     const intent = await input.tx.accountPluginIntent.findUnique({
         where: {
@@ -845,9 +890,13 @@ export async function finalizePluginCollectionDerivedStateForPromotionInTx(input
 function conflictFor(input: Readonly<{
     operation: PluginCollectionMutationOperationV1;
     existing: ExistingRow | undefined;
+    absenceEpoch: number;
 }>): Readonly<{ rowId: string; revision: number | null; deleted: boolean }> | null {
     const existing = input.existing;
     if (input.operation.expectedRevision === "absent") {
+        if (input.operation.expectedAbsenceEpoch !== input.absenceEpoch) {
+            return { rowId: input.operation.rowId, revision: existing?.revision ?? null, deleted: existing?.deletedAt !== null };
+        }
         if (!existing) return null;
         return {
             rowId: input.operation.rowId,
@@ -1069,8 +1118,8 @@ async function assertNoPersistedRelationUniquenessCollisionInTx(input: Readonly<
 
 /**
  * Validates a bounded relation replacement without writing. Candidate
- * promotion consumes this before its first derived-state write, while the
- * ordinary row writer immediately materializes the same plan below.
+ * promotion consumes this per source page; the ordinary row writer immediately
+ * materializes the same plan below.
  */
 export async function preparePluginCollectionRelationReplacementInTx(input: Readonly<{
     tx: Tx;
@@ -1078,6 +1127,7 @@ export async function preparePluginCollectionRelationReplacementInTx(input: Read
     contract: NormalizedPluginAccountCollectionContractV1;
     changes: readonly RelationRowChange[];
     maximumBatchRows: number;
+    skipPersistedUniqueRelationCollisionCheck?: boolean;
 }>): Promise<PluginCollectionPreparedRelationReplacement> {
     const sourceRowDbIds = input.changes.map((change) => change.rowDbId);
     if (new Set(sourceRowDbIds).size !== sourceRowDbIds.length) {
@@ -1098,15 +1148,64 @@ export async function preparePluginCollectionRelationReplacementInTx(input: Read
         maximumBatchRows: input.maximumBatchRows,
     });
     assertCandidateRelationUniqueness({ edges });
-    await assertNoPersistedRelationUniquenessCollisionInTx({
-        tx: input.tx,
-        accountId: input.accountId,
-        contract: input.contract,
-        sourceRowDbIds,
-        edges,
-        maximumBatchRows: input.maximumBatchRows,
-    });
+    if (input.skipPersistedUniqueRelationCollisionCheck !== true) {
+        await assertNoPersistedRelationUniquenessCollisionInTx({
+            tx: input.tx,
+            accountId: input.accountId,
+            contract: input.contract,
+            sourceRowDbIds,
+            edges,
+            maximumBatchRows: input.maximumBatchRows,
+        });
+    }
     return { sourceRowDbIds, edges };
+}
+
+export async function retirePluginCollectionRelationsForSourceCollectionInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    pluginId: string;
+    collectionId: string;
+}>): Promise<void> {
+    await input.tx.pluginCollectionRelation.updateMany({
+        where: {
+            accountId: input.accountId,
+            sourcePluginId: input.pluginId,
+            sourceCollectionId: input.collectionId,
+            deletedAt: null,
+        },
+        data: { deletedAt: new Date() },
+    });
+}
+
+export async function assertNoActiveUniqueCollectionRelationDuplicatesInTx(input: Readonly<{
+    tx: Tx;
+    accountId: string;
+    contract: NormalizedPluginAccountCollectionContractV1;
+}>): Promise<void> {
+    for (const relation of input.contract.relations) {
+        if (relation.kind !== "collection" || !relation.unique) continue;
+        const duplicates = await input.tx.pluginCollectionRelation.groupBy({
+            by: ["targetRowId"],
+            where: {
+                accountId: input.accountId,
+                sourcePluginId: input.contract.pluginId,
+                sourceCollectionId: input.contract.collectionId,
+                relationId: relation.id,
+                targetKind: "collection",
+                targetPluginId: input.contract.pluginId,
+                targetCollectionId: relation.collectionId,
+                deletedAt: null,
+            },
+            _count: { _all: true },
+            having: { targetRowId: { _count: { gt: 1 } } },
+            orderBy: { targetRowId: "asc" },
+            take: 1,
+        });
+        if (duplicates.length > 0) {
+            throw new PluginCollectionMutationOperationError("collection_relation_unavailable");
+        }
+    }
 }
 
 /** Materializes a prevalidated relation replacement in bounded setwise writes. */
@@ -1198,6 +1297,7 @@ export async function replaceRelationEdgesForRowTx(input: Readonly<{
 
 function readStoredProjection(input: Readonly<{
     contract: NormalizedPluginAccountCollectionContractV1;
+    validators: PluginCollectionContractValidators;
     rowId: string;
     projections: readonly Readonly<{ fieldId: string; typedEncodedValue: string }>[];
 }>): PluginCollectionProjectionV1 {
@@ -1219,6 +1319,7 @@ function readStoredProjection(input: Readonly<{
     try {
         return validateProjection({
             contract: input.contract,
+            validators: input.validators,
             rowId: input.rowId,
             projection: parsed.data,
         });
@@ -1246,13 +1347,16 @@ export function assertPluginCollectionStoredContentForAccountTransition(input: R
     content: ReturnType<typeof PluginCollectionContentEnvelopeV1Schema.parse>;
     projection: PluginCollectionProjectionV1;
 }> {
+    const validators = createPluginCollectionContractValidators(input.contract);
     const projection = readStoredProjection({
         contract: input.contract,
+        validators,
         rowId: input.rowId,
         projections: input.projections,
     });
     return validateCollectionContentAndProjection({
         contract: input.contract,
+        validators,
         encryptionMode: input.encryptionMode,
         rowId: input.rowId,
         content: input.contentEnvelope,
@@ -1433,9 +1537,20 @@ async function applyIncomingRelationDeletesTx(input: Readonly<{
         rowId: string;
         revision: number;
     }>> = [];
+    // Pendings sharing one source contract share one prepared validator set.
+    const sourceContractValidators = new Map<
+        NormalizedPluginAccountCollectionContractV1,
+        PluginCollectionContractValidators
+    >();
     for (const pending of nullificationsBySourceRowId.values()) {
+        let validators = sourceContractValidators.get(pending.sourceContract);
+        if (!validators) {
+            validators = createPluginCollectionContractValidators(pending.sourceContract);
+            sourceContractValidators.set(pending.sourceContract, validators);
+        }
         const projection = readStoredProjection({
             contract: pending.sourceContract,
+            validators,
             rowId: pending.sourceRow.rowId,
             projections: pending.sourceRow.projections,
         });
@@ -1588,8 +1703,20 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         select: { id: true, rowId: true, revision: true, deletedAt: true },
     });
     const existingByRowId = new Map(existingRows.map((row) => [row.rowId, row]));
+    const absenceEpoch = await input.tx.pluginCollectionAbsenceEpoch.findUnique({
+        where: { accountId_pluginId_collectionId: {
+            accountId: input.accountId,
+            pluginId: resolved.contract.pluginId,
+            collectionId: resolved.contract.collectionId,
+        } },
+        select: { epoch: true },
+    });
     const conflicts = operations
-        .map((operation) => conflictFor({ operation, existing: existingByRowId.get(operation.rowId) }))
+        .map((operation) => conflictFor({
+            operation,
+            existing: existingByRowId.get(operation.rowId),
+            absenceEpoch: absenceEpoch?.epoch ?? 0,
+        }))
         .filter((conflict): conflict is NonNullable<typeof conflict> => conflict !== null);
     if (conflicts.length > 0) {
         return PluginCollectionMutationResultV1Schema.parse({ status: "conflict", conflicts });
@@ -1620,6 +1747,9 @@ async function mutatePluginCollectionInTx(input: Readonly<{
 
     const results: Array<{ rowId: string; revision: number; deleted: boolean }> = [];
     const relationChanges: RelationRowChange[] = [];
+    // One resolved contract serves the whole batch: prepare its validators once
+    // here, not per field per row inside the write transaction.
+    const contractValidators = createPluginCollectionContractValidators(resolved.contract);
     for (const operation of operations) {
         if (operation.kind === "assert") continue;
         const existing = existingByRowId.get(operation.rowId);
@@ -1627,6 +1757,7 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         if (operation.kind === "put") {
             const projection = validatePutContent({
                 contract: resolved.contract,
+                validators: contractValidators,
                 encryptionMode: resolved.encryptionMode,
                 operation,
             });
@@ -1882,4 +2013,86 @@ export async function mutatePluginCollection(input: Readonly<{
         request,
         deployment,
     }));
+}
+
+/**
+ * Host-private, exact-CAS physical reclamation. Logical delete intentionally
+ * remains the public Collection mutation; this path is for a retention owner
+ * that has already proven its row unreachable. Advancing the one Collection
+ * absence epoch and deleting the tombstone share this transaction.
+ */
+export async function forgetPluginCollection(input: Readonly<{
+    accountId: string;
+    request: unknown;
+}>): Promise<PluginCollectionForgetResultV1> {
+    const request = PluginCollectionForgetRequestV1Schema.parse(input.request);
+    return await inTx(async (tx) => {
+        const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId);
+        if (fence.status === "account_not_found") {
+            throw new PluginCollectionMutationOperationError("collection_unavailable");
+        }
+        if (fence.status === "account_inconsistent") {
+            throw new PluginCollectionMutationOperationError("collection_content_mode_mismatch");
+        }
+        const resolved = await resolveWritableCollectionInTx({
+            tx,
+            accountId: input.accountId,
+            encryptionMode: fence.account.currentness.encryptionMode,
+            request,
+        });
+        const row = await tx.pluginCollectionRow.findFirst({
+            where: {
+                accountId: input.accountId,
+                pluginId: resolved.contract.pluginId,
+                collectionId: resolved.contract.collectionId,
+                rowId: request.rowId,
+                revision: request.expectedRevision,
+                deletedAt: { not: null },
+            },
+            select: { id: true },
+        });
+        if (!row) return PluginCollectionForgetResultV1Schema.parse({ status: "conflict" });
+        const epoch = await tx.pluginCollectionAbsenceEpoch.upsert({
+            where: { accountId_pluginId_collectionId: {
+                accountId: input.accountId,
+                pluginId: resolved.contract.pluginId,
+                collectionId: resolved.contract.collectionId,
+            } },
+            create: {
+                accountId: input.accountId,
+                pluginId: resolved.contract.pluginId,
+                collectionId: resolved.contract.collectionId,
+                epoch: 0,
+            },
+            update: {},
+            select: { id: true },
+        });
+        const advanced = await tx.pluginCollectionAbsenceEpoch.updateMany({
+            where: { id: epoch.id, epoch: request.expectedAbsenceEpoch },
+            data: { epoch: { increment: 1 } },
+        });
+        if (advanced.count !== 1) return PluginCollectionForgetResultV1Schema.parse({ status: "conflict" });
+        await tx.pluginCollectionRow.delete({ where: { id: row.id } });
+        await markAccountChanged(tx, {
+            accountId: input.accountId,
+            kind: "pluginDomain",
+            entityId: buildPluginDomainAccountChangeEntityId({
+                pluginDomain: "dataCollection",
+                pluginId: resolved.contract.pluginId,
+                collectionId: resolved.contract.collectionId,
+                contractDigest: resolved.contract.contractDigest,
+                revision: request.expectedRevision,
+                full: true,
+            }),
+            hint: {
+                pluginDomain: "dataCollection",
+                pluginId: resolved.contract.pluginId,
+                collectionId: resolved.contract.collectionId,
+                contractDigest: resolved.contract.contractDigest,
+                revision: request.expectedRevision,
+                full: true,
+            },
+        });
+        return PluginCollectionForgetResultV1Schema.parse({ status: "forgotten" });
+    });
 }

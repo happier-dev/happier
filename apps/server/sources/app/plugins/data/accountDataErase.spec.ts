@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     const deleteSessionTree = vi.fn();
     const deletePublicFile = vi.fn();
     const deleteDefaultAccountPetPrivateObject = vi.fn();
+    const inTxOptions = vi.fn();
     const tx = {
         account: {
             findUnique,
@@ -54,13 +55,16 @@ const mocks = vi.hoisted(() => {
         routeDeleteMany,
         domainDeleteMany, sessionFindMany, uploadedFileFindMany, accountPetAssetFindMany, deleteSessionTree,
         deletePublicFile, deleteDefaultAccountPetPrivateObject,
+        inTxOptions,
         tx,
     };
 });
 
 vi.mock("@/storage/inTx", () => ({
-    inTx: async (operation: (tx: typeof mocks.tx) => Promise<unknown>) => await operation(mocks.tx),
-    afterTx: (_tx: typeof mocks.tx, callback: () => void) => callback(),
+    inTx: async (operation: (tx: typeof mocks.tx) => Promise<unknown>, options?: unknown) => {
+        mocks.inTxOptions(options);
+        return await operation(mocks.tx);
+    },
 }));
 vi.mock("@/app/session/delete/deleteSessionTree", () => ({ deleteSessionTree: mocks.deleteSessionTree }));
 vi.mock("@/storage/blob/files", () => ({ deletePublicFile: mocks.deletePublicFile }));
@@ -112,6 +116,7 @@ describe("deleteAccountForErasure", () => {
         mocks.deleteSessionTree.mockResolvedValue(undefined);
         mocks.deletePublicFile.mockResolvedValue(undefined);
         mocks.deleteDefaultAccountPetPrivateObject.mockResolvedValue(undefined);
+        mocks.inTxOptions.mockClear();
     });
 
     it("composes webhook cleanup and the physical Account delete in one transaction", async () => {
@@ -135,11 +140,12 @@ describe("deleteAccountForErasure", () => {
         );
     });
 
-    it("uses the Session owner and removes captured file bytes only after the Account delete", async () => {
+    it("removes captured file bytes before the exact Account cleanup transaction", async () => {
         const updatedAt = new Date("2026-08-27T10:00:00.000Z");
         mocks.sessionFindMany.mockResolvedValue([{ id: "session-1", updatedAt }]);
-        mocks.uploadedFileFindMany.mockResolvedValue([{ path: "public/users/account-1/avatar.jpg" }]);
+        mocks.uploadedFileFindMany.mockResolvedValue([{ id: "uploaded-avatar", path: "public/users/account-1/avatar.jpg" }]);
         mocks.accountPetAssetFindMany.mockResolvedValue([{
+            id: "pet-asset-sheet",
             objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp",
         }]);
 
@@ -159,9 +165,90 @@ describe("deleteAccountForErasure", () => {
         expect(mocks.deleteDefaultAccountPetPrivateObject).toHaveBeenCalledWith(
             "private/accounts/account-1/pets/pet-1/sheet.webp",
         );
-        expect(mocks.deleteAccount.mock.invocationCallOrder[0]!).toBeLessThan(
-            mocks.deletePublicFile.mock.invocationCallOrder[0]!,
+        expect(mocks.deletePublicFile.mock.invocationCallOrder[0]!).toBeLessThan(
+            mocks.deleteAccount.mock.invocationCallOrder[0]!,
         );
+        expect(mocks.inTxOptions).toHaveBeenLastCalledWith({ isolationLevel: "Serializable" });
+    });
+
+    it("returns failure and preserves Account rows when public blob deletion fails, then retries with retained locators", async () => {
+        mocks.uploadedFileFindMany.mockResolvedValue([{ id: "uploaded-avatar", path: "public/users/account-1/avatar.jpg" }]);
+        mocks.deletePublicFile
+            .mockRejectedValueOnce(new Error("storage unavailable"))
+            .mockResolvedValueOnce(undefined);
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "failed",
+            code: "account_erasure_blob_delete_failed",
+        });
+
+        expect(mocks.deletePublicFile).toHaveBeenCalledWith("public/users/account-1/avatar.jpg");
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+        expect(mocks.domainDeleteMany).not.toHaveBeenCalledWith({ where: { accountId: "account-1" } });
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "deleted",
+        });
+        expect(mocks.deletePublicFile).toHaveBeenCalledTimes(2);
+        expect(mocks.deleteAccount).toHaveBeenCalledWith({ where: { id: "account-1" } });
+    });
+
+    it("returns failure and preserves Account rows when private blob deletion fails, then retries with retained locators", async () => {
+        mocks.accountPetAssetFindMany.mockResolvedValue([{
+            id: "pet-asset-sheet",
+            objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp",
+        }]);
+        mocks.deleteDefaultAccountPetPrivateObject
+            .mockRejectedValueOnce(new Error("private storage unavailable"))
+            .mockResolvedValueOnce(undefined);
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "failed",
+            code: "account_erasure_blob_delete_failed",
+        });
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "deleted",
+        });
+        expect(mocks.deleteDefaultAccountPetPrivateObject).toHaveBeenCalledTimes(2);
+        expect(mocks.deleteAccount).toHaveBeenCalledWith({ where: { id: "account-1" } });
+    });
+
+    it("refuses to delete the Account when retained blob locators changed after storage deletion", async () => {
+        mocks.uploadedFileFindMany
+            .mockResolvedValueOnce([{ id: "uploaded-avatar", path: "public/users/account-1/avatar.jpg" }])
+            .mockResolvedValueOnce([{ id: "uploaded-avatar", path: "public/users/account-1/other.jpg" }]);
+        mocks.accountPetAssetFindMany.mockResolvedValue([]);
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "failed",
+            code: "account_erasure_locator_mismatch",
+        });
+
+        expect(mocks.deletePublicFile).toHaveBeenCalledWith("public/users/account-1/avatar.jpg");
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
+    });
+
+    it("rechecks exact locator rows, not only storage coordinates, before Account deletion", async () => {
+        mocks.uploadedFileFindMany
+            .mockResolvedValueOnce([{ id: "uploaded-avatar", path: "public/users/account-1/avatar.jpg" }])
+            .mockResolvedValueOnce([{ id: "replacement-upload", path: "public/users/account-1/avatar.jpg" }]);
+        mocks.accountPetAssetFindMany
+            .mockResolvedValueOnce([{ id: "pet-asset-sheet", objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp" }])
+            .mockResolvedValueOnce([{ id: "pet-asset-sheet", objectKey: "private/accounts/account-1/pets/pet-1/sheet.webp" }]);
+
+        await expect(deleteAccountForErasure({ accountId: "account-1" })).resolves.toEqual({
+            status: "failed",
+            code: "account_erasure_locator_mismatch",
+        });
+
+        expect(mocks.deletePublicFile).toHaveBeenCalledWith("public/users/account-1/avatar.jpg");
+        expect(mocks.deleteDefaultAccountPetPrivateObject).toHaveBeenCalledWith(
+            "private/accounts/account-1/pets/pet-1/sheet.webp",
+        );
+        expect(mocks.acquireAccountEncryptionTransitionFenceInTx).toHaveBeenCalledTimes(2);
+        expect(mocks.deleteAccount).not.toHaveBeenCalled();
     });
 
     it("does not invoke a cleanup or delete for an Account that is already absent", async () => {

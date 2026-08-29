@@ -264,7 +264,11 @@ export async function retainAutomationRunProducedSession(params: {
                 accountId: params.accountId,
                 claimedByMachineId: params.machineId,
                 attempt: params.attempt,
-                state: { in: ["running", "cancelled"] },
+                // Cancellation of a running Run settles outcome-uncertain, so
+                // a Session the target committed around that cancellation
+                // retains its exact canonical identity in that terminal state
+                // too.
+                state: { in: ["running", "cancelled", "outcome_uncertain"] },
             },
             select: {
                 automationId: true,
@@ -1667,13 +1671,22 @@ export async function failAutomationRunFromV2(params: {
     });
 }
 
-type CancelledAutomationRunTxResult = Readonly<{
+/** One settled canonical-cancellation row, consumed by the publication seam. */
+export type CancelledAutomationRunTxResult = Readonly<{
     run: AutomationRunItem;
     previousState: AutomationRunItem["state"];
     transitionCause?: typeof AUTOMATION_RUN_CANCELLED_AFTER_DISPATCH_PERMITTED_CAUSE_V1;
 }>;
 
-async function cancelAutomationRunRowTx(params: Readonly<{
+/**
+ * The one canonical Run-cancellation row transition, shared by ordinary
+ * per-Run cancellation and by the Automation-owned machine-assignment removal
+ * composition when permanent machine revocation strands admitted
+ * Runs. Callers own the Account encryption fence and the post-transition
+ * publication; this owner owns the exact Run CAS, lifecycle event, reply
+ * handoff closure, and schedule-cursor advance.
+ */
+export async function cancelAutomationRunRowTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     previousRun: AutomationRunItem;
@@ -1700,10 +1713,16 @@ async function cancelAutomationRunRowTx(params: Readonly<{
 
     const now = new Date();
     // Dispatch permission is the boundary after which one external execution
-    // may already be running. Cancellation remains authoritative, but cannot
-    // claim that accepted external work disappeared.
+    // may already be running. A Run observed running is past the same boundary
+    // for its target regardless of target kind and regardless of the retained
+    // dispatch bytes (session-targeted Runs keep no dispatch state at all), so
+    // every running Run — and any retained/malformed dispatchPermitted row —
+    // may only settle outcome-uncertain. Cancellation stays authoritative but
+    // cannot claim accepted external work disappeared. Queued and claimed
+    // Runs have had no permission to start and settle cleanly cancelled.
     const dispatchPermitted = previousRun.executionDispatchState === "dispatchPermitted";
-    const terminalState = dispatchPermitted ? "outcome_uncertain" : "cancelled";
+    const outcomeUncertain = dispatchPermitted || previousRun.state === "running";
+    const terminalState = outcomeUncertain ? "outcome_uncertain" : "cancelled";
     const updated = await params.tx.automationRun.updateMany({
         where: {
             id: previousRun.id,
@@ -1717,11 +1736,18 @@ async function cancelAutomationRunRowTx(params: Readonly<{
         },
         data: {
             state: terminalState,
-            ...(dispatchPermitted
+            ...(outcomeUncertain
                 ? {
-                    executionDispatchState: "outcomeUnknown",
+                    // Rows that carry dispatch vocabulary record the unknown
+                    // outcome in it; session-targeted Runs intentionally keep
+                    // none. A terminal Run owns no dispatch-retry cursor.
+                    executionDispatchState: previousRun.executionDispatchState === null
+                        ? null
+                        : "outcomeUnknown",
                     executionDispatchDueAt: null,
-                    errorCode: "execution_run_cancelled_outcome_unknown",
+                    errorCode: dispatchPermitted
+                        ? "execution_run_cancelled_outcome_unknown"
+                        : "execution_run_outcome_unknown",
                 }
                 : {}),
             finishedAt: now,
@@ -1748,11 +1774,13 @@ async function cancelAutomationRunRowTx(params: Readonly<{
     await appendRunEventTx({
         tx: params.tx,
         runId: run.id,
-        type: dispatchPermitted ? "run_outcome_uncertain" : "run_cancelled",
+        type: outcomeUncertain ? "run_outcome_uncertain" : "run_cancelled",
         now,
         ...(dispatchPermitted
             ? { payload: { reason: "cancelled_after_dispatch_permitted" } }
-            : {}),
+            : outcomeUncertain
+                ? { payload: { reason: "cancelled_while_running" } }
+                : {}),
     });
     await advanceAutomationScheduleCursorAfterTerminalRunTx({
         tx: params.tx,
@@ -1768,7 +1796,14 @@ async function cancelAutomationRunRowTx(params: Readonly<{
     };
 }
 
-async function publishCancelledAutomationRunsTx(params: Readonly<{
+/**
+ * The one post-transition publication seam for settled cancellation rows:
+ * Account/Automation change marking plus the post-commit Run transition
+ * carrier (including the authoritative cancelled-after-dispatch cause when a
+ * result carries one). Shared by ordinary cancellation and by the
+ * machine-assignment removal composition.
+ */
+export async function publishCancelledAutomationRunsTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     results: readonly CancelledAutomationRunTxResult[];

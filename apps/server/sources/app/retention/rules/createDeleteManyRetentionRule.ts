@@ -11,6 +11,7 @@ type CreateDeleteManyRetentionRuleParams = Readonly<{
     primaryField: string;
     cutoffField: string;
     extraWhere?: (cutoff: Date) => Record<string, unknown>;
+    intrinsicExpiry?: true;
 }>;
 
 export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionRuleParams): RetentionRule {
@@ -20,15 +21,25 @@ export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionR
         run: async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, now }) => {
             const domains = resolveEffectiveRetentionDomains(policy);
             const domainPolicy = domains[params.id];
-            if (domainPolicy.mode === 'keep_forever') {
-                return { id: params.id, deleted: 0 };
+            const intrinsicExpiry = params.intrinsicExpiry === true;
+            let cutoff: Date;
+            let cutoffFilter: Readonly<{ lte: Date } | { lt: Date }>;
+            if (intrinsicExpiry) {
+                cutoff = now;
+                cutoffFilter = { lte: cutoff };
+            } else {
+                if (domainPolicy.mode === 'keep_forever') {
+                    return { id: params.id, deleted: 0 };
+                }
+                cutoff = new Date(
+                    now.getTime() - domainPolicy.days * 24 * 60 * 60 * 1000,
+                );
+                cutoffFilter = { lt: cutoff };
             }
-
-            const cutoff = new Date(now.getTime() - domainPolicy.days * 24 * 60 * 60 * 1000);
             const limit = Math.max(1, Math.min(batchSize, maxDeletesPerRulePerRun));
             const model = db[params.modelName] as any;
             const where = {
-                [params.cutoffField]: { lt: cutoff },
+                [params.cutoffField]: cutoffFilter,
                 ...(params.extraWhere ? params.extraWhere(cutoff) : null),
             };
             const rows = await model.findMany({
@@ -57,7 +68,7 @@ export function createDeleteManyRetentionRule(params: CreateDeleteManyRetentionR
             const result = await model.deleteMany({
                 where: {
                     [params.primaryField]: { in: identifiers },
-                    [params.cutoffField]: { lt: cutoff },
+                    [params.cutoffField]: cutoffFilter,
                     ...(params.extraWhere ? params.extraWhere(cutoff) : null),
                 },
             });

@@ -11,7 +11,7 @@ type ApiTokenAuth = typeof auth & {
         accountId: string;
         label: string;
         expiresAt?: Date | null;
-    }>): Promise<Readonly<{
+    }>, now?: Date): Promise<Readonly<{
         tokenId: string;
         token: string;
         label: string;
@@ -147,6 +147,7 @@ describe("auth (API tokens)", () => {
         const secret = minted.token.split("_")[3] ?? "";
 
         expect(minted.token).toMatch(/^hap_v1_[0-9a-f-]{36}_[A-Za-z0-9_-]{43}$/);
+        expect(minted.displayPrefix).toBe(`hap_v1_${minted.tokenId.slice(0, 8)}`);
         await expect(auth.verifyToken(minted.token)).resolves.toEqual({
             userId: account.id,
             authority: "account_automation",
@@ -217,6 +218,25 @@ describe("auth (API tokens)", () => {
             expect(response.statusCode).toBe(401);
             expect(response.json()).toEqual({ error: "invalid_token" });
         });
+    });
+
+    it("uses one captured creation time when validating and persisting a near-boundary expiry", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "api-token-single-expiry-clock" },
+            select: { id: true },
+        });
+        const creationTime = new Date("2026-08-22T12:00:00.000Z");
+        const expiresAt = new Date("2026-08-22T12:00:00.001Z");
+        vi.setSystemTime(new Date("2026-08-22T12:00:05.000Z"));
+
+        const minted = await apiTokenAuth.createApiToken({
+            accountId: account.id,
+            label: "Boundary expiry",
+            expiresAt,
+        }, creationTime);
+
+        expect(minted.createdAt).toEqual(creationTime);
+        expect(minted.expiresAt).toEqual(expiresAt);
     });
 
     it("exposes a PAT-only verification seam with stable credential provenance", async () => {

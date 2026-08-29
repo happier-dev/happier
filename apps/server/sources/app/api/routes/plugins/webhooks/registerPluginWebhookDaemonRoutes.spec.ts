@@ -7,13 +7,14 @@ const TARGET = {
     materialization: { machineId: "machine-1", materializationId: "materialization-1", pluginId: "acme.github" },
     machineInstallationId: "installation-1",
 };
+const MACHINE = { machineId: "machine-1", machineInstallationId: "installation-1" };
 const CALLER = {
     pluginId: "happier.channels",
     machineId: "machine-1",
     materializationId: "materialization-caller",
 };
 const CORRESPONDENCE_SETUP = {
-    kind: "githubAccountEndpointV1",
+    kind: "accountEndpointV1",
     credential: "serverGenerated",
 } as const;
 
@@ -212,17 +213,20 @@ describe("plugin webhook daemon HTTP routes", () => {
             verifyPublisher: vi.fn(async () => ({ machineId: "machine-1", installationId: "installation-1" })),
         }, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
         const reply = createReplyStub();
-        const body = { v: 1, policyVersion: 1, target: TARGET };
+        const body = { v: 1, policyVersion: 1, machine: MACHINE };
 
         await getRouteHandler(app, "POST", "/v1/daemon/plugins/webhooks/claim")({
             userId: "account-authenticated",
             body,
         }, reply);
 
-        expect(claim).toHaveBeenCalledWith(expect.objectContaining({
-            accountId: "account-authenticated",
-            target: TARGET,
-        }));
+        expect(claim).toHaveBeenCalledWith(
+            expect.objectContaining({
+                accountId: "account-authenticated",
+                machine: MACHINE,
+            }),
+            { signal: expect.any(AbortSignal) },
+        );
         expect(reply.headers).toEqual({ "Cache-Control": "no-store" });
         expect(reply.send).toHaveBeenCalledWith({ kind: "none", retryAfterMs: 5_000 });
     });
@@ -275,7 +279,77 @@ describe("plugin webhook daemon HTTP routes", () => {
         });
     });
 
-    it("rejects a body-selected target unless the signed machine installation proof matches exactly", async () => {
+    it("forwards only a per-request abort signal to the bounded claim", async () => {
+        const app = createFakeRouteApp();
+        let capturedWait: unknown;
+        const claim = vi.fn(async (_params: unknown, wait: unknown) => {
+            capturedWait = wait;
+            return { kind: "none" as const, retryAfterMs: 5_000 };
+        });
+        registerPluginWebhookDaemonRoutes(app as never, {
+            claim,
+            renew: vi.fn(),
+            complete: vi.fn(),
+            fail: vi.fn(),
+            checkCorrespondence: vi.fn(),
+            authenticateCaller: vi.fn(),
+            verifyPublisher: vi.fn(async () => ({ machineId: "machine-1", installationId: "installation-1" })),
+        }, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
+        const reply = createReplyStub();
+        const request: Record<string, unknown> = {
+            userId: "account-authenticated",
+            method: "POST",
+            headers: {},
+            body: { v: 1, policyVersion: 1, machine: MACHINE },
+        };
+
+        await getRouteHandler(app, "POST", "/v1/daemon/plugins/webhooks/claim")(request, reply);
+
+        // The parked window is a fixed implementation constant of the claim
+        // owner; the route carries no policy input except the disconnect abort.
+        expect(claim).toHaveBeenCalledWith(
+            expect.objectContaining({ accountId: "account-authenticated", machine: MACHINE }),
+            { signal: expect.any(AbortSignal) },
+        );
+        expect((capturedWait as { signal?: AbortSignal }).signal?.aborted).toBe(false);
+    });
+
+    it("aborts the forwarded claim signal when the client disconnects", async () => {
+        const app = createFakeRouteApp();
+        let capturedWait: unknown;
+        const claim = vi.fn(async (_params: unknown, wait: unknown) => {
+            capturedWait = wait;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return { kind: "none" as const, retryAfterMs: 5_000 };
+        });
+        registerPluginWebhookDaemonRoutes(app as never, {
+            claim,
+            renew: vi.fn(),
+            complete: vi.fn(),
+            fail: vi.fn(),
+            checkCorrespondence: vi.fn(),
+            authenticateCaller: vi.fn(),
+            verifyPublisher: vi.fn(async () => ({ machineId: "machine-1", installationId: "installation-1" })),
+        }, { HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1" });
+        const reply = createReplyStub();
+        const request: Record<string, unknown> = {
+            userId: "account-authenticated",
+            method: "POST",
+            headers: {},
+            body: { v: 1, policyVersion: 1, machine: MACHINE },
+        };
+
+        await getRouteHandler(app, "POST", "/v1/daemon/plugins/webhooks/claim")(request, reply);
+
+        const entry = getRouteEntry(app, "POST", "/v1/daemon/plugins/webhooks/claim");
+        const onRequestAbort = entry.opts.onRequestAbort as ((request: unknown) => Promise<void>) | undefined;
+        expect(onRequestAbort).toBeTypeOf("function");
+        await onRequestAbort?.(request);
+
+        expect((capturedWait as { signal?: AbortSignal }).signal?.aborted).toBe(true);
+    });
+
+    it("rejects a machine-installation claim unless the signed machine installation proof matches exactly", async () => {
         const app = createFakeRouteApp();
         const claim = vi.fn();
         registerPluginWebhookDaemonRoutes(app as never, {
@@ -293,7 +367,7 @@ describe("plugin webhook daemon HTTP routes", () => {
             userId: "account-authenticated",
             method: "POST",
             headers: {},
-            body: { v: 1, policyVersion: 1, target: TARGET },
+            body: { v: 1, policyVersion: 1, machine: MACHINE },
         }, reply);
 
         expect(reply.code).toHaveBeenCalledWith(401);

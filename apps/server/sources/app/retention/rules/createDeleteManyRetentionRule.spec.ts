@@ -74,4 +74,34 @@ describe('createDeleteManyRetentionRule', () => {
             },
         });
     });
+
+    it('preserves ordinary keep-forever behavior when no intrinsic lifecycle is configured', async () => {
+        const { createDeleteManyRetentionRule } = await import('./createDeleteManyRetentionRule');
+        const rule = createDeleteManyRetentionRule({
+            id: 'globalLocks',
+            modelName: 'globalLock',
+            primaryField: 'key',
+            cutoffField: 'expiresAt',
+        });
+        const finitePolicy = createPolicy();
+        const policy: RetentionPolicy = {
+            ...finitePolicy,
+            domains: {
+                ...finitePolicy.domains,
+                globalLocks: { mode: 'keep_forever' },
+            },
+        };
+
+        const result = await rule.run({
+            policy,
+            batchSize: 10,
+            dryRun: false,
+            maxDeletesPerRulePerRun: 10,
+            now: new Date('2025-01-08T00:00:00.000Z'),
+        });
+
+        expect(result).toEqual({ id: 'globalLocks', deleted: 0 });
+        expect(findMany).not.toHaveBeenCalled();
+        expect(deleteMany).not.toHaveBeenCalled();
+    });
 });

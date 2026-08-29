@@ -14,6 +14,7 @@ import {
 
 import { afterTx, type Tx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import { automationPortableQueryChunks } from "./automationPortableQueryChunks";
@@ -160,7 +161,13 @@ const automationAdmissionDefinitionSelect = {
     templateCiphertext: true,
     assignments: {
         where: { enabled: true },
-        select: { machineId: true, priority: true },
+        select: {
+            machineId: true,
+            priority: true,
+            machine: {
+                select: { accountId: true, revokedAt: true, replacedByMachineId: true },
+            },
+        },
         orderBy: [{ priority: "desc" as const }, { machineId: "asc" as const }],
     },
 } satisfies Prisma.AutomationSelect;
@@ -444,7 +451,21 @@ export async function admitAutomationRunsTx(params: Readonly<{
             where: { id: { in: [...chunk] }, deletedAt: null },
             select: automationAdmissionTriggerSelect,
         })))).flat();
-    const automationsById = new Map(automations.map((automation) => [automation.id, automation]));
+    // Definition assignments are mutable configuration and intentionally
+    // survive reversible machine replacement. Admission freezes only the
+    // currently available configured subset through the canonical machine
+    // availability classifier. Rejoin was resolved before this mutable check,
+    // so an already-admitted Run keeps its exact immutable snapshot.
+    const automationsById = new Map(automations.map((automation) => [
+        automation.id,
+        {
+            ...automation,
+            assignments: automation.assignments.filter((assignment) => (
+                assignment.machine.accountId === params.accountId
+                && classifyMachineAvailabilityState(assignment.machine) === "available"
+            )),
+        },
+    ]));
     const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));
     const prepared = parsedAdmissions.map(({ request, cause }) => prepareAutomationRunAdmission({
         request,

@@ -32,6 +32,10 @@ const TARGET = {
     },
     machineInstallationId: "installation-claim",
 } as const;
+const MACHINE_CLAIM = {
+    machineId: TARGET.materialization.machineId,
+    machineInstallationId: TARGET.machineInstallationId,
+} as const;
 const RETARGETED = {
     materialization: {
         machineId: "machine-retargeted",
@@ -225,7 +229,7 @@ describe("plugin webhook claim/lease settlement", () => {
                 sourceInstanceId: "source-claim",
                 ensureIdempotencyKey: "idempotency-claim-0001",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: TARGET.materialization.machineId,
@@ -298,7 +302,7 @@ describe("plugin webhook claim/lease settlement", () => {
 
         await expect(claimPluginWebhookDeliveryV1({
             accountId: "wrong-account",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(1),
         })).resolves.toMatchObject({ kind: "none" });
@@ -306,13 +310,13 @@ describe("plugin webhook claim/lease settlement", () => {
         const [first, second] = await Promise.all([
             claimPluginWebhookDeliveryV1({
                 accountId: "account-claim",
-                target: TARGET,
+                machine: MACHINE_CLAIM,
                 now: NOW,
                 randomBytes: () => new Uint8Array(16).fill(2),
             }),
             claimPluginWebhookDeliveryV1({
                 accountId: "account-claim",
-                target: TARGET,
+                machine: MACHINE_CLAIM,
                 now: NOW,
                 randomBytes: () => new Uint8Array(16).fill(3),
             }),
@@ -388,7 +392,7 @@ describe("plugin webhook claim/lease settlement", () => {
 
         await expect(claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(2),
         })).resolves.toEqual({ kind: "none", retryAfterMs: 5_000 });
@@ -425,7 +429,7 @@ describe("plugin webhook claim/lease settlement", () => {
 
         await expect(claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(9),
         })).resolves.toEqual({ kind: "none", retryAfterMs: 5_000 });
@@ -442,7 +446,7 @@ describe("plugin webhook claim/lease settlement", () => {
         await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(4),
         });
@@ -547,7 +551,7 @@ describe("plugin webhook claim/lease settlement", () => {
 
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(6),
         });
@@ -640,7 +644,7 @@ describe("plugin webhook claim/lease settlement", () => {
         await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(5),
         });
@@ -816,7 +820,11 @@ describe("plugin webhook claim/lease settlement", () => {
         await expect(purgeExpiredPluginWebhookDeliveriesV1({
             now: new Date("2026-09-09T00:00:00.000Z"),
             batchSize: 100,
-        })).resolves.toEqual({ payloadsPurged: 1, metadataDeleted: 0, tombstonesDeleted: 0 });
+        })).resolves.toEqual({
+            payloadsPurged: 1,
+            metadataDeleted: 0,
+            tombstonesDeleted: 0,
+        });
         await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
             .resolves.toMatchObject({ state: "dead_letter", payload: null, payloadBytes: 0n });
         await expect(db.pluginWebhookDelivery.aggregate({
@@ -827,7 +835,11 @@ describe("plugin webhook claim/lease settlement", () => {
         await expect(purgeExpiredPluginWebhookDeliveriesV1({
             now: new Date("2026-11-08T00:00:00.000Z"),
             batchSize: 100,
-        })).resolves.toEqual({ payloadsPurged: 0, metadataDeleted: 1, tombstonesDeleted: 0 });
+        })).resolves.toEqual({
+            payloadsPurged: 0,
+            metadataDeleted: 1,
+            tombstonesDeleted: 0,
+        });
         await expect(db.pluginWebhookDelivery.findUnique({ where: { id: "delivery-claim" } })).resolves.toBeNull();
     });
 
@@ -835,7 +847,7 @@ describe("plugin webhook claim/lease settlement", () => {
         await seedDelivery();
         const claimed = await claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(4),
         });
@@ -1051,7 +1063,7 @@ describe("plugin webhook claim/lease settlement", () => {
 
         await expect(claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: NOW,
             randomBytes: () => new Uint8Array(16).fill(5),
         })).resolves.toMatchObject({ kind: "none" });
@@ -1067,7 +1079,7 @@ describe("plugin webhook claim/lease settlement", () => {
         const expiredAt = new Date(NOW.getTime() + 7 * 24 * 60 * 60 * 1_000 + 1);
         await expect(claimPluginWebhookDeliveryV1({
             accountId: "account-claim",
-            target: TARGET,
+            machine: MACHINE_CLAIM,
             now: expiredAt,
             randomBytes: () => new Uint8Array(16).fill(6),
         })).resolves.toMatchObject({ kind: "none" });
@@ -1078,5 +1090,96 @@ describe("plugin webhook claim/lease settlement", () => {
                 attemptCount: 0,
                 lastErrorCode: "target_offline",
             });
+    });
+
+    it("one machine claim selects one exact eligible target and returns its exact authority", async () => {
+        await seedDelivery();
+
+        const claimed = await claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now: NOW,
+            randomBytes: () => new Uint8Array(16).fill(7),
+        });
+        expect(claimed).toMatchObject({
+            kind: "delivery",
+            deliveryId: "delivery-claim",
+            target: TARGET,
+            pluginVersion: "1.0.0",
+            endpoint: {
+                webhookEndpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                revision: 1,
+                webhookContribution: { pluginId: "acme.github", localId: "github-events" },
+                handlerActionLocalId: "handle-webhook",
+                sourceInstanceId: "source-claim",
+            },
+        });
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-claim" } }))
+            .resolves.toMatchObject({
+                state: "claimed",
+                claimedByMachineId: MACHINE_CLAIM.machineId,
+                claimedByMachineInstallationId: MACHINE_CLAIM.machineInstallationId,
+            });
+    });
+
+    it("marks one stale head offline before the next claim reaches the eligible target", async () => {
+        await seedDelivery();
+        await db.pluginWebhookDelivery.create({
+            data: {
+                id: "delivery-stale",
+                endpointId: "wh_ep_AAECAwQFBgcICQoLDA0ODw",
+                accountId: "account-claim",
+                routeId: "route-claim",
+                deliveryIdentityDigest: "c".repeat(64),
+                verifierKind: "github_hmac_sha256_v1",
+                targetMachineId: TARGET.materialization.machineId,
+                targetMachineInstallationId: TARGET.machineInstallationId,
+                targetMaterializationId: "materialization-stale",
+                targetPluginId: TARGET.materialization.pluginId,
+                targetPluginVersion: "1.0.0",
+                endpointRevision: 1,
+                endpointWebhookContributionId: "github-events",
+                endpointHandlerActionId: "handle-webhook",
+                endpointSourceInstanceId: "source-claim",
+                payloadKind: "plain",
+                payload: ENVELOPE,
+                payloadBytes: 256n,
+                wireVersion: 1,
+                payloadVersion: 1,
+                state: "queued",
+                nextAttemptAt: new Date(NOW.getTime() - 1_000),
+                metadataDeleteAt: new Date(NOW.getTime() + 97 * 24 * 60 * 60 * 1_000),
+                receivedAt: new Date(NOW.getTime() - 1_000),
+            },
+        });
+
+        // One claim examines exactly one due head. It records the stale target's
+        // offline transition and returns none; the next wake then reaches the
+        // eligible exact target behind it.
+        await expect(claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now: NOW,
+            randomBytes: () => new Uint8Array(16).fill(8),
+        })).resolves.toMatchObject({ kind: "none" });
+        await expect(db.pluginWebhookDelivery.findUniqueOrThrow({ where: { id: "delivery-stale" } }))
+            .resolves.toMatchObject({
+                state: "queued",
+                attemptCount: 0,
+                offlineSinceAt: NOW,
+                lastErrorCode: "target_offline",
+            });
+
+        await expect(claimPluginWebhookDeliveryV1({
+            accountId: "account-claim",
+            machine: MACHINE_CLAIM,
+            now: new Date(NOW.getTime() + 5_000),
+            randomBytes: () => new Uint8Array(16).fill(9),
+        })).resolves.toMatchObject({
+            kind: "delivery",
+            deliveryId: "delivery-claim",
+            target: TARGET,
+            pluginVersion: "1.0.0",
+        });
     });
 });

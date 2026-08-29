@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
+import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { connectRoutes } from "./connectRoutes";
 import { readProviderAccountUsageRecord } from "./providerAccountUsage";
@@ -240,5 +241,77 @@ describe("connectRoutes (connected services quotas v3) plaintext quota endpoints
         });
         expect(missing.statusCode).toBe(404);
         expect(missing.json()).toEqual({ error: "connect_quotas_not_found" });
+    });
+
+    it("preserves the qualified PAU storage-mode mismatch instead of hiding it as quota not-found", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "server_sealed",
+        });
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as never);
+        await app.ready();
+        const credential = await createQualifiedPlainCredential({
+            app,
+            accountId: user.id,
+            providerAccountId: "acct_quota_v3_mode_drift",
+        });
+        const snapshot = createUsageSnapshot({
+            fetchedAt: Date.now(),
+            recordKey: createProviderAccountUsageRecordKey({
+                accountSubjectId: "acct_quota_v3_mode_drift",
+            }),
+            planLabel: "retained-history",
+        });
+        expect((await app.inject({
+            method: "POST",
+            url: "/v4/connect/qualified/provider-account-usage",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": user.id,
+            },
+            payload: {
+                source: { ref: credential.ref, bindingKind: "account" },
+                expectedCredentialRevision: credential.credentialRevision,
+                expectedConfigurationRevision: credential.configurationRevision,
+                recordId: snapshot.recordId,
+                recordKey: snapshot.recordKey,
+                payloadMode: "plain_json_v1",
+                status: "ok",
+                snapshot,
+                fetchedAt: snapshot.fetchedAtMs,
+                staleAfterMs: snapshot.staleAfterMs,
+            },
+        })).statusCode).toBe(200);
+
+        await db.account.update({
+            where: { id: user.id },
+            data: {
+                ...createSignedAccountContentBinding(),
+                encryptionMode: "e2ee",
+            },
+        });
+        const mismatch = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(mismatch.statusCode).toBe(409);
+        expect(mismatch.json()).toEqual({
+            error: "provider_account_usage_storage_mode_mismatch",
+        });
+        await expect(readProviderAccountUsageRecord({
+            accountId: user.id,
+            recordId: snapshot.recordId,
+        })).resolves.toEqual(expect.objectContaining({
+            recordId: snapshot.recordId,
+            payloadMode: "plain_json_v1",
+        }));
     });
 });

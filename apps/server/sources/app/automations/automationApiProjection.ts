@@ -3,6 +3,7 @@ import {
     AutomationDefinitionDetailSchema,
     AutomationDefinitionListItemSchema,
     AutomationRunApiV2Schema,
+    AutomationRunStateV2Schema,
     AutomationRunResultStoredV1Schema,
     AutomationV3RunDetailSchema,
     AutomationV3RunListItemSchema,
@@ -17,7 +18,6 @@ import {
 
 import type { AutomationEventStatusProjection } from "./automationEventStatusProjection";
 import type { AutomationSessionLifecycleTriggerStatus } from "@happier-dev/protocol";
-import type { AutomationRetiredTriggerProjectionItem } from "./automationRetiredTriggerProjection";
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import {
     assertAutomationExecutionInputEnvelopeOuterForMode,
@@ -38,6 +38,7 @@ import type {
     AutomationTargetType,
     AutomationTriggerItem,
 } from "./automationTypes";
+import { isTerminalAutomationRunState } from "./automationTypes";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
     AutomationValidationError,
@@ -87,7 +88,14 @@ function retainedV2CauseKind(item: AutomationRunV2ListItem | AutomationRunItem):
     return cause.kind === "trigger" && cause.triggerKind === "schedule" ? "scheduled" : null;
 }
 
-export function isAutomationRunV2Compatible(item: AutomationRunV2ListItem | AutomationRunItem): boolean {
+/**
+ * Strict released-V2 execution representability. Every V2 mutation/effect
+ * boundary requires the exact frozen predecessor input and must never infer it
+ * from current Automation bytes.
+ */
+export function isAutomationRunV2ExecutionRepresentable(
+    item: AutomationRunV2ListItem | AutomationRunItem,
+): boolean {
     const retainedV2OriginKind = retainedV2CauseKind(item);
     return retainedV2OriginKind !== null
         && item.executionInputEnvelope !== null
@@ -95,6 +103,25 @@ export function isAutomationRunV2Compatible(item: AutomationRunV2ListItem | Auto
             raw: item.executionInputEnvelope,
             retainedV2OriginKind,
         }) !== null;
+}
+
+/**
+ * Released-V2 history representability. A migrated predecessor Run that was
+ * already terminal at activation may intentionally have no frozen execution
+ * input: history can still project its retained V2 cause and public terminal
+ * facts, while every execution boundary remains guarded by the strict
+ * predicate above. Current-only V3 states remain invisible to the V2 wire.
+ */
+export function isAutomationRunV2HistoryRepresentable(
+    item: AutomationRunV2ListItem | AutomationRunItem,
+): boolean {
+    if (isAutomationRunV2ExecutionRepresentable(item)) {
+        return AutomationRunStateV2Schema.safeParse(item.state).success;
+    }
+    return item.executionInputEnvelope === null
+        && retainedV2CauseKind(item) !== null
+        && isTerminalAutomationRunState(item.state)
+        && AutomationRunStateV2Schema.safeParse(item.state).success;
 }
 
 export function toAutomationV2ApiDto(item: AutomationListItem) {
@@ -122,8 +149,8 @@ export function toAutomationV2ApiDto(item: AutomationListItem) {
 }
 
 export function toAutomationRunV2ApiDto(item: AutomationRunV2ListItem | AutomationRunItem) {
-    if (!isAutomationRunV2Compatible(item)) {
-        throw new Error("Automation Run is not representable by the V2 contract");
+    if (!isAutomationRunV2HistoryRepresentable(item)) {
+        throw new Error("Automation Run history is not representable by the V2 contract");
     }
     let summaryCiphertext: string | null = null;
     if (item.resultEnvelope !== null) {
@@ -182,22 +209,24 @@ function triggerProjection(
         };
     }
     const status = statuses.get(trigger.id);
+    const watcherObservation = () => ({
+        watcher: trigger.watcherMachineId === null ? null : {
+            machineId: trigger.watcherMachineId,
+            machineInstallationId: required(trigger.watcherMachineInstallationId, "watcherMachineInstallationId"),
+            pluginId: required(trigger.watcherPluginId, "watcherPluginId"),
+            materializationId: required(trigger.watcherMaterializationId, "watcherMaterializationId"),
+        },
+    });
     const observation = trigger.observationTransport === "checkpointedPull"
-        ? {
-            kind: "checkpointedPull" as const,
-            watcher: trigger.watcherMachineId === null ? null : {
-                machineId: trigger.watcherMachineId,
-                machineInstallationId: required(trigger.watcherMachineInstallationId, "watcherMachineInstallationId"),
-                pluginId: required(trigger.watcherPluginId, "watcherPluginId"),
-                materializationId: required(trigger.watcherMaterializationId, "watcherMaterializationId"),
-            },
-        }
-        : {
-            kind: "durablePush" as const,
-            webhookEndpointId: required(trigger.webhookEndpointId, "webhookEndpointId"),
-            endpointMaterializationRef: status?.durablePushEndpointMaterializationRef ?? null,
-            observationStartsAt: required(trigger.observationStartsAt, "observationStartsAt").getTime(),
-        };
+        ? { kind: "checkpointedPull" as const, ...watcherObservation() }
+        : trigger.observationTransport === "socket"
+            ? { kind: "socket" as const, ...watcherObservation() }
+            : {
+                kind: "durablePush" as const,
+                webhookEndpointId: required(trigger.webhookEndpointId, "webhookEndpointId"),
+                endpointMaterializationRef: status?.durablePushEndpointMaterializationRef ?? null,
+                observationStartsAt: required(trigger.observationStartsAt, "observationStartsAt").getTime(),
+            };
     return {
         ...common, kind: "pluginEvent" as const,
         eventRef: { pluginId: required(trigger.eventPluginId, "eventPluginId"), localId: required(trigger.eventLocalId, "eventLocalId") },
@@ -224,7 +253,6 @@ function definitionCommon(
     statuses: ReadonlyMap<string, AutomationEventStatusProjection>,
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus>,
     includeDefinitions: boolean,
-    retiredTriggers: readonly AutomationRetiredTriggerProjectionItem[],
 ) {
     return {
         id: item.id, name: item.name, description: item.description, enabled: item.enabled,
@@ -241,12 +269,6 @@ function definitionCommon(
             lifecycleStatuses,
             includeDefinitions,
         )),
-        retiredTriggers: retiredTriggers.map((trigger) => ({
-            id: trigger.id,
-            kind: trigger.kind,
-            revision: trigger.revision,
-            retiredAt: trigger.retiredAt.getTime(),
-        })),
     };
 }
 
@@ -254,14 +276,12 @@ export function toAutomationDefinitionListItemApiDto(
     item: AutomationListItem,
     statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
-    retiredTriggers: readonly AutomationRetiredTriggerProjectionItem[] = [],
 ) {
     return AutomationDefinitionListItemSchema.parse(definitionCommon(
         item,
         statuses,
         lifecycleStatuses,
         false,
-        retiredTriggers,
     ));
 }
 
@@ -270,7 +290,6 @@ export function toAutomationDefinitionDetailApiDto(
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
     statuses: ReadonlyMap<string, AutomationEventStatusProjection> = new Map(),
     lifecycleStatuses: ReadonlyMap<string, AutomationSessionLifecycleTriggerStatus> = new Map(),
-    retiredTriggers: readonly AutomationRetiredTriggerProjectionItem[] = [],
 ) {
     for (const trigger of item.triggers) {
         if (trigger.kind !== "pluginEvent") continue;
@@ -308,7 +327,7 @@ export function toAutomationDefinitionDetailApiDto(
         content = { templateCiphertext: item.templateCiphertext };
     }
     return AutomationDefinitionDetailSchema.parse({
-        ...definitionCommon(item, statuses, lifecycleStatuses, true, retiredTriggers),
+        ...definitionCommon(item, statuses, lifecycleStatuses, true),
         ...content,
     });
 }

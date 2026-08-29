@@ -101,7 +101,7 @@ function projectActiveEndpointV1(
     }
     if (
         (routingKind === "accountEndpoint"
-            && (endpoint.setupKind !== "githubAccountEndpointV1" || endpoint.providerInstallationId !== null))
+            && (endpoint.setupKind !== "accountEndpointV1" || endpoint.providerInstallationId !== null))
         || (routingKind === "providerInstallation"
             && (endpoint.setupKind !== "githubSharedInstallationV1" || endpoint.providerInstallationId === null))
     ) {

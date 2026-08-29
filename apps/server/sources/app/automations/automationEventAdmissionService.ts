@@ -411,7 +411,7 @@ function hostEvidenceMatchesAccountCurrentness(params: Readonly<{
         && params.hostEvidence.accountCurrentness.version === params.account.version;
 }
 
-function selectedPullTargetMatchesCaller(
+function selectedWatcherTargetMatchesCaller(
     trigger: Readonly<{
         observationTransport: string | null;
         watcherMachineId: string | null;
@@ -421,7 +421,11 @@ function selectedPullTargetMatchesCaller(
     }>,
     caller: AutomationEventAdmissionCallerV1,
 ): boolean {
-    return trigger.observationTransport === "checkpointedPull"
+    // Checkpointed-pull and session-socket triggers both observe through one
+    // exact assigned watcher materialization; only durable push derives its
+    // target from a webhook endpoint.
+    return (trigger.observationTransport === "checkpointedPull"
+        || trigger.observationTransport === "socket")
         && trigger.watcherMachineId === caller.machineId
         && trigger.watcherMachineInstallationId === caller.machineInstallationId
         && trigger.watcherPluginId === caller.pluginId
@@ -671,10 +675,11 @@ async function admitEncryptedAutomationEventV1(params: Readonly<{
                 continue;
             }
 
-            if (definition.observationTransport === "checkpointedPull") {
+            if (definition.observationTransport === "checkpointedPull"
+                || definition.observationTransport === "socket") {
                 if (
                     params.hostEvidence.webhookInvocationReference !== undefined
-                    || !selectedPullTargetMatchesCaller(trigger, params.caller)
+                    || !selectedWatcherTargetMatchesCaller(trigger, params.caller)
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;
@@ -1057,10 +1062,11 @@ export async function admitAutomationEventV1(params: Readonly<{
                 PluginWebhookInvocationReferenceValidationResultV1,
                 Readonly<{ kind: "ready" }>
             > | null = null;
-            if (trigger.observationTransport === "checkpointedPull") {
+            if (trigger.observationTransport === "checkpointedPull"
+                || trigger.observationTransport === "socket") {
                 if (
                     hostEvidence.webhookInvocationReference !== undefined
-                    || !selectedPullTargetMatchesCaller(trigger, params.caller)
+                    || !selectedWatcherTargetMatchesCaller(trigger, params.caller)
                 ) {
                     assignGroupResult(results, group, refresh("observationTargetChanged"));
                     continue;

@@ -42,7 +42,7 @@ export function isTerminalAutomationRunState(
 }
 
 export type AutomationTriggerKind = 'schedule' | 'pluginEvent' | 'sessionLifecycle';
-export type AutomationObservationTransport = 'checkpointedPull' | 'durablePush';
+export type AutomationObservationTransport = 'checkpointedPull' | 'durablePush' | 'socket';
 export type AutomationRunCauseKind = AutomationRunCause['kind'];
 /** The canonical execution-dispatch vocabulary; the Protocol schema is its one owner. */
 export type AutomationExecutionDispatchState = AutomationExecutionDispatchStateV3;

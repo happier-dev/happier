@@ -25,11 +25,7 @@ import {
     readWebhookRawBodyV1,
     WebhookRawBodyReadError,
 } from "@/app/plugins/webhooks/rawBody";
-import {
-    findActivePluginWebhookRouteV1,
-    type ActivePluginWebhookEndpointV1,
-    type ActivePluginWebhookRouteV1,
-} from "@/app/plugins/webhooks/routeStore";
+import type { ActivePluginWebhookEndpointV1 } from "@/app/plugins/webhooks/routeStore";
 import type { PluginWebhookCommittedDeliveryWakeV1 } from "@/app/plugins/webhooks/wake";
 import { getRedisClient } from "@/storage/redis/redis";
 
@@ -50,16 +46,6 @@ const UNSUPPORTED_INGRESS_METHODS_V1 = [
     "PUT",
     "TRACE",
 ] as const;
-
-/**
- * What the unauthenticated hop is allowed to know. It deliberately carries no
- * endpoint or Account identity: tenant facts belong to the authenticated
- * routing point, and a field here would invite charging a tenant for a request
- * that never produced a valid signature.
- */
-type PreparedRouteV1 = Readonly<{
-    route: ActivePluginWebhookRouteV1;
-}>;
 
 type ProcessAdmissionV1 = Readonly<{
     acquire(bytes: number): Readonly<{ release(): void }> | null;
@@ -82,7 +68,6 @@ export type RegisterPluginWebhookIngressRouteOptions = Readonly<{
     ingest?: IngestV1;
     onCommittedWake?: (wake: PluginWebhookCommittedDeliveryWakeV1) => void;
     processAdmission?: ProcessAdmissionV1;
-    prepareRoute?: (opaqueRouteId: string) => Promise<PreparedRouteV1 | null>;
     distributedAdmission?: DistributedAdmissionV1 | null;
 }>;
 
@@ -90,7 +75,6 @@ type RequestReservationV1 = {
     declaredBytes: number;
     deadlineAtMs: number;
     ownerToken: string;
-    prepared: PreparedRouteV1 | null;
     localRelease: () => void;
     distributedReleases: Array<() => void | Promise<void>>;
     deadlineController: AbortController;
@@ -128,16 +112,24 @@ function readHeaderBoundsV1(headers: Readonly<Record<string, unknown>>): boolean
     return true;
 }
 
-function scopeIdentityV1(kind: "route" | "endpoint" | "account", value: string): string {
+function scopeIdentityV1(kind: "public-ingress" | "route" | "endpoint" | "account", value: string): string {
     return `${kind}:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
 
+function publicIngressScopeV1(policy: WebhookIngressPolicyV1): PluginWebhookDistributedScopeV1 {
+    return {
+        key: scopeIdentityV1("public-ingress", "public-ingress"),
+        ratePerMinute: policy.route.ratePerMinute,
+        concurrency: policy.route.concurrency,
+    };
+}
+
 function routeScopeV1(
-    routeId: string,
+    opaqueRouteId: string,
     policy: WebhookIngressPolicyV1,
 ): PluginWebhookDistributedScopeV1 {
     return {
-        key: scopeIdentityV1("route", routeId),
+        key: scopeIdentityV1("route", opaqueRouteId),
         ratePerMinute: policy.route.ratePerMinute,
         concurrency: policy.route.concurrency,
     };
@@ -159,11 +151,6 @@ function endpointScopesV1(
             concurrency: policy.account.concurrency,
         },
     ];
-}
-
-async function defaultPrepareRouteV1(opaqueRouteId: string): Promise<PreparedRouteV1 | null> {
-    const route = await findActivePluginWebhookRouteV1(opaqueRouteId);
-    return route ? { route } : null;
 }
 
 function resolveDistributedAdmissionV1(
@@ -230,7 +217,6 @@ export function registerPluginWebhookIngressRoute(
         maxRequests: policy.process.maxRequests,
         maxWorkingBytes: policy.process.maxWorkingBytes,
     });
-    const prepareRoute = options.prepareRoute ?? defaultPrepareRouteV1;
     const distributedAdmission = resolveDistributedAdmissionV1(env, options.distributedAdmission);
     const distributedAdmissionRequired = options.distributedAdmission === undefined
         && env.HAPPIER_SERVER_FLAVOR?.trim() !== "light";
@@ -261,7 +247,7 @@ export function registerPluginWebhookIngressRoute(
                 params: z.object({ opaqueRouteId: z.string().regex(ROUTE_ID_PATTERN_V1) }).strict(),
             },
             onRequest: async (request, reply) => {
-            if (!isServerFeatureEnabledForRequest("plugins.webhooks", env)) {
+                if (!isServerFeatureEnabledForRequest("plugins.webhooks", env)) {
                     return publicEmpty(reply, 404);
                 }
                 if (distributedAdmissionRequired && !distributedAdmission) {
@@ -312,7 +298,6 @@ export function registerPluginWebhookIngressRoute(
                     declaredBytes: declared.bytes,
                     deadlineAtMs,
                     ownerToken: `wh_req_${randomBytes(16).toString("base64url")}`,
-                    prepared: null,
                     localRelease: releaseLocal,
                     distributedReleases: [],
                     deadlineController,
@@ -324,33 +309,24 @@ export function registerPluginWebhookIngressRoute(
                 reservations.set(request, requestReservation);
 
                 const opaqueRouteId = (request.params as { opaqueRouteId: string }).opaqueRouteId;
-                let prepared: PreparedRouteV1 | null;
-                try {
-                    prepared = await awaitUntilAbortedV1(prepareRoute(opaqueRouteId), deadlineController.signal);
-                } catch {
-                    await releaseTrackedReservation(request);
-                    if (reply.sent) return;
-                    return publicEmpty(reply, 503, 5);
-                }
-                if (deadlineController.signal.aborted) {
-                    await releaseTrackedReservation(request);
-                    if (reply.sent) return;
-                    return publicEmpty(reply, 503, 5);
-                }
-                if (!prepared) {
-                    await releaseTrackedReservation(request);
-                    return publicEmpty(reply, 404);
-                }
-                requestReservation.prepared = prepared;
                 if (distributedAdmission) {
-                    // Pre-HMAC admission protects the shared route and this
-                    // replica only. Charging an endpoint's or an Account's
-                    // tenant budget here would let anyone who learns a public
-                    // URL exhaust that one customer's admission budget without
-                    // ever producing a valid signature, so tenant sublimits are
-                    // acquired at the first authenticated routing point below.
+                    // The approved r0.20 order admits the public route by its
+                    // opaque URL identity before any database or credential
+                    // work: no route lookup may precede or gate this
+                    // acquisition, and an unknown route id pays the same shared
+                    // public-ingress plus per-route pressure scopes instead of a
+                    // cheaper database probe. These scopes protect the shared route
+                    // and this replica only —
+                    // charging an endpoint's or an Account's tenant budget here
+                    // would let anyone who learns a public URL exhaust that one
+                    // customer's admission budget without ever producing a
+                    // valid signature, so tenant sublimits are acquired at the
+                    // first authenticated routing point below, and signature
+                    // verifier preparation owns the sole route and credential
+                    // resolution.
                     const acquireDistributed = distributedAdmission.acquire([
-                        routeScopeV1(prepared.route.routeId, policy),
+                        publicIngressScopeV1(policy),
+                        routeScopeV1(opaqueRouteId, policy),
                     ], {
                         nowMs: Date.now(),
                         ttlMs: DISTRIBUTED_RESERVATION_TTL_MS_V1,
@@ -393,8 +369,7 @@ export function registerPluginWebhookIngressRoute(
             },
         }, async (request, reply) => {
             const reservation = reservations.get(request);
-            const prepared = reservation?.prepared;
-            if (!reservation || !prepared) return publicEmpty(reply, 503, 5);
+            if (!reservation) return publicEmpty(reply, 503, 5);
             try {
                 if (reservation.deadlineController.signal.aborted) {
                     return reply.sent ? reply : publicEmpty(reply, 503, 5);

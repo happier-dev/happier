@@ -56,7 +56,7 @@ describe("plugin webhook route custody", () => {
                 sourceInstanceId: `source-${params.suffix}`,
                 ensureIdempotencyKey: `idempotency-${params.suffix}-0001`,
                 ensureRequestFingerprint: params.suffix.repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-1",

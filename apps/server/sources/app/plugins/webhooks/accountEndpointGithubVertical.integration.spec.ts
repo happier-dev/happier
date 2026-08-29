@@ -175,7 +175,7 @@ async function ensureGithubEndpoint(accountId: string, idempotencyKey: string) {
             },
             targetMaterialization: MATERIALIZATION_REF,
             sourceInstanceId: ROUTING_SOURCE_INSTANCE_ID,
-            setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+            setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
             idempotencyKey,
         }),
     });
@@ -202,7 +202,7 @@ function githubHeaders(secret: string, deliveryId: string) {
     };
 }
 
-describe("GitHub Account webhook endpoint vertical", () => {
+describe("Account webhook endpoint with the shipped GitHub producer", () => {
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {

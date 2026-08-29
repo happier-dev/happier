@@ -79,7 +79,7 @@ describe("plugin webhook Account-deletion native database contract", () => {
                         ensureIdempotencyKey: `${marker}-idempotency-${suffix}`,
                         ensureRequestFingerprint: marker.repeat(64).slice(0, 64),
                         setupKind: routingKind === "accountEndpoint"
-                            ? "githubAccountEndpointV1"
+                            ? "accountEndpointV1"
                             : "githubSharedInstallationV1",
                         routeId,
                         routingKind,
@@ -236,7 +236,7 @@ describe("plugin webhook Account-deletion native database contract", () => {
                     sourceInstanceId: `rollback-source-${suffix}`,
                     ensureIdempotencyKey: `rollback-idempotency-${suffix}`,
                     ensureRequestFingerprint: "d".repeat(64),
-                    setupKind: "githubAccountEndpointV1",
+                    setupKind: "accountEndpointV1",
                     routeId,
                     routingKind: "accountEndpoint",
                     targetMachineId: "machine-rollback",

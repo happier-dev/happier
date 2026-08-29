@@ -1523,7 +1523,7 @@ describe("Automation Event admission", () => {
                 sourceInstanceId: "repository-happier-example",
                 ensureIdempotencyKey: "automation-event-admission-endpoint-key",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: MACHINE_ID,

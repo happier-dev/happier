@@ -15,6 +15,7 @@ import {
 } from "./automationValidation";
 import { isAutomationDefinitionRepresentableInV2 } from "./automationApiProjection";
 import { RETAINED_AUTOMATION_RUN_EXECUTION_INPUT_V2_JSON_PREFIX } from "./automationStoredContentRead";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 
 type AutomationAssignmentWakeRun = Readonly<{
     triggerId: string | null;
@@ -139,26 +140,66 @@ export function resolveAutomationAssignmentNextClaimAt(params: Readonly<{
     );
 }
 
-async function assertMachinesBelongToAccount(params: {
+async function assertMachineAssignmentsCanBeWritten(params: {
     tx: Tx;
     accountId: string;
+    automationId: string;
     machineIds: string[];
+    requestedEnabledByMachineId: ReadonlyMap<string, boolean>;
 }): Promise<void> {
     if (params.machineIds.length === 0) return;
 
-    const rows = await params.tx.machine.findMany({
-        where: {
-            accountId: params.accountId,
-            id: { in: params.machineIds },
-            revokedAt: null,
-        },
-        select: { id: true },
-    });
+    const [rows, existingAssignments] = await Promise.all([
+        params.tx.machine.findMany({
+            where: {
+                accountId: params.accountId,
+                id: { in: params.machineIds },
+            },
+            select: { id: true, revokedAt: true, replacedByMachineId: true },
+        }),
+        params.tx.automationAssignment.findMany({
+            where: {
+                automationId: params.automationId,
+                machineId: { in: params.machineIds },
+            },
+            select: { machineId: true, enabled: true },
+        }),
+    ]);
 
-    const known = new Set(rows.map((row) => row.id));
-    const missing = params.machineIds.filter((id) => !known.has(id));
-    if (missing.length > 0) {
-        throw new AutomationValidationError(`Unknown machine assignments: ${missing.join(", ")}`);
+    const machinesById = new Map(rows.map((row) => [row.id, row] as const));
+    const existingByMachineId = new Map(
+        existingAssignments.map((assignment) => [assignment.machineId, assignment] as const),
+    );
+    const unknown: string[] = [];
+    const unavailable: string[] = [];
+    for (const machineId of params.machineIds) {
+        const machine = machinesById.get(machineId) ?? null;
+        const availability = classifyMachineAvailabilityState(machine);
+        if (availability === "available") continue;
+        // Preserve the incumbent public validation contract for missing and
+        // permanently revoked machine authority. Replacement is a distinct,
+        // reversible availability fact and receives the narrower error below.
+        if (availability !== "replaced") {
+            unknown.push(machineId);
+            continue;
+        }
+
+        // Reversible replacement preserves an already-configured assignment,
+        // including through a whole-editor reconciliation. It does not grant
+        // new execution authority: adding an unavailable machine or enabling a
+        // previously disabled assignment is rejected until replacement is
+        // undone. Missing and permanently revoked machines always fail closed;
+        // the revoke owner normally removes those rows transactionally.
+        const existing = existingByMachineId.get(machineId);
+        if (!existing || (!existing.enabled && params.requestedEnabledByMachineId.get(machineId) === true)) {
+            unavailable.push(machineId);
+        }
+    }
+    if (unknown.length > 0) {
+        throw new AutomationValidationError(`Unknown machine assignments: ${unknown.join(", ")}`);
+    }
+    if (unavailable.length > 0) {
+        throw new AutomationValidationError(`Unavailable machine assignments: ${unavailable.join(", ")}`);
     }
 }
 
@@ -194,10 +235,15 @@ export async function replaceAutomationAssignmentsTx(params: {
     assignments: ReadonlyArray<AutomationAssignmentInput>;
 }): Promise<Array<{ machineId: string; enabled: boolean; priority: number; updatedAt: Date }>> {
     const normalizedAssignments = normalizeAutomationAssignments(params.assignments) ?? [];
-    await assertMachinesBelongToAccount({
+    await assertMachineAssignmentsCanBeWritten({
         tx: params.tx,
         accountId: params.accountId,
+        automationId: params.automationId,
         machineIds: normalizedAssignments.map((item) => item.machineId),
+        requestedEnabledByMachineId: new Map(normalizedAssignments.map((item) => [
+            item.machineId,
+            item.enabled ?? true,
+        ])),
     });
 
     await params.tx.automationAssignment.deleteMany({

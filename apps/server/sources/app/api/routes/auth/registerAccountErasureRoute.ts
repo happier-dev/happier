@@ -26,7 +26,10 @@ export function registerAccountErasureRoute(app: Fastify): void {
             if (request.validationError) {
                 return await reply.code(400).send({ error: "invalid_request" });
             }
-            await deleteAccountForErasure({ accountId: request.userId });
+            const result = await deleteAccountForErasure({ accountId: request.userId });
+            if (result.status === "failed") {
+                throw new Error(`Account erasure failed before Account deletion: ${result.code}`);
+            }
             app.disconnectAccountSockets(request.userId);
             return await reply.send({ status: "deleted" });
         },

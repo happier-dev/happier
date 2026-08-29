@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -100,6 +102,15 @@ describe("Connected Account attempt transaction routes", () => {
 
         const rows = await db.repeatKey.findMany();
         expect(rows).toHaveLength(1);
+        const canonicalKey = `caat_v1_${createHash("sha256")
+            .update(JSON.stringify([
+                "connected-account-attempt-transaction-v1",
+                accountA.id,
+                "oauth",
+                "attempt_01HZX4T3Q7",
+            ]))
+            .digest("base64url")}`;
+        expect(rows[0]?.key).toBe(canonicalKey);
         expect(rows[0]?.key).not.toContain(accountA.id);
         expect(rows[0]?.key).not.toContain("attempt_01HZX4T3Q7");
         expect(rows[0]?.value).toContain(ciphertext);
@@ -495,5 +506,127 @@ describe("Connected Account attempt transaction routes", () => {
             });
         }
         expect(await db.repeatKey.count()).toBe(1);
+    });
+
+    it("physically reclaims an expired exact attempt without imposing an invented per-account transaction quota", async () => {
+        const [accountA, accountB] = await Promise.all([
+            createE2eeAccount(),
+            createE2eeAccount(),
+        ]);
+        const app = createTestApp();
+        await app.ready();
+        const headers = (account: { id: string }) => ({
+            "content-type": "application/json" as const,
+            "x-test-user-id": account.id,
+        });
+        const urlFor = (attemptId: string) =>
+            `/v2/connect/connected-account-attempt-transactions/oauth/${attemptId}`;
+
+        const abandoned = await app.inject({
+            method: "POST",
+            url: urlFor("abandoned-attempt"),
+            headers: headers(accountA),
+            payload: {
+                content: { t: "encrypted", c: "opaque-abandoned" },
+                expiresAtMs: Date.now() + 40,
+            },
+        });
+        expect(abandoned.statusCode).toBe(200);
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        expect(await db.repeatKey.count()).toBe(1);
+
+        // Exact access owns semantic expiry cleanup. The broader RepeatKey
+        // retention worker remains a separately configured operator policy.
+        const expired = await app.inject({
+            method: "GET",
+            url: urlFor("abandoned-attempt"),
+            headers: headers(accountA),
+        });
+        expect(expired.statusCode).toBe(404);
+        expect(await db.repeatKey.count()).toBe(0);
+
+        // Row-size and lifetime validation are real request/storage boundaries;
+        // they do not derive an arbitrary count of legitimate concurrent flows.
+        // SQLite has one physical writer, so exercise a realistic concurrent
+        // burst before continuing past the rejected fixed-cap boundary.
+        const admitted = await Promise.all(
+            Array.from({ length: 4 }, (_, index) => app.inject({
+                method: "POST",
+                url: urlFor(`live-${index}`),
+                headers: headers(accountA),
+                payload: {
+                    content: { t: "encrypted", c: `opaque-live-${index}` },
+                    expiresAtMs: Date.now() + 15 * 60_000,
+                },
+            })),
+        );
+        for (const response of admitted) {
+            expect(response.statusCode, response.body).toBe(200);
+        }
+        for (let index = 4; index < 20; index += 1) {
+            const response = await app.inject({
+                method: "POST",
+                url: urlFor(`live-${index}`),
+                headers: headers(accountA),
+                payload: {
+                    content: { t: "encrypted", c: `opaque-live-${index}` },
+                    expiresAtMs: Date.now() + 15 * 60_000,
+                },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+        }
+        expect(await db.repeatKey.count()).toBe(20);
+
+        const other = await app.inject({
+            method: "POST",
+            url: urlFor("other-account-attempt"),
+            headers: headers(accountB),
+            payload: {
+                content: { t: "encrypted", c: "opaque-other" },
+                expiresAtMs: Date.now() + 15 * 60_000,
+            },
+        });
+        expect(other.statusCode).toBe(200);
+        expect(await db.repeatKey.count()).toBe(21);
+    });
+
+    it("resumes the canonical exact-key transaction written before a server restart", async () => {
+        const account = await createE2eeAccount();
+        const app = createTestApp();
+        await app.ready();
+        const attemptId = "restart-continuity";
+        const url = `/v2/connect/connected-account-attempt-transactions/oauth/${attemptId}`;
+        const headers = {
+            "content-type": "application/json" as const,
+            "x-test-user-id": account.id,
+        };
+        const content = { t: "encrypted", c: "opaque-restart" } as const;
+        const expiresAtMs = Date.now() + 15 * 60_000;
+        expect((await app.inject({
+            method: "POST",
+            url,
+            headers,
+            payload: { content, expiresAtMs },
+        })).statusCode).toBe(200);
+
+        const canonicalKey = `caat_v1_${createHash("sha256")
+            .update(JSON.stringify([
+                "connected-account-attempt-transaction-v1",
+                account.id,
+                "oauth",
+                attemptId,
+            ]))
+            .digest("base64url")}`;
+        const stored = await db.repeatKey.findFirstOrThrow({
+            where: { value: { contains: "opaque-restart" } },
+        });
+        await db.repeatKey.update({
+            where: { key: stored.key },
+            data: { key: canonicalKey },
+        });
+
+        const resumed = await app.inject({ method: "GET", url, headers });
+        expect(resumed.statusCode, resumed.body).toBe(200);
+        expect(resumed.json()).toEqual({ revision: 1, content, expiresAtMs });
     });
 });

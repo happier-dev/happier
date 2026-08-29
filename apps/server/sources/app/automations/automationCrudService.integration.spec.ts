@@ -20,6 +20,7 @@ import {
     deleteAutomation,
     deleteAutomationTrigger,
     getAutomation,
+    listAutomationDefinitionsPage,
     listAutomations,
     reconcileAutomationDefinition,
     runAutomationNow,
@@ -82,6 +83,49 @@ async function seedExecutionMachine(accountId: string): Promise<string> {
         data: { id: machineId, accountId, metadata: "{}" },
     });
     return machineId;
+}
+
+async function seedPluginEventTriggerWithStatus(automationId: string, suffix: string) {
+    const trigger = await db.automationTrigger.create({
+        data: {
+            id: `event-trigger-${suffix}-${randomUUID()}`,
+            automationId,
+            kind: "pluginEvent",
+            enabled: true,
+            eventPluginId: "happier.github",
+            eventLocalId: "repository-pushed",
+            sourceSelectorId: `selector-${suffix}-${randomUUID()}`,
+            sourceContractVersion: 1,
+            observationTransport: "checkpointedPull",
+            watcherMachineId: `watcher-machine-${suffix}`,
+            watcherMachineInstallationId: `watcher-installation-${suffix}`,
+            watcherPluginId: "happier.github",
+            watcherMaterializationId: `watcher-materialization-${suffix}`,
+            definitionEnvelope: JSON.stringify({ v: 1, suffix }),
+        },
+        select: {
+            id: true,
+            revision: true,
+            eventPluginId: true,
+            eventLocalId: true,
+            sourceSelectorId: true,
+        },
+    });
+    await db.automationEventSourceStatus.create({
+        data: {
+            triggerId: trigger.id,
+            eventPluginId: trigger.eventPluginId!,
+            eventLocalId: trigger.eventLocalId!,
+            sourceSelectorId: trigger.sourceSelectorId!,
+            triggerRevision: trigger.revision,
+            reporterMachineId: `reporter-machine-${suffix}`,
+            reporterMachineInstallationId: `reporter-installation-${suffix}`,
+            reporterMaterializationId: `reporter-materialization-${suffix}`,
+            reporterImmutableGenerationId: `reporter-generation-${suffix}`,
+            state: "observing",
+        },
+    });
+    return trigger;
 }
 
 describe("automationCrudService (integration)", () => {
@@ -155,6 +199,57 @@ describe("automationCrudService (integration)", () => {
             kind: "schedule", enabled: false, revision: 0, everyMs: 120_000,
         });
         expect(scheduled.triggers[0]!.id).not.toBe(scheduled.triggers[1]!.id);
+    });
+
+    it("pages the ordinary V3 definition order by stable updatedAt/id keyset", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const ids = [randomUUID(), randomUUID(), randomUUID()].sort();
+        for (const id of ids) {
+            await createAutomation({
+                accountId: account.id,
+                input: {
+                    automationId: id,
+                    name: id,
+                    enabled: false,
+                    executionRecipe: currentRecipe(1),
+                    triggers: [],
+                },
+            });
+        }
+        const sameUpdatedAt = new Date("2026-08-29T10:00:00.000Z");
+        await db.automation.updateMany({
+            where: { id: { in: ids } },
+            data: { updatedAt: sameUpdatedAt },
+        });
+
+        const first = await listAutomationDefinitionsPage({
+            accountId: account.id,
+            limit: 2,
+        });
+        expect(first.automations.map((automation) => automation.id)).toEqual(ids.slice(0, 2));
+        expect(first.nextCursor).not.toBeNull();
+
+        // Cursor progression is independent of the cursor row continuing to
+        // exist; numeric offsets would skip the remaining definition here.
+        await db.automation.update({
+            where: { id: ids[1]! },
+            data: { deletedAt: new Date("2026-08-29T10:01:00.000Z") },
+        });
+        const second = await listAutomationDefinitionsPage({
+            accountId: account.id,
+            limit: 2,
+            cursor: first.nextCursor,
+        });
+        expect(second.automations.map((automation) => automation.id)).toEqual([ids[2]]);
+        expect(second.nextCursor).toBeNull();
+
+        await expect(listAutomationDefinitionsPage({
+            accountId: account.id,
+            cursor: "not-a-cursor",
+        })).rejects.toThrow(AutomationValidationError);
     });
 
     it("keeps private trigger definition envelopes and unused status relations out of the list read", async () => {
@@ -434,6 +529,83 @@ describe("automationCrudService (integration)", () => {
             sourceSessionId: null,
             sourceTurnId: null,
         });
+    });
+
+    it("deletes Event source projection state when its trigger is retired", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const automation = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Retired Event status",
+                enabled: false,
+                executionRecipe: currentRecipe(1),
+                triggers: [],
+            },
+        });
+        const trigger = await seedPluginEventTriggerWithStatus(automation.id, "retired");
+
+        await expect(deleteAutomationTrigger({
+            accountId: account.id,
+            automationId: automation.id,
+            triggerId: trigger.id,
+            expectedRevision: trigger.revision,
+        })).resolves.not.toBeNull();
+        await expect(db.automationEventSourceStatus.findUnique({
+            where: { triggerId: trigger.id },
+        })).resolves.toBeNull();
+        await expect(db.automationTrigger.findUniqueOrThrow({
+            where: { id: trigger.id },
+            select: {
+                deletedAt: true,
+                eventPluginId: true,
+                eventLocalId: true,
+                sourceSelectorId: true,
+                definitionEnvelope: true,
+            },
+        })).resolves.toEqual({
+            deletedAt: expect.any(Date),
+            eventPluginId: trigger.eventPluginId,
+            eventLocalId: trigger.eventLocalId,
+            sourceSelectorId: trigger.sourceSelectorId,
+            definitionEnvelope: null,
+        });
+    });
+
+    it("deletes every child Event source status when its parent Automation is deleted", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const automation = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Deleted parent Event statuses",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: await seedExecutionMachine(account.id) }],
+                triggers: [],
+            },
+        });
+        const first = await seedPluginEventTriggerWithStatus(automation.id, "parent-first");
+        const second = await seedPluginEventTriggerWithStatus(automation.id, "parent-second");
+
+        await expect(deleteAutomation({
+            accountId: account.id,
+            automationId: automation.id,
+        })).resolves.toBe(true);
+        await expect(db.automationEventSourceStatus.count({
+            where: { triggerId: { in: [first.id, second.id] } },
+        })).resolves.toBe(0);
+        await expect(db.automationTrigger.count({
+            where: {
+                id: { in: [first.id, second.id] },
+                enabled: false,
+                deletedAt: null,
+            },
+        })).resolves.toBe(2);
     });
 
     it("runs a zero-trigger Automation manually and rejoins only the same invocation", async () => {
@@ -766,6 +938,68 @@ describe("automationCrudService (integration)", () => {
                 assignments: [{ machineId: executionMachineId }],
             },
         })).resolves.toMatchObject({ enabled: true });
+    });
+
+    it("rejects newly assigning a replaced machine while preserving an unchanged assignment", async () => {
+        const account = await db.account.create({
+            data: { encryptionMode: "plain" }, select: { id: true },
+        });
+        const replacedMachineId = await seedExecutionMachine(account.id);
+        const replacementMachineId = await seedExecutionMachine(account.id);
+        const retained = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Reversible replacement assignment",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: replacedMachineId }],
+                triggers: [],
+            },
+        });
+        await db.machine.update({
+            where: { id: replacedMachineId },
+            data: { replacedByMachineId: replacementMachineId, replacedAt: new Date() },
+        });
+
+        // An unrelated whole-definition edit preserves the configured
+        // assignment so clearing replacement can naturally reactivate it.
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: retained.id,
+            input: {
+                name: "Reversible replacement assignment renamed",
+                assignments: [{ machineId: replacedMachineId }],
+            },
+        })).resolves.toMatchObject({
+            name: "Reversible replacement assignment renamed",
+            assignments: [{ machineId: replacedMachineId, enabled: true }],
+        });
+
+        const otherMachineId = await seedExecutionMachine(account.id);
+        const other = await createAutomation({
+            accountId: account.id,
+            input: {
+                automationId: randomUUID(),
+                name: "Available assignment",
+                enabled: true,
+                executionRecipe: currentRecipe(1),
+                assignments: [{ machineId: otherMachineId }],
+                triggers: [],
+            },
+        });
+        await expect(updateAutomation({
+            accountId: account.id,
+            automationId: other.id,
+            input: { assignments: [{ machineId: replacedMachineId }] },
+        })).rejects.toMatchObject({
+            name: "AutomationValidationError",
+            message: `Unavailable machine assignments: ${replacedMachineId}`,
+        });
+        await expect(getAutomation({ accountId: account.id, automationId: other.id }))
+            .resolves.toMatchObject({
+                assignments: [{ machineId: otherMachineId, enabled: true }],
+            });
     });
 
     it("rejects removing or disabling the last enabled assignment while enabled, atomically", async () => {

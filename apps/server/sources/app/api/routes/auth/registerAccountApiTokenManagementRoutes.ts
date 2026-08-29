@@ -16,6 +16,7 @@ import {
 
 import {
     auth,
+    InvalidApiTokenExpiryError,
     type ApiTokenSummary,
     type CreatedApiToken,
 } from "@/app/auth/auth";
@@ -77,19 +78,23 @@ export function registerAccountApiTokenManagementRoutes(app: Fastify): void {
                 return await reply.code(400).send({ error: "invalid_request" });
             }
 
+            const now = new Date();
             const expiresAt = request.body.expiresAt == null
                 ? null
                 : new Date(request.body.expiresAt);
-            if (expiresAt !== null && (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
-                return await reply.code(400).send({ error: "invalid_request" });
+            try {
+                const created = await auth.createApiToken({
+                    accountId: request.userId,
+                    label: request.body.label,
+                    expiresAt,
+                }, now);
+                return await reply.send(serializeCreatedApiToken(created));
+            } catch (error) {
+                if (error instanceof InvalidApiTokenExpiryError) {
+                    return await reply.code(400).send({ error: "invalid_request" });
+                }
+                throw error;
             }
-
-            const created = await auth.createApiToken({
-                accountId: request.userId,
-                label: request.body.label,
-                expiresAt,
-            });
-            return await reply.send(serializeCreatedApiToken(created));
         },
     );
 

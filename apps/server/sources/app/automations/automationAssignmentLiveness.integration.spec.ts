@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import {
+    AutomationOccurrenceKeyV1Schema,
+    AutomationSourceSelectorIdV1Schema,
     AutomationTriggerIdSchema,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
     type AutomationRunCause,
@@ -47,8 +49,10 @@ function storedRecipe(templateVersion: number): string {
     return serialized.serialized;
 }
 
-function occurrenceKey(): string {
-    return createHash("sha256").update(randomUUID()).digest("base64url");
+function occurrenceKey(): ReturnType<typeof AutomationOccurrenceKeyV1Schema.parse> {
+    return AutomationOccurrenceKeyV1Schema.parse(
+        createHash("sha256").update(randomUUID()).digest("base64url"),
+    );
 }
 
 describe("automation assignment liveness (integration)", () => {
@@ -101,7 +105,10 @@ describe("automation assignment liveness (integration)", () => {
             sourceSessionId?: string;
             sourceTurnId?: string;
         }>;
-    }>): Promise<{ automationId: string; triggerId: string | null }> {
+    }>): Promise<{
+        automationId: string;
+        triggerId: ReturnType<typeof AutomationTriggerIdSchema.parse> | null;
+    }> {
         const automationId = `automation-${randomUUID()}`;
         const triggerId = params.trigger
             ? AutomationTriggerIdSchema.parse(randomUUID())
@@ -133,7 +140,7 @@ describe("automation assignment liveness (integration)", () => {
                                 ? {
                                     eventPluginId: "happier.test",
                                     eventLocalId: "liveness-event",
-                                    sourceSelectorId: randomUUID(),
+                                    sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(randomUUID()),
                                     sourceContractVersion: 1,
                                     observationTransport: "checkpointedPull" as const,
                                     watcherMachineId: "watcher-machine",
@@ -218,7 +225,7 @@ describe("automation assignment liveness (integration)", () => {
                     occurredAt,
                     evidence: {
                         eventRef: { pluginId: "happier.test", localId: "liveness-event" },
-                        sourceSelectorId: randomUUID(),
+                        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(randomUUID()),
                     },
                 },
             },
@@ -357,5 +364,119 @@ describe("automation assignment liveness (integration)", () => {
             where: { runId: admitted!.id },
             select: { machineId: true },
         })).resolves.toEqual([{ machineId }]);
+    });
+
+    it("freezes only currently available configured assignments and naturally resumes after replacement undo", async () => {
+        const accountId = await createAccount();
+        const replacedMachineId = `execution-replaced-${randomUUID()}`;
+        const replacementMachineId = `execution-replacement-${randomUUID()}`;
+        const availableMachineId = `execution-available-${randomUUID()}`;
+        await db.machine.createMany({
+            data: [
+                {
+                    id: replacedMachineId,
+                    accountId,
+                    metadata: "{}",
+                    replacedByMachineId: replacementMachineId,
+                    replacedAt: new Date(),
+                },
+                { id: replacementMachineId, accountId, metadata: "{}" },
+                { id: availableMachineId, accountId, metadata: "{}" },
+            ],
+        });
+        const automationId = `automation-${randomUUID()}`;
+        await db.automation.create({
+            data: {
+                id: automationId,
+                accountId,
+                name: "Replacement-filtered admission",
+                enabled: true,
+                targetType: "new_session",
+                templateCiphertext: storedRecipe(1),
+                templateVersion: 1,
+                assignments: {
+                    create: [
+                        { machineId: replacedMachineId, enabled: true, priority: 20 },
+                        { machineId: availableMachineId, enabled: true, priority: 10 },
+                    ],
+                },
+            },
+        });
+
+        const first = await runAutomationNow({
+            accountId,
+            automationId,
+            idempotencyKey: "replacement-filtered-first",
+        });
+        expect(first).toMatchObject({ state: "queued" });
+        await expect(db.automationRunAssignment.findMany({
+            where: { runId: first!.id },
+            select: { machineId: true },
+        })).resolves.toEqual([{ machineId: availableMachineId }]);
+
+        await db.machine.update({
+            where: { id: replacedMachineId },
+            data: {
+                replacedByMachineId: null,
+                replacedAt: null,
+                replacementReason: null,
+                replacementSource: null,
+                replacementActorUserId: null,
+            },
+        });
+        const second = await runAutomationNow({
+            accountId,
+            automationId,
+            idempotencyKey: "replacement-filtered-after-undo",
+        });
+        await expect(db.automationRunAssignment.findMany({
+            where: { runId: second!.id },
+            select: { machineId: true },
+            orderBy: { priority: "desc" },
+        })).resolves.toEqual([
+            { machineId: replacedMachineId },
+            { machineId: availableMachineId },
+        ]);
+    });
+
+    it("does not admit a Run when every configured assignment is currently unavailable", async () => {
+        const accountId = await createAccount();
+        const replacedMachineId = `execution-replaced-${randomUUID()}`;
+        const replacementMachineId = `execution-replacement-${randomUUID()}`;
+        await db.machine.createMany({
+            data: [
+                {
+                    id: replacedMachineId,
+                    accountId,
+                    metadata: "{}",
+                    replacedByMachineId: replacementMachineId,
+                    replacedAt: new Date(),
+                },
+                { id: replacementMachineId, accountId, metadata: "{}" },
+            ],
+        });
+        const automationId = `automation-${randomUUID()}`;
+        await db.automation.create({
+            data: {
+                id: automationId,
+                accountId,
+                name: "Replacement-unavailable admission",
+                enabled: true,
+                targetType: "new_session",
+                templateCiphertext: storedRecipe(1),
+                templateVersion: 1,
+                assignments: { create: { machineId: replacedMachineId, enabled: true } },
+            },
+        });
+
+        await expect(runAutomationNow({
+            accountId,
+            automationId,
+            idempotencyKey: "replacement-unavailable",
+        })).rejects.toMatchObject({
+            name: "AutomationValidationError",
+            message: expect.stringContaining("noEnabledAssignment"),
+        });
+        await expect(db.automationRun.count({ where: { automationId } })).resolves.toBe(0);
     });
 });

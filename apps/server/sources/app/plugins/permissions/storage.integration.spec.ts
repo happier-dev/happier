@@ -1,10 +1,11 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { createFakeRouteApp, createReplyStub, getRouteHandler } from "@/app/api/testkit/routeHarness";
 import { registerApiRoutes } from "@/app/api/api";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createPluginAvailabilityOperations } from "@/app/plugins/availability/operations";
 import {
     createSignedPluginInstallationPublisherHeader,
     createTrustedMachineInstallation,
@@ -27,28 +28,124 @@ function registerDefaultRoutes() {
 }
 
 const CODERABBIT_PLUGIN_ID = "happier.review.coderabbit";
-const UNKNOWN_PLUGIN_ID = "acme.uninstalled.review";
+const THIRD_PARTY_PLUGIN_ID = "acme.external.review";
 const EXTERNAL_PLUGIN_ID = "acme.reviewbot";
+const PINNED_SERVER_IDENTITY_ID = "srv_permissionCallerIntegration";
+const CURRENT_MATERIALIZATION_ID = "install-epoch-permission-caller-current";
 let publisherMachineCounter = 0;
+
+function callerReleaseFacts(pluginId: string) {
+    const version = "1.2.3";
+    return {
+        ref: { pluginId, version },
+        archiveDigestSha256: `sha256:${"a".repeat(64)}`,
+        normalizedManifest: {
+            schemaVersion: 2,
+            id: pluginId,
+            version,
+            displayName: "Permission caller fixture",
+            engines: { happier: "^1.0.0" },
+            runtime: { apiVersion: 1 },
+            contributes: {},
+        },
+        collectionContracts: [],
+        uiSlots: [{
+            contributionId: "hosted",
+            tier: "hostedWeb",
+            platform: "web",
+            artifactDigest: `sha256:${"b".repeat(64)}`,
+            compatibility: {
+                hostUiApiVersion: "1.0.0",
+            },
+        }],
+        packageAssetArchive: {
+            archiveDigestSha256: `sha256:${"c".repeat(64)}`,
+            resources: [],
+        },
+    };
+}
+
+/**
+ * Seeds the exact current Availability generation the caller-materialization
+ * owner resolves: one verified release plus one trusted reported
+ * materialization bound to the pinned server identity.
+ */
+async function seedCurrentCallerMaterialization(params: Readonly<{
+    accountId: string;
+    machineId: string;
+    materializationId: string;
+    pluginId: string;
+}>): Promise<void> {
+    const availability = createPluginAvailabilityOperations({
+        resolveServerIdentityId: async () => PINNED_SERVER_IDENTITY_ID,
+    });
+    const facts = callerReleaseFacts(params.pluginId);
+    await availability.publishRelease({
+        accountId: params.accountId,
+        input: { facts, sourceClass: "registryPackage" },
+    });
+    await availability.reportMaterializations({
+        accountId: params.accountId,
+        publisherMachineId: params.machineId,
+        input: {
+            snapshot: {
+                serverIdentityId: PINNED_SERVER_IDENTITY_ID,
+                machineId: params.machineId,
+                revision: 1,
+                materializations: [{
+                    serverIdentityId: PINNED_SERVER_IDENTITY_ID,
+                    machineId: params.machineId,
+                    materializationId: params.materializationId,
+                    pluginId: params.pluginId,
+                    version: facts.ref.version,
+                    sourceClass: "registryPackage" as const,
+                    portableRelease: true,
+                    archiveDigestSha256: facts.archiveDigestSha256,
+                    uiArtifacts: facts.uiSlots.map(({ compatibility: _compatibility, ...slot }) => slot),
+                    enabled: true,
+                    trustState: "trusted" as const,
+                    observedAt: 1_700_000_000_000,
+                }],
+            },
+        },
+    });
+}
 
 async function createPublisherRouteRequest(params: Readonly<{
     accountId: string;
     path: string;
     body: unknown;
 }>) {
+    const bodyRecord = params.body && typeof params.body === "object" && !Array.isArray(params.body)
+        ? params.body as Readonly<Record<string, unknown>>
+        : {};
+    const pluginId = typeof bodyRecord?.pluginId === "string" ? bodyRecord.pluginId : "";
+    if (!pluginId) throw new Error("permission publisher fixture requires a plugin id");
     const keyPair = tweetnacl.sign.keyPair();
     publisherMachineCounter += 1;
     const machineId = `machine-plugin-projection-${publisherMachineCounter}`;
     const installationId = `installation-plugin-projection-${publisherMachineCounter}`;
+    const materializationId = `materialization-plugin-projection-${publisherMachineCounter}`;
     await createTrustedMachineInstallation({
         accountId: params.accountId,
         machineId,
         installationId,
         keyPair,
     });
+    vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", PINNED_SERVER_IDENTITY_ID);
+    await seedCurrentCallerMaterialization({
+        accountId: params.accountId,
+        machineId,
+        materializationId,
+        pluginId,
+    });
+    const body = {
+        ...bodyRecord,
+        caller: { machineId, materializationId, pluginId },
+    };
     return {
         userId: params.accountId,
-        body: params.body,
+        body,
         method: "POST",
         url: params.path,
         headers: {
@@ -57,7 +154,7 @@ async function createPublisherRouteRequest(params: Readonly<{
                 machineId,
                 installationId,
                 path: params.path,
-                body: params.body,
+                body,
             }),
         },
     };
@@ -84,6 +181,10 @@ describe("plugin permission grant durable storage", () => {
         await db.$executeRawUnsafe("DELETE FROM plugin_permission_grant_requests").catch(() => undefined);
         await harness.resetDbTables([
             () => db.userKVStore.deleteMany(),
+            () => db.pluginMachineMaterialization.deleteMany(),
+            () => db.accountPluginRelease.deleteMany(),
+            () => db.accountPluginIntent.deleteMany(),
+            () => db.accountChange.deleteMany(),
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
@@ -168,7 +269,7 @@ describe("plugin permission grant durable storage", () => {
         expect(eventRows.map((row) => row.event_kind)).toEqual(["requested", "granted"]);
     });
 
-    it("keeps bundled plugin grant requests valid when they include a machine publisher proof", async () => {
+    it("keeps trusted plugin grant requests valid with a signed exact current materialization caller", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-plugin-permission-bundled-publisher-proof",
@@ -234,6 +335,14 @@ describe("plugin permission grant durable storage", () => {
             installationId,
             keyPair,
         });
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", PINNED_SERVER_IDENTITY_ID);
+        const materializationId = "materialization-plugin-permission-concurrent-request";
+        await seedCurrentCallerMaterialization({
+            accountId: account.id,
+            machineId,
+            materializationId,
+            pluginId: CODERABBIT_PLUGIN_ID,
+        });
         const path = "/v1/plugins/permissions/grants/request";
         const body = {
             pluginId: CODERABBIT_PLUGIN_ID,
@@ -247,6 +356,7 @@ describe("plugin permission grant durable storage", () => {
                 sessionId: "session-concurrent",
                 requestId: "call-concurrent",
             },
+            caller: { machineId, materializationId, pluginId: CODERABBIT_PLUGIN_ID },
         };
         const requestGrant = getRouteHandler(registerDefaultRoutes(), "POST", path);
         const routeRequest = (nonce: string) => ({
@@ -420,11 +530,11 @@ describe("plugin permission grant durable storage", () => {
         `).toEqual([]);
     });
 
-    it("accepts non-reserved external plugin requests from an exact verified machine installation", async () => {
+    it("accepts non-reserved external plugin requests from an exact current verified machine materialization", async () => {
         const account = await db.account.create({
             data: {
-                id: "account-plugin-permission-uninstalled",
-                publicKey: "pk-plugin-permission-uninstalled",
+                id: "account-plugin-permission-third-party",
+                publicKey: "pk-plugin-permission-third-party",
                 encryptionMode: "plain",
             },
             select: { id: true },
@@ -436,12 +546,12 @@ describe("plugin permission grant durable storage", () => {
         );
         const reply = createReplyStub();
         const body = {
-            pluginId: UNKNOWN_PLUGIN_ID,
+            pluginId: THIRD_PARTY_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: { kind: "project", projectId: "project-1" },
             subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
             reason: "Publish approved review comments directly.",
-            requester: { kind: "plugin" as const, pluginId: UNKNOWN_PLUGIN_ID },
+            requester: { kind: "plugin" as const, pluginId: THIRD_PARTY_PLUGIN_ID },
         };
 
         const result = await requestGrant(await createPublisherRouteRequest({
@@ -453,7 +563,7 @@ describe("plugin permission grant durable storage", () => {
         expect(reply.statusCode).toBe(200);
         expect(result).toMatchObject({
             pendingRequest: {
-                pluginId: UNKNOWN_PLUGIN_ID,
+                pluginId: THIRD_PARTY_PLUGIN_ID,
                 targetScope: { kind: "project", projectId: "project-1" },
                 authoritySource: {
                     kind: "machine_installation",
@@ -779,5 +889,362 @@ describe("plugin permission grant durable storage", () => {
         } else {
             expect(storedRequest?.status).toBe("dismissed");
         }
+    });
+
+    it("binds grant request/list ingress to the exact signed current materialization caller and refuses spoofed or stale refs", async () => {
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", PINNED_SERVER_IDENTITY_ID);
+        const account = await db.account.create({
+            data: {
+                id: "account-plugin-permission-exact-caller",
+                publicKey: "pk-plugin-permission-exact-caller",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const keyPair = tweetnacl.sign.keyPair();
+        const machineId = "machine-plugin-permission-exact-caller";
+        const installationId = "installation-plugin-permission-exact-caller";
+        await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+        await seedCurrentCallerMaterialization({
+            accountId: account.id,
+            machineId,
+            materializationId: CURRENT_MATERIALIZATION_ID,
+            pluginId: CODERABBIT_PLUGIN_ID,
+        });
+
+        const routes = registerDefaultRoutes();
+        const requestGrant = getRouteHandler(routes, "POST", "/v1/plugins/permissions/grants/request");
+        const listGrants = getRouteHandler(routes, "POST", "/v1/plugins/permissions/grants/list");
+
+        const requestBase = {
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "project", projectId: "project-exact-caller" },
+            subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
+            reason: "Publish approved review comments directly.",
+        };
+
+        // Spoofed operation plugin identity: the signed proof and materialization
+        // name CODERABBIT, the operation names another plugin.
+        const spoofedReply = createReplyStub();
+        const spoofed = await requestGrant({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/request",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/request",
+                    body: {
+                        ...requestBase,
+                        pluginId: EXTERNAL_PLUGIN_ID,
+                        requester: { kind: "plugin", pluginId: EXTERNAL_PLUGIN_ID },
+                        caller: { machineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+                    },
+                }),
+            },
+            body: {
+                ...requestBase,
+                pluginId: EXTERNAL_PLUGIN_ID,
+                requester: { kind: "plugin", pluginId: EXTERNAL_PLUGIN_ID },
+                caller: { machineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+            },
+        }, spoofedReply);
+        expect(spoofedReply.statusCode).toBe(403);
+        expect(spoofed).toMatchObject({ error: "plugin_permission_grant_caller_mismatch" });
+
+        // Stale/unknown materialization under the proven machine: never current.
+        const staleReply = createReplyStub();
+        const staleBody = {
+            ...requestBase,
+            pluginId: CODERABBIT_PLUGIN_ID,
+            requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
+            caller: { machineId, materializationId: "install-epoch-stale", pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const stale = await requestGrant({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/request",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/request",
+                    body: staleBody,
+                }),
+            },
+            body: staleBody,
+        }, staleReply);
+        expect(staleReply.statusCode).toBe(403);
+        expect(stale).toMatchObject({ error: "plugin_permission_grant_caller_mismatch" });
+
+        // Exact current caller with a matching operation identity is admitted.
+        const acceptedReply = createReplyStub();
+        const acceptedBody = {
+            ...requestBase,
+            pluginId: CODERABBIT_PLUGIN_ID,
+            requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
+            caller: { machineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const accepted = await requestGrant({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/request",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/request",
+                    body: acceptedBody,
+                }),
+            },
+            body: acceptedBody,
+        }, acceptedReply) as any;
+        expect(acceptedReply.statusCode).toBe(200);
+        expect(accepted.pendingRequest).toMatchObject({
+            pluginId: CODERABBIT_PLUGIN_ID,
+            authoritySource: { kind: "machine_installation", machineId, installationId },
+        });
+
+        // A signed plugin list rejects a conflicting caller-supplied filter;
+        // it must not silently widen or rewrite a spoofed plugin identity.
+        const scopedListBody = {
+            pluginId: EXTERNAL_PLUGIN_ID,
+            caller: { machineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const scopedListReply = createReplyStub();
+        const scopedList = await listGrants({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/list",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/list",
+                    body: scopedListBody,
+                }),
+            },
+            body: scopedListBody,
+        }, scopedListReply);
+        expect(scopedListReply.statusCode).toBe(403);
+        expect(scopedList).toMatchObject({ error: "plugin_permission_grant_caller_mismatch" });
+
+        // Omitting the optional filter derives the exact plugin scope from the
+        // proven current materialization.
+        const exactListBody = {
+            caller: { machineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const exactListReply = createReplyStub();
+        const exactList = await listGrants({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/list",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/list",
+                    body: exactListBody,
+                }),
+            },
+            body: exactListBody,
+        }, exactListReply) as any;
+        expect(exactListReply.statusCode).toBe(200);
+        expect(exactList.pendingRequests).toEqual([
+            expect.objectContaining({
+                id: accepted.pendingRequest.id,
+                pluginId: CODERABBIT_PLUGIN_ID,
+            }),
+        ]);
+
+        const staleListBody = {
+            caller: { machineId, materializationId: "install-epoch-stale", pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const staleListReply = createReplyStub();
+        const staleList = await listGrants({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/list",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path: "/v1/plugins/permissions/grants/list",
+                    body: staleListBody,
+                }),
+            },
+            body: staleListBody,
+        }, staleListReply);
+        expect(staleListReply.statusCode).toBe(403);
+        expect(staleList).toMatchObject({ error: "plugin_permission_grant_caller_mismatch" });
+    });
+
+    it("isolates plugin self-revocation to the proven caller and keeps user-side revocation present-user", async () => {
+        vi.stubEnv("HAPPIER_SERVER_IDENTITY_ID", PINNED_SERVER_IDENTITY_ID);
+        const account = await db.account.create({
+            data: {
+                id: "account-plugin-permission-self-revoke",
+                publicKey: "pk-plugin-permission-self-revoke",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const ownerKeyPair = tweetnacl.sign.keyPair();
+        const ownerMachineId = "machine-plugin-permission-self-revoke-owner";
+        const ownerInstallationId = "installation-plugin-permission-self-revoke-owner";
+        await createTrustedMachineInstallation({
+            accountId: account.id,
+            machineId: ownerMachineId,
+            installationId: ownerInstallationId,
+            keyPair: ownerKeyPair,
+        });
+        await seedCurrentCallerMaterialization({
+            accountId: account.id,
+            machineId: ownerMachineId,
+            materializationId: CURRENT_MATERIALIZATION_ID,
+            pluginId: CODERABBIT_PLUGIN_ID,
+        });
+
+        const app = registerDefaultRoutes();
+        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
+        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
+        const revoke = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/revoke");
+
+        const createActiveGrant = async (): Promise<string> => {
+            const requestBody = {
+                pluginId: CODERABBIT_PLUGIN_ID,
+                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+                targetScope: { kind: "project", projectId: "project-self-revoke" },
+                subject: GENERAL_PLUGIN_PERMISSION_SUBJECT_V1,
+                reason: "Publish approved review comments directly.",
+                requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
+                caller: { machineId: ownerMachineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+            };
+            const requested = await requestGrant({
+                userId: account.id,
+                method: "POST",
+                url: "/v1/plugins/permissions/grants/request",
+                headers: {
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                        keyPair: ownerKeyPair,
+                        machineId: ownerMachineId,
+                        installationId: ownerInstallationId,
+                        path: "/v1/plugins/permissions/grants/request",
+                        body: requestBody,
+                    }),
+                },
+                body: requestBody,
+            }, createReplyStub()) as any;
+            const granted = await grant({
+                userId: account.id,
+                body: { requestId: requested.pendingRequest.id },
+            }, createReplyStub()) as any;
+            return granted.grant.id;
+        };
+
+        const ownedGrantId = await createActiveGrant();
+
+        // Self-revocation with the exact proven caller succeeds and attributes
+        // the event to the plugin, not to a fabricated user decision.
+        const selfRevokeBody = {
+            grantId: ownedGrantId,
+            caller: { machineId: ownerMachineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const selfRevokeReply = createReplyStub();
+        await revoke({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/revoke",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair: ownerKeyPair,
+                    machineId: ownerMachineId,
+                    installationId: ownerInstallationId,
+                    path: "/v1/plugins/permissions/grants/revoke",
+                    body: selfRevokeBody,
+                }),
+            },
+            body: selfRevokeBody,
+        }, selfRevokeReply);
+        expect(selfRevokeReply.statusCode).toBe(200);
+        const selfRevokeEvent = await db.$queryRaw<Array<{ actor_json: string }>>`
+            SELECT actor_json FROM plugin_permission_grant_events
+            WHERE account_id = ${account.id} AND grant_id = ${ownedGrantId} AND event_kind = 'revoked'
+        `;
+        expect(JSON.parse(selfRevokeEvent[0]?.actor_json ?? "{}")).toMatchObject({ kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID });
+        const revokedRow = await db.$queryRaw<Array<{ revoked_by_user_id: string | null }>>`
+            SELECT revoked_by_user_id FROM plugin_permission_grants WHERE id = ${ownedGrantId}
+        `;
+        expect(revokedRow[0]?.revoked_by_user_id ?? null).toBeNull();
+
+        // A different machine installation cannot revoke the owner's grant.
+        const grantIdStillOwned = await createActiveGrant();
+        const foreignKeyPair = tweetnacl.sign.keyPair();
+        const foreignMachineId = "machine-plugin-permission-self-revoke-foreign";
+        const foreignInstallationId = "installation-plugin-permission-self-revoke-foreign";
+        await createTrustedMachineInstallation({
+            accountId: account.id,
+            machineId: foreignMachineId,
+            installationId: foreignInstallationId,
+            keyPair: foreignKeyPair,
+        });
+        await seedCurrentCallerMaterialization({
+            accountId: account.id,
+            machineId: foreignMachineId,
+            materializationId: CURRENT_MATERIALIZATION_ID,
+            pluginId: CODERABBIT_PLUGIN_ID,
+        });
+        const foreignBody = {
+            grantId: grantIdStillOwned,
+            caller: { machineId: foreignMachineId, materializationId: CURRENT_MATERIALIZATION_ID, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const foreignReply = createReplyStub();
+        const foreignResult = await revoke({
+            userId: account.id,
+            method: "POST",
+            url: "/v1/plugins/permissions/grants/revoke",
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPluginInstallationPublisherHeader({
+                    keyPair: foreignKeyPair,
+                    machineId: foreignMachineId,
+                    installationId: foreignInstallationId,
+                    path: "/v1/plugins/permissions/grants/revoke",
+                    body: foreignBody,
+                }),
+            },
+            body: foreignBody,
+        }, foreignReply) as any;
+        expect(foreignReply.statusCode).toBe(403);
+        expect(foreignResult).toMatchObject({ error: "plugin_permission_grant_not_owned" });
+        const stillActive = await db.$queryRaw<Array<{ status: string }>>`
+            SELECT status FROM plugin_permission_grants WHERE id = ${grantIdStillOwned}
+        `;
+        expect(stillActive[0]?.status).toBe("active");
+
+        // A present user revokes any account grant without a publisher proof.
+        const userReply = createReplyStub();
+        await revoke({
+            userId: account.id,
+            authAuthority: "present_user",
+            body: { grantId: grantIdStillOwned },
+        }, userReply);
+        expect(userReply.statusCode).toBe(200);
+
+        // Account-automation authority without a proof is refused.
+        const grantIdForAutomation = await createActiveGrant();
+        const automationReply = createReplyStub();
+        await revoke({
+            userId: account.id,
+            authAuthority: "account_automation",
+            body: { grantId: grantIdForAutomation },
+        }, automationReply);
+        expect(automationReply.statusCode).toBe(403);
     });
 });

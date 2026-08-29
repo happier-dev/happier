@@ -14,6 +14,16 @@ describe("registerAccountErasureRoute", () => {
         expect(deletion).toHaveBeenCalledWith({ accountId: "present-user" });
         expect(app.disconnectAccountSockets).toHaveBeenCalledWith("present-user");
     });
+    it("does not disconnect sockets when blob deletion failure preserves the Account", async () => {
+        deletion.mockResolvedValueOnce({ status: "failed", code: "account_erasure_blob_delete_failed" });
+        let handler: any;
+        const app: any = { authenticate: vi.fn(), disconnectAccountSockets: vi.fn(), post: vi.fn((_path: string, _options: unknown, next: any) => { handler = next; }) };
+        registerAccountErasureRoute(app);
+        const reply: any = { send: vi.fn(async (body) => body), code: vi.fn() };
+        await expect(handler({ userId: "present-user", validationError: null }, reply)).rejects.toThrow(/account_erasure_blob_delete_failed/u);
+        expect(deletion).toHaveBeenCalledWith({ accountId: "present-user" });
+        expect(app.disconnectAccountSockets).not.toHaveBeenCalled();
+    });
     it("rejects malformed confirmation before deletion", async () => {
         let handler: any;
         const app: any = { authenticate: vi.fn(), disconnectAccountSockets: vi.fn(), post: vi.fn((_p: string, _o: unknown, next: any) => { handler = next; }) };

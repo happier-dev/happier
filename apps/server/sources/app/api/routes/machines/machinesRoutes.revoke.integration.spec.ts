@@ -29,6 +29,20 @@ vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: { invalidateMachine },
 }));
 
+const removeAutomationMachineAssignmentsTx = vi.fn(async (params: Readonly<{
+    tx: unknown;
+    markMachineUnavailableTx: (tx: unknown) => Promise<void>;
+}>) => {
+    await params.markMachineUnavailableTx(params.tx);
+    return {
+        affectedAutomationIds: [],
+        disabledAutomationIds: [],
+    };
+});
+vi.mock("@/app/automations/automationMachineAssignmentRemoval", () => ({
+    removeAutomationMachineAssignmentsTx,
+}));
+
 const existingMachine = {
     id: "m1",
     accountId: "u1",
@@ -51,7 +65,6 @@ const dbMocks = createDbMocks({
 const txDbMocks = createDbMocks({
     machine: ["findFirst", "update"],
     accessKey: ["deleteMany"],
-    automationAssignment: ["deleteMany"],
 } as const);
 
 installDbModuleMock(() => ({
@@ -62,7 +75,6 @@ installDbModuleMock(() => ({
 const harness = createInTxHarness(() => ({
     machine: txDbMocks.db.machine,
     accessKey: txDbMocks.db.accessKey,
-    automationAssignment: txDbMocks.db.automationAssignment,
 }));
 
 vi.mock("@/storage/inTx", () => ({
@@ -83,7 +95,6 @@ describe("machinesRoutes (revoke machine)", () => {
             updatedAt: new Date(),
         }));
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 2 });
-        txDbMocks.db.automationAssignment.deleteMany.mockResolvedValue({ count: 1 });
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/machines/:id/revoke",
@@ -102,9 +113,11 @@ describe("machinesRoutes (revoke machine)", () => {
         expect(txDbMocks.db.accessKey.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ accountId: "u1", machineId: "m1" }),
         }));
-        expect(txDbMocks.db.automationAssignment.deleteMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ machineId: "m1" }),
-        }));
+        // Definition assignments are removed through the canonical
+        // Automation-owned machine-assignment removal composition.
+        expect(removeAutomationMachineAssignmentsTx).toHaveBeenCalledWith(
+            expect.objectContaining({ accountId: "u1", machineId: "m1" }),
+        );
         expect(txDbMocks.db.machine.update).toHaveBeenCalledWith(expect.objectContaining({
             where: { accountId_id: { accountId: "u1", id: "m1" } },
             data: expect.objectContaining({
@@ -142,6 +155,7 @@ describe("machinesRoutes (revoke machine)", () => {
     it("does not revoke a marked Machine for a legacy caller", async () => {
         const { machinesRoutes } = await import("./machinesRoutes");
         markAccountChanged.mockClear();
+        removeAutomationMachineAssignmentsTx.mockClear();
         dbMocks.reset();
         txDbMocks.reset();
         const markedMachine = {
@@ -157,7 +171,6 @@ describe("machinesRoutes (revoke machine)", () => {
             revokedAt: new Date(),
         });
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
-        txDbMocks.db.automationAssignment.deleteMany.mockResolvedValue({ count: 0 });
         const route = createRouteTestBuilder({
             method: "POST",
             path: "/v1/machines/:id/revoke",
@@ -178,6 +191,7 @@ describe("machinesRoutes (revoke machine)", () => {
         expect(reply.code).toHaveBeenCalledWith(426);
         expect(txDbMocks.db.machine.update).not.toHaveBeenCalled();
         expect(txDbMocks.db.accessKey.deleteMany).not.toHaveBeenCalled();
+        expect(removeAutomationMachineAssignmentsTx).not.toHaveBeenCalled();
         expect(markAccountChanged).not.toHaveBeenCalled();
     });
 });

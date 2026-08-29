@@ -54,7 +54,7 @@ function ensureInput(overrides: Partial<PluginWebhookEndpointEnsureInputV1> = {}
         webhookContribution: { pluginId: "acme.github", localId: "github-events" },
         targetMaterialization: TARGET.materialization,
         sourceInstanceId: "source-primary",
-        setup: { kind: "githubAccountEndpointV1", credential: "serverGenerated" },
+        setup: { kind: "accountEndpointV1", credential: "serverGenerated" },
         idempotencyKey: "ensure-endpoint-primary-0001",
         ...overrides,
     });

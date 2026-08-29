@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRetentionRuleRegistry } from './retentionRuleRegistry';
+import {
+    createRetentionRuleRegistry,
+    readRetentionDomainDefinitions,
+} from './retentionRuleRegistry';
 
 describe('retention/createRetentionRuleRegistry', () => {
     it('registers one rule per supported v1 retention domain', () => {
@@ -29,5 +32,15 @@ describe('retention/createRetentionRuleRegistry', () => {
         const registry = createRetentionRuleRegistry();
 
         expect(Object.isFrozen(registry)).toBe(true);
+    });
+
+    it('owns the domains whose lifecycle remains active without operator retention', () => {
+        expect(readRetentionDomainDefinitions()
+            .filter((definition) => definition.runsWhenGlobalPolicyIsDisabled)
+            .map((definition) => definition.id))
+            .toEqual([
+                'repeatKeys',
+                'automationRuns',
+            ]);
     });
 });

@@ -501,7 +501,6 @@ describe("plugin webhook ingress persistence contract", () => {
                 SELECT "id" FROM "PluginWebhookEndpointOperation"
                 WHERE "id" = 'endpoint-operation-1'
             `)).rows).toEqual([]);
-
             await expect(db.exec(`
                 INSERT INTO "PluginWebhookEndpoint" (
                     "id", "routeId", "routingKind", "providerInstallationId", "enabled", "revision",

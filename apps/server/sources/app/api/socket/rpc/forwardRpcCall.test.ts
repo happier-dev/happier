@@ -408,6 +408,63 @@ describe('forwardRpcCall', () => {
         }
     });
 
+    it('stops awaiting a submitted external Action relay when its caller aborts', async () => {
+        const controller = new AbortController();
+        let resolveDaemonResponse!: (value: unknown) => void;
+        let markSubmitted!: () => void;
+        const submitted = new Promise<void>((resolve) => {
+            markSubmitted = resolve;
+        });
+        const pendingDaemonResponse = new Promise<unknown>((resolve) => {
+            resolveDaemonResponse = resolve;
+        });
+        const emitWithAck = vi.fn(() => {
+            markSubmitted();
+            return pendingDaemonResponse;
+        });
+        const target = {
+            id: 'machine-daemon-socket',
+            timeout: vi.fn(() => ({ emitWithAck })),
+        };
+        const fetchSockets = vi.fn().mockResolvedValue([target]);
+        const io = {
+            in: vi.fn(() => ({
+                timeout: vi.fn(() => ({ fetchSockets })),
+                fetchSockets,
+            })),
+        } as unknown as Server;
+
+        let settled = false;
+        const forwarded = forwardRpcCall({
+            io,
+            targetUserId: 'user-1',
+            method: `machine-1:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            callParams: { actionId: 'session.wait.idle' },
+            cancellation: {
+                targetRequestId: 'relay-request-1',
+                signal: controller.signal,
+                onTargetSelected: vi.fn(),
+            },
+        }).finally(() => {
+            settled = true;
+        });
+
+        await submitted;
+        controller.abort(new Error('HTTP caller disconnected'));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const settledAfterAbort = settled;
+
+        // Let the deliberately pending boundary promise settle on RED so the
+        // test never leaves a dangling asynchronous operation behind.
+        if (!settledAfterAbort) resolveDaemonResponse({ late: true });
+
+        expect(settledAfterAbort).toBe(true);
+        await expect(forwarded).resolves.toEqual({
+            ok: false,
+            error: 'RPC request cancelled by caller',
+        });
+    });
+
     it('marks a timeout after target emission as a submitted-unknown settlement', async () => {
         const emitWithAck = vi.fn().mockRejectedValue(new Error('operation has timed out'));
         const onSubmittedUnknown = vi.fn();

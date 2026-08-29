@@ -16,6 +16,7 @@ import type {
 import {
     ACCOUNT_ENCRYPTION_MIGRATE_AUTOMATIONS_MAX_ITEMS,
     ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS,
+    AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
     AUTOMATION_V3_RUN_LIST_MAX_ITEMS,
     AccountEncryptionMigrateAutomationsDirectiveSchema,
     AutomationEventTriggerDefinitionStoredPayloadV1Schema,
@@ -62,7 +63,7 @@ import { validateExistingSessionAutomationTargetTx } from "./automationExistingS
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
 import {
     isAutomationDefinitionRepresentableInV2,
-    isAutomationRunV2Compatible,
+    isAutomationRunV2HistoryRepresentable,
 } from "./automationApiProjection";
 import {
     automationDefinitionListItemSelect,
@@ -308,12 +309,20 @@ type NormalizedAutomationPluginEventWriteBase = Readonly<{
 
 /**
  * AUTO-19: exactly one selected observation transport per enabled Event
- * trigger. The pull arm owns the four watcher columns; the push arm owns the
- * canonical endpoint scalar and leaves every watcher column null.
+ * trigger. The checkpointed-pull and session-socket arms own the four watcher
+ * columns; the durable-push arm owns the canonical endpoint scalar and leaves
+ * every watcher column null.
  */
 type NormalizedAutomationPluginEventWrite =
     | (NormalizedAutomationPluginEventWriteBase & Readonly<{
         observationTransport: "checkpointedPull";
+        watcherMachineId: string;
+        watcherMachineInstallationId: string;
+        watcherPluginId: string;
+        watcherMaterializationId: string;
+    }>)
+    | (NormalizedAutomationPluginEventWriteBase & Readonly<{
+        observationTransport: "socket";
         watcherMachineId: string;
         watcherMachineInstallationId: string;
         watcherPluginId: string;
@@ -360,9 +369,9 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         throw new AutomationStoredContentReadError("modeMismatch");
     }
     const transport = params.input.observationTransport;
-    const observationTarget = transport.kind === "checkpointedPull"
-        ? transport.watcherMaterializationRef
-        : transport.endpointMaterializationRef;
+    const observationTarget = transport.kind === "durablePush"
+        ? transport.endpointMaterializationRef
+        : transport.watcherMaterializationRef;
     if (observationTarget.pluginId !== params.input.eventRef.pluginId) {
         throw new AutomationValidationError(
             "Automation Event watcher must use the Event's declaring plugin",
@@ -432,9 +441,7 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
     }
     if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError(
-            transport.kind === "checkpointedPull"
-                ? "Automation Event declaration does not support checkpointed pull"
-                : "Automation Event declaration does not support durable push",
+            `Automation Event declaration does not support ${transport.kind} observation`,
         );
     }
     let validatesSourceConfig: ReturnType<typeof compilePluginJsonSchema>;
@@ -468,10 +475,10 @@ async function normalizeAutomationPluginEventWriteTx(params: Readonly<{
         filter: params.input.filter,
         maximumObservationAgeMs: params.input.maximumObservationAgeMs,
     } as const;
-    if (transport.kind === "checkpointedPull") {
+    if (transport.kind === "checkpointedPull" || transport.kind === "socket") {
         return {
             ...base,
-            observationTransport: "checkpointedPull",
+            observationTransport: transport.kind,
             watcherMachineId: watcher.machineId,
             watcherMachineInstallationId: machine.installationId,
             watcherPluginId: watcher.pluginId,
@@ -527,7 +534,7 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
 }>): Promise<Readonly<{
     sourceSelectorId: string;
     sourceContractVersion: number;
-    observationTransport: "checkpointedPull" | "durablePush";
+    observationTransport: "checkpointedPull" | "durablePush" | "socket";
     webhookEndpointId: string | null;
     observationStartsAt: Date | null;
     watcherMachineId: string | null;
@@ -563,9 +570,9 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     }
 
     const transport = params.input.observationTransport;
-    const watcher = transport.kind === "checkpointedPull"
-        ? transport.watcherMaterializationRef
-        : transport.endpointMaterializationRef;
+    const watcher = transport.kind === "durablePush"
+        ? transport.endpointMaterializationRef
+        : transport.watcherMaterializationRef;
     if (watcher.pluginId !== params.input.eventRef.pluginId) {
         throw new AutomationValidationError("Automation Event watcher must use the Event's declaring plugin");
     }
@@ -618,11 +625,11 @@ async function normalizeEncryptedAutomationPluginEventWriteTx(params: Readonly<{
     if (!contribution.automation.source.supportedObservationTransports.includes(transport.kind)) {
         throw new AutomationValidationError("Automation Event declaration does not support the selected transport");
     }
-    if (transport.kind === "checkpointedPull") {
+    if (transport.kind === "checkpointedPull" || transport.kind === "socket") {
         return {
             sourceSelectorId: params.input.sourceSelectorId,
             sourceContractVersion: params.input.sourceContractVersion,
-            observationTransport: "checkpointedPull",
+            observationTransport: transport.kind,
             webhookEndpointId: null,
             observationStartsAt: null,
             watcherMachineId: watcher.machineId,
@@ -683,7 +690,7 @@ function automationPluginEventTransportColumns(
     now: Date,
     retainedObservationStartsAt: Date | null = null,
 ): Readonly<{
-    observationTransport: "checkpointedPull" | "durablePush";
+    observationTransport: "checkpointedPull" | "durablePush" | "socket";
     webhookEndpointId: string | null;
     observationStartsAt: Date | null;
     watcherMachineId: string | null;
@@ -691,9 +698,9 @@ function automationPluginEventTransportColumns(
     watcherPluginId: string | null;
     watcherMaterializationId: string | null;
 }> {
-    if (event.observationTransport === "checkpointedPull") {
+    if (event.observationTransport === "checkpointedPull" || event.observationTransport === "socket") {
         return {
-            observationTransport: "checkpointedPull",
+            observationTransport: event.observationTransport,
             webhookEndpointId: null,
             observationStartsAt: null,
             watcherMachineId: event.watcherMachineId,
@@ -822,8 +829,8 @@ function automationPluginEventCreateTransportMatches(
     requested: AutomationPluginEventDefinitionTriggerInput,
 ): boolean {
     const transport = requested.observationTransport;
-    if (transport.kind === "checkpointedPull") {
-        return existing.observationTransport === "checkpointedPull"
+    if (transport.kind === "checkpointedPull" || transport.kind === "socket") {
+        return existing.observationTransport === transport.kind
             && existing.webhookEndpointId === null
             && existing.watcherMachineId === transport.watcherMaterializationRef.machineId
             && existing.watcherPluginId === transport.watcherMaterializationRef.pluginId
@@ -1004,7 +1011,12 @@ async function tryRejoinAutomationTriggerCreateTx(params: Readonly<{
     return automation;
 }
 
-async function ensureAutomationEventCatalogStateTx(params: Readonly<{
+/**
+ * Canonical Event source-definition catalog revision owner. Visible changes to
+ * the enabled source projection advance the Account revision so watchers
+ * re-adopt through their canonical read.
+ */
+export async function ensureAutomationEventCatalogStateTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     projectionChanged: boolean;
@@ -1038,12 +1050,14 @@ async function deleteSupersededAutomationEventSourceStatusTx(params: Readonly<{
         where: { id: params.triggerId },
         select: {
             kind: true,
+            deletedAt: true,
             eventPluginId: true,
             eventLocalId: true,
             sourceSelectorId: true,
         },
     });
     const currentKey = current !== null
+        && current.deletedAt === null
         && current.kind === "pluginEvent"
         && current.eventPluginId !== null
         && current.eventLocalId !== null
@@ -3325,7 +3339,7 @@ export async function matchAutomationAccountEncryptionMigrationPostStateInTx(
     return { status: "matched" };
 }
 
-async function markAutomationChangedTx(tx: Tx, params: { accountId: string; automationId: string }): Promise<number> {
+export async function markAutomationChangedTx(tx: Tx, params: { accountId: string; automationId: string }): Promise<number> {
     return await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "automation",
@@ -3546,7 +3560,14 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                 ...common,
                 kind: "schedule",
                 ...schedule,
-                nextRunAt: unchangedSchedule
+                // Effective enablement owns the cursor, independent of the
+                // request shape: a paused trigger has no next occurrence even
+                // when the same definition is redundantly supplied, an
+                // unchanged active cadence retains its cursor (a null cursor
+                // is then initialized from the transaction clock by the
+                // canonical schedule-cursor owner), and a changed cadence
+                // resets it.
+                nextRunAt: params.input.enabled && unchangedSchedule
                     ? params.existing?.nextRunAt ?? null
                     : null,
             },
@@ -3554,10 +3575,24 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     }
 
     if (params.input.kind === "sessionLifecycle") {
+        const automationExistingSessionId =
+            readAutomationExistingSessionTargetId(params.automation);
         const retainsExactRegistration = params.existing?.kind === "sessionLifecycle"
             && params.existing.sessionLifecycleEvent === params.input.event
             && params.existing.sourceSessionId === params.input.scope.sourceSessionId
             && params.existing.sourceTurnId === params.input.scope.sourceTurnId;
+        // Source/target inequality is a property of the effective recipe, not
+        // of registration freshness: every normalized lifecycle write re-proves
+        // it (and target-ID presence) against the current execution target, so
+        // a recipe retarget cannot slip past an unchanged exact-turn patch.
+        // Only a new, changed, or re-enabled registration additionally re-runs
+        // the current-turn eligibility proof, keeping terminal historical
+        // triggers inert instead of blocking unrelated edits.
+        validateSessionLifecycleExecutionTargetInequality({
+            automationTargetType: params.automation.targetType,
+            automationExistingSessionId,
+            sourceSessionId: params.input.scope.sourceSessionId,
+        });
         const mustRegister = !retainsExactRegistration
             || (params.existing?.enabled === false && params.input.enabled);
         const lifecycle = mustRegister
@@ -3565,8 +3600,7 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
                 tx: params.tx,
                 accountId: params.accountId,
                 automationTargetType: params.automation.targetType,
-                automationExistingSessionId:
-                    readAutomationExistingSessionTargetId(params.automation),
+                automationExistingSessionId,
                 input: params.input,
             })
             : {
@@ -3679,7 +3713,8 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     };
 }
 
-function emitAutomationMutationAfterTx(params: Readonly<{
+/** The one post-commit publication seam for a committed Automation mutation. */
+export function emitAutomationMutationAfterTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     automation: AutomationListItem;
@@ -3725,6 +3760,91 @@ export async function listAutomations(params: {
     return params.requireV2DefinitionRepresentability
         ? items.filter(isAutomationDefinitionRepresentableInV2)
         : items;
+}
+
+const AUTOMATION_DEFINITION_LIST_CURSOR_PREFIX = "automation-definition-v1";
+
+function encodeAutomationDefinitionListCursor(
+    row: Pick<AutomationListItem, "id" | "updatedAt">,
+): string {
+    return Buffer.from(JSON.stringify([
+        AUTOMATION_DEFINITION_LIST_CURSOR_PREFIX,
+        row.updatedAt.getTime(),
+        row.id,
+    ]), "utf8").toString("base64url");
+}
+
+function decodeAutomationDefinitionListCursor(
+    cursor: string | null | undefined,
+): Readonly<{ updatedAt: Date; id: string }> | null {
+    if (!cursor) return null;
+    try {
+        const decoded: unknown = JSON.parse(
+            Buffer.from(cursor, "base64url").toString("utf8"),
+        );
+        if (!Array.isArray(decoded) || decoded.length !== 3) {
+            throw new Error("invalid shape");
+        }
+        const [prefix, updatedAtMs, id] = decoded;
+        if (
+            prefix !== AUTOMATION_DEFINITION_LIST_CURSOR_PREFIX
+            || typeof updatedAtMs !== "number"
+            || !Number.isSafeInteger(updatedAtMs)
+            || updatedAtMs < 0
+            || typeof id !== "string"
+            || id.length === 0
+        ) {
+            throw new Error("invalid fields");
+        }
+        const updatedAt = new Date(updatedAtMs);
+        if (Number.isNaN(updatedAt.getTime())) throw new Error("invalid timestamp");
+        return { updatedAt, id };
+    } catch {
+        throw new AutomationValidationError("Invalid Automation definition list cursor");
+    }
+}
+
+/**
+ * Current V3 definition paging through the canonical list projection. The
+ * cursor carries exactly the stable public ordering tuple; it is not a
+ * snapshot, count ceiling, or second catalog revision.
+ */
+export async function listAutomationDefinitionsPage(params: Readonly<{
+    accountId: string;
+    limit?: number;
+    cursor?: string | null;
+}>): Promise<Readonly<{
+    automations: AutomationListItem[];
+    nextCursor: string | null;
+}>> {
+    const limit = Math.min(
+        Math.max(Math.floor(params.limit ?? AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS), 1),
+        AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
+    );
+    const cursor = decodeAutomationDefinitionListCursor(params.cursor);
+    const rows = await db.automation.findMany({
+        where: {
+            accountId: params.accountId,
+            deletedAt: null,
+            ...(cursor ? {
+                OR: [
+                    { updatedAt: { lt: cursor.updatedAt } },
+                    { updatedAt: cursor.updatedAt, id: { gt: cursor.id } },
+                ],
+            } : {}),
+        },
+        select: automationDefinitionListItemSelect,
+        orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+        take: limit + 1,
+    });
+    const page = rows.slice(0, limit) as AutomationListItem[];
+    const last = page[page.length - 1];
+    return {
+        automations: page,
+        nextCursor: rows.length > limit && last
+            ? encodeAutomationDefinitionListCursor(last)
+            : null,
+    };
 }
 
 export async function getAutomation(params: {
@@ -5104,6 +5224,12 @@ export async function deleteAutomation(params: {
                 projectionChanged: existing.enabled,
             });
         }
+        // Source status is current projection state, not history. Delete every
+        // child row, including any row attached to an already-retired trigger;
+        // immutable Run causes and trigger tombstones retain historical truth.
+        await tx.automationEventSourceStatus.deleteMany({
+            where: { trigger: { automationId: existing.id } },
+        });
 
         const cursor = await markAutomationChangedTx(tx, {
             accountId: params.accountId,
@@ -5305,7 +5431,7 @@ export async function listAutomationRuns(params: AutomationRunListParams | Autom
             while (representable.length <= normalizedLimit) {
                 const candidates = await readRows(tx, scanCursor, scanSize);
                 for (const run of candidates) {
-                    if (isAutomationRunV2Compatible(run)) {
+                    if (isAutomationRunV2HistoryRepresentable(run)) {
                         representable.push(run);
                         if (representable.length > normalizedLimit) break;
                     }

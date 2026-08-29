@@ -334,6 +334,9 @@ describe("Automation trigger-set persistence contract", () => {
             expect(livePluginEvent).toContain(`${requiredField} IS NOT NULL`);
         }
         expect(livePluginEvent).toContain("sessionLifecycleEvent IS NULL");
+        expect(livePluginEvent).toMatch(
+            /observationTransport = 'socket'.*webhookEndpointId IS NULL.*observationStartsAt IS NULL.*watcherMachineId IS NOT NULL.*watcherMachineInstallationId IS NOT NULL.*watcherPluginId IS NOT NULL.*watcherMaterializationId IS NOT NULL/s,
+        );
         expect(triggerCheck).toMatch(/kind = 'sessionLifecycle'.*sessionLifecycleEvent = 'parentTurnCompleted'.*sourceTurnId IS NOT NULL/s);
         expect(deletedPluginEvent).toMatch(/enabled = (?:false|0)/);
         for (const retainedIdentityField of [

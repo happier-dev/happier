@@ -813,6 +813,25 @@ describe("automation daemon routes (integration)", () => {
             },
             select: { id: true },
         });
+        const migratedTerminalRun = await db.automationRun.create({
+            data: {
+                automationId: predecessorAutomation.id,
+                accountId: account.id,
+                state: "succeeded",
+                ...scheduleRunCause({
+                    triggerId: predecessorTriggerId,
+                    scheduledFor: new Date(now - 90_000),
+                }),
+                scheduledAt: new Date(now - 90_000),
+                dueAt: new Date(now - 90_000),
+                finishedAt: new Date(now - 30_000),
+                executionInputEnvelope: null,
+                assignments: {
+                    create: { machineId: "machine-v2-frozen-snapshot", priority: 0 },
+                },
+            },
+            select: { id: true },
+        });
 
         // A current Definition is mutable after the predecessor Run's input
         // was frozen. The V2 worker may finish the retained work, but it must
@@ -868,7 +887,10 @@ describe("automation daemon routes (integration)", () => {
                 });
                 expect(retainedRunList.statusCode, retainedRunList.body).toBe(200);
                 expect(retainedRunList.json()).toEqual(expect.objectContaining({
-                    runs: [expect.objectContaining({ id: predecessorRun.id, state: "queued" })],
+                    runs: expect.arrayContaining([
+                        expect.objectContaining({ id: predecessorRun.id, state: "queued" }),
+                        expect.objectContaining({ id: migratedTerminalRun.id, state: "succeeded" }),
+                    ]),
                 }));
 
                 const claim = await app.inject({
@@ -895,6 +917,16 @@ describe("automation daemon routes (integration)", () => {
                 }));
             },
         );
+
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: migratedTerminalRun.id },
+            select: { state: true, claimedByMachineId: true, leaseExpiresAt: true, attempt: true },
+        })).resolves.toEqual({
+            state: "succeeded",
+            claimedByMachineId: null,
+            leaseExpiresAt: null,
+            attempt: 0,
+        });
 
         await expect(db.automationRun.findUniqueOrThrow({
             where: { id: strictRun.id },

@@ -73,6 +73,7 @@ export type AutomationSessionLifecycleEvent = (typeof AutomationSessionLifecycle
 export const AutomationObservationTransport = {
     checkpointedPull: "checkpointedPull",
     durablePush: "durablePush",
+    socket: "socket",
 } as const;
 
 export type AutomationObservationTransport = (typeof AutomationObservationTransport)[keyof typeof AutomationObservationTransport];

@@ -13,10 +13,8 @@ import {
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "../connectedServicesV2/profileIdSchema";
 import {
-    readProviderAccountUsageRecord,
-} from "../providerAccountUsage";
-import {
     readLegacyConnectedServiceQuotaCompatibilitySource,
+    readQualifiedProviderAccountUsageRecord,
     requestLegacyConnectedServiceQuotaCompatibilityRefresh,
     unlinkLegacyConnectedServiceQuotaCompatibilitySource,
     writeLegacyConnectedServiceQuotaCompatibilityRecord,
@@ -138,15 +136,17 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                     }),
                 }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
+                409: z.object({
+                    error: z.literal(
+                        "provider_account_usage_storage_mode_mismatch",
+                    ),
+                }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
-
-        const account = await readPlainAccount(userId);
-        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
         const ref = {
             service:
@@ -165,10 +165,22 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                 error: "connect_quotas_not_found",
             });
         }
-        const record = await readProviderAccountUsageRecord({
+        // Admission is owned by the adjacent V4 ProviderAccountUsage read: one
+        // transaction admits the persisted Account encryption mode and the
+        // record's payload mode together. Source-less PAU history remains
+        // absent from this compatibility projection without being deleted.
+        const admitted = await readQualifiedProviderAccountUsageRecord({
             accountId: userId,
             recordId: source.recordId,
         });
+        if (admitted.status === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
+        const record = admitted.status === "resolved"
+            ? admitted.record
+            : null;
         if (
             !record?.snapshot
             || record.payloadMode !== "plain_json_v1"

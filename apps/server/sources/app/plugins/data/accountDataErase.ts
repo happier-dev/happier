@@ -3,6 +3,7 @@ import { buildPluginDomainAccountChangeEntityId } from "@happier-dev/protocol/ch
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { acquireAccountEncryptionTransitionFenceInTx } from "@/app/encryption/accountEncryptionTransition";
+import { readPluginsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { admitAccountDataEraseThroughEncryptionTransitionInTx } from "@/app/encryption/accountEncryptionTransitionCoordinator";
 import { cleanupPluginWebhooksForAccountDeletionTxV1 } from "@/app/plugins/webhooks/accountDeletion";
 import { deleteDefaultAccountPetPrivateObject } from "@/app/pets/accountPetLibraryRuntime";
@@ -13,9 +14,8 @@ import {
 } from "@/app/kv/accountScopedKv";
 import { applyUserKvMutationsInTx, type KVMutation } from "@/app/kv/kvMutate";
 import { deletePublicFile } from "@/storage/blob/files";
-import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { getActivePrismaRuntime } from "@/storage/prisma";
-import { log } from "@/utils/logging/log";
 
 import { retirePluginCollectionCandidatePreparationStagesTx } from "./collections/candidatePreparationLifecycle";
 
@@ -96,30 +96,31 @@ async function tombstoneReservedAccountKvRowsInTx(input: Readonly<{
     }));
 }
 
-function collectCollectionChanges(rows: readonly Readonly<{
-    collectionId: string;
-    contractDigest: string;
-    revision: number;
-}>[]): readonly CollectionChange[] {
-    const byCollection = new Map<string, CollectionChange>();
-    for (const row of rows) {
-        const candidate: CollectionChange = {
-            collectionId: row.collectionId,
-            contractDigest: row.contractDigest,
-            revision: row.revision + 1,
-        };
-        const current = byCollection.get(candidate.collectionId);
-        if (
-            !current
-            || candidate.revision > current.revision
-            || (
-                candidate.revision === current.revision
-                && candidate.contractDigest < current.contractDigest
-            )
-        ) {
-            byCollection.set(candidate.collectionId, candidate);
-        }
+function mergeCollectionChange(input: Readonly<{
+    byCollection: Map<string, CollectionChange>;
+    row: Readonly<{ collectionId: string; contractDigest: string; revision: number }>;
+}>): void {
+    const candidate: CollectionChange = {
+        collectionId: input.row.collectionId,
+        contractDigest: input.row.contractDigest,
+        revision: input.row.revision + 1,
+    };
+    const current = input.byCollection.get(candidate.collectionId);
+    if (
+        !current
+        || candidate.revision > current.revision
+        || (
+            candidate.revision === current.revision
+            && candidate.contractDigest < current.contractDigest
+        )
+    ) {
+        input.byCollection.set(candidate.collectionId, candidate);
     }
+}
+
+function orderedCollectionChanges(
+    byCollection: ReadonlyMap<string, CollectionChange>,
+): readonly CollectionChange[] {
     return Object.freeze([...byCollection.values()].sort((left, right) => (
         left.collectionId < right.collectionId ? -1 : left.collectionId > right.collectionId ? 1 : 0
     )));
@@ -182,69 +183,118 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
         throw new Error("Plugin Account data erase did not tombstone every reserved destination.");
     }
 
-    const liveRows = await input.tx.pluginCollectionRow.findMany({
-        where: {
-            accountId: input.accountId,
-            pluginId,
-            deletedAt: null,
-        },
-        select: {
-            id: true,
-            collectionId: true,
-            contractDigest: true,
-            revision: true,
-        },
-    });
-    // Historical tombstones must be content-free too. Do not increment their
-    // revision or rewrite deletion history: this is erasure scrubbing, not a
-    // new logical Collection mutation.
-    const historicalTombstones = await input.tx.pluginCollectionRow.findMany({
-        where: {
-            accountId: input.accountId,
-            pluginId,
-            deletedAt: { not: null },
-        },
-        select: { id: true, contentEnvelope: true },
-    });
-    const indexStates = await input.tx.pluginCollectionIndexState.findMany({
-        where: { accountId: input.accountId, pluginId },
-        select: { id: true },
-    });
-    const collectionChanges = collectCollectionChanges(liveRows);
+    const maximumBatchRows = readPluginsFeatureEnv(process.env).collectionLimits.maxBatchRows;
+    const collectionChangesById = new Map<string, CollectionChange>();
     const now = new Date();
-
-    const rowTombstone = liveRows.length === 0
-        ? { count: 0 }
-        : await input.tx.pluginCollectionRow.updateMany({
-            where: { id: { in: liveRows.map((row) => row.id) } },
+    let tombstonedRowCount = 0;
+    let lastLiveRowId: string | null = null;
+    for (;;) {
+        const liveRows = await input.tx.pluginCollectionRow.findMany({
+            where: {
+                accountId: input.accountId,
+                pluginId,
+                deletedAt: null,
+                ...(lastLiveRowId ? { id: { gt: lastLiveRowId } } : {}),
+            },
+            orderBy: { id: "asc" },
+            take: maximumBatchRows,
+            select: {
+                id: true,
+                collectionId: true,
+                contractDigest: true,
+                revision: true,
+            },
+        });
+        if (liveRows.length === 0) break;
+        for (const row of liveRows) {
+            mergeCollectionChange({ byCollection: collectionChangesById, row });
+        }
+        const rowTombstone = await input.tx.pluginCollectionRow.updateMany({
+            where: { id: { in: liveRows.map((row) => row.id) }, deletedAt: null },
             data: {
                 revision: { increment: 1 },
                 deletedAt: now,
                 contentEnvelope: getActivePrismaRuntime().JsonNull,
             },
         });
-    const historicalTombstoneContentIds = historicalTombstones
-        .filter((row) => row.contentEnvelope !== null)
-        .map((row) => row.id);
-    const historicalTombstoneContentScrub = historicalTombstoneContentIds.length === 0
-        ? { count: 0 }
-        : await input.tx.pluginCollectionRow.updateMany({
-            where: { id: { in: historicalTombstoneContentIds } },
-            data: { contentEnvelope: getActivePrismaRuntime().JsonNull },
-        });
-    const projectionDeletion = await input.tx.pluginCollectionProjection.deleteMany({
-        where: { accountId: input.accountId, pluginId },
-    });
-    const indexEntryDeletion = indexStates.length === 0
-        ? { count: 0 }
-        : await input.tx.pluginCollectionIndexEntry.deleteMany({
-            where: { indexStateId: { in: indexStates.map((state) => state.id) } },
-        });
-    const indexStateReset = indexStates.length === 0
-        ? { count: 0 }
-        : await input.tx.pluginCollectionIndexState.updateMany({
+        tombstonedRowCount += rowTombstone.count;
+        lastLiveRowId = liveRows[liveRows.length - 1]!.id;
+    }
+
+    // Historical tombstones must be content-free too. Do not increment their
+    // revision or rewrite deletion history: this is erasure scrubbing, not a
+    // new logical Collection mutation.
+    let scrubbedHistoricalTombstoneContentCount = 0;
+    let lastHistoricalTombstoneId: string | null = null;
+    for (;;) {
+        const historicalTombstones = await input.tx.pluginCollectionRow.findMany({
             where: {
-                id: { in: indexStates.map((state) => state.id) },
+                accountId: input.accountId,
+                pluginId,
+                deletedAt: { not: null },
+                ...(lastHistoricalTombstoneId ? { id: { gt: lastHistoricalTombstoneId } } : {}),
+            },
+            orderBy: { id: "asc" },
+            take: maximumBatchRows,
+            select: { id: true, contentEnvelope: true },
+        });
+        if (historicalTombstones.length === 0) break;
+        const historicalTombstoneContentIds = historicalTombstones
+            .filter((row) => row.contentEnvelope !== null)
+            .map((row) => row.id);
+        if (historicalTombstoneContentIds.length > 0) {
+            const scrub = await input.tx.pluginCollectionRow.updateMany({
+                where: { id: { in: historicalTombstoneContentIds } },
+                data: { contentEnvelope: getActivePrismaRuntime().JsonNull },
+            });
+            scrubbedHistoricalTombstoneContentCount += scrub.count;
+        }
+        lastHistoricalTombstoneId = historicalTombstones[historicalTombstones.length - 1]!.id;
+    }
+
+    let deletedProjectionCount = 0;
+    let lastProjectionId: string | null = null;
+    for (;;) {
+        const projections = await input.tx.pluginCollectionProjection.findMany({
+            where: {
+                accountId: input.accountId,
+                pluginId,
+                ...(lastProjectionId ? { id: { gt: lastProjectionId } } : {}),
+            },
+            orderBy: { id: "asc" },
+            take: maximumBatchRows,
+            select: { id: true },
+        });
+        if (projections.length === 0) break;
+        const deletion = await input.tx.pluginCollectionProjection.deleteMany({
+            where: { id: { in: projections.map((projection) => projection.id) } },
+        });
+        deletedProjectionCount += deletion.count;
+        lastProjectionId = projections[projections.length - 1]!.id;
+    }
+    let deletedIndexEntryCount = 0;
+    let resetIndexStateCount = 0;
+    let lastIndexStateId: string | null = null;
+    for (;;) {
+        const indexStates = await input.tx.pluginCollectionIndexState.findMany({
+            where: {
+                accountId: input.accountId,
+                pluginId,
+                ...(lastIndexStateId ? { id: { gt: lastIndexStateId } } : {}),
+            },
+            orderBy: { id: "asc" },
+            take: maximumBatchRows,
+            select: { id: true },
+        });
+        if (indexStates.length === 0) break;
+        const indexStateIds = indexStates.map((state) => state.id);
+        const indexEntryDeletion = await input.tx.pluginCollectionIndexEntry.deleteMany({
+            where: { indexStateId: { in: indexStateIds } },
+        });
+        deletedIndexEntryCount += indexEntryDeletion.count;
+        const indexStateReset = await input.tx.pluginCollectionIndexState.updateMany({
+            where: {
+                id: { in: indexStateIds },
                 OR: [
                     { indexedThroughRevision: { not: 0 } },
                     { indexedThroughRevision: null },
@@ -252,14 +302,32 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
             },
             data: { indexedThroughRevision: 0 },
         });
-    const relationRetirement = await input.tx.pluginCollectionRelation.updateMany({
-        where: {
-            accountId: input.accountId,
-            sourcePluginId: pluginId,
-            deletedAt: null,
-        },
-        data: { deletedAt: now },
-    });
+        resetIndexStateCount += indexStateReset.count;
+        lastIndexStateId = indexStates[indexStates.length - 1]!.id;
+    }
+    let retiredRelationCount = 0;
+    let lastRelationId: string | null = null;
+    for (;;) {
+        const relations = await input.tx.pluginCollectionRelation.findMany({
+            where: {
+                accountId: input.accountId,
+                sourcePluginId: pluginId,
+                deletedAt: null,
+                ...(lastRelationId ? { id: { gt: lastRelationId } } : {}),
+            },
+            orderBy: { id: "asc" },
+            take: maximumBatchRows,
+            select: { id: true },
+        });
+        if (relations.length === 0) break;
+        const retirement = await input.tx.pluginCollectionRelation.updateMany({
+            where: { id: { in: relations.map((relation) => relation.id) }, deletedAt: null },
+            data: { deletedAt: now },
+        });
+        retiredRelationCount += retirement.count;
+        lastRelationId = relations[relations.length - 1]!.id;
+    }
+    const collectionChanges = orderedCollectionChanges(collectionChangesById);
 
     if (accountStorage.status === "tombstoned") {
         const hint = {
@@ -310,12 +378,12 @@ export async function erasePluginAccountDataInTx(input: Readonly<{
         accountStorage,
         declarativeSettings,
         collections: {
-            tombstonedRowCount: rowTombstone.count,
-            scrubbedHistoricalTombstoneContentCount: historicalTombstoneContentScrub.count,
-            deletedProjectionCount: projectionDeletion.count,
-            deletedIndexEntryCount: indexEntryDeletion.count,
-            resetIndexStateCount: indexStateReset.count,
-            retiredRelationCount: relationRetirement.count,
+            tombstonedRowCount,
+            scrubbedHistoricalTombstoneContentCount,
+            deletedProjectionCount,
+            deletedIndexEntryCount,
+            resetIndexStateCount,
+            retiredRelationCount,
         },
     };
 }
@@ -329,18 +397,105 @@ export async function erasePluginAccountData(input: Readonly<{
 
 export type DeleteAccountForErasureResult =
     | Readonly<{ status: "deleted" }>
-    | Readonly<{ status: "already-deleted" }>;
+    | Readonly<{ status: "already-deleted" }>
+    | Readonly<{
+        status: "failed";
+        code: "account_erasure_blob_delete_failed" | "account_erasure_locator_mismatch";
+    }>;
+
+type AccountErasurePublicBlobLocator = Readonly<{
+    id: string;
+    path: string;
+}>;
+
+type AccountErasurePrivateBlobLocator = Readonly<{
+    id: string;
+    objectKey: string;
+}>;
+
+type AccountErasureBlobLocators = Readonly<{
+    publicFiles: readonly AccountErasurePublicBlobLocator[];
+    privatePetAssets: readonly AccountErasurePrivateBlobLocator[];
+}>;
+
+function sameOrderedLocators<T>(
+    left: readonly T[],
+    right: readonly T[],
+    matches: (left: T, right: T) => boolean,
+): boolean {
+    return left.length === right.length && left.every((value, index) => matches(value, right[index]!));
+}
+
+function sameAccountErasureBlobLocators(
+    left: AccountErasureBlobLocators,
+    right: AccountErasureBlobLocators,
+): boolean {
+    return sameOrderedLocators(left.publicFiles, right.publicFiles, (l, r) => l.id === r.id && l.path === r.path)
+        && sameOrderedLocators(left.privatePetAssets, right.privatePetAssets, (l, r) => l.id === r.id && l.objectKey === r.objectKey);
+}
+
+async function captureAccountErasureBlobLocatorsInTx(
+    tx: Tx,
+    accountId: string,
+): Promise<AccountErasureBlobLocators> {
+    const [uploadedFiles, privatePetAssets] = await Promise.all([
+        tx.uploadedFile.findMany({
+            where: { accountId },
+            select: { id: true, path: true },
+            orderBy: [{ path: "asc" }, { id: "asc" }],
+        }),
+        tx.accountPetAsset.findMany({
+            where: { accountId },
+            select: { id: true, objectKey: true },
+            orderBy: [{ objectKey: "asc" }, { id: "asc" }],
+        }),
+    ]);
+    return Object.freeze({
+        publicFiles: Object.freeze(uploadedFiles.map(({ id, path }) => Object.freeze({ id, path }))),
+        privatePetAssets: Object.freeze(privatePetAssets.map(({ id, objectKey }) => Object.freeze({ id, objectKey }))),
+    });
+}
+
+async function deleteAccountErasureBlobLocators(
+    locators: AccountErasureBlobLocators,
+): Promise<boolean> {
+    const [publicResults, privateResults] = await Promise.all([
+        Promise.allSettled(locators.publicFiles.map(async ({ path }) => await deletePublicFile(path))),
+        Promise.allSettled(locators.privatePetAssets.map(async ({ objectKey }) => await deleteDefaultAccountPetPrivateObject(objectKey))),
+    ]);
+    return publicResults.every((result) => result.status === "fulfilled")
+        && privateResults.every((result) => result.status === "fulfilled");
+}
 
 /**
  * Sole physical Account-deletion composition. Existing domain owners remove
- * restrictive custody in the same transaction as the Account row so any
- * remaining blocker rolls the whole operation back. Owned public and private
- * file bytes are removed through their storage owners only after commit.
+ * restrictive custody in the same serializable transaction as the Account row,
+ * but owned public/private blob coordinates remain in Account rows until their
+ * storage owners confirm idempotent deletion. A retry therefore keeps exact
+ * coordinates without adding a ledger, worker, status row, or second API.
  */
 export async function deleteAccountForErasure(input: Readonly<{
     accountId: string;
     now?: Date;
 }>): Promise<DeleteAccountForErasureResult> {
+    const capturedLocators = await inTx(async (tx) => {
+        const fence = await acquireAccountEncryptionTransitionFenceInTx(
+            tx,
+            input.accountId,
+        );
+        if (fence.status === "account_not_found") return null;
+        if (fence.status === "account_inconsistent") {
+            throw new Error("Plugin Account deletion requires a consistent Account encryption mode.");
+        }
+        return await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
+    });
+    if (!capturedLocators) return { status: "already-deleted" };
+
+    const blobsDeleted = await deleteAccountErasureBlobLocators(capturedLocators);
+    if (!blobsDeleted) {
+        return { status: "failed", code: "account_erasure_blob_delete_failed" };
+    }
+
     return await inTx(async (tx) => {
         const fence = await acquireAccountEncryptionTransitionFenceInTx(
             tx,
@@ -352,12 +507,12 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (fence.status === "account_inconsistent") {
             throw new Error("Plugin Account deletion requires a consistent Account encryption mode.");
         }
+        const currentLocators = await captureAccountErasureBlobLocatorsInTx(tx, input.accountId);
+        if (!sameAccountErasureBlobLocators(capturedLocators, currentLocators)) {
+            return { status: "failed", code: "account_erasure_locator_mismatch" };
+        }
 
-        const [sessions, uploadedFiles, privatePetAssets] = await Promise.all([
-            tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true, updatedAt: true }, orderBy: { id: "asc" } }),
-            tx.uploadedFile.findMany({ where: { accountId: input.accountId }, select: { path: true } }),
-            tx.accountPetAsset.findMany({ where: { accountId: input.accountId }, select: { objectKey: true } }),
-        ]);
+        const sessions = await tx.session.findMany({ where: { accountId: input.accountId }, select: { id: true, updatedAt: true }, orderBy: { id: "asc" } });
         await tx.sessionShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await tx.publicShareAccessLog.deleteMany({ where: { userId: input.accountId } });
         await tx.sessionShare.deleteMany({ where: { OR: [{ sharedByUserId: input.accountId }, { sharedWithUserId: input.accountId }] } });
@@ -378,16 +533,6 @@ export async function deleteAccountForErasure(input: Readonly<{
             ...(input.now ? { now: input.now } : {}),
         });
         await tx.account.delete({ where: { id: input.accountId } });
-        if (uploadedFiles.length > 0 || privatePetAssets.length > 0) afterTx(tx, () => {
-            void Promise.all([
-                Promise.allSettled(uploadedFiles.map(async ({ path }) => await deletePublicFile(path))),
-                Promise.allSettled(privatePetAssets.map(async ({ objectKey }) => await deleteDefaultAccountPetPrivateObject(objectKey))),
-            ]).then(([publicResults, privateResults]) => {
-                const failedPublicFileCount = publicResults.filter((result) => result.status === "rejected").length;
-                const failedPrivateFileCount = privateResults.filter((result) => result.status === "rejected").length;
-                if (failedPublicFileCount || failedPrivateFileCount) log({ module: "account-erasure", failedPublicFileCount, failedPrivateFileCount }, "Account erasure could not remove every owned file blob");
-            });
-        });
         return { status: "deleted" };
-    });
+    }, { isolationLevel: "Serializable" });
 }

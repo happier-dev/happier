@@ -151,6 +151,19 @@ const TARGET_MANIFEST_WITH_INDEX_AND_RELATION = {
     },
 } as const;
 
+const TARGET_MANIFEST_WITH_UNIQUE_RELATION = {
+    ...TARGET_MANIFEST_WITH_INDEX_AND_RELATION,
+    contributes: {
+        accountCollections: [{
+            ...TARGET_MANIFEST_WITH_INDEX_AND_RELATION.contributes.accountCollections[0],
+            relations: [{
+                ...TARGET_MANIFEST_WITH_INDEX_AND_RELATION.contributes.accountCollections[0].relations[0],
+                unique: true,
+            }],
+        }],
+    },
+} as const;
+
 function toPrismaJson(value: unknown): Prisma.InputJsonValue {
     const serialized = JSON.stringify(value);
     if (serialized === undefined) throw new TypeError("Fixture JSON must be serializable.");
@@ -861,6 +874,67 @@ describe("plugin Collection candidate preparation", () => {
         await expect(db.pluginCollectionCandidatePreparationStage.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
     });
 
+    it("requires exactly one complete candidate identity before promotion", async () => {
+        const { source, target, service } = await prepareAvailabilityPromotionFixture();
+
+        await db.pluginCollectionCandidatePreparationStage.deleteMany({
+            where: { accountId: ACCOUNT_ID, rowId: "task-b" },
+        });
+        await expect(service.setIntent({
+            accountId: ACCOUNT_ID,
+            pluginId: PLUGIN_ID,
+            intent: {
+                desiredVersion: TARGET_VERSION,
+                writableCollections: [target],
+                revision: "0",
+            },
+        })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+
+        await stagePluginCollectionCandidatePreparation({
+            accountId: ACCOUNT_ID,
+            request: {
+                binding: {
+                    source,
+                    target,
+                    candidate: { releaseVersion: TARGET_VERSION, artifactDigest: `sha256:${"b".repeat(64)}` },
+                },
+                items: ["task-a", "task-b"].map((rowId) => ({
+                    source: { rowId, revision: 1 },
+                    target: {
+                        content: { t: "plain", v: {} },
+                        projection: { id: rowId, status: "open", title: `Second ${rowId}` },
+                    },
+                })),
+            },
+        });
+        await stagePluginCollectionCandidatePreparation({
+            accountId: ACCOUNT_ID,
+            request: {
+                binding: {
+                    source,
+                    target,
+                    candidate: { releaseVersion: TARGET_VERSION, artifactDigest: `sha256:${"a".repeat(64)}` },
+                },
+                items: [{
+                    source: { rowId: "task-b", revision: 1 },
+                    target: {
+                        content: { t: "plain", v: {} },
+                        projection: { id: "task-b", status: "open", title: "Target B" },
+                    },
+                }],
+            },
+        });
+        await expect(service.setIntent({
+            accountId: ACCOUNT_ID,
+            pluginId: PLUGIN_ID,
+            intent: {
+                desiredVersion: TARGET_VERSION,
+                writableCollections: [target],
+                revision: "0",
+            },
+        })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+    });
+
     it("materializes validated rows, indexes, and relations before Availability publishes the target intent", async () => {
         const { target, service } = await prepareAvailabilityPromotionFixture();
 
@@ -966,6 +1040,170 @@ describe("plugin Collection candidate preparation", () => {
                 entityId: buildPluginDomainAccountChangeEntityId(hint),
             },
         })).resolves.toBe(1);
+    });
+
+    it("promotes a cross-page unique-relation swap atomically with one-row DB pages", async () => {
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
+        const { target, service } = await prepareAvailabilityPromotionFixture({
+            targetManifest: TARGET_MANIFEST_WITH_UNIQUE_RELATION,
+            targetTitles: ["task-b", "task-a"],
+        });
+
+        await expect(service.setIntent({
+            accountId: ACCOUNT_ID,
+            pluginId: PLUGIN_ID,
+            intent: {
+                desiredVersion: TARGET_VERSION,
+                writableCollections: [target],
+                revision: "0",
+            },
+        })).resolves.toMatchObject({ intent: { desiredVersion: TARGET_VERSION, revision: "1" } });
+
+        await expect(db.pluginCollectionRelation.findMany({
+            where: { accountId: ACCOUNT_ID, relationId: "required-related-task", deletedAt: null },
+            orderBy: { sourceRowId: "asc" },
+            select: { sourceRowId: true, targetRowId: true, sourceRevision: true },
+        })).resolves.toEqual([
+            { sourceRowId: "task-a", targetRowId: "task-b", sourceRevision: 2 },
+            { sourceRowId: "task-b", targetRowId: "task-a", sourceRevision: 2 },
+        ]);
+    });
+
+    it("rejects cross-page unique-relation duplicates and rolls back with one-row DB pages", async () => {
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
+        const { source, target, service } = await prepareAvailabilityPromotionFixture({
+            targetManifest: TARGET_MANIFEST_WITH_UNIQUE_RELATION,
+            targetTitles: ["task-a", "task-a"],
+        });
+
+        await expect(service.setIntent({
+            accountId: ACCOUNT_ID,
+            pluginId: PLUGIN_ID,
+            intent: {
+                desiredVersion: TARGET_VERSION,
+                writableCollections: [target],
+                revision: "0",
+            },
+        })).rejects.toMatchObject({ code: "plugin_intent_writable_collections_not_ready" });
+
+        await expect(db.pluginCollectionRow.findMany({
+            where: { accountId: ACCOUNT_ID },
+            orderBy: { rowId: "asc" },
+            select: { schemaVersion: true, revision: true, contractDigest: true },
+        })).resolves.toEqual([
+            { schemaVersion: source.schemaVersion, revision: 1, contractDigest: source.contractDigest },
+            { schemaVersion: source.schemaVersion, revision: 1, contractDigest: source.contractDigest },
+        ]);
+        await expect(db.pluginCollectionRelation.findMany({
+            where: { accountId: ACCOUNT_ID, relationId: "required-related-task", deletedAt: null },
+        })).resolves.toEqual([]);
+        await expect(db.pluginCollectionRelation.count({
+            where: { accountId: ACCOUNT_ID, relationId: "retired-source-edge", deletedAt: null },
+        })).resolves.toBe(1);
+        await expect(db.pluginCollectionCandidatePreparationStage.count({
+            where: { accountId: ACCOUNT_ID },
+        })).resolves.toBe(2);
+        await expect(db.accountPluginIntent.findUniqueOrThrow({
+            where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
+            select: { desiredVersion: true, revision: true },
+        })).resolves.toEqual({ desiredVersion: SOURCE_VERSION, revision: BigInt(0) });
+    });
+
+    it("pages and materializes a large candidate promotion in bounded row batches", async () => {
+        harness.resetEnv({ HAPPIER_COLLECTION_MAX_BATCH_ROWS: "1" });
+        const rowIds = Array.from({ length: 5 }, (_, index) => `task-${index}`);
+        const { target } = await prepareAvailabilityPromotionFixture({ rowIds });
+        const currentIntent = await db.accountPluginIntent.findUniqueOrThrow({
+            where: { accountId_pluginId: { accountId: ACCOUNT_ID, pluginId: PLUGIN_ID } },
+            select: {
+                pluginId: true,
+                desiredVersion: true,
+                enabled: true,
+                offlineUiHosting: true,
+                writableCollections: true,
+                revision: true,
+            },
+        });
+        const observedBatchRows: number[] = [];
+        await expect(inTx(async (tx) => {
+            const delegate = <T extends object>(name: string, value: T): T => new Proxy(value, {
+                get(targetDelegate, property, receiver) {
+                    if (property === "findMany") {
+                        const findMany = Reflect.get(targetDelegate, property, targetDelegate);
+                        return async (...args: unknown[]) => {
+                            const request = args[0];
+                            if (name === "row" && request && typeof request === "object" && "take" in request) {
+                                observedBatchRows.push(Number((request as Readonly<{ take?: unknown }>).take));
+                            }
+                            if (name === "stage") {
+                                const sourceRowDbId = request && typeof request === "object"
+                                    && "where" in request
+                                    && (request as { where?: { sourceRowDbId?: { in?: unknown[] } } }).where?.sourceRowDbId;
+                                if (sourceRowDbId?.in) observedBatchRows.push(sourceRowDbId.in.length);
+                            }
+                            return await Reflect.apply(findMany, targetDelegate, args);
+                        };
+                    }
+                    if (property === "createMany") {
+                        const createMany = Reflect.get(targetDelegate, property, targetDelegate);
+                        return async (...args: unknown[]) => {
+                            const request = args[0] as { data?: unknown[] } | undefined;
+                            const data = Array.isArray(request?.data) ? request.data : [];
+                            const rowIdentities = new Set(data.map((item) => {
+                                if (!item || typeof item !== "object") return item;
+                                const record = item as Record<string, unknown>;
+                                return record.rowDbId ?? record.sourceRowDbId ?? record.rowId;
+                            }));
+                            if (rowIdentities.size > 0) observedBatchRows.push(rowIdentities.size);
+                            return await Reflect.apply(createMany, targetDelegate, args);
+                        };
+                    }
+                    return Reflect.get(targetDelegate, property, receiver);
+                },
+            });
+            const boundedTx = new Proxy(tx, {
+                get(targetTx, property, receiver) {
+                    if (property === "pluginCollectionRow") return delegate("row", tx.pluginCollectionRow);
+                    if (property === "pluginCollectionCandidatePreparationStage") {
+                        return delegate("stage", tx.pluginCollectionCandidatePreparationStage);
+                    }
+                    if (property === "pluginCollectionProjection") return delegate("projection", tx.pluginCollectionProjection);
+                    if (property === "pluginCollectionIndexEntry") return delegate("index", tx.pluginCollectionIndexEntry);
+                    if (property === "pluginCollectionRelation") return delegate("relation", tx.pluginCollectionRelation);
+                    if (property === "$executeRawUnsafe") {
+                        const executeRawUnsafe = Reflect.get(targetTx, property, targetTx);
+                        return async (...args: unknown[]) => {
+                            const query = typeof args[0] === "string" ? args[0] : "";
+                            if (query.includes("PluginCollectionRow") && query.includes("candidate")) {
+                                observedBatchRows.push((args.length - 1 - 4) / 7);
+                            }
+                            return await Reflect.apply(executeRawUnsafe, targetTx, args);
+                        };
+                    }
+                    return Reflect.get(targetTx, property, receiver);
+                },
+            });
+            await promotePluginCollectionCandidatePreparationInTx({
+                tx: boundedTx,
+                accountId: ACCOUNT_ID,
+                pluginId: PLUGIN_ID,
+                currentIntent,
+                targetReleaseVersion: TARGET_VERSION,
+                targetContracts: [target],
+            });
+            return await preparePluginCollectionWritableContractsTx({
+                tx: boundedTx,
+                accountId: ACCOUNT_ID,
+                pluginId: PLUGIN_ID,
+                contracts: [target],
+            });
+        })).resolves.toEqual({ contracts: [target] });
+
+        expect(observedBatchRows.length).toBeGreaterThan(rowIds.length);
+        expect(observedBatchRows.every((size) => size <= 1)).toBe(true);
+        await expect(db.pluginCollectionRow.count({
+            where: { accountId: ACCOUNT_ID, schemaVersion: target.schemaVersion, revision: 2 },
+        })).resolves.toBe(rowIds.length);
     });
 
     it("keeps a target index building until every promoted row has an index entry", async () => {

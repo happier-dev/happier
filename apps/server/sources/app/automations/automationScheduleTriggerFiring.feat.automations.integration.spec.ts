@@ -157,6 +157,7 @@ describe("Automation schedule trigger firing (integration)", () => {
         expect(runByTriggerId.has(disabledTriggerId)).toBe(false);
 
         for (const [triggerId, run] of runByTriggerId) {
+            if (triggerId === null) throw new Error("Schedule Run must retain its trigger identity");
             const trigger = await db.automationTrigger.findUniqueOrThrow({
                 where: { id: triggerId },
                 select: { revision: true },

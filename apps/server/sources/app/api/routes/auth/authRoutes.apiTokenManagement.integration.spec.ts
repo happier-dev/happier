@@ -78,7 +78,7 @@ describe("authRoutes (API-token management) (integration)", () => {
                 apiToken: {
                     tokenId: expect.any(String),
                     label: "CI deploy",
-                    displayPrefix: expect.stringMatching(/^hap_[0-9a-f]{8}$/u),
+                    displayPrefix: expect.stringMatching(/^hap_v1_[0-9a-f]{8}$/u),
                     createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/u),
                     lastUsedAt: null,
                     expiresAt: "2030-08-22T12:00:00.000Z",

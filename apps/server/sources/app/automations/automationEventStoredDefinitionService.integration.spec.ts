@@ -51,7 +51,7 @@ function sourceSelector(index: number) {
 }
 
 function releaseFacts(params: Readonly<{
-    supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush")[];
+    supportedObservationTransports?: readonly ("checkpointedPull" | "durablePush" | "socket")[];
 }> = {}) {
     const supportedObservationTransports = params.supportedObservationTransports ?? ["checkpointedPull"];
     const supportsDurablePush = supportedObservationTransports.includes("durablePush");
@@ -312,7 +312,7 @@ describe("Automation Event stored-definition projection", () => {
                 sourceInstanceId: "endpoint-routing-repository",
                 ensureIdempotencyKey: "automation-stored-definitions-endpoint-key",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: MACHINE_ID,
@@ -784,6 +784,69 @@ describe("Automation Event stored-definition projection", () => {
         })).rejects.toMatchObject({
             code: "durable_push_endpoint_context_unavailable",
         });
+    });
+
+    it("projects session-socket envelopes only through the exact assigned watcher", async () => {
+        await seed(1);
+        const socketRelease = releaseFacts({ supportedObservationTransports: ["socket"] });
+        await db.accountPluginRelease.update({
+            where: {
+                accountId_pluginId_version: {
+                    accountId: ACCOUNT_ID,
+                    pluginId: PLUGIN_ID,
+                    version: PLUGIN_VERSION,
+                },
+            },
+            data: { normalizedManifest: socketRelease.normalizedManifest },
+        });
+        await db.automationTrigger.update({
+            where: { id: triggerId(1) },
+            data: { observationTransport: "socket" },
+        });
+
+        const socketPage = await readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { transport: { kind: "socket" } },
+        });
+        expect(socketPage).toMatchObject({
+            kind: "page",
+            revision: "7",
+            scope: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u),
+            definitions: [{
+                automationId: "automation-0001",
+                observationTransport: {
+                    kind: "socket",
+                    watcherMaterializationRef: {
+                        pluginId: PLUGIN_ID,
+                        machineId: MACHINE_ID,
+                        materializationId: MATERIALIZATION_ID,
+                    },
+                },
+                storedDefinitionEnvelope: { t: "plain" },
+            }],
+        });
+
+        // The checkpointed-pull scope must not serve socket triggers: a
+        // checkpointed observer pulling under the pull scope would falsely
+        // claim checkpoint coverage the session-socket source cannot provide.
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { transport: { kind: "checkpointedPull" } },
+        })).resolves.toMatchObject({ kind: "page", definitions: [] });
+
+        // The assigned watcher is exact: a different watcher materialization
+        // of the same plugin sees nothing.
+        await db.automationTrigger.update({
+            where: { id: triggerId(1) },
+            data: { watcherMachineId: "machine-other" },
+        });
+        await expect(readAutomationEventStoredDefinitionsV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: { transport: { kind: "socket" } },
+        })).resolves.toMatchObject({ kind: "page", definitions: [] });
     });
 
     it("fails closed before disclosure when Account mode and a stored definition envelope disagree", async () => {

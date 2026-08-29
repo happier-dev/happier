@@ -142,7 +142,12 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     terminalAuthRequests: { id: 'terminalAuthRequests', policyConfig: ageConfig('TERMINAL_AUTH_REQUESTS'), createRule: createTerminalAuthRequestRetentionRule },
     accountAuthRequests: { id: 'accountAuthRequests', policyConfig: ageConfig('ACCOUNT_AUTH_REQUESTS'), createRule: createAccountAuthRequestRetentionRule },
     authPairingSessions: { id: 'authPairingSessions', policyConfig: ageConfig('AUTH_PAIRING_SESSIONS'), createRule: createAuthPairingSessionRetentionRule },
-    repeatKeys: { id: 'repeatKeys', policyConfig: ageConfig('REPEAT_KEYS'), createRule: createRepeatKeyRetentionRule },
+    repeatKeys: {
+        id: 'repeatKeys',
+        policyConfig: ageConfig('REPEAT_KEYS'),
+        runsWhenGlobalPolicyIsDisabled: true,
+        createRule: createRepeatKeyRetentionRule,
+    },
     globalLocks: { id: 'globalLocks', policyConfig: ageConfig('GLOBAL_LOCKS'), createRule: createGlobalLockRetentionRule },
     automationRuns: {
         id: 'automationRuns',

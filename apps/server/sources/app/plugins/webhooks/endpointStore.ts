@@ -200,7 +200,7 @@ export async function ensurePluginWebhookEndpointV1(params: Readonly<{
         || params.input.targetMaterialization.materializationId !== params.target.materialization.materializationId
         || params.input.targetMaterialization.pluginId !== params.target.materialization.pluginId
         || params.target.materialization.pluginId !== params.contribution.pluginId
-        || (params.input.setup.kind === "githubAccountEndpointV1" && params.contribution.routingKind !== "accountEndpoint")
+        || (params.input.setup.kind === "accountEndpointV1" && params.contribution.routingKind !== "accountEndpoint")
         || (params.input.setup.kind === "githubSharedInstallationV1" && params.contribution.routingKind !== "providerInstallation")
     ) {
         throw new PluginWebhookEndpointStoreError("endpoint_unavailable");

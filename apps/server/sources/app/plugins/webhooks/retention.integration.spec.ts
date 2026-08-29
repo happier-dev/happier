@@ -162,7 +162,7 @@ describe("plugin webhook retention and explicit discard", () => {
                 sourceInstanceId: `source-${suffix}`,
                 ensureIdempotencyKey: `idempotency-${suffix}-0001`,
                 ensureRequestFingerprint: suffix.repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-1",

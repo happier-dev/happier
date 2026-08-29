@@ -2,6 +2,8 @@ import * as privacyKit from "privacy-kit";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import {
     AccountEncryptionMigrateExternalAuthBindingDigestV1Schema,
+    parseAccountApiTokenBearerV1,
+    type ParsedAccountApiTokenBearerV1,
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
@@ -117,32 +119,25 @@ export type VerifyPatResult =
         reason: "invalid_token";
     }>;
 
-type ParsedApiToken = Readonly<{
-    tokenId: string;
-    secret: string;
-}>;
-
 type VerifiedApiToken = Readonly<{
     accountId: string;
     credentialId: string;
     expiresAt: Date | null;
 }>;
 
-const API_TOKEN_PATTERN = /^hap_v1_([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_([A-Za-z0-9_-]{43})$/;
+/** The API adapter maps this canonical creation rejection to `invalid_request`. */
+export class InvalidApiTokenExpiryError extends Error {
+    constructor() {
+        super("API token expiry must be in the future");
+    }
+}
+
 const API_TOKEN_SECRET_BYTES = 32;
 const API_TOKEN_DISPLAY_ID_LENGTH = 8;
 // API-token verification may be high frequency. Five minutes bounds each valid
 // token to one durable activity write per interval while retaining useful UI
 // observability; revocation is still a row deletion checked on every request.
 const API_TOKEN_LAST_USED_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
-
-function parseApiToken(token: string): ParsedApiToken | null {
-    const match = API_TOKEN_PATTERN.exec(token);
-    if (!match) return null;
-    const tokenId = match[1];
-    const secret = match[2];
-    return tokenId && secret ? { tokenId, secret } : null;
-}
 
 function isApiTokenCandidate(token: string): boolean {
     return token.startsWith("hap_");
@@ -159,7 +154,7 @@ function apiTokenSecretDigestMatches(storedDigest: string, suppliedSecret: strin
 }
 
 function createApiTokenDisplayPrefix(tokenId: string): string {
-    return `hap_${tokenId.slice(0, API_TOKEN_DISPLAY_ID_LENGTH)}`;
+    return `hap_v1_${tokenId.slice(0, API_TOKEN_DISPLAY_ID_LENGTH)}`;
 }
 
 function createApiTokenBearer(tokenId: string, secret: string): string {
@@ -351,7 +346,7 @@ class AuthModule {
         accountId: string;
         label: string;
         expiresAt?: Date | null;
-    }>): Promise<CreatedApiToken> {
+    }>, nowInput: Date = new Date()): Promise<CreatedApiToken> {
         const accountId = params.accountId.trim();
         const label = params.label.trim();
         if (!accountId) {
@@ -361,12 +356,12 @@ class AuthModule {
             throw new Error("Cannot create an API token without a label");
         }
 
-        const now = new Date();
+        const now = new Date(nowInput.getTime());
         const expiresAt = params.expiresAt == null
             ? null
             : new Date(params.expiresAt.getTime());
         if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt <= now)) {
-            throw new Error("API token expiry must be in the future");
+            throw new InvalidApiTokenExpiryError();
         }
 
         const account = await db.account.findUnique({
@@ -427,7 +422,7 @@ class AuthModule {
         return rows.map((row) => ({
             tokenId: row.id,
             label: row.label,
-            displayPrefix: row.displayPrefix,
+            displayPrefix: createApiTokenDisplayPrefix(row.id),
             createdAt: row.createdAt,
             lastUsedAt: row.lastUsedAt,
             expiresAt: row.expiresAt,
@@ -518,7 +513,7 @@ class AuthModule {
         }
         signal?.throwIfAborted();
 
-        const parsed = parseApiToken(token);
+        const parsed = parseAccountApiTokenBearerV1(token);
         if (!parsed) {
             return { ok: false, reason: "invalid_token" };
         }
@@ -547,7 +542,7 @@ class AuthModule {
     }
 
     private async verifyParsedApiToken(
-        parsed: ParsedApiToken,
+        parsed: ParsedAccountApiTokenBearerV1,
         signal?: AbortSignal,
     ): Promise<VerifiedApiToken | null> {
         signal?.throwIfAborted();

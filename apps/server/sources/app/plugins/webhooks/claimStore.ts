@@ -7,6 +7,7 @@ import {
     PluginWebhookInvocationReferenceV1Schema,
     PluginWebhookRenewResultV1Schema,
     PluginWebhookSettleResultV1Schema,
+    type PluginWebhookClaimRequestV1,
     type PluginWebhookClaimResultV1,
     type PluginWebhookAutomationAdmissionUnresolvedV1,
     type PluginWebhookInvocationReferenceV1,
@@ -37,11 +38,13 @@ const PLUGIN_WEBHOOK_DEAD_PAYLOAD_RETENTION_MS_V1 = 30 * DAY_MS;
 const PLUGIN_WEBHOOK_DEAD_METADATA_RETENTION_MS_V1 = 90 * DAY_MS;
 const DEFAULT_RECOVERY_BATCH_SIZE_V1 = 100;
 const MAX_RECOVERY_BATCH_SIZE_V1 = 500;
+// Private server implementation relationship: this wait remains below the
+// daemon's 60s claim transport timeout and the 120s claim lease.
+const PLUGIN_WEBHOOK_CLAIM_LONG_POLL_WAIT_MS_V1 = 30_000;
 
-type ClaimTargetV1 = Readonly<{
-    materialization: Readonly<{ machineId: string; materializationId: string; pluginId: string }>;
-    machineInstallationId: string;
-}>;
+type ClaimTargetV1 = Extract<PluginWebhookClaimResultV1, { kind: "delivery" }>["target"];
+
+type ClaimMachineInstallationV1 = PluginWebhookClaimRequestV1["machine"];
 
 type LeaseIdentityV1 = Readonly<{ leaseId: string; revision: number }>;
 
@@ -104,66 +107,120 @@ async function isCurrentAuthenticatedTargetInTx(params: Readonly<{
     return current.kind === "current";
 }
 
+type ClaimCandidateRowV1 = {
+    id: string;
+    revision: number;
+    attemptCount: number;
+    replayCount: number;
+    receivedAt: Date;
+    payload: unknown;
+    endpointId: string;
+    endpointRevision: number;
+    endpointWebhookContributionId: string;
+    endpointHandlerActionId: string;
+    endpointSourceInstanceId: string;
+    targetMachineId: string;
+    targetMachineInstallationId: string;
+    targetMaterializationId: string;
+    targetPluginId: string;
+    targetPluginVersion: string;
+    offlineSinceAt: Date | null;
+};
+
+/**
+ * Reads the ordered due head delivery for the authenticated machine
+ * installation. Exact materialization currentness is still decided only by the
+ * canonical owner. A stale head receives its existing offline-aging transition;
+ * the AccountChange wake / next claim request then reaches the next due row.
+ */
+async function readServerSelectedClaimCandidateTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    machine: ClaimMachineInstallationV1;
+    now: Date;
+}>): Promise<Readonly<{ candidate: ClaimCandidateRowV1; selectedTarget: ClaimTargetV1 }> | null> {
+    const candidate = await params.tx.pluginWebhookDelivery.findFirst({
+        where: {
+            accountId: params.accountId,
+            targetMachineId: params.machine.machineId,
+            targetMachineInstallationId: params.machine.machineInstallationId,
+            state: "queued",
+            payloadBytes: { gt: 0n },
+            nextAttemptAt: { lte: params.now },
+            endpoint: {
+                enabled: true,
+                revokedAt: null,
+                releasedAt: null,
+                route: { enabled: true, revokedAt: null },
+            },
+        },
+        orderBy: [{ nextAttemptAt: "asc" }, { receivedAt: "asc" }, { id: "asc" }],
+        select: {
+            id: true,
+            revision: true,
+            attemptCount: true,
+            replayCount: true,
+            receivedAt: true,
+            payload: true,
+            endpointId: true,
+            endpointRevision: true,
+            endpointWebhookContributionId: true,
+            endpointHandlerActionId: true,
+            endpointSourceInstanceId: true,
+            targetMachineId: true,
+            targetMachineInstallationId: true,
+            targetMaterializationId: true,
+            targetPluginId: true,
+            targetPluginVersion: true,
+            offlineSinceAt: true,
+        },
+    });
+    if (candidate === null) return null;
+    return {
+        candidate,
+        selectedTarget: {
+            materialization: {
+                machineId: candidate.targetMachineId,
+                materializationId: candidate.targetMaterializationId,
+                pluginId: candidate.targetPluginId,
+            },
+            machineInstallationId: candidate.targetMachineInstallationId,
+        },
+    };
+}
+
 export async function claimPluginWebhookDeliveryV1(params: Readonly<{
     accountId: string;
-    target: ClaimTargetV1;
+    machine: ClaimMachineInstallationV1;
     now?: Date;
     randomBytes?: (length: number) => Uint8Array;
 }>): Promise<PluginWebhookClaimResultV1> {
     const now = params.now ?? new Date();
+    const none = (retryAfterMs: number) => PluginWebhookClaimResultV1Schema.parse({
+        kind: "none",
+        retryAfterMs,
+    });
     const serverIdentityId = await getOrCreateServerIdentityId(process.env);
     const randomBytes = params.randomBytes
         ?? ((length: number) => Uint8Array.from(nodeRandomBytes(length)));
-    const leaseBytes = randomBytes(16);
-    if (leaseBytes.byteLength !== 16) throw new TypeError("Plugin webhook lease identity requires exactly 16 bytes");
-    const leaseId = `wh_lease_${encodeBase64(leaseBytes, "base64url")}`;
 
     return await inTx(async (tx) => {
-        const candidate = await tx.pluginWebhookDelivery.findFirst({
-            where: {
-                accountId: params.accountId,
-                ...targetWhere(params.target),
-                state: "queued",
-                payloadBytes: { gt: 0n },
-                nextAttemptAt: { lte: now },
-                endpoint: {
-                    enabled: true,
-                    revokedAt: null,
-                    releasedAt: null,
-                    route: { enabled: true, revokedAt: null },
-                },
-            },
-            orderBy: [{ nextAttemptAt: "asc" }, { receivedAt: "asc" }, { id: "asc" }],
-            select: {
-                id: true,
-                revision: true,
-                attemptCount: true,
-                replayCount: true,
-                receivedAt: true,
-                payload: true,
-                endpointId: true,
-                endpointRevision: true,
-                endpointWebhookContributionId: true,
-                endpointHandlerActionId: true,
-                endpointSourceInstanceId: true,
-                targetPluginId: true,
-                targetPluginVersion: true,
-                offlineSinceAt: true,
-            },
+        const selected = await readServerSelectedClaimCandidateTx({
+            tx,
+            accountId: params.accountId,
+            machine: params.machine,
+            now,
         });
-        if (!candidate) return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 5_000 });
-        if (
-            candidate.targetPluginId !== params.target.materialization.pluginId
-        ) {
-            return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 5_000 });
-        }
-        if (!(await isCurrentAuthenticatedTargetInTx({
-                tx,
-                accountId: params.accountId,
-                target: params.target,
-                version: candidate.targetPluginVersion,
-                serverIdentityId,
-            }))) {
+        if (selected === null) return none(5_000);
+        const candidate = selected.candidate;
+        const target = selected.selectedTarget;
+        if (!await isCurrentAuthenticatedTargetInTx({
+            tx,
+            accountId: params.accountId,
+            target,
+            version: candidate.targetPluginVersion,
+            serverIdentityId,
+        })) {
             const offlineSinceAt = candidate.offlineSinceAt ?? now;
             const expired = now.getTime() - offlineSinceAt.getTime()
                 >= PLUGIN_WEBHOOK_MAX_QUEUED_AGE_MS_V1;
@@ -183,17 +240,16 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
                         revision: { increment: 1 },
                 },
             });
-            if (updated.count === 1) {
-                await markPluginWebhookAccountChangedInTxV1(tx, {
-                    accountId: params.accountId,
-                    pluginId: candidate.targetPluginId,
-                });
-            }
-            return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 5_000 });
+            if (updated.count !== 1) return none(250);
+            await markPluginWebhookAccountChangedInTxV1(tx, {
+                accountId: params.accountId,
+                pluginId: candidate.targetPluginId,
+            });
+            return none(5_000);
         }
         const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (fence.status !== "ready") {
-            return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 5_000 });
+            return none(5_000);
         }
         const storedEnvelope =
             validatePluginWebhookStoredEnvelopeForAccountCurrentnessV1({
@@ -220,8 +276,11 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
                     pluginId: candidate.targetPluginId,
                 });
             }
-            return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 5_000 });
+            return none(5_000);
         }
+        const leaseBytes = randomBytes(16);
+        if (leaseBytes.byteLength !== 16) throw new TypeError("Plugin webhook lease identity requires exactly 16 bytes");
+        const leaseId = `wh_lease_${encodeBase64(leaseBytes, "base64url")}`;
         const firstClaimAt = now;
         const maxClaimUntil = new Date(now.getTime() + PLUGIN_WEBHOOK_MAX_CONTINUOUS_CLAIM_MS_V1);
         const expiresAt = new Date(Math.min(
@@ -239,8 +298,8 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
             data: {
                 state: "claimed",
                 leaseId,
-                claimedByMachineId: params.target.materialization.machineId,
-                claimedByMachineInstallationId: params.target.machineInstallationId,
+                claimedByMachineId: target.materialization.machineId,
+                claimedByMachineInstallationId: target.machineInstallationId,
                 firstClaimAt,
                 executionStartedAt: null,
                 leaseExpiresAt: expiresAt,
@@ -249,7 +308,7 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
                 revision: { increment: 1 },
             },
         });
-        if (claimed.count !== 1) return PluginWebhookClaimResultV1Schema.parse({ kind: "none", retryAfterMs: 250 });
+        if (claimed.count !== 1) return none(250);
         await markPluginWebhookAccountChangedInTxV1(tx, {
             accountId: params.accountId,
             pluginId: candidate.targetPluginId,
@@ -258,11 +317,13 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
         return PluginWebhookClaimResultV1Schema.parse({
             kind: "delivery",
             deliveryId: candidate.id,
+            target,
+            pluginVersion: candidate.targetPluginVersion,
             endpoint: {
                 webhookEndpointId: candidate.endpointId,
                 revision: candidate.endpointRevision,
                 webhookContribution: {
-                    pluginId: params.target.materialization.pluginId,
+                    pluginId: target.materialization.pluginId,
                     localId: candidate.endpointWebhookContributionId,
                 },
                 handlerActionLocalId: candidate.endpointHandlerActionId,
@@ -281,6 +342,51 @@ export async function claimPluginWebhookDeliveryV1(params: Readonly<{
             },
         });
     });
+}
+
+/**
+ * One authenticated bounded claim for the Account/machine installation
+ * (§6.4). The canonical claim owner runs immediately; when it finds nothing,
+ * the request parks for one fixed private window raced with request
+ * cancellation, then re-runs the canonical claim owner exactly once. Nothing
+ * is read from the database while parked, and there is no wake subscription,
+ * queue, scheduler, or cursor: the existing daemon wake path simply cancels
+ * the parked request so the final claim happens sooner. Cancellation returns
+ * the first answer with no final claim. Every returned result is the
+ * canonical owner's own answer, including its bounded retryAfterMs, and the
+ * request still names no materialization target.
+ */
+export async function claimPluginWebhookDeliveryWithBoundedWaitV1(
+    params: Readonly<{
+        accountId: string;
+        machine: ClaimMachineInstallationV1;
+        now?: Date;
+        randomBytes?: (length: number) => Uint8Array;
+    }>,
+    wait: Readonly<{ signal?: AbortSignal }> = {},
+): Promise<PluginWebhookClaimResultV1> {
+    const first = await claimPluginWebhookDeliveryV1(params);
+    if (first.kind === "delivery") return first;
+    const signal = wait.signal;
+    if (signal?.aborted) return first;
+    const aborted = await new Promise<boolean>((resolve) => {
+        const onAbort = () => {
+            cleanup();
+            resolve(true);
+        };
+        const timer = setTimeout(() => {
+            cleanup();
+            resolve(false);
+        }, PLUGIN_WEBHOOK_CLAIM_LONG_POLL_WAIT_MS_V1);
+        const cleanup = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
+        };
+        if (signal === undefined) return;
+        signal.addEventListener("abort", onAbort, { once: true });
+    });
+    if (aborted) return first;
+    return await claimPluginWebhookDeliveryV1(params);
 }
 
 export type PluginWebhookInvocationReferenceValidationResultV1 = Readonly<

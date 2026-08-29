@@ -11,20 +11,23 @@ import {
     PluginWebhookRenewRequestV1Schema,
     PluginWebhookRenewResultV1Schema,
     PluginWebhookSettleResultV1Schema,
+    type PluginWebhookClaimRequestV1,
+    type PluginWebhookClaimResultV1,
 } from "@happier-dev/protocol";
 
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
-import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
-import { verifyPluginInstallationPublisherHeader } from "@/app/plugins/installations/publisherProof";
+import { authenticateCurrentPluginMaterializationCallerV1 } from "@/app/plugins/availability/callerMaterialization";
+import {
+    verifyPluginInstallationPublisherHeader,
+    type VerifiedPluginInstallationPublisher,
+} from "@/app/plugins/installations/publisherProof";
 import { createPluginWebhookEndpointActionsV1 } from "@/app/plugins/webhooks/endpointActions";
 import {
-    claimPluginWebhookDeliveryV1,
+    claimPluginWebhookDeliveryWithBoundedWaitV1,
     completePluginWebhookDeliveryV1,
     failPluginWebhookDeliveryV1,
     renewPluginWebhookDeliveryV1,
 } from "@/app/plugins/webhooks/claimStore";
-import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import { inTx } from "@/storage/inTx";
 import type { Fastify } from "../../../types";
 
 const DeliveryParamsSchema = z.object({
@@ -52,7 +55,7 @@ type AuthenticatePluginCallerV1 = (params: Readonly<{
 const webhookEndpointActions = createPluginWebhookEndpointActionsV1();
 
 type RouteDependencies = Readonly<{
-    claim: typeof claimPluginWebhookDeliveryV1;
+    claim: typeof claimPluginWebhookDeliveryWithBoundedWaitV1;
     renew: typeof renewPluginWebhookDeliveryV1;
     complete: typeof completePluginWebhookDeliveryV1;
     fail: typeof failPluginWebhookDeliveryV1;
@@ -61,55 +64,19 @@ type RouteDependencies = Readonly<{
     verifyPublisher: typeof verifyPluginInstallationPublisherHeader;
 }>;
 
-async function authenticateCurrentPluginCallerV1(params: Readonly<{
-    accountId: string;
-    caller: Readonly<{
-        pluginId: string;
-        machineId: string;
-        materializationId: string;
-    }>;
-    publisher: Readonly<{ machineId: string; installationId: string }>;
-}>): Promise<AuthenticatedPluginCallerV1 | null> {
-    if (params.caller.machineId !== params.publisher.machineId) return null;
-    const serverIdentityId = await getOrCreateServerIdentityId(process.env);
-    return await inTx(async (tx) => {
-        const row = await tx.pluginMachineMaterialization.findUnique({
-            where: {
-                machineId_materializationId: {
-                    machineId: params.caller.machineId,
-                    materializationId: params.caller.materializationId,
-                },
-            },
-            select: {
-                accountId: true,
-                pluginId: true,
-                version: true,
-                machine: { select: { installationId: true } },
-            },
-        });
-        if (
-            !row
-            || row.accountId !== params.accountId
-            || row.pluginId !== params.caller.pluginId
-            || row.machine.installationId !== params.publisher.installationId
-        ) return null;
-        const current = await resolveCurrentClaimablePluginMachineMaterializationTx({
-            tx,
-            accountId: params.accountId,
-            serverIdentityId,
-            machineId: params.caller.machineId,
-            machineInstallationId: params.publisher.installationId,
-            materializationId: params.caller.materializationId,
-            pluginId: row.pluginId,
-            version: row.version,
-            requiredMachineOperationCapability: "pluginWebhookClaim",
-        });
-        return current.kind === "current" ? { pluginId: row.pluginId } : null;
-    });
-}
+/**
+ * Webhook delivery adds the exact machine operation capability required to
+ * claim; the shared exact-caller owner supplies every other admission fact.
+ */
+const authenticateCurrentPluginCallerV1: AuthenticatePluginCallerV1 = (params) => (
+    authenticateCurrentPluginMaterializationCallerV1({
+        ...params,
+        requiredMachineOperationCapability: "pluginWebhookClaim",
+    })
+);
 
 const DEFAULT_DEPENDENCIES: RouteDependencies = {
-    claim: claimPluginWebhookDeliveryV1,
+    claim: claimPluginWebhookDeliveryWithBoundedWaitV1,
     renew: renewPluginWebhookDeliveryV1,
     complete: completePluginWebhookDeliveryV1,
     fail: failPluginWebhookDeliveryV1,
@@ -118,17 +85,17 @@ const DEFAULT_DEPENDENCIES: RouteDependencies = {
     verifyPublisher: verifyPluginInstallationPublisherHeader,
 };
 
+/** Per-request cancellation for the parked claim long poll. */
+const claimAbortControllers = new WeakMap<object, AbortController>();
+
 function noStore(reply: { header(name: string, value: string): unknown }): void {
     reply.header("Cache-Control", "no-store");
 }
 
-type DaemonWebhookTargetV1 = Readonly<{
-    materialization: Readonly<{ machineId: string }>;
-    machineInstallationId: string;
-}>;
+type DaemonWebhookTargetV1 = Extract<PluginWebhookClaimResultV1, { kind: "delivery" }>["target"];
+type DaemonWebhookMachineInstallationV1 = PluginWebhookClaimRequestV1["machine"];
 
-async function authenticateExactTargetV1(params: Readonly<{
-    dependencies: RouteDependencies;
+async function authenticateMachineInstallationV1<TPublisher extends VerifiedPluginInstallationPublisher>(params: Readonly<{
     accountId: string;
     request: Readonly<{
         method?: string;
@@ -136,25 +103,27 @@ async function authenticateExactTargetV1(params: Readonly<{
         headers?: Record<string, string | string[] | undefined>;
         body?: unknown;
     }>;
-    target: DaemonWebhookTargetV1;
-}>): Promise<boolean> {
+    machineId: DaemonWebhookMachineInstallationV1["machineId"] | DaemonWebhookTargetV1["materialization"]["machineId"];
+    machineInstallationId: DaemonWebhookMachineInstallationV1["machineInstallationId"] | DaemonWebhookTargetV1["machineInstallationId"];
+    verifyPublisher: (params: Parameters<typeof verifyPluginInstallationPublisherHeader>[0]) => Promise<TPublisher | null>;
+}>): Promise<TPublisher | null> {
     try {
-        const publisher = await params.dependencies.verifyPublisher({
+        const publisher = await params.verifyPublisher({
             accountId: params.accountId,
             request: params.request,
             path: params.request.url,
             required: true,
         });
         if (
-            publisher?.machineId === params.target.materialization.machineId
-            && publisher.installationId === params.target.machineInstallationId
+            publisher?.machineId === params.machineId
+            && publisher.installationId === params.machineInstallationId
         ) {
-            return true;
+            return publisher;
         }
     } catch {
         // Authentication failures are deliberately indistinguishable at this boundary.
     }
-    return false;
+    return null;
 }
 
 export function registerPluginWebhookDaemonRoutes(
@@ -208,22 +177,37 @@ export function registerPluginWebhookDaemonRoutes(
 
     app.post("/v1/daemon/plugins/webhooks/claim", {
         preHandler: authenticatedWebhookPreHandler,
+        onRequest: async (request) => {
+            claimAbortControllers.set(request, new AbortController());
+        },
+        onRequestAbort: async (request) => {
+            claimAbortControllers.get(request)?.abort(new Error("plugin_webhook_claim_client_aborted"));
+        },
         schema: {
             body: PluginWebhookClaimRequestV1Schema,
             response: { 200: PluginWebhookClaimResultV1Schema, 401: z.null() },
         },
     }, async (request, reply) => {
         noStore(reply);
-        if (!await authenticateExactTargetV1({
-            dependencies,
+        // One claim per Account/machine installation. The signed machine
+        // installation proof must match the requested installation exactly;
+        // the server selects the one eligible exact materialization target.
+        const publisher = await authenticateMachineInstallationV1({
             accountId: request.userId,
             request,
-            target: request.body.target,
-        })) return reply.code(401).send(null);
-        return await reply.send(await dependencies.claim({
-            accountId: request.userId,
-            target: request.body.target,
-        }));
+            machineId: request.body.machine.machineId,
+            machineInstallationId: request.body.machine.machineInstallationId,
+            verifyPublisher: dependencies.verifyPublisher,
+        });
+        if (!publisher) return reply.code(401).send(null);
+        const signal = claimAbortControllers.get(request)?.signal;
+        // The parked window is the claim owner's fixed implementation
+        // constant; the route carries no policy input except the disconnect
+        // abort signal.
+        return await reply.send(await dependencies.claim(
+            { accountId: request.userId, machine: request.body.machine },
+            signal ? { signal } : {},
+        ));
     });
 
     app.post("/v1/daemon/plugins/webhooks/:deliveryId/renew", {
@@ -235,11 +219,12 @@ export function registerPluginWebhookDaemonRoutes(
         },
     }, async (request, reply) => {
         noStore(reply);
-        if (!await authenticateExactTargetV1({
-            dependencies,
+        if (!await authenticateMachineInstallationV1({
             accountId: request.userId,
             request,
-            target: request.body.target,
+            machineId: request.body.target.materialization.machineId,
+            machineInstallationId: request.body.target.machineInstallationId,
+            verifyPublisher: dependencies.verifyPublisher,
         })) return reply.code(401).send(null);
         return await reply.send(await dependencies.renew({
             accountId: request.userId,
@@ -259,11 +244,12 @@ export function registerPluginWebhookDaemonRoutes(
         },
     }, async (request, reply) => {
         noStore(reply);
-        if (!await authenticateExactTargetV1({
-            dependencies,
+        if (!await authenticateMachineInstallationV1({
             accountId: request.userId,
             request,
-            target: request.body.target,
+            machineId: request.body.target.materialization.machineId,
+            machineInstallationId: request.body.target.machineInstallationId,
+            verifyPublisher: dependencies.verifyPublisher,
         })) return reply.code(401).send(null);
         return await reply.send(await dependencies.complete({
             accountId: request.userId,
@@ -283,11 +269,12 @@ export function registerPluginWebhookDaemonRoutes(
         },
     }, async (request, reply) => {
         noStore(reply);
-        if (!await authenticateExactTargetV1({
-            dependencies,
+        if (!await authenticateMachineInstallationV1({
             accountId: request.userId,
             request,
-            target: request.body.target,
+            machineId: request.body.target.materialization.machineId,
+            machineInstallationId: request.body.target.machineInstallationId,
+            verifyPublisher: dependencies.verifyPublisher,
         })) return reply.code(401).send(null);
         return await reply.send(await dependencies.fail({
             accountId: request.userId,

@@ -34,13 +34,26 @@ const invalidateMachine = vi.fn();
 vi.mock("@/app/presence/sessionCache", () => ({ activityCache: { invalidateMachine } }));
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd") }));
 
+const removeAutomationMachineAssignmentsTx = vi.fn(async (params: Readonly<{
+    tx: unknown;
+    markMachineUnavailableTx: (tx: unknown) => Promise<void>;
+}>) => {
+    await params.markMachineUnavailableTx(params.tx);
+    return {
+        affectedAutomationIds: [],
+        disabledAutomationIds: [],
+    };
+});
+vi.mock("@/app/automations/automationMachineAssignmentRemoval", () => ({
+    removeAutomationMachineAssignmentsTx,
+}));
+
 const dbMocks = createDbMocks({
     account: ["findUnique", "updateMany"],
     machine: ["findFirst", "findMany", "findUnique"],
 } as const);
 const txDbMocks = createDbMocks({
     accessKey: ["deleteMany"],
-    automationAssignment: ["deleteMany"],
     machine: ["create", "findFirst", "update", "updateMany"],
 } as const);
 
@@ -52,7 +65,6 @@ installDbModuleMock(() => ({
 
 const harness = createInTxHarness(() => ({
     accessKey: txDbMocks.db.accessKey,
-    automationAssignment: txDbMocks.db.automationAssignment,
     machine: txDbMocks.db.machine,
 }));
 
@@ -164,7 +176,6 @@ describe("machinesRoutes machine replacement", () => {
         dbMocks.db.machine.findFirst.mockResolvedValue(null);
         dbMocks.db.machine.findUnique.mockResolvedValue(null);
         txDbMocks.db.accessKey.deleteMany.mockResolvedValue({ count: 0 });
-        txDbMocks.db.automationAssignment.deleteMany.mockResolvedValue({ count: 0 });
         txDbMocks.db.machine.create.mockImplementation(async (args: MachineCreateMockArgs) => ({
             ...baseMachine,
             ...args.data,
@@ -282,6 +293,10 @@ describe("machinesRoutes machine replacement", () => {
             }),
         }));
         expect(invalidateMachine).toHaveBeenCalledWith("m1");
+        // Replacement is reversible. It marks the old machine unavailable but
+        // preserves Automation definitions and admitted Runs so undo can make
+        // the old machine usable again without a restoration journal.
+        expect(removeAutomationMachineAssignmentsTx).not.toHaveBeenCalled();
         expect(response).toEqual(expect.objectContaining({
             machineReplacement: {
                 status: "applied",
@@ -366,6 +381,7 @@ describe("machinesRoutes machine replacement", () => {
         expect(response).toEqual(expect.objectContaining({
             machine: expect.objectContaining({ replacedByMachineId: "m2" }),
         }));
+        expect(removeAutomationMachineAssignmentsTx).not.toHaveBeenCalled();
 
         const undoRoute = await createRoute("DELETE", "/v1/machines/:oldMachineId/replacement");
         await undoRoute.invoke({

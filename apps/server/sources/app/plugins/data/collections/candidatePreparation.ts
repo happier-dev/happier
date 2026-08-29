@@ -39,9 +39,12 @@ import {
     readMaterializedPluginCollectionContract,
 } from "./contracts";
 import {
+    assertNoActiveUniqueCollectionRelationDuplicatesInTx,
     assertPluginCollectionStoredContentForAccountTransition,
+    finalizePluginCollectionDerivedStateForPromotionInTx,
     preparePluginCollectionDerivedStateForPromotionInTx,
     preparePluginCollectionRelationReplacementInTx,
+    retirePluginCollectionRelationsForSourceCollectionInTx,
     PluginCollectionMutationOperationError,
     type ResolvedWritableCollection,
 } from "./mutation";
@@ -882,27 +885,39 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
         const sourceRef = currentIntent.writableCollections.find((candidate) => (
             candidate.collectionId === targetRef.collectionId
         ));
-        const allLiveRows = await input.tx.pluginCollectionRow.findMany({
-            where: {
-                accountId: input.accountId,
-                pluginId: input.pluginId,
-                collectionId: targetRef.collectionId,
-                deletedAt: null,
-            },
-            orderBy: [{ rowId: "asc" }, { id: "asc" }],
-            select: {
-                id: true,
-                rowId: true,
-                revision: true,
-                contractId: true,
-                schemaVersion: true,
-                contractDigest: true,
-            },
-        });
+        const maximumBatchRows = readPluginsFeatureEnv(process.env).collectionLimits.maxBatchRows;
+        const liveRowWhere = {
+            accountId: input.accountId,
+            pluginId: input.pluginId,
+            collectionId: targetRef.collectionId,
+            deletedAt: null,
+        };
+        const liveRowCount = await input.tx.pluginCollectionRow.count({ where: liveRowWhere });
 
         if (!sourceRef || refsMatch(sourceRef, targetRef)) {
-            if (allLiveRows.some((row) => !isExactPersistedRef({ row, materialized: target }))) {
-                promotionNotReady();
+            let lastRowId: string | null = null;
+            for (;;) {
+                const rows = await input.tx.pluginCollectionRow.findMany({
+                    where: {
+                        ...liveRowWhere,
+                        ...(lastRowId ? { id: { gt: lastRowId } } : {}),
+                    },
+                    orderBy: { id: "asc" },
+                    take: maximumBatchRows,
+                    select: {
+                        id: true,
+                        rowId: true,
+                        revision: true,
+                        contractId: true,
+                        schemaVersion: true,
+                        contractDigest: true,
+                    },
+                });
+                if (rows.length === 0) break;
+                if (rows.some((row) => !isExactPersistedRef({ row, materialized: target }))) {
+                    promotionNotReady();
+                }
+                lastRowId = rows[rows.length - 1]!.id;
             }
             continue;
         }
@@ -916,18 +931,16 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
             }
             throw error;
         }
-        if (allLiveRows.length === 0) continue;
+        if (liveRowCount === 0) continue;
         if (!hasDeclaredMigrationChain({
             sourceSchemaVersion: source.ref.schemaVersion,
             target: target.contract,
         })) {
             promotionNotReady();
         }
-        if (allLiveRows.some((row) => !isExactPersistedRef({ row, materialized: source }))) {
-            promotionNotReady();
-        }
 
-        const stages = await input.tx.pluginCollectionCandidatePreparationStage.findMany({
+        const completeCandidateIdentities = await input.tx.pluginCollectionCandidatePreparationStage.groupBy({
+            by: ["candidateIdentity"],
             where: {
                 accountId: input.accountId,
                 pluginId: input.pluginId,
@@ -939,108 +952,14 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
                 targetSchemaVersion: target.ref.schemaVersion,
                 targetContractDigest: target.ref.contractDigest,
                 candidateReleaseVersion: input.targetReleaseVersion,
-                sourceRowDbId: { in: allLiveRows.map((row) => row.id) },
             },
-            select: {
-                id: true,
-                rowId: true,
-                candidateIdentity: true,
-                candidateArtifactDigest: true,
-                sourceRowDbId: true,
-                sourceRevision: true,
-                targetContentEnvelope: true,
-                targetProjection: true,
-            },
+            _count: { _all: true },
+            having: { candidateIdentity: { _count: { equals: liveRowCount } } },
+            orderBy: { candidateIdentity: "asc" },
+            take: 2,
         });
-        const stagesByCandidateIdentity = new Map<string, typeof stages>();
-        for (const stage of stages) {
-            const candidateArtifactDigest = PluginUiArtifactDigestV1Schema.safeParse(
-                stage.candidateArtifactDigest,
-            );
-            if (!candidateArtifactDigest.success) promotionNotReady();
-            const expectedIdentity = candidatePreparationBindingIdentity({
-                accountId: input.accountId,
-                binding: {
-                    source: source.ref,
-                    target: target.ref,
-                    candidate: {
-                        releaseVersion: input.targetReleaseVersion,
-                        artifactDigest: candidateArtifactDigest.data,
-                    },
-                },
-            });
-            if (stage.candidateIdentity !== expectedIdentity) promotionNotReady();
-            const existing = stagesByCandidateIdentity.get(stage.candidateIdentity) ?? [];
-            existing.push(stage);
-            stagesByCandidateIdentity.set(stage.candidateIdentity, existing);
-        }
-        const completeCandidates = [...stagesByCandidateIdentity.values()].filter((candidateStages) => {
-            if (candidateStages.length !== allLiveRows.length) return false;
-            const bySourceRowId = new Map(candidateStages.map((stage) => [stage.sourceRowDbId, stage]));
-            return bySourceRowId.size === allLiveRows.length && allLiveRows.every((row) => {
-                const stage = bySourceRowId.get(row.id);
-                return stage?.sourceRevision === row.revision && stage.rowId === row.rowId;
-            });
-        });
-        if (completeCandidates.length !== 1) promotionNotReady();
-        const selectedStages = completeCandidates[0]!;
-        const selectedStageBySourceRowId = new Map(selectedStages.map((stage) => [stage.sourceRowDbId, stage]));
-        const validatedTargets = new Map<string, ReturnType<typeof validateCandidateTarget>>();
-        for (const row of allLiveRows) {
-            const stage = selectedStageBySourceRowId.get(row.id);
-            if (!stage) promotionNotReady();
-            try {
-                validatedTargets.set(row.id, validateCandidateTarget({
-                    target,
-                    encryptionMode: fence.account.currentness.encryptionMode,
-                    rowId: row.rowId,
-                    content: stage.targetContentEnvelope,
-                    projection: PluginCollectionProjectionV1Schema.parse(stage.targetProjection),
-                }));
-            } catch (error) {
-                if (error instanceof PluginCollectionCandidatePreparationOperationError) {
-                    promotionNotReady();
-                }
-                throw error;
-            }
-        }
-        const promotionRows = allLiveRows.map((row) => {
-            const targetValue = validatedTargets.get(row.id);
-            if (!targetValue) promotionNotReady();
-            return {
-                id: row.id,
-                rowId: row.rowId,
-                expectedRevision: row.revision,
-                contentEnvelope: targetValue.content,
-                projection: targetValue.projection,
-            };
-        });
-        const maximumBatchRows = readPluginsFeatureEnv(process.env).collectionLimits.maxBatchRows;
-        let preparedRows: ReturnType<typeof prepareCandidatePromotionMaterializedRows>;
-        let preparedRelations: Awaited<ReturnType<typeof preparePluginCollectionRelationReplacementInTx>>;
-        try {
-            preparedRows = prepareCandidatePromotionMaterializedRows({
-                contract: target.contract,
-                rows: promotionRows,
-            });
-            preparedRelations = await preparePluginCollectionRelationReplacementInTx({
-                tx: input.tx,
-                accountId: input.accountId,
-                contract: target.contract,
-                changes: promotionRows.map((row) => ({
-                    rowDbId: row.id,
-                    rowId: row.rowId,
-                    revision: row.expectedRevision + 1,
-                    projection: row.projection,
-                })),
-                maximumBatchRows,
-            });
-        } catch (error) {
-            if (error instanceof PluginCollectionMutationOperationError) {
-                promotionNotReady();
-            }
-            throw error;
-        }
+        if (completeCandidateIdentities.length !== 1) promotionNotReady();
+        const selectedCandidateIdentity = completeCandidateIdentities[0]!.candidateIdentity;
 
         let derived: ResolvedWritableCollection;
         try {
@@ -1057,25 +976,299 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
             }
             throw error;
         }
-        let promoted: boolean;
-        try {
-            promoted = await materializeCandidatePromotionSetwiseInTx({
-                tx: input.tx,
-                accountId: input.accountId,
-                source: {
+
+        let validatedLiveRows = 0;
+        let maximumPromotedRevision = 0;
+        let lastRowId: string | null = null;
+        for (;;) {
+            const liveRows = await input.tx.pluginCollectionRow.findMany({
+                where: {
+                    ...liveRowWhere,
+                    ...(lastRowId ? { id: { gt: lastRowId } } : {}),
+                },
+                orderBy: { id: "asc" },
+                take: maximumBatchRows,
+                select: {
+                    id: true,
+                    rowId: true,
+                    revision: true,
+                    contractId: true,
+                    schemaVersion: true,
+                    contractDigest: true,
+                },
+            });
+            if (liveRows.length === 0) break;
+            if (liveRows.some((row) => !isExactPersistedRef({ row, materialized: source }))) {
+                promotionNotReady();
+            }
+            const stages = await input.tx.pluginCollectionCandidatePreparationStage.findMany({
+                where: {
+                    accountId: input.accountId,
+                    pluginId: input.pluginId,
+                    collectionId: targetRef.collectionId,
+                    sourceContractId: source.id,
+                    sourceSchemaVersion: source.ref.schemaVersion,
+                    sourceContractDigest: source.ref.contractDigest,
+                    targetContractId: target.id,
+                    targetSchemaVersion: target.ref.schemaVersion,
+                    targetContractDigest: target.ref.contractDigest,
+                    candidateReleaseVersion: input.targetReleaseVersion,
+                    candidateIdentity: selectedCandidateIdentity,
+                    sourceRowDbId: { in: liveRows.map((row) => row.id) },
+                },
+                select: {
+                    rowId: true,
+                    candidateIdentity: true,
+                    candidateArtifactDigest: true,
+                    sourceRowDbId: true,
+                    sourceRevision: true,
+                    targetContentEnvelope: true,
+                    targetProjection: true,
+                },
+            });
+            if (stages.length !== liveRows.length) promotionNotReady();
+            const selectedStageBySourceRowId = new Map(stages.map((stage) => [stage.sourceRowDbId, stage]));
+            if (selectedStageBySourceRowId.size !== liveRows.length) promotionNotReady();
+            const promotionRows = liveRows.map((row) => {
+                const stage = selectedStageBySourceRowId.get(row.id);
+                if (!stage || stage.sourceRevision !== row.revision || stage.rowId !== row.rowId) {
+                    promotionNotReady();
+                }
+                const candidateArtifactDigest = PluginUiArtifactDigestV1Schema.safeParse(
+                    stage.candidateArtifactDigest,
+                );
+                if (!candidateArtifactDigest.success) promotionNotReady();
+                const expectedIdentity = candidatePreparationBindingIdentity({
+                    accountId: input.accountId,
+                    binding: {
+                        source: source.ref,
+                        target: target.ref,
+                        candidate: {
+                            releaseVersion: input.targetReleaseVersion,
+                            artifactDigest: candidateArtifactDigest.data,
+                        },
+                    },
+                });
+                if (stage.candidateIdentity !== expectedIdentity) promotionNotReady();
+                let targetValue: ReturnType<typeof validateCandidateTarget>;
+                try {
+                    targetValue = validateCandidateTarget({
+                        target,
+                        encryptionMode: fence.account.currentness.encryptionMode,
+                        rowId: row.rowId,
+                        content: stage.targetContentEnvelope,
+                        projection: PluginCollectionProjectionV1Schema.parse(stage.targetProjection),
+                    });
+                } catch (error) {
+                    if (error instanceof PluginCollectionCandidatePreparationOperationError) {
+                        promotionNotReady();
+                    }
+                    throw error;
+                }
+                return {
+                    id: row.id,
+                    rowId: row.rowId,
+                    expectedRevision: row.revision,
+                    contentEnvelope: targetValue.content,
+                    projection: targetValue.projection,
+                };
+            });
+            try {
+                prepareCandidatePromotionMaterializedRows({
+                    contract: target.contract,
+                    rows: promotionRows,
+                });
+                await preparePluginCollectionRelationReplacementInTx({
+                    tx: input.tx,
+                    accountId: input.accountId,
+                    contract: target.contract,
+                    changes: promotionRows.map((row) => ({
+                        rowDbId: row.id,
+                        rowId: row.rowId,
+                        revision: row.expectedRevision + 1,
+                        projection: row.projection,
+                    })),
+                    maximumBatchRows,
+                    skipPersistedUniqueRelationCollisionCheck: true,
+                });
+            } catch (error) {
+                if (error instanceof PluginCollectionMutationOperationError) {
+                    promotionNotReady();
+                }
+                throw error;
+            }
+            validatedLiveRows += liveRows.length;
+            for (const row of liveRows) {
+                maximumPromotedRevision = Math.max(maximumPromotedRevision, row.revision + 1);
+            }
+            lastRowId = liveRows[liveRows.length - 1]!.id;
+        }
+        if (validatedLiveRows !== liveRowCount) promotionNotReady();
+        await retirePluginCollectionRelationsForSourceCollectionInTx({
+            tx: input.tx,
+            accountId: input.accountId,
+            pluginId: input.pluginId,
+            collectionId: targetRef.collectionId,
+        });
+        let promotedLiveRows = 0;
+        lastRowId = null;
+        for (;;) {
+            const liveRows = await input.tx.pluginCollectionRow.findMany({
+                where: {
+                    ...liveRowWhere,
                     contractId: source.id,
                     schemaVersion: source.ref.schemaVersion,
                     contractDigest: source.ref.contractDigest,
+                    ...(lastRowId ? { id: { gt: lastRowId } } : {}),
                 },
-                target: {
-                    contractId: target.id,
-                    schemaVersion: target.ref.schemaVersion,
-                    contractDigest: target.ref.contractDigest,
+                orderBy: { id: "asc" },
+                take: maximumBatchRows,
+                select: {
+                    id: true,
+                    rowId: true,
+                    revision: true,
+                    contractId: true,
+                    schemaVersion: true,
+                    contractDigest: true,
                 },
+            });
+            if (liveRows.length === 0) break;
+            const stages = await input.tx.pluginCollectionCandidatePreparationStage.findMany({
+                where: {
+                    accountId: input.accountId,
+                    pluginId: input.pluginId,
+                    collectionId: targetRef.collectionId,
+                    sourceContractId: source.id,
+                    sourceSchemaVersion: source.ref.schemaVersion,
+                    sourceContractDigest: source.ref.contractDigest,
+                    targetContractId: target.id,
+                    targetSchemaVersion: target.ref.schemaVersion,
+                    targetContractDigest: target.ref.contractDigest,
+                    candidateReleaseVersion: input.targetReleaseVersion,
+                    candidateIdentity: selectedCandidateIdentity,
+                    sourceRowDbId: { in: liveRows.map((row) => row.id) },
+                },
+                select: {
+                    rowId: true,
+                    candidateIdentity: true,
+                    candidateArtifactDigest: true,
+                    sourceRowDbId: true,
+                    sourceRevision: true,
+                    targetContentEnvelope: true,
+                    targetProjection: true,
+                },
+            });
+            if (stages.length !== liveRows.length) promotionNotReady();
+            const selectedStageBySourceRowId = new Map(stages.map((stage) => [stage.sourceRowDbId, stage]));
+            if (selectedStageBySourceRowId.size !== liveRows.length) promotionNotReady();
+            const promotionRows = liveRows.map((row) => {
+                const stage = selectedStageBySourceRowId.get(row.id);
+                if (!stage || stage.sourceRevision !== row.revision || stage.rowId !== row.rowId) {
+                    promotionNotReady();
+                }
+                const candidateArtifactDigest = PluginUiArtifactDigestV1Schema.safeParse(
+                    stage.candidateArtifactDigest,
+                );
+                if (!candidateArtifactDigest.success) promotionNotReady();
+                const expectedIdentity = candidatePreparationBindingIdentity({
+                    accountId: input.accountId,
+                    binding: {
+                        source: source.ref,
+                        target: target.ref,
+                        candidate: {
+                            releaseVersion: input.targetReleaseVersion,
+                            artifactDigest: candidateArtifactDigest.data,
+                        },
+                    },
+                });
+                if (stage.candidateIdentity !== expectedIdentity) promotionNotReady();
+                let targetValue: ReturnType<typeof validateCandidateTarget>;
+                try {
+                    targetValue = validateCandidateTarget({
+                        target,
+                        encryptionMode: fence.account.currentness.encryptionMode,
+                        rowId: row.rowId,
+                        content: stage.targetContentEnvelope,
+                        projection: PluginCollectionProjectionV1Schema.parse(stage.targetProjection),
+                    });
+                } catch (error) {
+                    if (error instanceof PluginCollectionCandidatePreparationOperationError) {
+                        promotionNotReady();
+                    }
+                    throw error;
+                }
+                return {
+                    id: row.id,
+                    rowId: row.rowId,
+                    expectedRevision: row.revision,
+                    contentEnvelope: targetValue.content,
+                    projection: targetValue.projection,
+                };
+            });
+            let promoted: boolean;
+            try {
+                const preparedRows = prepareCandidatePromotionMaterializedRows({
+                    contract: target.contract,
+                    rows: promotionRows,
+                });
+                const preparedRelations = await preparePluginCollectionRelationReplacementInTx({
+                    tx: input.tx,
+                    accountId: input.accountId,
+                    contract: target.contract,
+                    changes: promotionRows.map((row) => ({
+                        rowDbId: row.id,
+                        rowId: row.rowId,
+                        revision: row.expectedRevision + 1,
+                        projection: row.projection,
+                    })),
+                    maximumBatchRows,
+                    skipPersistedUniqueRelationCollisionCheck: true,
+                });
+                promoted = await materializeCandidatePromotionSetwiseInTx({
+                    tx: input.tx,
+                    accountId: input.accountId,
+                    source: {
+                        contractId: source.id,
+                        schemaVersion: source.ref.schemaVersion,
+                        contractDigest: source.ref.contractDigest,
+                    },
+                    target: {
+                        contractId: target.id,
+                        schemaVersion: target.ref.schemaVersion,
+                        contractDigest: target.ref.contractDigest,
+                    },
+                    resolved: derived,
+                    rows: preparedRows,
+                    relations: preparedRelations,
+                    maximumBatchRows,
+                    finalizeDerivedState: false,
+                });
+            } catch (error) {
+                if (error instanceof PluginCollectionMutationOperationError) {
+                    promotionNotReady();
+                }
+                throw error;
+            }
+            if (!promoted) promotionNotReady();
+            await retirePluginCollectionCandidatePreparationStagesTx({
+                tx: input.tx,
+                accountId: input.accountId,
+                sourceRowDbIds: liveRows.map((row) => row.id),
+            });
+            promotedLiveRows += liveRows.length;
+            lastRowId = liveRows[liveRows.length - 1]!.id;
+        }
+        if (promotedLiveRows !== liveRowCount) promotionNotReady();
+        try {
+            await assertNoActiveUniqueCollectionRelationDuplicatesInTx({
+                tx: input.tx,
+                accountId: input.accountId,
+                contract: target.contract,
+            });
+            await finalizePluginCollectionDerivedStateForPromotionInTx({
+                tx: input.tx,
+                accountId: input.accountId,
                 resolved: derived,
-                rows: preparedRows,
-                relations: preparedRelations,
-                maximumBatchRows,
             });
         } catch (error) {
             if (error instanceof PluginCollectionMutationOperationError) {
@@ -1083,17 +1276,29 @@ export async function promotePluginCollectionCandidatePreparationInTx(input: Rea
             }
             throw error;
         }
-        if (!promoted) promotionNotReady();
-        await retirePluginCollectionCandidatePreparationStagesTx({
-            tx: input.tx,
-            accountId: input.accountId,
-            sourceRowDbIds: allLiveRows.map((row) => row.id),
+        const finalTargetRows = await input.tx.pluginCollectionRow.aggregate({
+            where: {
+                ...liveRowWhere,
+                contractId: target.id,
+                schemaVersion: target.ref.schemaVersion,
+                contractDigest: target.ref.contractDigest,
+            },
+            _count: { _all: true },
+            _max: { revision: true },
         });
+        const finalRevision = finalTargetRows._max.revision;
+        if (
+            finalTargetRows._count._all !== liveRowCount
+            || finalRevision === null
+            || finalRevision !== maximumPromotedRevision
+        ) {
+            promotionNotReady();
+        }
         const change = {
             pluginId: target.ref.pluginId,
             collectionId: target.ref.collectionId,
             contractDigest: target.ref.contractDigest,
-            revision: Math.max(...allLiveRows.map((row) => row.revision + 1)),
+            revision: finalRevision,
         };
         const key = `${change.pluginId}\u0000${change.collectionId}`;
         const existing = changesByCollection.get(key);

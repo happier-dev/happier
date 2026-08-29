@@ -6,7 +6,6 @@ import {
     AutomationV3SettingsSchema,
     AutomationV3SettingsUpdateRequestSchema,
     AutomationV3WorkerClaimRequestSchema,
-    AutomationV3WorkerClaimResponseSchema,
     AutomationV3WorkerAssignmentsResponseSchema,
     AutomationV3WorkerExecutionDispatchSettlementRequestSchema,
     AutomationV3WorkerFailRequestSchema,
@@ -20,6 +19,7 @@ import {
     AutomationDefinitionCreateRequestSchema,
     AutomationDefinitionReconcileRequestSchema,
     AutomationDefinitionPatchRequestSchema,
+    AutomationDefinitionListRequestSchema,
     AutomationDefinitionListResponseSchema,
     AutomationTriggerCreateRequestSchema,
     AutomationTriggerDeleteRequestSchema,
@@ -44,7 +44,7 @@ import {
     getAutomation,
     getAutomationRun,
     listAutomationRuns,
-    listAutomations,
+    listAutomationDefinitionsPage,
     reconcileAutomationDefinition,
     runAutomationNow,
     setAutomationEnabled,
@@ -59,6 +59,7 @@ import {
 import {
     claimAutomationRun,
     heartbeatAutomationRun,
+    toAutomationV3WorkerClaimResponse,
 } from "@/app/automations/automationClaimService";
 import { listDaemonAssignments } from "@/app/automations/automationAssignmentService";
 import {
@@ -68,13 +69,11 @@ import {
 import {
     toAutomationRunV3DetailApiDto,
     toAutomationRunV3ListApiDto,
-    toAutomationRunCauseApiDto,
     toAutomationDefinitionDetailApiDto,
     toAutomationDefinitionListItemApiDto,
 } from "@/app/automations/automationApiProjection";
 import { loadAutomationEventStatusProjections } from "@/app/automations/automationEventStatusProjection";
 import { loadAutomationSessionLifecycleStatusProjections } from "@/app/automations/automationSessionLifecycleStatusProjection";
-import { loadAutomationRetiredTriggerProjections } from "@/app/automations/automationRetiredTriggerProjection";
 import { AutomationStoredContentReadError } from "@/app/automations/automationStoredContentRead";
 import { AutomationValidationError } from "@/app/automations/automationValidation";
 import { AutomationSessionLifecycleRegistrationValidationError } from "@/app/automations/automationSessionLifecycleRegistration";
@@ -128,17 +127,15 @@ async function toAutomationDefinitionDetailWithCurrentEventStatus(
     automation: AutomationListItem,
     accountCurrentness: AutomationAccountCurrentnessWitnessV1,
 ) {
-    const [eventProjections, lifecycleProjections, retiredProjections] = await Promise.all([
+    const [eventProjections, lifecycleProjections] = await Promise.all([
         loadAutomationEventStatusProjections({ automations: [automation] }),
         loadAutomationSessionLifecycleStatusProjections({ automations: [automation] }),
-        loadAutomationRetiredTriggerProjections({ automationIds: [automation.id] }),
     ]);
     return toAutomationDefinitionDetailApiDto(
         automation,
         accountCurrentness,
         eventProjections,
         lifecycleProjections.get(automation.id),
-        retiredProjections.get(automation.id),
     );
 }
 
@@ -160,21 +157,32 @@ export function registerAutomationV3Routes(
 ): void {
     app.get("/v3/automations", {
         preHandler: [app.authenticate, requirePresentUser],
-    }, async (request) => {
-        const rows = await listAutomations({ accountId: request.userId });
-        const [eventProjections, lifecycleProjections, retiredProjections] = await Promise.all([
-            loadAutomationEventStatusProjections({ automations: rows }),
-            loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
-            loadAutomationRetiredTriggerProjections({ automationIds: rows.map((row) => row.id) }),
-        ]);
-        return AutomationDefinitionListResponseSchema.parse({
-            automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
-                row,
-                eventProjections,
-                lifecycleProjections.get(row.id),
-                retiredProjections.get(row.id),
-            )),
-        });
+        schema: { querystring: AutomationDefinitionListRequestSchema },
+    }, async (request, reply) => {
+        try {
+            const query = AutomationDefinitionListRequestSchema.parse(request.query);
+            const page = await listAutomationDefinitionsPage({
+                accountId: request.userId,
+                limit: query.limit,
+                ...(query.cursor ? { cursor: query.cursor } : {}),
+            });
+            const rows = page.automations;
+            const [eventProjections, lifecycleProjections] = await Promise.all([
+                loadAutomationEventStatusProjections({ automations: rows }),
+                loadAutomationSessionLifecycleStatusProjections({ automations: rows }),
+            ]);
+            return AutomationDefinitionListResponseSchema.parse({
+                automations: rows.map((row) => toAutomationDefinitionListItemApiDto(
+                    row,
+                    eventProjections,
+                    lifecycleProjections.get(row.id),
+                )),
+                nextCursor: page.nextCursor,
+            });
+        } catch (error) {
+            if (!isAutomationDefinitionValidationError(error)) throw error;
+            return reply.code(400).send({ error: automationDefinitionValidationMessage(error) });
+        }
     });
 
     app.get("/v3/automations/settings", {
@@ -620,45 +628,7 @@ export function registerAutomationV3Routes(
                 expiresAt: publisher.proofExpiresAt,
             },
         });
-        if (!result.run || !result.accountCurrentness) {
-            return AutomationV3WorkerClaimResponseSchema.parse({
-                run: null,
-                automation: null,
-                accountCurrentness: null,
-            });
-        }
-        const cause = toAutomationRunCauseApiDto(result.run);
-        return AutomationV3WorkerClaimResponseSchema.parse({
-            run: {
-                id: result.run.id,
-                automationId: result.run.automationId,
-                triggerId: result.run.triggerId,
-                triggerRetired: result.run.triggerRetired ?? false,
-                attempt: result.run.attempt,
-                executionInputEnvelope: result.run.executionInputEnvelope,
-                // Reuse the sole immutable Run-cause projector rather than
-                // deriving cause from the mutable Automation definition.
-                cause,
-                ...(cause.kind === "conversation"
-                    && result.run.replyHandoffState === "awaitingResult"
-                    && typeof result.run.replyHandoffId === "string"
-                    && result.run.replyHandoffId.trim().length > 0
-                    ? {
-                        resultDelivery: {
-                            kind: "finalResult" as const,
-                            accountId: request.userId,
-                            handoffId: result.run.replyHandoffId,
-                        },
-                    }
-                    : {}),
-            },
-            automation: {
-                id: result.run.automation.id,
-                name: result.run.automation.name,
-                enabled: result.run.automation.enabled,
-            },
-            accountCurrentness: result.accountCurrentness,
-        });
+        return toAutomationV3WorkerClaimResponse(result, request.userId);
     });
 
     app.post("/v3/automations/runs/:runId/heartbeat", {

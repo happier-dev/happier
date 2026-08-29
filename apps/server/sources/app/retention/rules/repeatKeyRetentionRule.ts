@@ -6,5 +6,6 @@ export function createRepeatKeyRetentionRule() {
         modelName: 'repeatKey',
         primaryField: 'key',
         cutoffField: 'expiresAt',
+        intrinsicExpiry: true,
     });
 }

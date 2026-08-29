@@ -73,7 +73,7 @@ describe("plugin webhook Account-deletion cleanup", () => {
                 sourceInstanceId: `account-source-${suffix}`,
                 ensureIdempotencyKey: `account-idempotency-${suffix}`,
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: accountRouteId,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-account",

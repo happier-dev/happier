@@ -29,7 +29,7 @@ describe("plugin webhook route exact target projection", () => {
                 webhookContributionId: "github-events",
                 handlerActionId: "handle-webhook",
                 sourceInstanceId: "source-1",
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: "route-1",
                 routingKind: "accountEndpoint",
                 providerInstallationId: null,

@@ -195,7 +195,7 @@ describe("plugin webhook durable delivery admission", () => {
                 sourceInstanceId: "source-1",
                 ensureIdempotencyKey: "idempotency-delivery-0001",
                 ensureRequestFingerprint: "a".repeat(64),
-                setupKind: "githubAccountEndpointV1",
+                setupKind: "accountEndpointV1",
                 routeId: route.id,
                 routingKind: "accountEndpoint",
                 targetMachineId: "machine-1",

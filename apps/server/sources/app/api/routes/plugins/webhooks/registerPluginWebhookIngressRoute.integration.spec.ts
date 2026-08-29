@@ -11,6 +11,26 @@ import {
 } from "@/app/plugins/webhooks/admission";
 import { registerPluginWebhookIngressRoute } from "./registerPluginWebhookIngressRoute";
 
+// Spy on the route store: the sole route lookup must live inside signature
+// verifier preparation, so admission-order tests observe it without touching a
+// database. Ingest-injecting tests never reach it.
+const routeStoreState = vi.hoisted(() => ({
+    findActivePluginWebhookRouteV1: vi.fn(),
+}));
+const credentialStoreState = vi.hoisted(() => ({
+    readPluginWebhookVerificationCredentialsV1: vi.fn(),
+}));
+
+vi.mock("@/app/plugins/webhooks/routeStore", async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
+    findActivePluginWebhookRouteV1: routeStoreState.findActivePluginWebhookRouteV1,
+}));
+vi.mock("@/app/plugins/webhooks/credentialStore", async (importOriginal) => ({
+    ...(await importOriginal<Record<string, unknown>>()),
+    readPluginWebhookVerificationCredentialsV1:
+        credentialStoreState.readPluginWebhookVerificationCredentialsV1,
+}));
+
 const ENABLED_ENV = {
     HAPPIER_FEATURE_PLUGINS__ENABLED: "1",
     HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ENABLED: "1",
@@ -47,14 +67,6 @@ describe("public plugin webhook ingress route", () => {
             ingest,
             onCommittedWake,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-1",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: vi.fn(async () => {}) })) },
         });
 
@@ -87,14 +99,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-stream", duplicate: false })),
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-stream",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: vi.fn(async () => {}) })) },
         }, (app) => {
             app.addHook("preHandler", async (request: FastifyRequest) => {
@@ -115,23 +119,26 @@ describe("public plugin webhook ingress route", () => {
         expect(sawRawStream).toBe(true);
     });
 
-    it("reserves the declared raw-body bytes before route preparation or body parsing", async () => {
-        const localRelease = vi.fn();
-        const acquire = vi.fn(() => ({ release: localRelease }));
-        const prepareRoute = vi.fn(async () => ({
-            route: {
-                routeId: "route-raw-body-bytes",
-                verifierKind: "github_hmac_sha256_v1" as const,
-                routingKind: "providerInstallation" as const,
-                policyVersion: 1 as const,
-            },
-        }));
+    it("reserves the declared raw-body bytes before distributed admission or body parsing", async () => {
+        const order: string[] = [];
+        const localRelease = vi.fn(() => order.push("localRelease"));
+        const acquire = vi.fn((bytes: number) => {
+            order.push(`local:${bytes}`);
+            return { release: localRelease };
+        });
         const app = await createApp({
             env: ENABLED_ENV,
-            ingest: vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-raw-body-bytes", duplicate: false })),
+            ingest: vi.fn(async () => {
+                order.push("ingest");
+                return { kind: "accepted" as const, deliveryId: "delivery-raw-body-bytes", duplicate: false };
+            }),
             processAdmission: { acquire },
-            prepareRoute,
-            distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: vi.fn(async () => {}) })) },
+            distributedAdmission: {
+                acquire: vi.fn(async () => {
+                    order.push("distributed");
+                    return { ok: true as const, release: vi.fn(async () => {}) };
+                }),
+            },
         });
         const body = Buffer.from("{}", "utf8");
 
@@ -143,8 +150,72 @@ describe("public plugin webhook ingress route", () => {
         })).resolves.toMatchObject({ statusCode: 202 });
 
         expect(acquire).toHaveBeenCalledWith(body.byteLength);
-        expect(prepareRoute).toHaveBeenCalledTimes(1);
+        expect(order.indexOf(`local:${body.byteLength}`)).toBeLessThan(order.indexOf("distributed"));
+        expect(order.indexOf("distributed")).toBeLessThan(order.indexOf("ingest"));
         expect(localRelease).toHaveBeenCalledTimes(1);
+        expect(order.filter((step) => step === "distributed")).toHaveLength(1);
+    });
+
+    it("acquires distributed public-route pressure from the opaque route identity before any route lookup", async () => {
+        // r0.20 admits the shared public route by its opaque URL identity before
+        // any database or credential work. The route resolution belongs solely
+        // to signature verifier preparation, so a matching identity performs
+        // exactly one lookup after admission and an unknown identity still pays
+        // the shared pressure scope instead of a cheaper database probe.
+        routeStoreState.findActivePluginWebhookRouteV1.mockReset();
+        const order: string[] = [];
+        routeStoreState.findActivePluginWebhookRouteV1.mockImplementation(async (opaqueRouteId: string) => {
+            order.push(`route:${opaqueRouteId}`);
+            return opaqueRouteId === "opaque-ordered-valid"
+                ? {
+                    routeId: "opaque-ordered-valid",
+                    verifierKind: "github_hmac_sha256_v1" as const,
+                    routingKind: "providerInstallation" as const,
+                    policyVersion: 1 as const,
+                }
+                : null;
+        });
+        credentialStoreState.readPluginWebhookVerificationCredentialsV1.mockReset();
+        credentialStoreState.readPluginWebhookVerificationCredentialsV1.mockImplementation(async () => {
+            order.push("credentials");
+            return [{ credentialVersionId: "credential-v1", secret: "test-secret" }];
+        });
+        const app = await createApp({
+            env: ENABLED_ENV,
+            processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
+            distributedAdmission: {
+                acquire: vi.fn(async () => {
+                    order.push("distributed");
+                    return { ok: true as const, release: vi.fn(async () => {}) };
+                }),
+            },
+        });
+        const post = (opaqueRouteId: string) => app.inject({
+            method: "POST" as const,
+            url: `/v1/plugins/webhooks/${opaqueRouteId}`,
+            headers: {
+                "content-type": "application/json",
+                "x-github-delivery": "delivery-ordering-proof",
+                "x-hub-signature-256": `sha256=${"0".repeat(64)}`,
+            },
+            payload: Buffer.from("{}", "utf8"),
+        });
+
+        // Matching route identity: preparation owns the one route lookup and
+        // the one credential lookup. The deliberately invalid signature stops
+        // at the typed 401 after the body has streamed through that verifier.
+        await expect(post("opaque-ordered-valid")).resolves.toMatchObject({ statusCode: 401 });
+        // Unknown route identity: same admission-first path, then the typed 404.
+        await expect(post("opaque-ordered-unknown")).resolves.toMatchObject({ statusCode: 404 });
+
+        expect(order).toEqual([
+            "distributed",
+            "route:opaque-ordered-valid",
+            "credentials",
+            "distributed",
+            "route:opaque-ordered-unknown",
+        ]);
+        expect(credentialStoreState.readPluginWebhookVerificationCredentialsV1).toHaveBeenCalledTimes(1);
     });
 
     it("uses the one lower-only host ingress policy for process and distributed admission", async () => {
@@ -161,14 +232,6 @@ describe("public plugin webhook ingress route", () => {
                 HAPPIER_FEATURE_PLUGINS_WEBHOOKS__ACCOUNT_CONCURRENCY: "4",
             },
             ingest: vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-policy", duplicate: false })),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-policy",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "accountEndpoint" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: distributedAcquire },
         });
 
@@ -220,14 +283,6 @@ describe("public plugin webhook ingress route", () => {
             },
             ingest: ingest as never,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-policy-distributed",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "accountEndpoint" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: distributedAcquire },
         });
 
@@ -243,7 +298,8 @@ describe("public plugin webhook ingress route", () => {
         // belong to one tenant and are charged after the request authenticated.
         expect(distributedAcquire).toHaveBeenCalledTimes(2);
         expect(distributedAcquire.mock.calls[0]?.[0]).toEqual([
-            expect.objectContaining({ ratePerMinute: 5, concurrency: 2 }),
+            expect.objectContaining({ key: expect.stringMatching(/^public-ingress:/u), ratePerMinute: 5, concurrency: 2 }),
+            expect.objectContaining({ key: expect.stringMatching(/^route:/u), ratePerMinute: 5, concurrency: 2 }),
         ]);
         expect(distributedAcquire.mock.calls[1]?.[0]).toEqual([
             expect.objectContaining({ ratePerMinute: 3, concurrency: 1 }),
@@ -289,14 +345,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: ingest as never,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async (opaqueRouteId) => ({
-                route: {
-                    routeId: `route-${opaqueRouteId}`,
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "accountEndpoint" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: distributedAcquire },
         });
 
@@ -309,10 +357,11 @@ describe("public plugin webhook ingress route", () => {
             })).resolves.toMatchObject({ statusCode: 202 });
         }
 
-        const routeScopes = acquiredScopes.filter((scopes) => scopes.length === 1);
-        const tenantScopes = acquiredScopes.filter((scopes) => scopes.length === 2);
+        const routeScopes = acquiredScopes.filter((scopes) => scopes.length === 2 && scopes.some((scope) => scope.key.startsWith('public-ingress:')) && scopes.some((scope) => scope.key.startsWith('route:')));
+        const tenantScopes = acquiredScopes.filter((scopes) => scopes.length === 2 && scopes.some((scope) => scope.key.startsWith('endpoint:')));
         expect(routeScopes).toHaveLength(2);
-        expect(routeScopes[0]?.[0]?.key).not.toBe(routeScopes[1]?.[0]?.key);
+        expect(routeScopes[0]?.[0]?.key).toBe(routeScopes[1]?.[0]?.key);
+        expect(routeScopes[0]?.[1]?.key).not.toBe(routeScopes[1]?.[1]?.key);
         expect(tenantScopes).toHaveLength(2);
         expect(tenantScopes[0]?.[0]?.key).not.toBe(tenantScopes[1]?.[0]?.key);
         expect(tenantScopes[0]?.[1]?.key).toBe(tenantScopes[1]?.[1]?.key);
@@ -336,14 +385,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-unverified",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "accountEndpoint" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: distributedAcquire },
         });
 
@@ -355,14 +396,17 @@ describe("public plugin webhook ingress route", () => {
         })).resolves.toMatchObject({ statusCode: 401 });
 
         expect(distributedAcquire).toHaveBeenCalledTimes(1);
-        expect(distributedAcquire.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ key: expect.stringMatching(/^route:/u) })]);
+        expect(distributedAcquire.mock.calls[0]?.[0]).toEqual([
+            expect.objectContaining({ key: expect.stringMatching(/^public-ingress:/u) }),
+            expect.objectContaining({ key: expect.stringMatching(/^route:/u) }),
+        ]);
     });
 
-    it("applies route pressure per route so one exhausted route never consumes an unrelated route's budget", async () => {
-        // A stateful stand-in for the Redis admission owner: each scope key has
-        // its own rate window of one request. A process-wide route budget — a
-        // plausible wrong implementation — would refuse the second, unrelated
-        // route exactly like the exhausted one.
+    it("applies aggregate public-ingress pressure together with the per-route scope", async () => {
+        // A stateful stand-in for the Redis admission owner: every request pays
+        // both the aggregate public-ingress scope and its route-specific scope.
+        // Unknown or rotating route IDs therefore cannot sidestep the shared
+        // public-ingress pressure by minting ever-new per-route buckets.
         const acquisitionsByKey = new Map<string, number>();
         const distributedAdmission = {
             acquire: async (scopes: readonly PluginWebhookDistributedScopeV1[]) => {
@@ -387,14 +431,6 @@ describe("public plugin webhook ingress route", () => {
             },
             ingest: vi.fn(async () => ({ kind: "accepted" as const, deliveryId: "delivery-route-pressure", duplicate: false })),
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 4, maxWorkingBytes: chargePluginWebhookWorkingBytesV1(4_096) }),
-            prepareRoute: vi.fn(async (opaqueRouteId: string) => ({
-                route: {
-                    routeId: `route-${opaqueRouteId}`,
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission,
         });
         const post = (opaqueRouteId: string) => app.inject({
@@ -406,7 +442,7 @@ describe("public plugin webhook ingress route", () => {
 
         await expect(post("opaque-route-pressure-one")).resolves.toMatchObject({ statusCode: 202 });
         await expect(post("opaque-route-pressure-one")).resolves.toMatchObject({ statusCode: 429 });
-        await expect(post("opaque-route-pressure-two")).resolves.toMatchObject({ statusCode: 202 });
+        await expect(post("opaque-route-pressure-two")).resolves.toMatchObject({ statusCode: 429 });
     });
 
     it("maps authenticated tenant-admission refusal to its typed public response and releases the route reservation", async () => {
@@ -444,20 +480,14 @@ describe("public plugin webhook ingress route", () => {
                         : { kind: "rejected" as const, statusCode: 503 as const, code: "unavailable" as const };
                 }),
                 processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-                prepareRoute: vi.fn(async () => ({
-                    route: {
-                        routeId: `route-tenant-refusal-${code}`,
-                        verifierKind: "github_hmac_sha256_v1" as const,
-                        routingKind: "accountEndpoint" as const,
-                        policyVersion: 1 as const,
-                    },
-                })),
                 distributedAdmission: {
-                    acquire: vi.fn(async (scopes: readonly PluginWebhookDistributedScopeV1[]) => (
-                        scopes.length === 2
+                    acquire: vi.fn(async (scopes: readonly PluginWebhookDistributedScopeV1[]) => {
+                        const keys = scopes.map((scope) => scope.key);
+                        return keys.some((key) => key.startsWith("endpoint:"))
+                            && keys.some((key) => key.startsWith("account:"))
                             ? { ok: false as const, code, retryAfterMs }
-                            : { ok: true as const, release: distributedRelease }
-                    )),
+                            : { ok: true as const, release: distributedRelease };
+                    }),
                 },
             });
             return { app, localRelease, distributedRelease };
@@ -508,14 +538,6 @@ describe("public plugin webhook ingress route", () => {
                     return lease ? { release: () => { localRelease(); lease.release(); } } : null;
                 },
             },
-            prepareRoute: vi.fn(async (opaqueRouteId) => ({
-                route: {
-                    routeId: `route-${opaqueRouteId}`,
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: distributedRelease })) },
         });
         const post = (opaqueRouteId: string) => app.inject({
@@ -573,14 +595,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: vi.fn(),
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-client-abort",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: distributedRelease })) },
         });
         await registration;
@@ -629,7 +643,7 @@ describe("public plugin webhook ingress route", () => {
         await handling;
     });
 
-    it("cancels stalled route preparation when Fastify reports that the client aborted", async () => {
+    it("cancels stalled distributed admission when Fastify reports that the client aborted", async () => {
         let routeOptions: any;
         let registration: Promise<void> | null = null;
         const scoped = {
@@ -646,25 +660,29 @@ describe("public plugin webhook ingress route", () => {
             }),
         };
         const localRelease = vi.fn();
-        let resolvePreparation!: (value: null) => void;
-        let markPreparationStarted!: () => void;
-        const preparationStarted = new Promise<void>((resolve) => { markPreparationStarted = resolve; });
+        const distributedRelease = vi.fn(async () => {});
+        let resolveAdmission!: (value: Readonly<{ ok: true; release(): Promise<void> }>) => void;
+        let markAdmissionStarted!: () => void;
+        const admissionStarted = new Promise<void>((resolve) => { markAdmissionStarted = resolve; });
         registerPluginWebhookIngressRoute(app as never, {
             env: ENABLED_ENV,
             ingest: vi.fn(),
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => {
-                markPreparationStarted();
-                return await new Promise<null>((resolve) => { resolvePreparation = resolve; });
-            }),
-            distributedAdmission: null,
+            distributedAdmission: {
+                acquire: vi.fn(() => {
+                    markAdmissionStarted();
+                    return new Promise<Readonly<{ ok: true; release(): Promise<void> }>>((resolve) => {
+                        resolveAdmission = resolve;
+                    });
+                }),
+            },
         });
         await registration;
 
         const request = {
             query: {},
             headers: { "content-length": "1", "content-type": "application/octet-stream" },
-            params: { opaqueRouteId: "opaque-client-abort-during-prepare" },
+            params: { opaqueRouteId: "opaque-client-abort-during-admission" },
             raw: { complete: false, destroy: vi.fn() },
         };
         const reply: any = {
@@ -679,7 +697,7 @@ describe("public plugin webhook ingress route", () => {
         const onRequest = routeOptions.onRequest(request, reply);
 
         try {
-            await preparationStarted;
+            await admissionStarted;
             await routeOptions.onRequestAbort(request);
 
             await expect(Promise.race([
@@ -691,25 +709,32 @@ describe("public plugin webhook ingress route", () => {
             expect(reply.code).toHaveBeenCalledWith(503);
             expect(localRelease).toHaveBeenCalledTimes(1);
         } finally {
-            resolvePreparation(null);
-            await onRequest;
+            // A reservation that resolves after its request was abandoned must
+            // still release through the eventual-settlement guard.
+            resolveAdmission({ ok: true, release: distributedRelease });
+            await vi.waitFor(() => expect(distributedRelease).toHaveBeenCalledTimes(1));
+            await onRequest.catch(() => undefined);
         }
     });
 
-    it("cancels route preparation when the live Fastify request stream disconnects", async () => {
+    it("cancels distributed admission when the live Fastify request stream disconnects", async () => {
         const localRelease = vi.fn();
-        let markPreparationStarted!: () => void;
-        const preparationStarted = new Promise<void>((resolve) => { markPreparationStarted = resolve; });
-        let resolvePreparation!: (value: null) => void;
+        const distributedRelease = vi.fn(async () => {});
+        let markAdmissionStarted!: () => void;
+        const admissionStarted = new Promise<void>((resolve) => { markAdmissionStarted = resolve; });
+        let resolveAdmission!: (value: Readonly<{ ok: true; release(): Promise<void> }>) => void;
         const app = await createApp({
             env: ENABLED_ENV,
             ingest: vi.fn(),
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => {
-                markPreparationStarted();
-                return await new Promise<null>((resolve) => { resolvePreparation = resolve; });
-            }),
-            distributedAdmission: null,
+            distributedAdmission: {
+                acquire: vi.fn(() => {
+                    markAdmissionStarted();
+                    return new Promise<Readonly<{ ok: true; release(): Promise<void> }>>((resolve) => {
+                        resolveAdmission = resolve;
+                    });
+                }),
+            },
         });
         await app.listen({ host: "127.0.0.1", port: 0 });
         const address = app.server.address();
@@ -734,7 +759,7 @@ describe("public plugin webhook ingress route", () => {
             });
         });
         try {
-            await preparationStarted;
+            await admissionStarted;
             socket.destroy();
 
             await vi.waitFor(() => {
@@ -742,11 +767,12 @@ describe("public plugin webhook ingress route", () => {
             }, { timeout: 1_000 });
         } finally {
             socket.destroy();
-            resolvePreparation(null);
+            resolveAdmission({ ok: true, release: distributedRelease });
+            await vi.waitFor(() => expect(distributedRelease).toHaveBeenCalledTimes(1));
         }
     });
 
-    it("bounds a stalled route-resolution request before body handling and releases its local reservation", async () => {
+    it("bounds a stalled distributed-admission request before body handling and releases its local reservation", async () => {
         vi.useFakeTimers();
         const localRelease = vi.fn();
         const ingest = vi.fn();
@@ -754,8 +780,7 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest,
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => await new Promise<never>(() => {})),
-            distributedAdmission: null,
+            distributedAdmission: { acquire: vi.fn(async () => await new Promise<never>(() => {})) },
         });
 
         const response = app.inject({
@@ -780,14 +805,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: vi.fn(),
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-late-distributed",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: {
                 acquire: vi.fn(() => new Promise<Readonly<{ ok: true; release(): Promise<void> }>>((resolve) => {
                     resolveDistributed = resolve;
@@ -816,7 +833,6 @@ describe("public plugin webhook ingress route", () => {
             env: {},
             ingest: disabledIngest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: 1 }),
-            prepareRoute: vi.fn(),
             distributedAdmission: null,
         });
         expect((await disabled.inject({
@@ -832,7 +848,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: fullIngest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: 1 }),
-            prepareRoute: vi.fn(),
             distributedAdmission: null,
         });
         const response = await full.inject({
@@ -852,7 +867,6 @@ describe("public plugin webhook ingress route", () => {
             env: { ...ENABLED_ENV, HAPPIER_SERVER_FLAVOR: "full" },
             ingest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(),
         });
 
         const response = await app.inject({
@@ -873,7 +887,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(),
             distributedAdmission: null,
         });
 
@@ -898,7 +911,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(),
             distributedAdmission: null,
         });
 
@@ -922,7 +934,6 @@ describe("public plugin webhook ingress route", () => {
             env: {},
             ingest,
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 1, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(),
             distributedAdmission: null,
         });
 
@@ -946,14 +957,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: vi.fn(async () => ({ kind: "rejected" as const, statusCode: 401 as const, code: "unauthorized" as const })),
             processAdmission: { acquire: vi.fn(() => ({ release: localRelease })) },
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-1",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "accountEndpoint" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
             distributedAdmission: { acquire: vi.fn(async () => ({ ok: true as const, release: distributedRelease })) },
         });
         const response = await app.inject({
@@ -973,14 +976,6 @@ describe("public plugin webhook ingress route", () => {
             env: ENABLED_ENV,
             ingest: vi.fn(),
             processAdmission: createPluginWebhookProcessAdmissionV1({ maxRequests: 2, maxWorkingBytes: TEST_PROCESS_WORKING_BYTES }),
-            prepareRoute: vi.fn(async () => ({
-                route: {
-                    routeId: "route-1",
-                    verifierKind: "github_hmac_sha256_v1" as const,
-                    routingKind: "providerInstallation" as const,
-                    policyVersion: 1 as const,
-                },
-            })),
         };
         const rate = await createApp({
             ...base,

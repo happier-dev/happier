@@ -265,10 +265,13 @@ describe("Session server-start Automation ingress on SQLite", () => {
         });
 
         await forwardStarted.promise;
+        // The seeded Run is running, so the refined canonical cancellation
+        // settles it outcome-uncertain; the committed Session still retains
+        // its exact canonical identity.
         await expect(cancelAutomationRun({
             accountId: seeded.account.id,
             runId: seeded.run.id,
-        })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+        })).resolves.toEqual(expect.objectContaining({ state: "outcome_uncertain" }));
         targetResult.resolve(sessionStartSuccess(committedSession.id, seeded.targetMachineId));
 
         // The caller never observes this promise until after the durable
@@ -277,7 +280,7 @@ describe("Session server-start Automation ingress on SQLite", () => {
             await expect(db.automationRun.findUniqueOrThrow({
                 where: { id: seeded.run.id },
                 select: { state: true, producedSessionId: true },
-            })).resolves.toEqual({ state: "cancelled", producedSessionId: committedSession.id });
+            })).resolves.toEqual({ state: "outcome_uncertain", producedSessionId: committedSession.id });
         });
         await expect(sourceAck).resolves.toEqual(expect.objectContaining({
             v: 1,
@@ -306,7 +309,7 @@ describe("Session server-start Automation ingress on SQLite", () => {
         await expect(cancelAutomationRun({
             accountId: seeded.account.id,
             runId: seeded.run.id,
-        })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+        })).resolves.toEqual(expect.objectContaining({ state: "outcome_uncertain" }));
         const committedSession = await createCanonicalSession(seeded);
         targetResult.resolve(sessionStartSuccess(committedSession.id, seeded.targetMachineId));
 
@@ -314,7 +317,7 @@ describe("Session server-start Automation ingress on SQLite", () => {
             await expect(db.automationRun.findUniqueOrThrow({
                 where: { id: seeded.run.id },
                 select: { state: true, producedSessionId: true },
-            })).resolves.toEqual({ state: "cancelled", producedSessionId: committedSession.id });
+            })).resolves.toEqual({ state: "outcome_uncertain", producedSessionId: committedSession.id });
         });
         await expect(sourceAck).resolves.toEqual(expect.objectContaining({
             v: 1,
@@ -331,10 +334,12 @@ describe("Session server-start Automation ingress on SQLite", () => {
             // discriminate the Run-claim arm of the pre-submit guard.
             name: "the user cancels the Run",
             moveRun: async (seeded: Awaited<ReturnType<typeof seedCrossMachineRun>>) => {
+                // A running Run settles outcome-uncertain under canonical
+                // cancellation; the pre-submit guard must still refuse it.
                 await expect(cancelAutomationRun({
                     accountId: seeded.account.id,
                     runId: seeded.run.id,
-                })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+                })).resolves.toEqual(expect.objectContaining({ state: "outcome_uncertain" }));
             },
         },
         {

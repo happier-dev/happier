@@ -37,6 +37,13 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         replacementActorUserId: params.actorUserId,
     };
 
+    // Replacement is reversible machine-availability metadata, not permanent
+    // revocation. Preserve Automation definition assignments and immutable Run
+    // snapshots so clearing replacement naturally makes the old machine
+    // eligible again. The canonical machine-availability owner keeps a
+    // replaced machine out of new admission and claim while this marker is
+    // present; permanent revoke remains the sole destructive Automation
+    // assignment cleanup and stranded-Run settlement boundary.
     if (params.source === "automatic") {
         const update = await params.tx.machine.updateMany({
             where: {
