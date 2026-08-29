@@ -14,7 +14,7 @@ import {
 import {
     CONVERSATION_OUTBOUND_TEXT_UNITS_V1,
 } from '../bounds.js';
-import { ConversationConnectionSelectableTransportV1ProtocolSchema } from './connections.js';
+import { ConversationConnectionCreateSelectableTransportV1ProtocolSchema } from './connections.js';
 import { ConversationEndpointDisplayLabelV1ProtocolSchema } from '../provider/resolution.js';
 import {
     ConversationQualifiedConnectedAccountRefV1ProtocolSchema,
@@ -38,8 +38,8 @@ export type { ConversationProviderSetupRemediationV1 } from '../provider/setup.j
 const targetedContributionSelectionV1 = PluginTargetedContributionSelectionV1Schema;
 
 const conversationConnectionPrepareSelectableTransportsV1 = defineProtocolUniqueArray(
-    ConversationConnectionSelectableTransportV1ProtocolSchema,
-    { minItems: 1, maxItems: 2 },
+    ConversationConnectionCreateSelectableTransportV1ProtocolSchema,
+    { minItems: 1, maxItems: 3 },
 );
 
 /** @internal Relative-only input for no-invoke provider setup selection. */
@@ -63,7 +63,7 @@ export const ConversationConnectionPrepareInputV1JsonSchema: PluginJsonSchema =
 const conversationConnectionPrepareReadyV1 = defineProtocolObject({
     kind: defineProtocolLiteral('ready'),
     supportedTransports: conversationConnectionPrepareSelectableTransportsV1,
-    recommendedTransport: ConversationConnectionSelectableTransportV1ProtocolSchema,
+    recommendedTransport: ConversationConnectionCreateSelectableTransportV1ProtocolSchema,
     overlapSafety: ConversationConnectionOverlapSafetyV1ProtocolSchema,
     replayContinuity: ConversationConnectionReplayContinuityV1ProtocolSchema,
     outboundTextLimit: ConversationOutboundTextLimitV1ProtocolSchema,

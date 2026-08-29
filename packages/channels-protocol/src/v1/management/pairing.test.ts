@@ -158,14 +158,17 @@ describe('Channels V1 pairing cancellation management contract', () => {
         });
     });
 
-    it('requires pairing creation to name the conversation the binding will address', () => {
+    it('requires pairing creation to name the conversation the binding will address and one opaque request key', () => {
         // The `/pair` proof arrives in a private message. Without a selected
         // destination there is nothing else for the binding to address, so the
         // private message becomes the binding — which is never what the person
-        // chose when they picked a group.
+        // chose when they picked a group. The client-generated request key is
+        // what makes a response-loss retry rejoin its own challenge instead of
+        // adopting another device's superseding one.
         const createInput = {
             connectionId: 'connection-1',
             expectedConnectionRevision: 7,
+            pairingRequestId: 'pairing-request-1',
             endpointSelection: {
                 query: 'Ops room',
                 selected: { kind: 'shared', audience: 'shared', id: 'room-1' },
@@ -186,6 +189,12 @@ describe('Channels V1 pairing cancellation management contract', () => {
 
         const { endpointSelection: _omitted, ...withoutDestination } = createInput;
         expect(ConversationPairingCreateInputV1Schema.safeParse(withoutDestination).success).toBe(false);
+        const { pairingRequestId: _omittedRequestId, ...withoutRequestKey } = createInput;
+        expect(ConversationPairingCreateInputV1Schema.safeParse(withoutRequestKey).success).toBe(false);
+        expect(ConversationPairingCreateInputV1Schema.safeParse({
+            ...createInput,
+            pairingRequestId: '',
+        }).success).toBe(false);
         expect(ConversationPairingCreateInputV1Schema.safeParse({
             ...createInput,
             // A resolved endpoint is a provider answer, never a caller claim.
@@ -197,6 +206,7 @@ describe('Channels V1 pairing cancellation management contract', () => {
             required: [
                 'connectionId',
                 'expectedConnectionRevision',
+                'pairingRequestId',
                 'endpointSelection',
                 'target',
             ],
@@ -211,6 +221,7 @@ describe('Channels V1 pairing cancellation management contract', () => {
                 challengeId: 'challenge-1',
                 connectionId: 'connection-1',
                 expectedConnectionRevision: 7,
+                pairingRequestId: 'pairing-request-1',
                 expiresAt: 1_700_000_600_000,
                 attemptsRemaining: 5,
                 destinationLabel: 'Example destination',
@@ -241,6 +252,13 @@ describe('Channels V1 pairing cancellation management contract', () => {
             proposals: [{
                 ...projection.proposals[0],
                 state: 'consumed',
+            }],
+        }).success).toBe(false);
+        expect(ConversationPairingResourceV1Schema.safeParse({
+            ...projection,
+            challenges: [{
+                ...projection.challenges[0],
+                pairingRequestId: '',
             }],
         }).success).toBe(false);
     });

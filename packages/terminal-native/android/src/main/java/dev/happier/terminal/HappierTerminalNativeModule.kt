@@ -29,7 +29,6 @@ class HappierTerminalNativeModule : Module() {
         "detail" to diagnostic.detail,
         "fallbackRenderer" to diagnostic.fallbackRenderer,
         "fallbackRequired" to diagnostic.fallbackRequired,
-        "engineeringQaOverride" to diagnostic.engineeringQaOverride,
         "requiredModules" to diagnostic.requiredModules,
         "forbiddenModules" to diagnostic.forbiddenModules,
         "remoteSessionAdapterRequired" to diagnostic.remoteSessionAdapterRequired,

@@ -106,7 +106,9 @@ export type {
     ConversationBindingUpdateResultV1,
 } from './bindings.js';
 export {
+    CONVERSATION_CONNECTION_CREATE_SELECTABLE_TRANSPORTS_V1,
     CONVERSATION_CONNECTION_SELECTABLE_TRANSPORTS_V1,
+    CONVERSATION_CONNECTION_WEBHOOK_SOURCE_INSTANCE_ID_PREFIX_V1,
     ConversationConnectionCreateInputV1JsonSchema,
     ConversationConnectionCreateInputV1Schema,
     ConversationConnectionCreateResultV1JsonSchema,
@@ -123,13 +125,19 @@ export {
     ConversationConnectionUpdateInputV1Schema,
     ConversationConnectionUpdateResultV1JsonSchema,
     ConversationConnectionUpdateResultV1Schema,
+    conversationConnectionWebhookSourceInstanceIdV1,
+    isConversationConnectionCreateSelectableTransportV1,
     isConversationConnectionSelectableTransportV1,
 } from './connections.js';
 export type {
     ConversationConnectionCreateInputV1,
     ConversationConnectionCreateResultV1,
+    ConversationConnectionCreateSelectableTransportV1,
     ConversationConnectionDeleteInputV1,
     ConversationConnectionDeleteResultV1,
+    ConversationConnectionEndpointRequiredResultV1,
+    ConversationConnectionWebhookEndpointSetupRequiredResultV1,
+    ConversationConnectionSelectableTransportV1,
     ConversationConnectionTransferInputV1,
     ConversationConnectionTransferResultV1,
     ConversationConnectionUpdateInputV1,
@@ -242,9 +250,10 @@ export const ConversationConnectionPrepareManagementActionDeclarationV1: Convers
 });
 
 /**
- * The exact manifest-facing declaration for non-durable connection creation.
- * Durable-push create stays withheld until its generic endpoint lifecycle is
- * represented by the public SDK owner.
+ * The exact manifest-facing declaration for connection creation. Durable push
+ * is part of this one contract through its strict endpoint-ensure continuation
+ * arm; the core owns the preallocated identity, ensure facts, and the
+ * correspondence proof, so no caller-owned endpoint authority exists.
  */
 export const ConversationConnectionCreateManagementActionDeclarationV1: ConversationActionDeclarationV1 = Object.freeze({
     inputSchema: ConversationConnectionCreateInputV1Schema.jsonSchema,
@@ -348,10 +357,9 @@ export const ConversationDeliveryResolveManagementActionDeclarationV1: Conversat
 });
 
 /**
- * Present-user declarations whose schemas are fully executable today.
- * Create admits only the non-durable arm. Durable-push create remains held on
- * the generic endpoint lifecycle and gains no local grammar or fallback branch
- * here.
+ * Present-user declarations whose schemas are fully executable today. Create
+ * admits the non-durable transports directly and durable push only through
+ * its strict continuation arm.
  */
 export const CONVERSATION_MANAGEMENT_ACTION_DECLARATIONS_V1: ConversationManagementActionDeclarationsV1 = Object.freeze({
     connectionCreate: ConversationConnectionCreateManagementActionDeclarationV1,

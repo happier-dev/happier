@@ -1,20 +1,17 @@
 /**
- * The one way a Triage source bounds an invocation it owns.
+ * The one way a Triage source composes an explicitly owned invocation bound.
  *
- * `CONTRACT.md` §5.2 gives each source plugin — not Triage, and not the host — a positive private
- * deadline for every mounted detail read and every exact provider Action, and supplies neither a
- * public field nor a host timer to do it with. What that leaves each source to build is the same
- * three lines every time, and it is built here once for the same reason
+ * Caller cancellation is the default lifetime. When a real platform or provider boundary supplies
+ * an additional positive duration, the signal/timer cleanup is built here once for the same reason
  * {@link admitForgeRequestUrl} is: the rule does not vary by forge, and the copy that quietly
  * loses a `clearTimeout` or an `unref` is the one nobody reads again.
  *
- * What DOES vary — how long each operation may take, and what the timeout is called in this
- * forge's failure vocabulary — stays with the source. This module owns no constant and no
- * classification; it composes two signals and names the reason.
+ * Failure classification and any real external deadline stay with the caller. This owner composes
+ * and cleans up an explicitly supplied bound; it does not invent a product latency policy.
  */
 
 /**
- * The caller's signal, additionally bounded by one deadline this source owns.
+ * The caller's signal, optionally bounded by one explicitly supplied deadline.
  *
  * The deadline aborts with a `TimeoutError` so the source's own classifier can tell it apart from
  * a caller cancellation: *this panel gave up on the provider* and *you navigated away* are
@@ -26,7 +23,7 @@
  *
  * It bounds the whole INVOCATION rather than each request, because that is what a person
  * experiences: several calls behind one panel, or behind one button, must not be allowed to wait
- * several times the number the source chose.
+ * several times the supplied external/caller budget.
  */
 export type BoundedInvocation = Readonly<{
   signal: AbortSignal;
@@ -35,8 +32,15 @@ export type BoundedInvocation = Readonly<{
 
 export function createBoundedInvocation(input: Readonly<{
   callerSignal?: AbortSignal;
-  timeoutMs: number;
+  /** A positive bound supplied by a real caller/external owner; omission adds no timer. */
+  timeoutMs?: number;
 }>): BoundedInvocation {
+  if (input.timeoutMs === undefined) {
+    return Object.freeze({
+      signal: input.callerSignal ?? new AbortController().signal,
+      dispose(): void {},
+    });
+  }
   const deadline = new AbortController();
   let disposed = false;
   let timer: ReturnType<typeof setTimeout>;
@@ -60,7 +64,7 @@ export function createBoundedInvocation(input: Readonly<{
 }
 
 /**
- * Whether an abort came from a source-owned deadline rather than from the caller.
+ * Whether an abort came from an explicitly supplied deadline rather than ordinary cancellation.
  *
  * Sources classify their own transport failures, so this answers only the one question the shared
  * deadline above creates; the failure class and code it maps to stay with the source.

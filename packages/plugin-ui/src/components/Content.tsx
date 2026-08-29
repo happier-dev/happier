@@ -9,6 +9,7 @@ import {
   HappierMarkdown,
 } from '../presentation/content/Markdown.js';
 import { useHappierCodeBlockBehavior } from '../presentation/content/CodeBlock.js';
+import { resolveHappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 import { Button } from './Button.js';
 
 export type MarkdownProps = Readonly<{
@@ -42,6 +43,50 @@ export type CodeBlockProps = Readonly<{
   copiedLabel?: string;
   testID?: string;
 }>;
+
+export type DiffViewerProps = Readonly<{
+  /** A standard unified diff. Happier's mounted renderer owns parsing and presentation. */
+  unifiedDiff: string;
+  /** Optional path used for language-aware presentation. */
+  filePath?: string;
+  /** A short visible description that also orients screen-reader users. */
+  label: string;
+  testID?: string;
+}>;
+
+/**
+ * A read-only unified diff for plugin surfaces.
+ *
+ * The public contract intentionally excludes review drafts, comments, selection,
+ * caches, and parser options. Mounted product surfaces delegate those rendering
+ * decisions to Happier's existing diff owner; isolated author renders keep an
+ * honest selectable literal fallback.
+ */
+export function DiffViewer({
+  unifiedDiff,
+  filePath,
+  label,
+  testID,
+}: DiffViewerProps): ReactElement {
+  const host = useOptionalPluginUiPresentationHost();
+  const request = resolveHappierDiffViewerRequest({
+    unifiedDiff,
+    ...(filePath === undefined ? {} : { filePath }),
+    ...(testID === undefined ? {} : { testID }),
+  });
+  const content = host?.renderDiffViewer?.(request) ?? (
+    <HappierScrollArea horizontal testID={testID}>
+      <HappierText selectable variant="code">{unifiedDiff}</HappierText>
+    </HappierScrollArea>
+  );
+
+  return (
+    <HappierStack gap={8}>
+      <HappierText variant="caption">{label}</HappierText>
+      {content}
+    </HappierStack>
+  );
+}
 
 /**
  * A bounded code presentation. Product mounts delegate syntax highlighting to

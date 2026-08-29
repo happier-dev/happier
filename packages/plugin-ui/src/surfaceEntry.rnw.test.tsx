@@ -7,9 +7,8 @@ import { Text } from './components/Text.js';
 import { Markdown } from './components/Content.js';
 import { Menu } from './components/Overlay.js';
 import { usePluginTheme, useSurfaceContext } from './components/PluginUiProvider.js';
-import { usePluginUiDataClient, type PluginUiDataClient } from './data/index.js';
+import { usePluginUiDataClient, usePluginUiDataClientOrNull, type PluginUiDataClient } from './data/index.js';
 import { createUnavailablePluginUiAccountKv } from './data/accountKv.js';
-import { createUnavailablePluginUiAccountSettings } from './data/accountSettings.js';
 import {
   useComposer,
   usePluginResource,
@@ -38,7 +37,7 @@ function createRenderContext(
   if (privateCarrier !== undefined) {
     Object.defineProperty(
       context,
-      Symbol.for('happier.pluginUi.privateHostedWebCollectionUiQueryTransport.v1'),
+      Symbol.for('happier.pluginUi.privateHostedWebAccountDataTransport.v1'),
       {
         value: privateCarrier,
         enumerable: false,
@@ -409,7 +408,6 @@ describe('defineUiSurface', () => {
         throw new Error('The test author surface does not open a query.');
       },
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     });
     expectedDataClient = client;
     const renderSurface = defineUiSurface(DataAuthorSurface);
@@ -485,11 +483,11 @@ describe('defineUiSurface', () => {
     mount.unmount();
   });
 
-  it('provides one bounded typed-unavailable Data client when hosted bootstrap capability is absent', async () => {
-    let unavailableDataClient: PluginUiDataClient | undefined;
+  it('omits the Data client when hosted bootstrap capability is absent', async () => {
+    let unavailableDataClient: PluginUiDataClient | null | undefined;
     const surface = createSurfaceContext();
     const renderSurface = defineUiSurface(() => {
-      unavailableDataClient = usePluginUiDataClient();
+      unavailableDataClient = usePluginUiDataClientOrNull();
       return <Text testID="hosted-data-unavailable">hosted-data-unavailable</Text>;
     });
     const context = createRenderContext(
@@ -503,16 +501,7 @@ describe('defineUiSurface', () => {
     );
 
     expect(mount.container.textContent).toBe('hosted-data-unavailable');
-    if (!unavailableDataClient) {
-      throw new Error('The hosted unavailable Data client was not installed at the private provider boundary.');
-    }
-    await expect(unavailableDataClient.openCollectionQuery({
-      collectionId: 'tasks',
-      uiQueryId: 'open',
-      parameters: { status: 'open' },
-    })).rejects.toMatchObject({ code: 'plugin_collection_ui_query_unavailable' });
-    await expect(unavailableDataClient.accountSettings.snapshot())
-      .rejects.toMatchObject({ code: 'plugin_settings_persistence_unavailable' });
+    expect(unavailableDataClient).toBeNull();
     mount.unmount();
   });
 

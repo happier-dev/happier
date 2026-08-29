@@ -1076,6 +1076,7 @@ async function runExternalAuthoringFixtureInRoot({ mode = TARBALL_MODE, tarballP
     'tsconfig.nodenext.json',
     'tsconfig.vite.json',
     'tsconfig.metro.json',
+    'tsconfig.voice-native.json',
   ]) {
     runTypeScriptConfig(consumerRoot, configName);
   }

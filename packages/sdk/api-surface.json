@@ -234,6 +234,13 @@
     },
     {
       "specifier": ".",
+      "exportName": "PublicActionExecutionResult",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PublicActionExecutionResult"
+    },
+    {
+      "specifier": ".",
       "exportName": "PublicActionId",
       "kind": "type",
       "declarationModule": "dist/index.d.ts",
@@ -255,10 +262,24 @@
     },
     {
       "specifier": ".",
+      "exportName": "RawActionExecute",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "RawActionExecute"
+    },
+    {
+      "specifier": ".",
       "exportName": "connect",
       "kind": "value",
       "declarationModule": "dist/index.d.ts",
       "declarationExport": "connect"
+    },
+    {
+      "specifier": ".",
+      "exportName": "isHappierActionApprovalRequestCreated",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "isHappierActionApprovalRequestCreated"
     }
   ]
 }

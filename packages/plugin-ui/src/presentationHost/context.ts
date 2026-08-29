@@ -2,6 +2,7 @@ import { createContext, createElement, useContext, type ReactElement, type React
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginUiTargetedContributionSurfaceV1 } from '@happier-dev/plugin-sdk/ui';
 import type { HappierFocusable } from '../presentation/portableTypes.js';
+import type { HappierDiffViewerRequest } from '../presentation/content/DiffViewer.js';
 
 export type PluginUiPopoverPresentation = 'popover' | 'menu' | 'dropdown' | 'context';
 
@@ -91,6 +92,11 @@ export type PluginUiPresentationHost = Readonly<{
     selectable: boolean;
     testID?: string;
   }>): ReactNode;
+  /**
+   * Render one read-only unified diff through the incumbent product renderer.
+   * Parsing, syntax highlighting, settings, and virtualization remain host-owned.
+   */
+  renderDiffViewer?(input: HappierDiffViewerRequest): ReactNode;
   renderPopover(input: Readonly<{
     open: boolean;
     anchorRef: RefObject<unknown>;

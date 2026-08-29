@@ -4,6 +4,7 @@ import {
   SURFACE_CONTEXT_THEME_FIXTURE,
 } from '@happier-dev/plugin-sdk/testing';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { act, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -196,12 +197,9 @@ describe('plugin-ui RNW semantic fixture adapter', () => {
       },
       role: 'detail',
       presentation: 'content',
-      inputSchema: {
-        type: 'object',
-        properties: { entryId: { type: 'string', minLength: 1 } },
-        required: ['entryId'],
-        additionalProperties: false,
-      },
+      inputSchema: defineProtocolObject({
+        entryId: defineProtocolString({ minLength: 1 }),
+      }, { policy: 'closed' }).jsonSchema,
       rendererChain: [{ pluginId: contributorPluginId, localId: rendererId }],
       selectedRenderer: {
         identity: { pluginId: contributorPluginId, localId: rendererId },

@@ -767,6 +767,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
 
 export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<{
   publicationMode?: 'live' | 'artifact';
+  pruneStale?: boolean;
   bundles: ReadonlyArray<{
     packageName: string;
     srcDir: string;
@@ -789,10 +790,10 @@ export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<
       // runtime dependency tree as one reconciled view.
       preserveDestinationPath: true,
       // A resolver can read the previous manifest immediately before publication and open one of
-      // its targets afterward. Retain prior targets in live package trees so that in-flight read
-      // remains valid. Exact artifact publication runs in a packaging context and prunes those
-      // compatibility targets so obsolete generations cannot enter a tarball.
-      pruneStale: publicationMode === 'artifact',
+      // its targets afterward. Retain prior targets in ordinary live package trees so that in-flight reads remain valid.
+      // Exact artifact publication and explicit exact prepared readers prune compatibility targets
+      // so obsolete generations cannot enter their consumed declaration or artifact graph.
+      pruneStale: params.pruneStale ?? publicationMode === 'artifact',
     });
   }
 }

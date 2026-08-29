@@ -1,3 +1,4 @@
+import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions';
 import type {
   PublicActionId,
   PublicActionInputById,
@@ -19,6 +20,17 @@ export type ActionExecute = <K extends PublicActionId>(
   input: PublicActionInputById[K],
   options?: ActionExecutionOptions,
 ) => Promise<PublicActionResultById[K]>;
+
+/** Raw public execution truthfully includes policy deferral as admitted domain data. */
+export type PublicActionExecutionResult<K extends PublicActionId> =
+  | PublicActionResultById[K]
+  | ActionApprovalRequestCreatedResult;
+
+export type RawActionExecute = <K extends PublicActionId>(
+  actionId: K,
+  input: PublicActionInputById[K],
+  options?: ActionExecutionOptions,
+) => Promise<PublicActionExecutionResult<K>>;
 
 export type HappierConnectOptions = Readonly<{
   endpoint: string | URL;

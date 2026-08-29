@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { VOICE_AUDIO_GRAPH_TERMINAL_REASONS } from './voiceAudioSessionCoordinator';
+
 function readPackageFile(relativePath: string): string {
   return readFileSync(new URL(relativePath, `${new URL('..', import.meta.url).href}/`), 'utf8');
 }
@@ -139,5 +141,54 @@ describe('native audio-session ownership', () => {
     expect(iosSource).toContain('AVAudioPlayer(contentsOf: url)');
     expect(iosSource).toContain('AsyncFunction("startFileRecording")');
     expect(iosSource).toContain('AsyncFunction("startEncodedAudioPlayback")');
+  });
+
+  it('converts actual iOS input hardware PCM into the canonical provider format', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+
+    expect(iosSource).toContain('input.outputFormat(forBus: 0)');
+    expect(iosSource).toContain('AVAudioConverter(from: hardwareInputFormat, to: canonicalCaptureFormat)');
+    expect(iosSource).toMatch(/installTap\([\s\S]*?format: hardwareInputFormat/);
+    expect(iosSource).toMatch(/engine\?\.disconnectNodeOutput\(player\)[\s\S]*?engine\.connect\(player, to: engine\.mainMixerNode, format: format\)/);
+  });
+
+  it('restarts an iOS audio graph only when the complete bound hardware format is unchanged', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+
+    expect(iosSource).toMatch(/private func audioFormatsMatchForGraphRestart/);
+    for (const field of [
+      'mSampleRate',
+      'mFormatID',
+      'mFormatFlags',
+      'mBytesPerPacket',
+      'mFramesPerPacket',
+      'mBytesPerFrame',
+      'mChannelsPerFrame',
+      'mBitsPerChannel',
+    ]) {
+      expect(iosSource).toContain(field);
+    }
+    expect(iosSource).toMatch(
+      /guard audioFormatsMatchForGraphRestart\(current, baseline\) else \{ return \.unrecoverable \}/,
+    );
+  });
+
+  it('keeps every reachable iOS audio-graph terminal producer in the closed TypeScript contract', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+    const emittedReasons = Array.from(
+      iosSource.matchAll(/reportAudioGraphTerminal\(reason: "([^"]+)"/g),
+      (match) => match[1],
+    );
+
+    expect(new Set(emittedReasons)).toEqual(new Set(VOICE_AUDIO_GRAPH_TERMINAL_REASONS));
+  });
+
+  it('terminally replaces encoded playback and retires every native audio resource on media reset', () => {
+    const iosSource = readPackageFile('ios/HappierAudioStreamNativeModule.swift');
+
+    expect(iosSource).toContain('status: "replaced"');
+    expect(iosSource).toMatch(/handleMediaServicesReset[\s\S]*?fileRecorder\?\.stop\(\)[\s\S]*?encodedPlayback/);
+    expect(iosSource).toMatch(/guard recorder\.record\(\) else/);
+    expect(iosSource).toMatch(/if !encodedPlayback\.resumeAfterInterruption\(\)/);
   });
 });

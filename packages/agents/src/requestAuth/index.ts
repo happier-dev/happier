@@ -1,4 +1,5 @@
 export {
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_MAX_SERIALIZED_UTF8_BYTES,
   CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_RELATIVE_PATH,
   isConnectedAccountRequestAuthMaterializationId,
   parseConnectedAccountRequestAuthCapabilityDocument,

@@ -3,7 +3,6 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../data/accountKv.js';
-import { createUnavailablePluginUiAccountSettings } from '../data/accountSettings.js';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import type { RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 
@@ -172,7 +171,6 @@ describe('Projects and Tasks Account KV continuity', () => {
       }),
       openCollectionQuery,
       accountKv,
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     }) as unknown as PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();
     const mount = await mountThroughReactNativeWebAsync(
@@ -289,7 +287,6 @@ describe('Projects and Tasks Account Collection surface', () => {
       },
       openCollectionQuery,
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     }) satisfies PluginUiDataClient;
     const renderFixture = createProjectsTasksRenderContext();
     const { context: renderContext } = renderFixture;

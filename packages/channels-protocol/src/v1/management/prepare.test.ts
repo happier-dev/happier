@@ -41,17 +41,30 @@ describe('Channels V1 connection preparation result', () => {
             ...ready,
             supportedTransports: ['socket', 'socket'],
         }).success).toBe(false);
-        expect(ConversationConnectionPrepareResultV1Schema.safeParse({
+        // Durable push is now a creatable transport, so preparation projects
+        // it exactly when the provider declares it; the continuation journey
+        // is the create contract's business rule, not a preparation limit.
+        expect(ConversationConnectionPrepareResultV1Schema.parse({
             ...ready,
             supportedTransports: ['checkpointedPull', 'durablePush'],
-        }).success).toBe(false);
+        })).toEqual({
+            ...ready,
+            supportedTransports: ['checkpointedPull', 'durablePush'],
+        });
+        expect(ConversationConnectionPrepareResultV1Schema.parse({
+            ...ready,
+            recommendedTransport: 'durablePush',
+        })).toEqual({
+            ...ready,
+            recommendedTransport: 'durablePush',
+        });
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,
             recommendedTransport: 'socket',
         }).success).toBe(true);
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,
-            recommendedTransport: 'durablePush',
+            supportedTransports: ['checkpointedPull', 'durablePush', 'socket', 'checkpointedPull'],
         }).success).toBe(false);
         expect(ConversationConnectionPrepareResultV1Schema.safeParse({
             ...ready,

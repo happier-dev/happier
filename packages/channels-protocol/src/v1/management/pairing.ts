@@ -98,6 +98,7 @@ const conversationPairingChallengeResourceEntryV1 = defineProtocolObject({
     challengeId: pairingIdentifier,
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedConnectionRevision: positiveSafeInteger,
+    pairingRequestId: pairingIdentifier,
     ...conversationPairingChallengePresentationV1,
 }, { policy: 'closed' });
 
@@ -142,10 +143,18 @@ const conversationPairingResourceV1 = defineProtocolObject({
  * conversation it binds is the one the owner selected. The two are separate
  * facts, so the selected destination travels with the challenge instead of
  * being inferred from wherever the proof happened to arrive.
+ *
+ * `pairingRequestId` is one client-generated opaque correlation key. A
+ * response-loss retry repeats the exact same key and rejoins the challenge
+ * this request created; a different key deliberately supersedes it. Recovery
+ * therefore matches the exact request key and never merely a connection and
+ * revision, so a second device's superseding challenge cannot be adopted by
+ * the first device's unknown-outcome recovery.
  */
 export const ConversationPairingCreateInputV1ProtocolSchema = defineProtocolObject({
     connectionId: ConversationConnectionIdV1ProtocolSchema,
     expectedConnectionRevision: positiveSafeInteger,
+    pairingRequestId: pairingIdentifier,
     endpointSelection: ConversationBindingEndpointSelectionV1ProtocolSchema,
     target: ConversationBindingTargetV1ProtocolSchema,
 }, { policy: 'closed' });

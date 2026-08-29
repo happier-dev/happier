@@ -175,17 +175,17 @@ describe('the derivation follows the schema', () => {
      * Under a byte bound the costliest admitted code point per **byte** wins,
      * and that is always an ASCII one: `"` doubles its single byte, and a
      * control sextuples it. Under a code-point bound the costliest admitted code
-     * point per **code point** wins instead — and when the grammar excludes
-     * controls, that is a four-byte astral code point, which JSON emits
-     * literally, not the two-byte `\"` an ASCII-only search settles for. Every
-     * V1 string grammar admits astral code points, so a search that never
-     * considers one measures such a field at exactly half its real maximum and
-     * the pinned totals below stop being an upper bound.
+     * point per **code point** wins instead. An astral code point costs four
+     * literal UTF-8 bytes, and an admitted lone surrogate costs a six-byte JSON
+     * escape; either beats the two-byte `\"` an ASCII-only search settles for.
+     * Every V1 string grammar admits astral code points, so a search that never
+     * considers wider values can measure such a field at half its real maximum
+     * and the pinned totals below stop being an upper bound.
      *
      * Both directions are asserted against a value the real composable schema
      * parses, so neither is a claim about a value nothing would accept.
      */
-    it('measures a code-point-bounded string at the widest code point it admits', () => {
+    it('considers code points wider than ASCII for a code-point bound', () => {
         const codePoints = 8;
         const schema = defineProtocolString({
             minLength: 1,
@@ -193,12 +193,34 @@ describe('the derivation follows the schema', () => {
             pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
         });
         // Four UTF-8 bytes each, emitted literally by JSON, and admitted by
-        // every V1 string grammar.
+        // every V1 string grammar. The sibling test proves the still wider
+        // lone-surrogate case explicitly.
         const astral = '\u{10000}'.repeat(codePoints);
         expect(schema.parse(astral)).toBe(astral);
 
         expect(encodedJsonBytes(buildMaximalSchemaString(schema.jsonSchema, 'codePointBounded')))
             .toBeGreaterThanOrEqual(encodedJsonBytes(astral));
+    });
+
+    it('charges lone surrogates exactly when a code-point schema admits them', () => {
+        const codePoints = 8;
+        const schema = defineProtocolString({
+            minLength: 1,
+            maxLength: codePoints,
+            // The ordinary V1 display grammar excludes the equally expensive
+            // C0 fills, so a lone surrogate is the actual missed maximum.
+            pattern: TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
+        });
+        const loneSurrogates = '\ud800'.repeat(codePoints);
+
+        // Strict JSON intentionally preserves this JSON.stringify-representable
+        // value. The schema-derived maximum therefore has to include its
+        // six-byte escape instead of assuming that the UTF-8 string owner has
+        // already rejected it.
+        expect(schema.parse(loneSurrogates)).toBe(loneSurrogates);
+        expect(buildMaximalSchemaString(schema.jsonSchema, 'codePointBounded'))
+            .toBe(loneSurrogates);
+        expect(encodedJsonBytes(loneSurrogates)).toBe(codePoints * 6 + 2);
     });
 
     it('keeps a byte-bounded string on the fill that maximizes bytes, not code points', () => {

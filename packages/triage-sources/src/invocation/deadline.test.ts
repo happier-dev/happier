@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createBoundedInvocation } from './deadline.js';
+import {
+  createBoundedInvocation,
+} from '../runtime.js';
 
 describe('createBoundedInvocation', () => {
   afterEach(() => {
@@ -37,5 +39,19 @@ describe('createBoundedInvocation', () => {
 
     expect(bounded.signal.aborted).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('adds no timer when the caller supplies no external deadline', () => {
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const invocation = createBoundedInvocation({ callerSignal: caller.signal });
+
+    expect(invocation.signal).toBe(caller.signal);
+    expect(vi.getTimerCount()).toBe(0);
+
+    const reason = new Error('caller stopped');
+    caller.abort(reason);
+    expect(invocation.signal.reason).toBe(reason);
+    invocation.dispose();
   });
 });

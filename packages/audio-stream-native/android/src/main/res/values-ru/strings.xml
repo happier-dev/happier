@@ -1,0 +1,4 @@
+<resources>
+  <string name="happier_voice_foreground_notification_channel">Голосовой разговор</string>
+  <string name="happier_voice_foreground_notification_text">Голосовой разговор активен</string>
+</resources>

@@ -16,6 +16,7 @@ import type {
 import type { MenuGroup, MenuRadioGroup } from './Overlay.js';
 import type { StatusProps } from './Status.js';
 import type { TextProps } from './Text.js';
+import type { DiffViewerProps } from './Content.js';
 
 type Assert<Condition extends true> = Condition;
 
@@ -37,6 +38,13 @@ type _AuthorFocusTargetHookIsPublic = Assert<IsEqual<typeof usePluginUiFocusTarg
 type _AuthorTextInterpolationValuesArePublic = Assert<IsEqual<
   TextProps['values'],
   PluginTranslationValues | undefined
+>>;
+
+type _AuthorDiffViewerKeysStayReadOnlyAndCurated = Assert<IsEqual<keyof DiffViewerProps,
+  | 'unifiedDiff'
+  | 'filePath'
+  | 'label'
+  | 'testID'
 >>;
 
 type _AuthorButtonFocusTarget = Assert<IsEqual<ButtonProps['focusTarget'], PluginUiFocusTarget | undefined>>;
@@ -346,6 +354,7 @@ const privateNativeVirtualizerWindow: ListProps<AuthorReview> = {
 const authorSelectionDisabledRows: ListSelectionProps<AuthorReview> = {
   defaultSelectedKey: null,
   isItemDisabled: (review, index) => review.title.length === 0 && index > 0,
+  isItemActivatable: (review) => review.title !== 'Continuation',
 };
 
 const privateSelectionRovingProjection: ListSelectionProps<AuthorReview> = {

@@ -116,6 +116,17 @@ export type ListSearchProps<Item> = ListSearchBaseProps<Item> & (
 
 type ListSelectionBaseProps<Item> = Readonly<{
   /**
+   * Whether a row has the collection's primary open/select action.
+   *
+   * This is distinct from multi-selection eligibility: a grid may contain a
+   * stated continuation or placeholder row whose own sibling button remains
+   * actionable while the row itself must not become a dead primary button.
+   * Such rows are skipped by the collection's roving primary-action cursor.
+   * In a listbox, where sibling actions are not permitted, a non-activatable
+   * row is exposed as a disabled option.
+   */
+  isItemActivatable?: (item: Item, index: number) => boolean;
+  /**
    * Marks a row the author renders disabled, so keyboard navigation steps over
    * it. Only this List sees the rows its virtualizer has not mounted, so the
    * predicate — not each rendered row — is what makes arrow keys agree with
@@ -269,8 +280,15 @@ type NonSelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item> 
 type SelectableVirtualizedListProps<Item> = VirtualizedListSharedProps<Item>
   & ListAccessibleNameProps
   & Readonly<{
-    /** Makes one semantic List.Item per row an accessible selected option. */
+    /** Makes one semantic List.Item per row an accessible selected collection row. */
     selection: ListSelectionProps<Item>;
+    /**
+     * Use `grid` when rows contain sibling actionable controls such as
+     * secondary-action overflow buttons. A listbox may own only options/groups;
+     * the grid pattern keeps List's roving focus and selection owner while
+     * exposing row actions as real accessible buttons.
+     */
+    accessibilityPattern?: ListAccessibilityPattern;
   }>;
 
 type FlatVirtualizedListProps<Item> = (
@@ -389,6 +407,8 @@ export type ItemProps = Readonly<{
    * Keep an independently interactive accessory beside, rather than inside,
    * the row's primary Pressable. Use this for buttons, toggles, and compound
    * controls; decorative or passive trailing content stays inside by default.
+   * Selectable grids enforce this structure automatically for every accessory
+   * so an omitted advisory prop cannot create nested interactive markup.
    */
   accessoryOutsidePressable?: boolean;
   /**
@@ -434,13 +454,20 @@ export type ListItemProps = ItemProps;
 
 type ListItemSelectionDisposition = 'open' | 'handled';
 
+export type ListAccessibilityPattern = 'listbox' | 'grid';
+
 type ListItemSelectionContextValue = Readonly<{
   selected: boolean;
+  activatable: boolean;
   /** The activation event carries the modifier keys one press means something by. */
   select: (event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
   positionInSet: number;
   setSize: number;
   roving: HappierRovingCollectionItem;
+  accessibilityPattern: ListAccessibilityPattern;
+  /** Grid rows use collection-wide ARIA/native positions; listbox rows use set positions. */
+  rowIndex: number;
+  rowCount: number;
 }>;
 
 const ListItemSelectionContext = createContext<ListItemSelectionContextValue | null>(null);
@@ -449,13 +476,18 @@ type VirtualizedListRowProps<Item> = Readonly<{
   item: Item;
   /** Position in the collection-wide traversal order, which keyboard navigation addresses. */
   rowIndex: number;
+  /** Grid-only semantic position; keyboard traversal remains data-row based. */
+  accessibilityRowIndex: number;
   /** Position within the row's own collection unit, which authors and readers see. */
   index: number;
   itemKey: string;
   sectionKey: string | null;
   setSize: number;
+  /** Total grid rows, including section header rows in the sectioned arm. */
+  collectionSize: number;
   renderItem: (item: Item, index: number, sectionKey: string | null) => ReactNode;
   selectionEnabled: boolean;
+  activatable: boolean;
   selected: boolean;
   /**
    * Resolved per row rather than passed as the collection's tab-stop index, so
@@ -466,6 +498,7 @@ type VirtualizedListRowProps<Item> = Readonly<{
   onSelect: (key: string, event?: HappierGestureResponderEvent) => ListItemSelectionDisposition;
   onRovingKey: (index: number, key: string, event: unknown) => boolean;
   registerTarget: (key: string, target: HappierFocusable | null) => void;
+  accessibilityPattern: ListAccessibilityPattern;
 }>;
 
 /**
@@ -479,6 +512,7 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
     const selection: ListItemSelectionContextValue | null = props.selectionEnabled
       ? {
           selected: props.selected,
+          activatable: props.activatable,
           select: (event) => props.onSelect(props.itemKey, event),
           positionInSet: props.index + 1,
           setSize: props.setSize,
@@ -487,6 +521,9 @@ class VirtualizedListRow<Item> extends PureComponent<VirtualizedListRowProps<Ite
             onKeyDown: (key, event) => props.onRovingKey(props.rowIndex, key, event),
             register: (target) => props.registerTarget(props.itemKey, target),
           },
+          accessibilityPattern: props.accessibilityPattern,
+          rowIndex: props.accessibilityRowIndex,
+          rowCount: props.accessibilityPattern === 'grid' ? props.collectionSize : props.setSize,
         }
       : null;
     const renderedItem = props.renderItem(props.item, props.index, props.sectionKey);
@@ -661,6 +698,16 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     for (const section of visibleSections ?? []) {
       offsets.set(section.key, offset);
       offset += section.data.length;
+    }
+    return offsets;
+  }, [visibleSections]);
+  const sectionGridRowOffsets = useMemo(() => {
+    const offsets = new Map<string, number>();
+    let offset = 0;
+    for (const section of visibleSections ?? []) {
+      offsets.set(section.key, offset);
+      // A section header is a real row in the grid projection.
+      offset += 1 + section.data.length;
     }
     return offsets;
   }, [visibleSections]);
@@ -857,14 +904,21 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const isItemDisabled = props.selection?.isItemDisabled;
-  const rovingEntries = useMemo<readonly HappierRovingEntry[]>(
-    () => rows.map((row) => ({ disabled: isItemDisabled?.(row.item, row.index) === true })),
-    [isItemDisabled, rows],
+  const isItemActivatable = props.selection?.isItemActivatable;
+  const activatableRows = useMemo(
+    () => rows.map((row) => isItemActivatable?.(row.item, row.index) !== false),
+    [isItemActivatable, rows],
   );
-  // A range extension steps over what it cannot SELECT, which is a larger set
-  // than what it cannot reach: a continuation row is readable and focusable and
-  // still never joins a selection. Reusing the reading entries here would stop
-  // an extension dead on the first such row.
+  const rovingEntries = useMemo<readonly HappierRovingEntry[]>(
+    () => rows.map((row, rowIndex) => ({
+      disabled: isItemDisabled?.(row.item, row.index) === true
+        || activatableRows[rowIndex] === false,
+    })),
+    [activatableRows, isItemDisabled, rows],
+  );
+  // A range extension also respects bulk eligibility. Its traversal otherwise
+  // shares the primary-action cursor, which already excludes action-only rows;
+  // those rows remain readable and their sibling controls keep their own focus.
   const multiRovingEntries = useMemo<readonly HappierRovingEntry[]>(
     () => (multiStore === null
       ? rovingEntries
@@ -1021,9 +1075,10 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     if (authorFocusRequest === undefined) return;
     const rowIndex = rowIndexByKey.get(authorFocusRequest.key);
     if (rowIndex === undefined) return;
+    if (rovingEntries[rowIndex]?.disabled === true) return;
     requestFocusRef.current(authorFocusRequest.key);
     requestRowFocusRef.current(authorFocusRequest.key, rowIndex);
-  }, [authorFocusRequest]);
+  }, [authorFocusRequest, rovingEntries]);
   const moveFocus = (fromIndex: number, key: string, event: unknown): boolean => {
     const currentRowIndex = focusedIndex >= 0 ? focusedIndex : fromIndex;
     const multiStoreForKey = multiStoreRef.current;
@@ -1156,7 +1211,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
     ? null
     : <Stack gap="small">{searchControl}{selectionModeControl}{authorHeader}</Stack>;
   // Chrome is a SIBLING of the collection element, never a cell inside it. A
-  // listbox admits groups and options and a list admits list items; a search
+  // listbox admits groups/options, grid admits rows, and list admits list items; a search
   // textbox, an author header or an empty-state block placed in the scroller
   // becomes an unpermitted child and invalidates the whole control for a
   // reader. The empty slot is a sibling for a second reason: the platform
@@ -1164,14 +1219,20 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // never fires for a sectioned collection.
   const emptyContent = rows.length === 0 ? props.empty : null;
   const renderItem = props.renderItem;
+  const accessibilityPattern = selectionEnabled ? props.accessibilityPattern ?? 'listbox' : 'listbox';
+  const collectionRole = selectionEnabled
+    ? accessibilityPattern === 'grid' ? 'grid' : 'listbox'
+    : 'list';
   // One row projection for both arms. `rowIndex` is the collection-wide
   // navigation position; `index` and `setSize` stay unit-local, which is what a
   // reader hears and what the author's callbacks already receive.
   const renderRow = useCallback((input: Readonly<{
     item: Item;
     rowIndex: number;
+    accessibilityRowIndex: number;
     index: number;
     setSize: number;
+    collectionSize: number;
     sectionKey: string | null;
   }>) => {
     const itemKey = keyForItem(input.item, input.index);
@@ -1179,12 +1240,15 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       <VirtualizedListRow
         item={input.item}
         rowIndex={input.rowIndex}
+        accessibilityRowIndex={input.accessibilityRowIndex}
         index={input.index}
         itemKey={itemKey}
         sectionKey={input.sectionKey}
         setSize={input.setSize}
+        collectionSize={input.collectionSize}
         renderItem={renderItem}
         selectionEnabled={selectionEnabled}
+        activatable={activatableRows[input.rowIndex] !== false}
         // With the capability mounted, `aria-selected` is the multi-selection —
         // the standard meaning in a multi-selectable listbox. The single key
         // stays the open detail and keeps owning the tab stop.
@@ -1195,13 +1259,14 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
         onSelect={selectItem}
         onRovingKey={onRovingKey}
         registerTarget={registerTarget}
+        accessibilityPattern={accessibilityPattern}
       />
     );
-  }, [keyForItem, multiStore, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
+  }, [accessibilityPattern, activatableRows, keyForItem, multiStore, onRovingKey, registerTarget, renderItem, selectItem, selectionEnabled]);
 
   const flatSetSize = visibleItems?.length ?? 0;
   const renderFlatRow = useCallback(({ item, index }: Readonly<{ item: Item; index: number }>) => (
-    renderRow({ item, rowIndex: index, index, setSize: flatSetSize, sectionKey: null })
+    renderRow({ item, rowIndex: index, accessibilityRowIndex: index, index, setSize: flatSetSize, collectionSize: flatSetSize, sectionKey: null })
   ), [flatSetSize, renderRow]);
   const renderSectionRow = useCallback(({ item, index, section }: Readonly<{
     item: Item;
@@ -1210,11 +1275,12 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   }>) => renderRow({
     item,
     rowIndex: (sectionRowOffsets.get(section.key) ?? 0) + index,
+    accessibilityRowIndex: (sectionGridRowOffsets.get(section.key) ?? 0) + 1 + index,
     index,
     setSize: section.data.length,
+    collectionSize: rows.length + (visibleSections?.length ?? 0),
     sectionKey: section.key,
-  }), [renderRow, sectionRowOffsets]);
-  const collectionRole = selectionEnabled ? 'listbox' : 'list';
+  }), [renderRow, rows.length, sectionGridRowOffsets, sectionRowOffsets, visibleSections?.length]);
   // A listbox that admits more than one chosen option has to say so. The
   // capability marks every chosen row `aria-selected`, and without this fact a
   // screen reader treats those as contradictory and announces the last one as
@@ -1222,6 +1288,9 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // present only while the capability is mounted, so an ordinary
   // single-selection list never claims a choice its reader cannot make.
   const collectionMultiSelectable = multiStore === null ? undefined : true;
+  const collectionRowCount = visibleSections === undefined
+    ? flatSetSize
+    : rows.length + visibleSections.length;
   // `role="listbox"` is a React Native Web alias, and the selectable arm
   // deliberately withholds the native `list` role that would contradict its
   // `option` rows — so on Android a selectable list is not a collection at all
@@ -1229,21 +1298,30 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
   // `accessibilityCollection` while its published types omit it.
   //
   // The extent and the per-row `accessibilityCollectionItem` are ONE fact and
-  // have to be counted over the same traversal. A row indexes within its own
-  // unit (`setSize: section.data.length` above), which equals the whole list
-  // only on the flat arm. Publishing a whole-list extent beside section-local
-  // indices would make two rows claim row 0 and let no row reach
-  // `rowCount - 1`, so Android would announce a position that is false —
-  // strictly worse than the no-collection state it replaced.
-  const nativeCollection = Platform.OS === 'web' || !selectionEnabled || visibleSections !== undefined
+  // have to be counted over the same traversal. Grid rows use collection-wide
+  // indices (including section headers), so the sectioned grid can publish the
+  // same native extent as the flat grid. Listbox rows intentionally retain
+  // section-local set positions, so that arm withholds a contradictory extent.
+  const nativeCollection = Platform.OS === 'web'
+    || !selectionEnabled
+    || (visibleSections !== undefined && accessibilityPattern !== 'grid')
     ? undefined
-    : { rowCount: flatSetSize, columnCount: 1 };
+    : { rowCount: collectionRowCount, columnCount: 1 };
   // The shared section owner, told which collection element the virtualizer
   // makes this header a direct child of. The rows are its siblings there, so
   // the header has to be a child that collection role actually permits.
   const renderSectionHeader = useCallback(({ section }: Readonly<{ section: ListSectionData<Item> }>) => (
-    <HappierListSection title={section.title} virtualizedCollectionRole={collectionRole} />
-  ), [collectionRole]);
+    <HappierListSection
+      title={section.title}
+      virtualizedCollectionRole={collectionRole}
+      {...(collectionRole === 'grid'
+        ? {
+            accessibilityRowIndex: (sectionGridRowOffsets.get(section.key) ?? 0) + 1,
+            accessibilityRowCount: collectionRowCount,
+          }
+        : {})}
+    />
+  ), [collectionRole, collectionRowCount, sectionGridRowOffsets]);
 
   // Both facts reach the mounted cells: the tab stop follows focus, so a
   // focus-only move must still commit the two rows whose tab order changed.
@@ -1259,6 +1337,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       accessibilityRole={selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
       role={collectionRole}
+      aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
       aria-multiselectable={collectionMultiSelectable}
       accessibilityCollection={nativeCollection}
       accessibilityLabel={props.accessibilityLabel}
@@ -1299,6 +1378,7 @@ function VirtualizedList<Item>(props: ListBaseProps & VirtualizedListProps<Item>
       accessibilityRole={selectionEnabled ? undefined : 'list'}
       // @ts-expect-error React Native's role union omits RNW's standard listbox role.
       role={collectionRole}
+      aria-rowcount={collectionRole === 'grid' ? collectionRowCount : undefined}
       aria-multiselectable={collectionMultiSelectable}
       accessibilityCollection={nativeCollection}
       accessibilityLabel={props.accessibilityLabel}
@@ -1383,7 +1463,11 @@ function ListSection(props: ListSectionProps): ReactElement {
 }
 
 function renderListItem(
-  props: ItemProps & Readonly<{ rovingCollectionItem?: HappierRovingCollectionItem }>,
+  props: ItemProps & Readonly<{
+    rovingCollectionItem?: HappierRovingCollectionItem;
+    accessibilityRowIndex?: number;
+    accessibilityRowCount?: number;
+  }>,
   defaultSecondaryActionAccessibilityLabel: string,
   suppressListItemRole = false,
   secondaryActionsControl?: Readonly<{
@@ -1489,6 +1573,18 @@ function ListItem(props: ListItemProps): ReactElement {
     setSecondaryActionsOpen(true);
   }, [secondaryActionsEnabled]);
   if (selection === null) return renderListItem(resolvedProps, defaultSecondaryActionAccessibilityLabel);
+  // A grid row's controls are sibling cells by contract. Keeping this at the
+  // collection owner prevents an author from accidentally nesting an
+  // interactive accessory (Button, toggle, overflow trigger) inside the
+  // primary row Pressable merely because they omitted an advisory layout prop.
+  // Passive accessories may live in their own cell as well; that structural
+  // consistency is preferable to guessing whether an arbitrary ReactNode is
+  // interactive.
+  const gridResolvedProps = selection.accessibilityPattern === 'grid'
+    && resolvedProps.accessory !== undefined
+    && resolvedProps.accessory !== null
+    ? { ...resolvedProps, accessoryOutsidePressable: true }
+    : resolvedProps;
   const rovingCollectionItem: HappierRovingCollectionItem = {
     ...selection.roving,
     register: (target) => {
@@ -1505,17 +1601,30 @@ function ListItem(props: ListItemProps): ReactElement {
       return selection.roving.onKeyDown(key, event);
     },
   };
+  const collectionOnPress = selection.activatable
+    ? (event?: HappierGestureResponderEvent) => {
+        const disposition = selection.select(event);
+        return disposition === 'open' ? props.onPress?.(event) : undefined;
+      }
+    // A listbox has options rather than sibling action cells. Preserve a
+    // structural disabled option there; a grid can render a stated row with no
+    // invented primary control at all.
+    : selection.accessibilityPattern === 'listbox'
+      ? () => undefined
+      : undefined;
   return renderListItem({
-    ...resolvedProps,
+    ...gridResolvedProps,
     selected: selection.selected,
-    accessibilityRole: 'option',
-    accessibilityPositionInSet: selection.positionInSet,
-    accessibilitySetSize: selection.setSize,
-    rovingCollectionItem,
-    onPress: (event) => {
-      const disposition = selection.select(event);
-      return disposition === 'open' ? props.onPress?.(event) : undefined;
-    },
+    ...(selection.accessibilityPattern === 'listbox' && !selection.activatable
+      ? { disabled: true }
+      : {}),
+    accessibilityRole: selection.accessibilityPattern === 'grid' ? 'button' : 'option',
+    accessibilityPositionInSet: selection.accessibilityPattern === 'grid' ? undefined : selection.positionInSet,
+    accessibilitySetSize: selection.accessibilityPattern === 'grid' ? undefined : selection.setSize,
+    accessibilityRowIndex: selection.accessibilityPattern === 'grid' ? selection.rowIndex + 1 : undefined,
+    accessibilityRowCount: selection.accessibilityPattern === 'grid' ? selection.rowCount : undefined,
+    ...(selection.activatable ? { rovingCollectionItem } : {}),
+    ...(collectionOnPress === undefined ? {} : { onPress: collectionOnPress }),
   }, defaultSecondaryActionAccessibilityLabel, true, {
     open: secondaryActionsOpen,
     onOpenChange: setSecondaryActionsOpen,

@@ -3,13 +3,12 @@ import { View } from 'react-native';
 
 import {
   actionInputOptionValueKey,
+  type ActionFormHints,
   isSameActionInputOptionValue,
   normalizeActionInputByFieldHints,
   readActionInputOptionValue,
   resolveEffectiveActionInputFields,
-  type ActionInputHints,
   type ActionInputOptionValue,
-  type ActionInputPredicate,
 } from '@happier-dev/plugin-sdk/actions';
 
 import {
@@ -42,28 +41,11 @@ import { Text } from './Text.js';
 const FORM_SUBMIT_TRANSLATION_KEY = 'happier.plugin-ui.form.submit';
 const FORM_CANCEL_TRANSLATION_KEY = 'happier.plugin-ui.form.cancel';
 
-/**
- * The author-owned subset of Action-form presentation hints.
- *
- * The SDK's canonical Action schema also carries host producer instructions
- * (`optionsSourceId` and `connectedAccountOptions`). A mounted Form receives
- * only already-resolved author-visible values, so those instructions are
- * deliberately normalized out before this public component boundary.
- */
-type FormHints = Readonly<{
-  title?: string;
-  description?: string;
-  submitLabel?: string;
-  fields: readonly FormFieldHints[];
-}>;
+type FormOptionValue = ActionInputOptionValue;
 
-type FormOptionValue = string | Readonly<{
-  service: Readonly<{
-    pluginId: string;
-    localId: string;
-  }>;
-  accountId: string;
-}>;
+// Re-export the canonical narrowed Action vocabulary alongside FormProps so
+// callers can author against the same type without reaching into internals.
+export type { ActionFormFieldHint, ActionFormHints } from '@happier-dev/plugin-sdk/actions';
 
 type FormOption = Readonly<{
   value: FormOptionValue;
@@ -74,119 +56,6 @@ type FormOption = Readonly<{
   testID?: string;
 }>;
 
-type FormHintOption = Readonly<{
-  value: FormOptionValue;
-  label: string;
-  description?: string;
-  disabled?: boolean;
-}>;
-
-type FormPrimitive = string | number | boolean | null;
-
-type FormPredicate =
-  | Readonly<{ op: 'truthy'; path: string }>
-  | Readonly<{ op: 'eq'; path: string; value: FormPrimitive }>
-  | Readonly<{ op: 'includes'; path: string; value: string }>
-  | Readonly<{ op: 'not'; predicate: FormPredicate }>
-  | Readonly<{ op: 'and'; all: readonly FormPredicate[] }>
-  | Readonly<{ op: 'or'; any: readonly FormPredicate[] }>;
-
-type FormFieldHints = Readonly<{
-  path: string;
-  title: string;
-  description?: string;
-  placeholder?: string;
-  widget:
-    | 'text'
-    | 'url'
-    | 'secret'
-    | 'textarea'
-    | 'number'
-    | 'integer'
-    | 'text_list'
-    | 'select'
-    | 'multiselect'
-    | 'boolean'
-    | 'json';
-  required?: boolean;
-  requireExplicitSelection?: boolean;
-  listSeparator?: 'comma' | 'newline';
-  maxSelections?: number;
-  options?: readonly FormHintOption[];
-  visibleWhen?: FormPredicate;
-  requiredWhen?: FormPredicate;
-  disabledWhen?: FormPredicate;
-}>;
-
-function toCanonicalActionInputOptionValue(value: FormOptionValue): ActionInputOptionValue {
-  if (typeof value === 'string') return value;
-  return {
-    service: {
-      pluginId: value.service.pluginId,
-      localId: value.service.localId,
-    },
-    accountId: value.accountId,
-  };
-}
-
-function fromCanonicalActionInputOptionValue(value: ActionInputOptionValue): FormOptionValue {
-  if (typeof value === 'string') return value;
-  return {
-    service: {
-      pluginId: value.service.pluginId,
-      localId: value.service.localId,
-    },
-    accountId: value.accountId,
-  };
-}
-
-function toCanonicalActionInputPredicate(predicate: FormPredicate): ActionInputPredicate {
-  switch (predicate.op) {
-    case 'truthy':
-      return { op: 'truthy', path: predicate.path };
-    case 'eq':
-      return { op: 'eq', path: predicate.path, value: predicate.value };
-    case 'includes':
-      return { op: 'includes', path: predicate.path, value: predicate.value };
-    case 'not':
-      return { op: 'not', predicate: toCanonicalActionInputPredicate(predicate.predicate) };
-    case 'and':
-      return { op: 'and', all: predicate.all.map(toCanonicalActionInputPredicate) };
-    case 'or':
-      return { op: 'or', any: predicate.any.map(toCanonicalActionInputPredicate) };
-  }
-}
-
-/** Normalize the curated author vocabulary into the canonical Action-form owner. */
-function toCanonicalActionInputHints(hints: FormHints): ActionInputHints {
-  return {
-    ...(hints.title === undefined ? {} : { title: hints.title }),
-    ...(hints.description === undefined ? {} : { description: hints.description }),
-    ...(hints.submitLabel === undefined ? {} : { submitLabel: hints.submitLabel }),
-    fields: hints.fields.map((field) => ({
-      path: field.path,
-      title: field.title,
-      widget: field.widget,
-      ...(field.description === undefined ? {} : { description: field.description }),
-      ...(field.placeholder === undefined ? {} : { placeholder: field.placeholder }),
-      ...(field.required === undefined ? {} : { required: field.required }),
-      ...(field.requireExplicitSelection === undefined ? { } : { requireExplicitSelection: field.requireExplicitSelection }),
-      ...(field.listSeparator === undefined ? {} : { listSeparator: field.listSeparator }),
-      ...(field.maxSelections === undefined ? {} : { maxSelections: field.maxSelections }),
-      ...(field.options === undefined ? {} : {
-        options: field.options.map((option) => ({
-          value: toCanonicalActionInputOptionValue(option.value),
-          label: option.label,
-          ...(option.description === undefined ? {} : { description: option.description }),
-          ...(option.disabled === undefined ? {} : { disabled: option.disabled }),
-        })),
-      }),
-      ...(field.visibleWhen === undefined ? {} : { visibleWhen: toCanonicalActionInputPredicate(field.visibleWhen) }),
-      ...(field.requiredWhen === undefined ? {} : { requiredWhen: toCanonicalActionInputPredicate(field.requiredWhen) }),
-      ...(field.disabledWhen === undefined ? {} : { disabledWhen: toCanonicalActionInputPredicate(field.disabledWhen) }),
-    })),
-  };
-}
 
 export type FieldProps = Readonly<{
   label: string;
@@ -302,11 +171,8 @@ export function Select(props: SelectProps): ReactElement {
     value={props.value}
     controlRef={focusBinding}
     theme={usePluginTheme()}
-    isEqual={(left, right) => isSameActionInputOptionValue(
-      toCanonicalActionInputOptionValue(left),
-      toCanonicalActionInputOptionValue(right),
-    )}
-    keyForOption={(option) => actionInputOptionValueKey(toCanonicalActionInputOptionValue(option.value))}
+    isEqual={isSameActionInputOptionValue}
+    keyForOption={(option) => actionInputOptionValueKey(option.value)}
   />;
 }
 
@@ -323,7 +189,7 @@ function FormActions({ children }: FormActionsProps): ReactElement {
 }
 
 export type FormProps = Readonly<{
-  hints: FormHints;
+  hints: ActionFormHints;
   value: Readonly<Record<string, unknown>>;
   onChange: (value: Record<string, unknown>) => void;
   onSubmit: (value: Record<string, unknown>) => unknown;
@@ -337,23 +203,23 @@ export type FormProps = Readonly<{
 }>;
 
 function readActionInputSelectionForPresentation(
-  field: Pick<ActionInputHints['fields'][number], 'widget'>,
+  field: Pick<ActionFormHints['fields'][number], 'widget'>,
   value: unknown,
 ): FormOptionValue | readonly FormOptionValue[] | undefined {
   if (field.widget === 'select') {
     const optionValue = readActionInputOptionValue(value);
-    return optionValue === undefined ? undefined : fromCanonicalActionInputOptionValue(optionValue);
+    return optionValue;
   }
   if (field.widget !== 'multiselect') return undefined;
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const optionValue = readActionInputOptionValue(item);
-    return optionValue === undefined ? [] : [fromCanonicalActionInputOptionValue(optionValue)];
+    return optionValue === undefined ? [] : [optionValue];
   });
 }
 
 function FormRoot(props: FormProps): ReactElement {
-  const hints = toCanonicalActionInputHints(props.hints);
+  const hints = props.hints;
   const spec = { inputHints: hints };
   const fields = resolveEffectiveActionInputFields(spec, props.value);
   const submission = useHappierFormSubmission(props.busy);
@@ -387,7 +253,7 @@ function FormRoot(props: FormProps): ReactElement {
             <Select
               label={field.title}
               options={(field.options ?? []).map((option) => ({
-                value: fromCanonicalActionInputOptionValue(option.value),
+                value: option.value,
                 label: option.label,
                 ...(option.description === undefined ? {} : { description: option.description }),
                 ...(option.disabled === undefined ? {} : { disabled: option.disabled }),

@@ -69,6 +69,71 @@ describe('execution-run subscriptions', () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects a first page with a foreign stream id before emitting or adopting it', async () => {
+    const cancel = vi.fn(async () => undefined);
+    const stream = await startExecutionRunStream({
+      runId: 'run-1',
+      start: async () => ({ streamId: 'stream-1' }),
+      read: async () => ({
+        streamId: 'stream-2',
+        events: [{ t: 'delta' as const, textDelta: 'foreign' }],
+        nextCursor: 99,
+        done: true,
+      }),
+      cancel,
+      closeSignal: new AbortController().signal,
+    });
+
+    await expect(stream[Symbol.asyncIterator]().next()).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      code: 'execution_run_stream_id_mismatch',
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith({ runId: 'run-1', streamId: 'stream-1' });
+  });
+
+  it('rejects a later foreign page while preserving the original cursor and cancellation identity', async () => {
+    const cancel = vi.fn(async () => undefined);
+    let reads = 0;
+    const cursors: number[] = [];
+    const stream = await startExecutionRunStream({
+      runId: 'run-1',
+      start: async () => ({ streamId: 'stream-1' }),
+      read: async (input) => {
+        reads += 1;
+        cursors.push(input.cursor);
+        return reads === 1
+          ? {
+              streamId: 'stream-1',
+              events: [{ t: 'delta' as const, textDelta: 'valid' }],
+              nextCursor: 1,
+              done: false,
+            }
+          : {
+              streamId: 'stream-2',
+              events: [{ t: 'delta' as const, textDelta: 'foreign' }],
+              nextCursor: 2,
+              done: true,
+            };
+      },
+      cancel,
+      closeSignal: new AbortController().signal,
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toEqual({
+      done: false,
+      value: { t: 'delta', textDelta: 'valid' },
+    });
+    await expect(iterator.next()).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      code: 'execution_run_stream_id_mismatch',
+    });
+    expect(cursors).toEqual([0, 1]);
+    expect(cancel).toHaveBeenCalledWith({ runId: 'run-1', streamId: 'stream-1' });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('paces an empty nonterminal page before pulling again', async () => {
     vi.useFakeTimers();
     let reads = 0;

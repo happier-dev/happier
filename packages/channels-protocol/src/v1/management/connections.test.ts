@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    CONVERSATION_CONNECTION_WEBHOOK_SOURCE_INSTANCE_ID_PREFIX_V1,
     ConversationConnectionCreateInputV1Schema,
     ConversationConnectionCreateResultV1Schema,
     ConversationConnectionDeleteInputV1Schema,
@@ -9,10 +10,24 @@ import {
     ConversationConnectionTransferResultV1Schema,
     ConversationConnectionUpdateInputV1Schema,
     ConversationConnectionUpdateResultV1Schema,
+    conversationConnectionWebhookSourceInstanceIdV1,
 } from './connections.js';
 
 describe('Channels V1 connection management contracts', () => {
-    it('admits only the complete non-durable create contract through the host-admitted provider selection', () => {
+    it('derives a bounded deterministic webhook source identity from the canonical connection id', () => {
+        expect(CONVERSATION_CONNECTION_WEBHOOK_SOURCE_INSTANCE_ID_PREFIX_V1)
+            .toBe('channels.connection.');
+        expect(conversationConnectionWebhookSourceInstanceIdV1('connection-1'))
+            .toBe('channels.connection.connection-1');
+        expect(conversationConnectionWebhookSourceInstanceIdV1('x'.repeat(96)))
+            .toBe('channels.connection.' + 'x'.repeat(96));
+
+        for (const invalid of ['', 'x'.repeat(97), 'connection!1']) {
+            expect(() => conversationConnectionWebhookSourceInstanceIdV1(invalid)).toThrow();
+        }
+    });
+
+    it('admits the complete create contract through the host-admitted provider selection and the strict endpoint relay', () => {
         const providerSelection = {
             target: {
                 pluginId: 'happier.channels',
@@ -45,9 +60,37 @@ describe('Channels V1 connection management contracts', () => {
             selectedTransport: 'socket',
         });
 
-        expect(ConversationConnectionCreateInputV1Schema.safeParse({
+        // Durable push joins the create contract as the strict two-call
+        // journey: the same closed input admits the first call and the
+        // endpoint-ensure continuation, while every caller-owned endpoint
+        // authority outside that relay stays rejected.
+        const durablePush = {
             ...checkpointedPull,
             selectedTransport: 'durablePush',
+        } as const;
+        expect(ConversationConnectionCreateInputV1Schema.parse(durablePush)).toEqual(durablePush);
+        const durablePushContinuation = {
+            ...durablePush,
+            endpointContinuation: {
+                connectionId: 'connection-1',
+                webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+            },
+        } as const;
+        expect(ConversationConnectionCreateInputV1Schema.parse(durablePushContinuation))
+            .toEqual(durablePushContinuation);
+        expect(ConversationConnectionCreateInputV1Schema.safeParse({
+            ...durablePush,
+            endpointContinuation: {
+                ...durablePushContinuation.endpointContinuation,
+                setupAttemptId: 'caller-second-attempt-authority',
+            },
+        }).success).toBe(false);
+        expect(ConversationConnectionCreateInputV1Schema.safeParse({
+            ...durablePush,
+            endpointContinuation: {
+                ...durablePushContinuation.endpointContinuation,
+                webhookEndpointId: 'caller-owned-url.example/webhook',
+            },
         }).success).toBe(false);
         expect(ConversationConnectionCreateInputV1Schema.safeParse({
             ...checkpointedPull,
@@ -215,5 +258,70 @@ describe('Channels V1 connection management contracts', () => {
                 }),
             ]),
         });
+    });
+
+    it('admits the strict durable-push endpointRequired arm with core-minted facts only', () => {
+        const endpointRequired = {
+            kind: 'endpointRequired',
+            connectionId: 'connection-1',
+            webhookContribution: {
+                pluginId: 'happier.channel.github',
+                localId: 'issues-webhook',
+            },
+            targetMaterialization: {
+                pluginId: 'happier.channel.github',
+                machineId: 'machine-1',
+                materializationId: 'materialization-1',
+            },
+            sourceInstanceId: 'channels.connection.connection-1',
+            webhookEndpointSetup: {
+                kind: 'accountEndpointV1',
+                credential: 'serverGenerated',
+            },
+            webhookEndpointIdempotencyKey: 'endpoint-attempt-0123456789abcdef',
+        } as const;
+
+        expect(ConversationConnectionCreateResultV1Schema.parse(endpointRequired))
+            .toEqual(endpointRequired);
+        // The source instance must carry the Channels-owned derivation prefix
+        // and the generic routing charset; a provider-shaped source is
+        // rejected. Cross-field equality with the result's connectionId is
+        // enforced by the core runtime owner that builds this result (its
+        // discriminating mismatch test lives beside that owner).
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            sourceInstanceId: 'github:repo:1',
+        }).success).toBe(false);
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            sourceInstanceId: 'channels.connection.' + 'x'.repeat(200),
+        }).success).toBe(false);
+        // The generic WH idempotency key is the sole setup-attempt identity;
+        // Channels neither accepts nor publishes a second attempt token.
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            setupAttemptId: 'endpoint-attempt-0123456789abcdef',
+        }).success).toBe(false);
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            webhookEndpointIdempotencyKey: 'caller key',
+        }).success).toBe(false);
+        // The pinned setup arm is the Account endpoint whose secret the server
+        // mints; other setup arms stay with their own held producers.
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            webhookEndpointSetup: {
+                kind: 'githubSharedInstallationV1',
+                installationId: '1',
+                installationAuthorizationRef: 'ref',
+            },
+        }).success).toBe(false);
+        // The result never carries an endpoint ID: the present-user ensure
+        // result is its only producer, and only the continuation input relays
+        // it back.
+        expect(ConversationConnectionCreateResultV1Schema.safeParse({
+            ...endpointRequired,
+            webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+        }).success).toBe(false);
     });
 });

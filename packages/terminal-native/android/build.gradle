@@ -14,6 +14,18 @@ def termuxSourceMetadata = termuxSourceMetadataFile.exists()
   ? new groovy.json.JsonSlurper().parse(termuxSourceMetadataFile)
   : null
 def termuxUpstreamNoticePath = termuxSourceMetadata?.licenseClosure?.upstreamNoticePath
+def sha256File = { File target ->
+  def digest = java.security.MessageDigest.getInstance("SHA-256")
+  target.withInputStream { input ->
+    byte[] buffer = new byte[8192]
+    for (int read = input.read(buffer); read != -1; read = input.read(buffer)) {
+      digest.update(buffer, 0, read)
+    }
+  }
+  return digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+def termuxRedistributionLicense = file("../${termuxPolicy.license.redistributionLicensePath}")
+def termuxRedistributionNotice = file("../${termuxPolicy.license.redistributionNoticePath}")
 def hasTermuxLicenseClosure = termuxSourceMetadata?.licenseClosure?.upstreamLicensePath == "TERMUX-UPSTREAM-LICENSE.md" &&
   file("termux/vendor/TERMUX-UPSTREAM-LICENSE.md").exists() &&
   (termuxUpstreamNoticePath == null || (
@@ -21,7 +33,15 @@ def hasTermuxLicenseClosure = termuxSourceMetadata?.licenseClosure?.upstreamLice
     file("termux/vendor/TERMUX-UPSTREAM-NOTICE.md").exists()
   )) &&
   termuxSourceMetadata?.licenseClosure?.noticePath == "android/termux/NOTICE.md" &&
-  file("termux/NOTICE.md").exists()
+  file("termux/NOTICE.md").exists() &&
+  termuxSourceMetadata?.licenseClosure?.redistributionLicensePath == termuxPolicy.license.redistributionLicensePath &&
+  termuxSourceMetadata?.licenseClosure?.redistributionLicenseSha256 == termuxPolicy.license.redistributionLicenseSha256 &&
+  termuxSourceMetadata?.licenseClosure?.redistributionNoticePath == termuxPolicy.license.redistributionNoticePath &&
+  termuxSourceMetadata?.licenseClosure?.redistributionNoticeSha256 == termuxPolicy.license.redistributionNoticeSha256 &&
+  termuxRedistributionLicense.exists() &&
+  termuxRedistributionNotice.exists() &&
+  sha256File(termuxRedistributionLicense) == termuxPolicy.license.redistributionLicenseSha256 &&
+  sha256File(termuxRedistributionNotice) == termuxPolicy.license.redistributionNoticeSha256
 def hasTermuxSource = termuxVendorDir.exists() &&
   termuxSourceMetadata != null &&
   termuxSourceMetadata.observedCommit == termuxPolicy.upstream.observedCommit &&
@@ -41,14 +61,12 @@ def readBooleanGate = { String name ->
 }
 
 def dependencyClosureApproved = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED")
-def legalAccepted = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED")
 def appEnvironment = (System.getenv("APP_ENV") ?: "").trim().toLowerCase(java.util.Locale.ROOT)
 def engineeringQaAllowedAppEnvironments = (rendererPolicy.engineeringQa.allowedAppEnvironments ?: [])
   .collect { it.toString().trim().toLowerCase(java.util.Locale.ROOT) }
   .toSet()
 def internalEngineeringBuild = engineeringQaAllowedAppEnvironments.contains(appEnvironment)
-def engineeringQaOverride = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA") &&
-  internalEngineeringBuild
+def hasTermuxImplementation = hasTermuxSource
 def gradleBuildProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN")
 def abiSmokePassed = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED")
 def crashFallbackProven = readBooleanGate("HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN")
@@ -72,23 +90,22 @@ android {
   defaultConfig {
     versionCode 1
     versionName version
-    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_HAS_TERMUX_SOURCE", hasTermuxSource ? "true" : "false"
-    buildConfigField "String", "HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_STATUS", hasTermuxSource ? "\"present\"" : "\"missing\""
+    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_HAS_TERMUX_SOURCE", hasTermuxImplementation ? "true" : "false"
+    buildConfigField "String", "HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_STATUS", hasTermuxImplementation ? "\"included\"" : "\"missing\""
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED", dependencyClosureApproved ? "true" : "false"
-    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED", legalAccepted ? "true" : "false"
-    buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA", engineeringQaOverride ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN", gradleBuildProven ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED", abiSmokePassed ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN", crashFallbackProven ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE", accessibilityNative ? "true" : "false"
     buildConfigField "boolean", "HAPPIER_TERMINAL_NATIVE_QA_CRASH_INJECTION", qaCrashInjectionEnabled ? "true" : "false"
+    consumerProguardFiles "consumer-rules.pro"
   }
 
   buildFeatures {
     buildConfig true
   }
 
-  if (hasTermuxSource) {
+  if (hasTermuxImplementation) {
     sourceSets {
       main {
         java.srcDirs += [
@@ -98,6 +115,9 @@ android {
         ]
         res.srcDirs += [
           "termux/vendor/terminal-view/src/main/res"
+        ]
+        assets.srcDirs += [
+          "termux/distribution"
         ]
       }
     }

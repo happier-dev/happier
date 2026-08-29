@@ -1,6 +1,7 @@
 import { followTranscriptSourceWithFiniteActions } from '@happier-dev/agents/runtime/facets/transcriptSource';
 
 import type { PublicActionInputById, PublicActionResultById } from './actions/generated.js';
+import { HappierTransportError } from './errors.js';
 import type { ActionExecute, ActionExecutionOptions } from './types.js';
 
 /** A raw row emitted by the canonical finite `transcript.follow` Action. */
@@ -114,6 +115,21 @@ export async function startExecutionRunStream(params: Readonly<{
           streamId: started.streamId,
           cursor,
         }, signal);
+        // The stream id is the response's correlation key, not merely a
+        // schema-valid string. Keep the started identity authoritative and
+        // reject before adopting any foreign cursor/events/terminal state.
+        if (page.streamId !== started.streamId) {
+          throw new HappierTransportError(
+            'The execution-run stream response has a mismatched stream id.',
+            {
+              code: 'execution_run_stream_id_mismatch',
+              details: {
+                expectedStreamId: started.streamId,
+                receivedStreamId: page.streamId,
+              },
+            },
+          );
+        }
         cursor = page.nextCursor;
         events = page.events;
         terminal = page.done;

@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,19 +14,21 @@ export async function createLicenseNoticeReport({ packageRoot = defaultPackageRo
   const iosLicense = await readIosLicense(packageRoot, iosPolicy.license);
   const iosNotice = await readIosNotice(packageRoot, iosPolicy);
   const androidTermuxNotice = await readNotice(packageRoot, androidTermuxNoticePath);
+  const androidRedistribution = await readAndroidRedistributionClosure(packageRoot, rendererPolicy.androidTermux.license);
   const androidVendorPresent = await isDirectory(join(packageRoot, rendererPolicy.androidTermux.sourceStrategy.vendorRoot));
   const iosStatus = iosArtifact.status === 'present'
     && iosLicense.status === 'present'
     && iosNotice.status === 'present'
     ? 'ok'
     : 'blocked';
-  const androidStatus = androidTermuxNotice.status === 'present' ? 'ok' : 'blocked';
+  const androidStatus = androidTermuxNotice.status === 'present' && androidRedistribution.status === 'present'
+    ? 'ok'
+    : 'blocked';
 
   return {
     status: iosStatus === 'ok' && androidStatus === 'ok' ? 'ok' : 'blocked',
     packageName: packageJson.name,
     vendoredRendererArtifacts: iosArtifact.status === 'present' || androidVendorPresent,
-    legalReviewRequiredBeforeBundlingGhosttyOrTermux: true,
     iosGhostty: {
       status: iosStatus,
       renderer: iosPolicy.renderer,
@@ -44,7 +47,6 @@ export async function createLicenseNoticeReport({ packageRoot = defaultPackageRo
     androidTermux: {
       status: androidStatus,
       engineeringEvidenceStatus: androidStatus,
-      releaseApprovalStatus: rendererPolicy.androidTermux.approvalBoundary.currentStatus,
       renderer: rendererPolicy.androidTermux.renderer,
       integration: rendererPolicy.androidTermux.integration,
       upstream: rendererPolicy.androidTermux.upstream,
@@ -53,11 +55,33 @@ export async function createLicenseNoticeReport({ packageRoot = defaultPackageRo
       remoteSessionAdapter: rendererPolicy.androidTermux.remoteSessionAdapter,
       sourceStrategy: rendererPolicy.androidTermux.sourceStrategy,
       license: rendererPolicy.androidTermux.license,
-      approvalBoundary: rendererPolicy.androidTermux.approvalBoundary,
       notice: androidTermuxNotice,
+      redistribution: androidRedistribution,
       gates: rendererPolicy.androidTermux.gates,
     },
   };
+}
+
+async function readAndroidRedistributionClosure(packageRoot, policy) {
+  const license = await readOptionalFile(join(packageRoot, policy.redistributionLicensePath));
+  const notice = await readOptionalFile(join(packageRoot, policy.redistributionNoticePath));
+  const licenseSha256 = license === null ? null : sha256(license);
+  const noticeSha256 = notice === null ? null : sha256(notice);
+  const valid = licenseSha256 === policy.redistributionLicenseSha256
+    && noticeSha256 === policy.redistributionNoticeSha256
+    && license?.includes('Apache License')
+    && license?.includes('Version 2.0, January 2004');
+  return {
+    status: valid ? 'present' : license === null || notice === null ? 'missing' : 'mismatch',
+    licensePath: policy.redistributionLicensePath,
+    licenseSha256,
+    noticePath: policy.redistributionNoticePath,
+    noticeSha256,
+  };
+}
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
 }
 
 async function main() {

@@ -645,6 +645,20 @@ export function HappierSelect<Value = string>(props: Readonly<{
   const selected = props.multiple
     ? retainLastSemanticSelections(Array.isArray(props.value) ? props.value : [], isEqual)
     : (props.value === undefined ? [] : [props.value as Value]);
+  // Option identity belongs to this shared Select owner. In particular, a
+  // caller-provided canonical comparator must reject semantically duplicate
+  // values before React keys or selection state can split them into two
+  // controls. Key suffixes are only a rendering fallback for unrelated
+  // options; they must never hide duplicate semantic choices.
+  for (let index = 0; index < props.options.length; index += 1) {
+    const option = props.options[index]!;
+    for (let previousIndex = 0; previousIndex < index; previousIndex += 1) {
+      const previous = props.options[previousIndex]!;
+      if (isEqual(previous.value, option.value)) {
+        throw new Error(`Select options contain duplicate values at indexes ${previousIndex} and ${index}.`);
+      }
+    }
+  }
   const declaredMinimumSelections = typeof props.minimumSelections === 'number'
     && Number.isFinite(props.minimumSelections)
     ? Math.max(0, Math.floor(props.minimumSelections))

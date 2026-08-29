@@ -117,6 +117,8 @@ type MutableEntry = {
   disposed: boolean;
   reading: boolean;
   readQueued: boolean;
+  /** Whether a queued invalidation read must converge after a transient failure. */
+  readQueuedRetryOnFailure: boolean;
   /** Whether every queued wakeup can retain an already-fresh LKG snapshot. */
   readQueuedRetainsFreshSnapshot: boolean;
   /**
@@ -135,10 +137,13 @@ type MutableEntry = {
   watchFailureTerminal: boolean;
   watchRetryTimer: ReturnType<typeof setTimeout> | null;
   watchRetryAttempts: number;
+  rereadRetryTimer: ReturnType<typeof setTimeout> | null;
+  rereadRetryAttempts: number;
 };
 
 /** Retry only a failed initial open; established-watch recovery stays owner-local in the host adapter. */
 const WATCH_OPEN_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
+const RESOURCE_REREAD_RETRY_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
 
 /**
  * A bare Resource id is shorthand for the mounted plugin's contribution. Turn
@@ -218,6 +223,13 @@ function classifyWatchOpenFailure(error: unknown): Readonly<{
     unsupported,
     retryable: candidate?.retryable === false ? false : !unsupported,
   };
+}
+
+function isRetryableResourceReadFailure(error: unknown): boolean {
+  const candidate = error && typeof error === 'object'
+    ? error as Readonly<{ retryable?: unknown }>
+    : null;
+  return candidate?.retryable !== false;
 }
 
 function sameError(
@@ -303,11 +315,23 @@ export function createPluginUiResourceStore(input: Readonly<{
     entry.watchRetryAttempts = 0;
   }
 
+  function clearRereadRetry(entry: MutableEntry): void {
+    if (entry.rereadRetryTimer !== null) {
+      clearTimeout(entry.rereadRetryTimer);
+      entry.rereadRetryTimer = null;
+    }
+    entry.rereadRetryAttempts = 0;
+  }
+
   function stopWatch(entry: MutableEntry, terminal: boolean): void {
     const hadWatchLifecycle = entry.watch !== null
       || entry.watchEstablishing
       || entry.watchRetryTimer !== null;
     clearWatchRetry(entry);
+    // A reread retry is meaningful only while this exact watch remains live.
+    // Terminal watch events, zero subscribers, disposal, and Account retirement
+    // all pass through this owner and therefore cancel it here.
+    clearRereadRetry(entry);
     entry.watchController?.abort();
     entry.watchController = null;
     const watch = entry.watch;
@@ -349,8 +373,10 @@ export function createPluginUiResourceStore(input: Readonly<{
     entry.readController = null;
     entry.reading = false;
     entry.readQueued = false;
+    entry.readQueuedRetryOnFailure = false;
     entry.readQueuedRetainsFreshSnapshot = false;
     entry.readQueuedExpectedDigest = null;
+    clearRereadRetry(entry);
     stopWatch(entry, true);
   }
 
@@ -361,6 +387,8 @@ export function createPluginUiResourceStore(input: Readonly<{
       retainFreshSnapshot?: boolean;
       /** An establishment digest that can satisfy this queued baseline resync. */
       expectedDigest?: string;
+      /** Retry a transient failure of this invalidation-triggered reread. */
+      retryOnFailure?: boolean;
     }>,
   ): void {
     if (!isEntryCurrent(entry)) return;
@@ -374,6 +402,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         // A normal refresh and every invalidation must win over an
         // establishment-only digest optimization.
         entry.readQueuedRetainsFreshSnapshot = entry.readQueuedRetainsFreshSnapshot && retainsFreshSnapshot;
+        entry.readQueuedRetryOnFailure = entry.readQueuedRetryOnFailure || options?.retryOnFailure === true;
         // Only an establishment digest proves a baseline read crossed the
         // watch-open boundary. A caller refresh and every invalidation remain
         // unconditional canonical reads, even when their digest matches LKG.
@@ -382,12 +411,17 @@ export function createPluginUiResourceStore(input: Readonly<{
         }
       } else {
         entry.readQueuedRetainsFreshSnapshot = retainsFreshSnapshot;
+        entry.readQueuedRetryOnFailure = options?.retryOnFailure === true;
         entry.readQueuedExpectedDigest = expectedDigest;
       }
       entry.readQueued = true;
       return;
     }
     entry.reading = true;
+    if (entry.rereadRetryTimer !== null) {
+      clearTimeout(entry.rereadRetryTimer);
+      entry.rereadRetryTimer = null;
+    }
     if (!retainsFreshSnapshot) {
       publish(entry, snapshotForPending(entry, requestedPending));
     }
@@ -427,11 +461,13 @@ export function createPluginUiResourceStore(input: Readonly<{
           pending: 'idle',
           subscription: previous.subscription,
         });
+        clearRereadRetry(entry);
       },
       (error) => {
         if (!isEntryCurrent(entry) || controller.signal.aborted) return;
         const previous = entry.snapshot;
         const hasValue = previous.value !== undefined;
+        const retryable = isRetryableResourceReadFailure(error);
         publish(entry, {
           ...(hasValue ? { value: previous.value, digest: previous.digest } : {}),
           freshness: hasValue ? 'stale' : 'unknown',
@@ -439,6 +475,23 @@ export function createPluginUiResourceStore(input: Readonly<{
           error: readError(error),
           subscription: previous.subscription,
         });
+        if (!retryable) {
+          // A terminal read failure cannot be made current by replaying a
+          // queued invalidation. Drop that wakeup and its retry intent while
+          // retaining the last-known-good value for the author.
+          entry.readQueued = false;
+          entry.readQueuedRetryOnFailure = false;
+          entry.readQueuedRetainsFreshSnapshot = false;
+          entry.readQueuedExpectedDigest = null;
+        }
+        if (
+          options?.retryOnFailure === true
+          && retryable
+          && entry.watch !== null
+          && entry.liveSubscriberCount > 0
+        ) {
+          scheduleRereadRetry(entry);
+        }
       },
     ).finally(() => {
       if (entry.readController !== controller) return;
@@ -446,9 +499,11 @@ export function createPluginUiResourceStore(input: Readonly<{
       entry.reading = false;
       if (!isEntryCurrent(entry) || !entry.readQueued) return;
       const queuedRetainsFreshSnapshot = entry.readQueuedRetainsFreshSnapshot;
+      const queuedRetryOnFailure = entry.readQueuedRetryOnFailure;
       const queuedExpectedDigest = entry.readQueuedExpectedDigest;
       entry.readQueued = false;
       entry.readQueuedRetainsFreshSnapshot = false;
+      entry.readQueuedRetryOnFailure = false;
       entry.readQueuedExpectedDigest = null;
       // A contextual watch establishment gives us a real admission digest. If
       // this in-flight canonical read already returned those bytes, its
@@ -465,9 +520,30 @@ export function createPluginUiResourceStore(input: Readonly<{
       requestRead(
         entry,
         entry.snapshot.value === undefined ? 'initial' : 'refresh',
-        queuedRetainsFreshSnapshot ? { retainFreshSnapshot: true } : undefined,
+        {
+          ...(queuedRetainsFreshSnapshot ? { retainFreshSnapshot: true } : {}),
+          ...(queuedRetryOnFailure ? { retryOnFailure: true } : {}),
+        },
       );
     });
+  }
+
+  function scheduleRereadRetry(entry: MutableEntry): void {
+    if (
+      !isEntryCurrent(entry)
+      || entry.liveSubscriberCount === 0
+      || entry.watch === null
+      || entry.rereadRetryTimer !== null
+    ) return;
+    const delayMs = RESOURCE_REREAD_RETRY_BACKOFF_MS[
+      Math.min(entry.rereadRetryAttempts, RESOURCE_REREAD_RETRY_BACKOFF_MS.length - 1)
+    ]!;
+    entry.rereadRetryAttempts += 1;
+    entry.rereadRetryTimer = setTimeout(() => {
+      entry.rereadRetryTimer = null;
+      if (!isEntryCurrent(entry) || entry.liveSubscriberCount === 0 || entry.watch === null) return;
+      requestRead(entry, entry.snapshot.value === undefined ? 'initial' : 'refresh', { retryOnFailure: true });
+    }, delayMs);
   }
 
   function receiveWatchEvent(entry: MutableEntry, event: ResourceSubscriptionEvent): void {
@@ -488,6 +564,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         entry.snapshot.value === undefined ? 'initial' : 'refresh',
         {
           ...(retainsFreshSnapshot ? { retainFreshSnapshot: true } : {}),
+          retryOnFailure: true,
         },
       );
       return;
@@ -649,6 +726,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       disposed: false,
       reading: false,
       readQueued: false,
+      readQueuedRetryOnFailure: false,
       readQueuedRetainsFreshSnapshot: false,
       readQueuedExpectedDigest: null,
       readController: null,
@@ -659,6 +737,8 @@ export function createPluginUiResourceStore(input: Readonly<{
       watchFailureTerminal: false,
       watchRetryTimer: null,
       watchRetryAttempts: 0,
+      rereadRetryTimer: null,
+      rereadRetryAttempts: 0,
     };
   }
 

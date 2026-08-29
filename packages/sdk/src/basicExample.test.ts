@@ -244,7 +244,7 @@ async function runBasicExample(
       env: {
         ...process.env,
         HAPPIER_API_ENDPOINT: `http://127.0.0.1:${address.port}`,
-        HAPPIER_TOKEN: 'test-token',
+        HAPPIER_TOKEN: 'hap_v1_123e4567-e89b-42d3-a456-426614174000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         HAPPIER_ENDPOINT_MODE: options.endpointMode ?? 'daemon',
         HAPPIER_MACHINE_ID: options.machineId ?? '',
         HAPPIER_AGENT_ID: 'codex',

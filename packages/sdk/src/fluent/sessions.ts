@@ -1,6 +1,6 @@
 import type { PublicActionInputById, PublicActionResultById } from '../actions/generated.js';
 import type { FollowTranscriptOptions, HappierTranscriptItem } from '../subscriptions.js';
-import type { ActionExecute, ActionExecutionOptions } from '../types.js';
+import type { ActionExecute, ActionExecutionOptions, ActionTarget } from '../types.js';
 
 type WithoutSessionId<T> = T extends object ? Omit<T, 'sessionId'> : never;
 type SessionSpawnActionInput = PublicActionInputById['session.spawn_new'];
@@ -24,7 +24,7 @@ type AgentIdentity = SessionSpawnActionInput['agentTarget']['identity'];
  * Machine inventory resolves the friendly Agent id to the canonical target.
  */
 export type HappierSessionSpawnInput = Readonly<
-  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
+  Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput' | 'environmentVariables'> & Readonly<{
     agent: string;
     initialMessage?: string;
   }>
@@ -130,6 +130,7 @@ export type HappierMachineSessions = HappierSessions<HappierMachineSessionOption
 
 type SessionCollectionParams = Readonly<{
   execute: ActionExecute;
+  sessionTarget?: (sessionId: string) => ActionTarget;
   spawn: (
     input: SessionSpawnActionInput,
     options?: ActionExecutionOptions,
@@ -165,30 +166,34 @@ export function createSessions<TOptions extends ActionExecutionOptions = ActionE
 ): HappierSessions<TOptions> {
   const get = (sessionId: string): HappierSession<TOptions> => {
     const id = params.requireSessionId(sessionId);
+    const optionsForSession = (options: TOptions | undefined): ActionExecutionOptions | undefined => {
+      const target = options?.target ?? params.sessionTarget?.(id);
+      return target === undefined ? options : { ...(options ?? {}), target };
+    };
     return Object.freeze({
       id,
       send: (message: string, options?: TOptions) => params.execute(
         'session.message.send',
         { sessionId: id, message },
-        options,
+        optionsForSession(options),
       ),
       sendAndWait: (message: string, input = {}, options?: TOptions) => params.execute(
         'session.message.send',
         { ...input, sessionId: id, message, wait: true },
-        options,
+        optionsForSession(options),
       ),
       waitForIdle: (input = {}, options?: TOptions) => params.execute(
         'session.wait.idle',
         { ...input, sessionId: id },
-        options,
+        optionsForSession(options),
       ),
       history: (input = {}, options?: TOptions) => params.execute(
         'session.transcript.get',
         { ...input, sessionId: id },
-        options,
+        optionsForSession(options),
       ),
       followTranscript: (options?: FollowTranscriptOptions) => params.followTranscript(id, options),
-      stop: (options?: TOptions) => params.execute('session.stop', { sessionId: id }, options),
+      stop: (options?: TOptions) => params.execute('session.stop', { sessionId: id }, optionsForSession(options)),
     });
   };
 

@@ -944,6 +944,25 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: ['CodeBlock as PluginCodeBlock'],
     declarative: { kind: 'not-applicable', reason: 'Preview V2 has Markdown but no standalone code-block node.' },
   },
+  {
+    publicName: 'DiffViewer',
+    propTypeName: 'DiffViewerProps',
+    family: 'Read-only unified diff',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'presentation/content/DiffViewer.ts',
+    sharedSymbol: 'resolveHappierDiffViewerRequest',
+    pluginOwner: { module: 'components/Content.tsx', symbol: 'DiffViewer' },
+    coreConsumers: ['components/plugins/surfaces/pluginUiPrivatePresentationHost.tsx'],
+    positiveConsumer: {
+      kind: 'plugin-surface',
+      pathFromRepoRoot: 'packages/plugins/scm-bitbucket/src/ui/renderSurface.tsx',
+    },
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Diff bodies are live provider content, not declarative document nodes.' },
+  },
   ...(['Popover', 'Menu', 'Dropdown', 'ContextMenu'] as const).map((publicName) => ({
     publicName,
     propTypeName: publicName === 'Popover' ? 'PopoverProps' : 'MenuProps',
@@ -1134,7 +1153,7 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     devMountSymbols: [],
     declarative: { kind: 'not-applicable', reason: 'The canonical interaction/modal owner mediates dialog outcomes.' },
   },
-  ...(['Tooltip', 'Grid', 'Tree', 'Skeleton', 'DiffViewer', 'KeyHint'] as const).map((publicName) => ({
+  ...(['Tooltip', 'Grid', 'Tree', 'Skeleton', 'KeyHint'] as const).map((publicName) => ({
     publicName,
     propTypeName: 'never',
     family: publicName,
@@ -1703,6 +1722,7 @@ describe('graduated shared presentation families (§8.2)', () => {
       'Progress',
       'Image',
       'BrandMark',
+      'DiffViewer',
       'TargetedSurface',
     ]);
   });

@@ -22,21 +22,32 @@ export function createVoiceEncodedAudioPlayback(
   if (!supportsVoiceEncodedAudioPlayback(nativeModule)) return null;
   const playbackId = `voice-encoded-${++playbackSequence}`;
   let active = false;
+  let terminal = false;
   const listeners = new Set<(event: VoiceEncodedAudioPlaybackEvent) => void>();
+  const emit = (event: VoiceEncodedAudioPlaybackEvent): void => {
+    if (terminal) return;
+    if (event.status !== 'started') {
+      terminal = true;
+      active = false;
+    }
+    for (const listener of listeners) listener(event);
+    if (event.status !== 'started') subscription.remove();
+  };
   const subscription = nativeModule.addListener('encodedAudioPlayback', (event) => {
     if (event.playbackId !== playbackId) return;
-    if (event.status !== 'started') active = false;
-    for (const listener of listeners) listener(event);
+    emit(event);
   });
 
   return Object.freeze({
     start: async (uri) => {
       if (active) throw new Error('voice_encoded_audio_playback_already_active');
+      if (terminal) throw new Error('voice_encoded_audio_playback_terminal');
       active = true;
       try {
         await nativeModule.startEncodedAudioPlayback({ playbackId, uri });
       } catch (error) {
         active = false;
+        terminal = true;
         subscription.remove();
         throw error;
       }
@@ -47,6 +58,7 @@ export function createVoiceEncodedAudioPlayback(
         return;
       }
       active = false;
+      terminal = true;
       try {
         await nativeModule.stopEncodedAudioPlayback({ playbackId });
       } finally {

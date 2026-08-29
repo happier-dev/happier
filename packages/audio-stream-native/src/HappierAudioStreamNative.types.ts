@@ -38,7 +38,7 @@ export type VoiceFileRecordingStopResult = Readonly<{
 
 export type VoiceEncodedAudioPlaybackEvent = Readonly<{
   playbackId: string;
-  status: 'started' | 'finished' | 'failed';
+  status: 'started' | 'finished' | 'failed' | 'replaced';
   reason?: string;
 }>;
 

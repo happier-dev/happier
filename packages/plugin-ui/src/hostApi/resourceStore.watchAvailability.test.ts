@@ -4,7 +4,7 @@ import type {
   ResourceContent,
   ResourceSubscriptionEvent,
 } from '@happier-dev/plugin-sdk/ui';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createPluginUiHostApiResourceClient,
@@ -69,6 +69,56 @@ function createReconnectingHostApi() {
 }
 
 describe('plugin UI Resource watch availability', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries a transient invalidation reread in the live Resource owner', async () => {
+    vi.useFakeTimers();
+    let deliver: ((event: ResourceSubscriptionEvent) => void) | null = null;
+    let failNextRead = false;
+    const readResource = vi.fn(async () => {
+      if (failNextRead) {
+        failNextRead = false;
+        throw Object.assign(new Error('temporary read outage'), { code: 'unavailable', retryable: true });
+      }
+      return onlineValue;
+    });
+    const watchResource = vi.fn(async (
+      _resource: unknown,
+      listener: (event: ResourceSubscriptionEvent) => void,
+    ): Promise<Disposable> => {
+      deliver = listener;
+      return { dispose: vi.fn() };
+    });
+    const store = createPluginUiResourceStore({
+      client: { readResource, watchResource },
+      pluginId: 'acme.preview',
+    });
+    const entry = store.getEntry('review-summary');
+    const unsubscribe = entry.subscribe(() => undefined, true);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ freshness: 'fresh', subscription: 'live' });
+    expect(deliver).not.toBeNull();
+
+    failNextRead = true;
+    deliver!({ version: 1, subscriptionId: 'sub-1', kind: 'invalidated', digest: onlineValue.digest });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(entry.getSnapshot()).toMatchObject({ value: onlineValue, freshness: 'stale', subscription: 'live' });
+    const failedReadCount = readResource.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(249);
+    expect(readResource).toHaveBeenCalledTimes(failedReadCount);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(readResource).toHaveBeenCalledTimes(failedReadCount + 1);
+    expect(entry.getSnapshot()).toMatchObject({ value: onlineValue, freshness: 'fresh', subscription: 'live' });
+
+    unsubscribe();
+    store.dispose();
+  });
+
   it('resumes live watching on the same entry when a reconnect re-advertises watchResource', async () => {
     const host = createReconnectingHostApi();
     const client = createPluginUiHostApiResourceClient(host.api);

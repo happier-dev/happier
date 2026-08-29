@@ -1,0 +1,4 @@
+<resources>
+  <string name="happier_voice_foreground_notification_channel">语音对话</string>
+  <string name="happier_voice_foreground_notification_text">语音对话正在进行</string>
+</resources>

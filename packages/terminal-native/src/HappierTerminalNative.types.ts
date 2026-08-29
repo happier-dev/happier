@@ -15,7 +15,6 @@ export type TerminalNativeUnavailableReason =
   | 'native-module-missing'
   | 'feature-disabled'
   | 'build-not-included'
-  | 'legal-not-approved'
   | 'dependency-closure-unapproved'
   | 'package-proof-unaccepted'
   | 'artifact-missing'

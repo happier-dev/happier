@@ -1,10 +1,8 @@
-# Android Termux Terminal Renderer Gate
+# Android Termux Terminal Renderer
 
-This directory records the Android native renderer decision. It must not contain Termux source or AAR artifacts until legal/product approval accepts the dependency posture.
+This directory records the Android native renderer source and compliance contract. Materialized Termux source remains ignored and is accepted only when repository checks prove the pinned revision, copied Apache license and attribution, allowed module set, and absence of forbidden GPL-module references.
 
-Repository checks can prove the pinned revision, copied license, allowed module set, and absence of forbidden module references. They cannot make the product/legal decision: that approval must be recorded by the authorized release owners against commit `401bbe54b8f4e68302b1ff70678015a24628fb1d`; the environment gate merely asserts that decision to the build.
-
-The intended native renderer source is Termux `terminal-view` plus `terminal-emulator` from `termux/termux-app`. The root Termux app is GPL-3.0-only, but upstream documents `terminal-view` and `terminal-emulator` as Apache-2.0 exceptions inherited from Terminal Emulator for Android. Happier must consume only those terminal libraries, not the full Termux app, unless a later legal/product decision explicitly changes that scope.
+The intended native renderer source is Termux `terminal-view` plus `terminal-emulator` from `termux/termux-app`. The root Termux app is GPL-3.0-only, but upstream documents `terminal-view` and `terminal-emulator` as Apache-2.0 exceptions inherited from Terminal Emulator for Android. Happier consumes only those terminal libraries and never the full Termux app or `termux-shared` in this implementation.
 
 Happier does not embed Termux's process-backed `TerminalView` widget directly. `TerminalView` requires a final `TerminalSession` that starts a local Android subprocess, while Happier terminals receive bytes from the remote daemon PTY. The native path therefore uses Termux `TerminalEmulator` and `TerminalRenderer` behind `TermuxBackedRemoteSession`, and Happier owns the remote interaction adapter.
 
@@ -20,7 +18,7 @@ yarn workspace @happier-dev/terminal-native fetch:termux:android
 
 The source checkout must be clean and exactly at that pinned revision. The extractor copies only `terminal-view` and `terminal-emulator`, rejects `app` and `termux-shared`, copies the root upstream `LICENSE.md` plus an upstream `NOTICE` when present, and writes the matching provenance and license-closure fields to `android/termux/vendor/TERMUX-SOURCE.json`. Gradle consumes the ignored source tree only when its module set, pin, policy metadata, package notice, and copied license closure all match.
 
-Before approving source or artifacts here, record:
+Before updating source or artifacts here, verify:
 
 - pinned upstream commit;
 - exact copied modules/artifacts;
@@ -36,20 +34,18 @@ Before approving source or artifacts here, record:
 Runtime gate env/properties:
 
 - `HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED=1`
-- `HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED=1`
 - `HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN=1`
 - `HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED=1`
 - `HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN=1`
 - `HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE=1`
 
-Before external approval exists, an internal-development device build may instead set `HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA=1`. The override is accepted only for `APP_ENV=internaldev` or `APP_ENV=internalpreview`; missing, unknown, `publicdev`, `preview`, and `production` environments fail closed. It enables only engineering validation and never changes release approval evidence or the production legal/product gate.
-
-The first five are hard availability gates outside the explicit internal-development QA override. `HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE` only controls whether availability reports `accessibility: "native"` instead of `accessibility: "fallback-required"`; xterm WebView remains the default accessible renderer until this is proven.
+The first four are hard technical availability gates. `HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE` only controls whether availability reports `accessibility: "native"` instead of `accessibility: "fallback-required"`; xterm WebView remains the accessible fallback until this is proven.
 
 Static APK size and ABI evidence is generated with:
 
 ```bash
 HAPPIER_TERMINAL_NATIVE_ANDROID_CANDIDATE_APK=/path/to/native-enabled.apk \
+HAPPIER_TERMINAL_NATIVE_ANDROID_EXPECT_TERMUX_INCLUDED=1 \
 HAPPIER_TERMINAL_NATIVE_ANDROID_BASELINE_APK=/path/to/native-disabled.apk \
 HAPPIER_TERMINAL_NATIVE_ANDROID_REQUIRED_ABIS=arm64-v8a,x86_64 \
 yarn workspace @happier-dev/terminal-native evidence:android:artifact

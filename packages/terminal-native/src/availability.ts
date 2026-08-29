@@ -189,7 +189,6 @@ function isTerminalNativeUnavailableReason(value: unknown): value is TerminalNat
     value === 'native-module-missing' ||
     value === 'feature-disabled' ||
     value === 'build-not-included' ||
-    value === 'legal-not-approved' ||
     value === 'dependency-closure-unapproved' ||
     value === 'package-proof-unaccepted' ||
     value === 'artifact-missing' ||

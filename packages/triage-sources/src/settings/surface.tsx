@@ -139,9 +139,6 @@ type DraftEdit = Readonly<{
   control: Exclude<TriageSourceSettingsRowControlV1['id'], 'remove'>;
 }>;
 
-/** Private per-invocation deadline; owner tests inject a short duration. */
-const TRIAGE_SOURCE_SETTINGS_DISCOVERY_DEADLINE_MS = 10_000;
-
 function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfigurationV1): boolean {
   return outcome.kind === 'configured'
     || outcome.kind === 'alreadyConfigured'
@@ -159,10 +156,7 @@ function isSettledConfigurationSuccess(outcome: TriageSourceSettingsConfiguratio
 export function createTriageSourceSettingsSurface(
   identity: TriageSourceSettingsSurfaceIdentityV1,
 ): RenderSurface {
-  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
-    identity,
-    TRIAGE_SOURCE_SETTINGS_DISCOVERY_DEADLINE_MS,
-  );
+  return createTriageSourceSettingsSurfaceWithDiscoveryDeadline(identity);
 }
 
 /** Test-only source-module seam; intentionally not re-exported by this package. */
@@ -175,7 +169,7 @@ export function createTriageSourceSettingsSurfaceForTesting(
 
 function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
   identity: TriageSourceSettingsSurfaceIdentityV1,
-  discoveryDeadlineMs: number,
+  discoveryDeadlineMs?: number,
 ): RenderSurface {
   const { sourceDisplayName } = identity;
   const DraftEditor = identity.DraftEditor;
@@ -226,7 +220,11 @@ function createTriageSourceSettingsSurfaceWithDiscoveryDeadline(
       );
       void (async () => {
         try {
-          await raceWithTimeout(invocation, discoveryDeadlineMs);
+          if (discoveryDeadlineMs === undefined) {
+            await invocation;
+          } else {
+            await raceWithTimeout(invocation, discoveryDeadlineMs);
+          }
         } finally {
           // This invocation is no longer current to this page. The mounted
           // host/action boundary owns the resulting outcome-unknown state.

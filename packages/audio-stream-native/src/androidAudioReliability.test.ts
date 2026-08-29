@@ -11,6 +11,20 @@ const serviceSource = fs.readFileSync(
   path.join(packageRoot, 'android/src/main/java/dev/happier/audio/HappierVoiceAudioForegroundService.kt'),
   'utf8',
 );
+const androidResourcesRoot = path.join(packageRoot, 'android/src/main/res');
+const localizedResourceDirectories = [
+  'values-ca',
+  'values-de',
+  'values-es',
+  'values-fr',
+  'values-it',
+  'values-ja',
+  'values-pl',
+  'values-pt',
+  'values-ru',
+  'values-zh-rCN',
+  'values-zh-rTW',
+];
 
 describe('Android Voice audio reliability contract', () => {
   it('degrades only preferred AEC activation failures and keeps required AEC fail-closed', () => {
@@ -43,5 +57,16 @@ describe('Android Voice audio reliability contract', () => {
     expect(successIndex).toBeGreaterThan(startForegroundIndex);
     expect(serviceSource).toContain('settleStart(requestId, Result.failure(error))');
     expect(serviceSource).toContain('if (pendingStart?.first == requestId) pendingStart = null');
+  });
+
+  it('ships localized build-owned foreground notification resources', () => {
+    for (const directory of localizedResourceDirectories) {
+      const resource = fs.readFileSync(
+        path.join(androidResourcesRoot, directory, 'strings.xml'),
+        'utf8',
+      );
+      expect(resource).toContain('name="happier_voice_foreground_notification_channel"');
+      expect(resource).toContain('name="happier_voice_foreground_notification_text"');
+    }
   });
 });

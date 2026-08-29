@@ -12,6 +12,8 @@ vi.mock('react-native', () => ({
 }));
 
 import { PluginUiProvider } from './PluginUiProvider.js';
+import { PluginUiProviderInternal } from './PluginUiProvider.js';
+import { Spinner } from './Spinner.js';
 import { HappierSpinner } from '../presentation/feedback/Spinner.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 
@@ -39,5 +41,33 @@ describe('native HappierSpinner presentation', () => {
     const spinner = renderer!.root.findByType('ActivityIndicator');
     expect(spinner.props.animating).toBe(false);
     expect(spinner.props.hidesWhenStopped).toBe(false);
+  });
+
+  it('pauses public Spinner animation while its retained surface is inactive', async () => {
+    const context = createSurfaceContext({ platform: 'ios', reducedMotion: false });
+    const renderSpinner = (active: boolean) => (
+      <PluginUiProviderInternal
+        hostApi={createHostApiStub(context)}
+        context={context}
+        surfaceActivity={{ active }}
+      >
+        <Spinner testID="public-spinner" />
+      </PluginUiProviderInternal>
+    );
+
+    await act(async () => {
+      renderer = create(renderSpinner(false));
+    });
+    let spinner = renderer!.root.findByType('ActivityIndicator');
+    expect(spinner.props.animating).toBe(false);
+    expect(spinner.props.hidesWhenStopped).toBe(false);
+
+    await act(async () => {
+      renderer!.update(renderSpinner(true));
+    });
+    spinner = renderer!.root.findByType('ActivityIndicator');
+    // Leaving the prop undefined preserves React Native's default active
+    // indicator; the adapter only needs to force it off for inactive mounts.
+    expect(spinner.props.animating).not.toBe(false);
   });
 });

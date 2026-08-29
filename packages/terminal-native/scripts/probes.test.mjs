@@ -772,22 +772,20 @@ test('Android Termux bridge enforces hard gates before creating or driving sessi
   assert.match(remoteSessionSource, /val diagnostic = makeTermuxBridgeDiagnostic\(\)[\s\S]*if \(!diagnostic\.available\)/);
 });
 
-test('Android Termux engineering QA override cannot replace the public legal gate', async () => {
+test('Android Termux keeps crash injection restricted to internal QA environments without a release-approval gate', async () => {
   const buildGradle = await readFile(join(packageRoot, 'android/build.gradle'), 'utf-8');
   const bridgeSource = await readFile(join(packageRoot, 'android/src/main/java/dev/happier/terminal/TermuxBridge.kt'), 'utf-8');
   const rendererPolicy = JSON.parse(await readFile(join(packageRoot, 'native-renderers.json'), 'utf-8'));
 
-  assert.match(buildGradle, /HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
   assert.deepEqual(
     rendererPolicy.engineeringQa.allowedAppEnvironments,
     ['internaldev', 'internalpreview'],
   );
   assert.match(buildGradle, /engineeringQaAllowedAppEnvironments\.contains\(appEnvironment\)/);
-  assert.match(buildGradle, /engineeringQaOverride[\s\S]*internalEngineeringBuild/);
   assert.match(buildGradle, /qaCrashInjectionEnabled[\s\S]*internalEngineeringBuild/);
   assert.doesNotMatch(buildGradle, /APP_ENV"\)\s*!=/);
-  assert.match(bridgeSource, /!BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED &&\s*!BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
-  assert.match(bridgeSource, /engineeringQaOverride = BuildConfig\.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA/);
+  assert.doesNotMatch(buildGradle, /HAPPIER_TERMINAL_NATIVE_ANDROID_(?:LEGAL_ACCEPTED|ENGINEERING_QA)/);
+  assert.doesNotMatch(bridgeSource, /legal-not-approved|engineeringQaOverride/);
 });
 
 test('Android Termux accessibility uses host-localized labels and exposes focus, copy, select, and link actions', async () => {
@@ -1064,7 +1062,7 @@ test('Android probe reports structured fail-closed license and fallback diagnost
   assert.equal(payload.gradle.status, 'source-missing');
   assert.equal(payload.abi.status, 'unverified');
   assert.ok(payload.requiredGates.includes('dependency-closure-review'));
-  assert.equal(payload.requiredGates.includes('legal-product-approval'), true);
+  assert.equal(payload.requiredGates.includes('legal-product-approval'), false);
   assert.ok(payload.remediation.includes('Set HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_ROOT to a locally audited Termux checkout, then run scripts/fetchTermuxAndroid.mjs to extract only terminal-view and terminal-emulator into android/termux/vendor.'));
 });
 
@@ -1094,10 +1092,10 @@ test('Android probe reports source-present state blocked by hard package gates b
     assert.equal(payload.source.status, 'ok');
     assert.equal(payload.source.metadata.observedCommit, '401bbe54b8f4e68302b1ff70678015a24628fb1d');
     assert.equal(payload.gradle.status, 'source-present');
-    assert.equal(payload.requiredGates.includes('legal-product-approval'), true);
+    assert.equal(payload.requiredGates.includes('legal-product-approval'), false);
     assert.equal(payload.gates.dependencyClosureApproved, false);
-    assert.equal(payload.gates.legalAccepted, false);
-    assert.ok(payload.remediation.includes('Keep xterm WebView selected until source, legal, package, ABI, crash fallback, and accessibility gates pass.'));
+    assert.equal(Object.hasOwn(payload.gates, 'legalAccepted'), false);
+    assert.ok(payload.remediation.includes('Keep xterm WebView selected until source, package, ABI, crash fallback, and accessibility gates pass.'));
   } finally {
     await rm(sourceRoot, { force: true, recursive: true });
     await rm(vendorRoot, { force: true, recursive: true });
@@ -1122,7 +1120,6 @@ test('Android probe reports fallback-required availability after hard gates pass
         ...process.env,
         HAPPIER_TERMINAL_NATIVE_TERMUX_VENDOR: vendorRoot,
         HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED: '1',
-        HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED: '1',
         HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN: '1',
         HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED: '1',
         HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN: '1',
@@ -1142,6 +1139,50 @@ test('Android probe reports fallback-required availability after hard gates pass
     assert.equal(payload.fallbackRequired, true);
     assert.equal(payload.gates.nativeAccessibilityProven, false);
     assert.ok(payload.remediation.includes('Use terminalRendererPreference=native to opt into Android native while the custom accessibility model is still fallback-required.'));
+  } finally {
+    await rm(sourceRoot, { force: true, recursive: true });
+    await rm(vendorRoot, { force: true, recursive: true });
+  }
+});
+
+test('Android probe reports native accessibility once the TalkBack-proven shared gate set passes', async () => {
+  const { installTermuxAndroidSource } = await import('./termuxAndroidSource.mjs');
+  const sourceRoot = await createTermuxSourceFixture({
+    modules: ['terminal-view', 'terminal-emulator'],
+  });
+  const vendorRoot = await mkdtempPath();
+
+  try {
+    await installTermuxAndroidSource({
+      sourceRoot,
+      vendorRoot,
+      observedCommit: '401bbe54b8f4e68302b1ff70678015a24628fb1d',
+    });
+    const { stdout } = await execFileAsync(process.execPath, [join(packageRoot, 'scripts/probeAndroid.mjs')], {
+      env: {
+        ...process.env,
+        HAPPIER_TERMINAL_NATIVE_TERMUX_VENDOR: vendorRoot,
+        HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED: '1',
+        HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN: '1',
+        HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED: '1',
+        HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN: '1',
+        HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE: '1',
+      },
+    });
+    const payload = JSON.parse(stdout);
+
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.reason, 'available');
+    assert.deepEqual(payload.availability, {
+      available: true,
+      platform: 'android',
+      renderer: 'android-termux',
+      moduleVersion: '0.0.0',
+      accessibility: 'native',
+    });
+    assert.equal(payload.fallbackRequired, false);
+    assert.equal(payload.gates.nativeAccessibilityProven, true);
+    assert.ok(payload.remediation.includes('Android Termux native renderer gates passed for default native accessibility selection.'));
   } finally {
     await rm(sourceRoot, { force: true, recursive: true });
     await rm(vendorRoot, { force: true, recursive: true });
@@ -1198,10 +1239,12 @@ test('license notice retains Android Termux module scope without approving the f
     assert.equal(payload.androidTermux.sourceStrategy.kind, 'ignored-source-extract');
     assert.equal(payload.androidTermux.notice.path, 'android/termux/NOTICE.md');
     assert.equal(payload.androidTermux.notice.status, 'present');
+    assert.equal(payload.androidTermux.redistribution.status, 'present');
+    assert.equal(payload.androidTermux.redistribution.licenseSha256, 'a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2');
+    assert.equal(payload.androidTermux.redistribution.noticeSha256, '7b620f17bed368d6ffe6736b523aae0dcee22dd56fe5f40428811b64b71d6b9a');
     assert.equal(payload.androidTermux.engineeringEvidenceStatus, 'ok');
-    assert.equal(payload.androidTermux.releaseApprovalStatus, 'not-recorded-in-repository');
-    assert.equal(payload.androidTermux.approvalBoundary.currentStatus, 'not-recorded-in-repository');
-    assert.match(payload.androidTermux.approvalBoundary.environmentGateSemantics, /assertion only/);
+    assert.equal(Object.hasOwn(payload.androidTermux, 'releaseApprovalStatus'), false);
+    assert.equal(Object.hasOwn(payload.androidTermux, 'approvalBoundary'), false);
   } finally {
     await rm(fixtureRoot, { force: true, recursive: true });
   }
@@ -1310,6 +1353,83 @@ test('Android artifact evidence reports size delta and packaged ABI closure with
     assert.match(report.candidate.sha256, /^[a-f0-9]{64}$/);
     assert.equal(report.evidenceScope, 'static-apk-package-only');
     assert.equal(report.abiSmokeStillRequired, true);
+  } finally {
+    process.env.PATH = originalPath;
+    await rm(fakeBin, { force: true, recursive: true });
+    await rm(outputRoot, { force: true, recursive: true });
+  }
+});
+
+test('Android artifact evidence enforces Termux inclusion and complete redistribution license assets', async () => {
+  const outputRoot = await mkdtempPath();
+  const fakeBin = await mkdtempPath();
+  const candidatePath = join(outputRoot, 'candidate.apk');
+  const fakeUnzip = join(fakeBin, 'unzip');
+  const licensePath = join(packageRoot, 'android', 'termux', 'distribution', 'LICENSE-APACHE-2.0.txt');
+  const noticePath = join(packageRoot, 'android', 'termux', 'distribution', 'NOTICE.txt');
+  const originalPath = process.env.PATH;
+
+  try {
+    await writeFile(candidatePath, 'candidate-apk');
+    await writeFile(fakeUnzip, [
+      '#!/bin/sh',
+      'if [ "$1" = "-Z1" ]; then',
+      '  printf "classes.dex\\nclasses2.dex\\nassets/LICENSE-APACHE-2.0.txt\\nassets/NOTICE.txt\\n"',
+      'elif [ "$1" = "-p" ]; then',
+      '  case "$3" in',
+      '    classes.dex) printf "Ldev/happier/terminal/termux/TermuxBackedRemoteSession;Lcom/termux/terminal/TerminalEmulator;" ;;',
+      '    classes2.dex) printf "Lcom/termux/view/TerminalRenderer;" ;;',
+      `    assets/LICENSE-APACHE-2.0.txt) cat '${licensePath}' ;;`,
+      `    assets/NOTICE.txt) cat '${noticePath}' ;;`,
+      '    *) exit 73 ;;',
+      '  esac',
+      'else',
+      '  exit 72',
+      'fi',
+    ].join('\n'));
+    await chmod(fakeUnzip, 0o755);
+    process.env.PATH = `${fakeBin}:${originalPath ?? ''}`;
+
+    const { createAndroidArtifactEvidence } = await import('./androidArtifactEvidence.mjs');
+    const internalArtifact = await createAndroidArtifactEvidence({
+      candidatePath,
+      requiredAbis: [],
+      expectTermuxIncluded: true,
+    });
+    assert.equal(internalArtifact.status, 'ok');
+    assert.equal(internalArtifact.candidate.termuxImplementationPresent, true);
+    assert.equal(internalArtifact.candidate.termuxLicenseClosurePresent, true);
+    assert.equal(internalArtifact.candidate.foundTermuxMarkers.length, 3);
+
+    const publicArtifact = await createAndroidArtifactEvidence({
+      candidatePath,
+      requiredAbis: [],
+      expectTermuxIncluded: false,
+    });
+    assert.equal(publicArtifact.status, 'blocked');
+    assert.equal(publicArtifact.reason, 'termux-unexpected-in-artifact');
+
+    await writeFile(fakeUnzip, [
+      '#!/bin/sh',
+      'if [ "$1" = "-Z1" ]; then',
+      '  printf "classes.dex\\nassets/LICENSE-APACHE-2.0.txt\\nassets/NOTICE.txt\\n"',
+      'elif [ "$3" = "classes.dex" ]; then',
+      '  printf "Ldev/happier/terminal/termux/TermuxBackedRemoteSession;Lcom/termux/terminal/TerminalEmulator;Lcom/termux/view/TerminalRenderer;"',
+      'elif [ "$3" = "assets/LICENSE-APACHE-2.0.txt" ]; then',
+      `  cat '${licensePath}'`,
+      'elif [ "$3" = "assets/NOTICE.txt" ]; then',
+      '  printf "tampered notice"',
+      'else',
+      '  exit 73',
+      'fi',
+    ].join('\n'));
+    const tamperedLicenseArtifact = await createAndroidArtifactEvidence({
+      candidatePath,
+      requiredAbis: [],
+      expectTermuxIncluded: true,
+    });
+    assert.equal(tamperedLicenseArtifact.status, 'blocked');
+    assert.equal(tamperedLicenseArtifact.reason, 'termux-license-closure-missing');
   } finally {
     process.env.PATH = originalPath;
     await rm(fakeBin, { force: true, recursive: true });
@@ -1431,6 +1551,10 @@ test('Android Termux source installer preserves the Apache notice closure with p
       upstreamLicensePath: 'TERMUX-UPSTREAM-LICENSE.md',
       upstreamNoticePath: 'TERMUX-UPSTREAM-NOTICE.md',
       noticePath: 'android/termux/NOTICE.md',
+      redistributionLicensePath: 'android/termux/distribution/LICENSE-APACHE-2.0.txt',
+      redistributionLicenseSha256: 'a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2',
+      redistributionNoticePath: 'android/termux/distribution/NOTICE.txt',
+      redistributionNoticeSha256: '7b620f17bed368d6ffe6736b523aae0dcee22dd56fe5f40428811b64b71d6b9a',
     });
 
     const validation = await validateTermuxAndroidSource({ sourceRoot: vendorRoot });
@@ -1496,11 +1620,20 @@ test('Android Termux reattaches native callbacks after a retained view returns t
 
 test('Android Gradle consumes Termux source only when the pinned license closure is present', async () => {
   const buildGradle = await readFile(join(packageRoot, 'android/build.gradle'), 'utf-8');
+  const consumerRules = await readFile(join(packageRoot, 'android/consumer-rules.pro'), 'utf-8');
 
   assert.match(buildGradle, /new groovy\.json\.JsonSlurper\(\)\.parse\(termuxSourceMetadataFile\)/);
   assert.match(buildGradle, /termuxSourceMetadata\.observedCommit == termuxPolicy\.upstream\.observedCommit/);
   assert.match(buildGradle, /TERMUX-UPSTREAM-LICENSE\.md/);
   assert.match(buildGradle, /TERMUX-UPSTREAM-NOTICE\.md/);
+  assert.match(buildGradle, /hasTermuxImplementation = hasTermuxSource/);
+  assert.doesNotMatch(buildGradle, /legalAccepted|termuxImplementationApproved|engineeringQaOverride/);
+  assert.match(buildGradle, /if \(hasTermuxImplementation\) \{[\s\S]*sourceSets/);
+  assert.match(buildGradle, /assets\.srcDirs \+= \[[\s\S]*"termux\/distribution"/);
+  assert.match(buildGradle, /consumerProguardFiles "consumer-rules\.pro"/);
+  assert.match(consumerRules, /-keep class dev\.happier\.terminal\.termux\.TermuxBackedRemoteSession/);
+  assert.match(consumerRules, /-keepnames class com\.termux\.terminal\.\*\*/);
+  assert.match(consumerRules, /-keepnames class com\.termux\.view\.TerminalRenderer/);
 });
 
 test('Android Termux fetch rejects a checkout whose Git revision differs from the policy pin', async () => {
@@ -1853,7 +1986,7 @@ async function createNativeLicenseFixture() {
   const vendorRoot = join(root, 'ios', 'Vendor');
 
   await mkdir(join(vendorRoot, 'GhosttyKit.xcframework'), { recursive: true });
-  await mkdir(join(root, 'android', 'termux'), { recursive: true });
+  await mkdir(join(root, 'android', 'termux', 'distribution'), { recursive: true });
   await writeFile(join(root, 'native-renderers.json'), policyText);
   await writeFile(join(root, 'package.json'), packageJsonText);
   await writeFile(join(vendorRoot, 'LICENSE-libghostty-spm.txt'), [
@@ -1873,6 +2006,14 @@ async function createNativeLicenseFixture() {
     'https://raw.githubusercontent.com/Lakr233/libghostty-spm/c069f05e0a4ef50143e943e954ed75e52e947009/LICENSE',
   ].join('\n'));
   await writeFile(join(root, 'android', 'termux', 'NOTICE.md'), 'Terminal Emulator for Android notice.');
+  await copyFile(
+    join(packageRoot, 'android', 'termux', 'distribution', 'LICENSE-APACHE-2.0.txt'),
+    join(root, 'android', 'termux', 'distribution', 'LICENSE-APACHE-2.0.txt'),
+  );
+  await copyFile(
+    join(packageRoot, 'android', 'termux', 'distribution', 'NOTICE.txt'),
+    join(root, 'android', 'termux', 'distribution', 'NOTICE.txt'),
+  );
   return root;
 }
 

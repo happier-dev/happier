@@ -41,7 +41,10 @@ Declaration: `dist/index.d.ts`
 - type `HappierTranscriptItem` from `dist/index.d.ts`
 - value `HappierTransportError` from `dist/index.d.ts`
 - type `MachineListOptions` from `dist/index.d.ts`
+- type `PublicActionExecutionResult` from `dist/index.d.ts`
 - type `PublicActionId` from `dist/index.d.ts`
 - type `PublicActionInputById` from `dist/index.d.ts`
 - type `PublicActionResultById` from `dist/index.d.ts`
+- type `RawActionExecute` from `dist/index.d.ts`
 - value `connect` from `dist/index.d.ts`
+- value `isHappierActionApprovalRequestCreated` from `dist/index.d.ts`

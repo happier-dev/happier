@@ -13,7 +13,6 @@ import type {
 import { usePluginUiDataClient, usePluginUiDataClientOrNull } from './context.js';
 import type {
   PluginUiAccountKv,
-  PluginUiAccountSettings,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
 } from './types.js';
@@ -22,7 +21,6 @@ export { usePluginUiDataClient, usePluginUiDataClientOrNull } from './context.js
 export type {
   PluginUiAccountCollectionForDefinition,
   PluginUiAccountKv,
-  PluginUiAccountSettings,
   PluginUiCollectionQueryInput,
   PluginUiCollectionQueryPager,
   PluginUiCollectionQuerySnapshot,
@@ -52,10 +50,6 @@ export function usePluginAccountKv(): PluginUiAccountKv {
  * all — the Account is not reachable from here, so durable controls must be
  * disabled rather than silently doing nothing.
  */
-export function usePluginAccountSettings(): PluginUiAccountSettings | null {
-  return usePluginUiDataClientOrNull()?.accountSettings ?? null;
-}
-
 export type PluginUiCollectionQueryFailure =
   | PluginCollectionUiQueryErrorV1
   | Error;

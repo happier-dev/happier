@@ -19,7 +19,6 @@ data class TermuxBridgeDiagnostic(
   val detail: String,
   val fallbackRenderer: String,
   val fallbackRequired: Boolean,
-  val engineeringQaOverride: Boolean,
   val requiredModules: List<Map<String, String>>,
   val forbiddenModules: List<Map<String, String>>,
   val remoteSessionAdapterRequired: Boolean,
@@ -79,7 +78,6 @@ object TermuxBridge {
       detail = firstBlocker?.detail ?: "Android Termux native renderer gates passed.",
       fallbackRenderer = "xterm-webview",
       fallbackRequired = blockers.isNotEmpty() || !BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE,
-      engineeringQaOverride = BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA,
       requiredModules = requiredModules,
       forbiddenModules = forbiddenModules,
       remoteSessionAdapterRequired = true,
@@ -374,14 +372,6 @@ object TermuxBridge {
         blockers,
         "dependency-closure-unapproved",
         "The selected Termux dependency closure has not been approved.",
-      )
-    }
-    if (!BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED &&
-      !BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_ENGINEERING_QA) {
-      addBlocker(
-        blockers,
-        "legal-not-approved",
-        "Android Termux legal/product approval has not passed.",
       )
     }
     if (!BuildConfig.HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN) {

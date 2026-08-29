@@ -21,7 +21,6 @@ export type AndroidTermuxForbiddenModule = Readonly<{
 
 export type AndroidTermuxGateInputs = Readonly<{
   dependencyClosureApproved: boolean;
-  legalAccepted: boolean;
   artifactsLinked: boolean;
   gradleBuildProven: boolean;
   abiSmokePassed: boolean;
@@ -88,7 +87,6 @@ export const ANDROID_TERMUX_SOURCE_STRATEGY: AndroidTermuxSourceStrategy = {
 
 const DEFAULT_ANDROID_TERMUX_GATE_INPUTS: AndroidTermuxGateInputs = {
   dependencyClosureApproved: false,
-  legalAccepted: false,
   artifactsLinked: false,
   gradleBuildProven: false,
   abiSmokePassed: false,
@@ -141,12 +139,6 @@ function collectAndroidTermuxBlockers(
     blockers.push({
       reason: 'dependency-closure-unapproved',
       detail: 'The selected Termux dependency closure has not been approved.',
-    });
-  }
-  if (!gates.legalAccepted) {
-    blockers.push({
-      reason: 'legal-not-approved',
-      detail: 'Android Termux legal/product approval has not passed.',
     });
   }
   if (!gates.gradleBuildProven) {

@@ -5,19 +5,32 @@ type MockUndiciRequestOptions = RequestInit & Readonly<{
   headersTimeout?: number;
 }>;
 
+type MockUndiciResponse = Readonly<{
+  statusCode: number;
+  headers: Readonly<Record<string, string>>;
+  body: AsyncIterable<Uint8Array> & Readonly<{
+    destroy?: (error?: Error) => unknown;
+  }>;
+}>;
+
 const undiciRequest = vi.hoisted(() => vi.fn(async (
   url: URL | RequestInfo,
   options?: MockUndiciRequestOptions,
-) => {
+): Promise<MockUndiciResponse> => {
   const response = await fetch(url, options);
   const headers: Record<string, string> = {};
   response.headers.forEach((value, name) => {
     headers[name] = value;
   });
+  const bytes = new Uint8Array(await response.arrayBuffer());
   return {
     statusCode: response.status,
     headers,
-    body: { json: () => response.json() },
+    body: {
+      async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+        yield bytes;
+      },
+    },
   };
 }));
 
@@ -48,7 +61,11 @@ import {
   type PublicActionInputById,
   type PublicActionResultById,
   connect,
+  isHappierActionApprovalRequestCreated,
 } from './index.js';
+
+const TEST_API_TOKEN = 'hap_v1_123e4567-e89b-42d3-a456-426614174000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const TEST_ALT_API_TOKEN = 'hap_v1_223e4567-e89b-42d3-a456-426614174001_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -67,6 +84,15 @@ function responseForRequest(init: RequestInit | undefined, body: Record<string, 
   }, status);
 }
 
+function failingResponseBody(error: unknown, beforeThrow?: () => void): AsyncIterable<Uint8Array> {
+  return {
+    async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+      beforeThrow?.();
+      throw error;
+    },
+  };
+}
+
 function isHappierSessionInitialInputError(
   error: unknown,
 ): error is HappierSessionInitialInputError {
@@ -83,6 +109,19 @@ describe('Happier SDK client', () => {
     undiciAgent.instances.length = 0;
   });
 
+  it('rejects padded or over-limit machine and Session identities without normalizing them', () => {
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
+
+    expect(() => client.machine(' machine-1 ')).toThrow(TypeError);
+    expect(() => client.machine('m'.repeat(257))).toThrow(TypeError);
+    expect(() => client.sessions.get(' session-1 ')).toThrow(TypeError);
+    expect(() => client.sessions.get('s'.repeat(192))).toThrow(TypeError);
+  });
+
+  it('rejects padded API Tokens without normalizing credential bytes', () => {
+    expect(() => connect({ endpoint: 'http://daemon', token: ' hap_v1_123e4567-e89b-42d3-a456-426614174000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ' })).toThrow(TypeError);
+  });
+
   it('owns one dispatcher per root client, shares it with bound clients, and closes it once', async () => {
     const fetch = vi.fn(async (_url: URL | RequestInfo, _init?: RequestInit) => response({
       v: 1,
@@ -91,7 +130,7 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const machine = client.machine('machine-1');
     await client.actions.execute('machines.list', {});
     await machine.actions.execute('machines.list', {});
@@ -133,7 +172,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await client.runs.startStream({ runId: 'run-1', message: 'Continue.' });
     const iterator = client.sessions.get('session-1').followTranscript()[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
@@ -155,7 +194,7 @@ describe('Happier SDK client', () => {
       return response({ v: 1, actionId, execution: { ok: true, result: { ok: true } } });
     }));
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const transcript = client.sessions.get('session-1').followTranscript();
     await client.close();
 
@@ -171,14 +210,14 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://127.0.0.1:3000/', token: 'pat_secret' });
+    const client = connect({ endpoint: 'http://127.0.0.1:3000/', token: TEST_ALT_API_TOKEN });
     await expect(client.actions.execute('machines.list', {})).resolves.toEqual([{ id: 'machine-1' }]);
 
     expect(fetch).toHaveBeenCalledWith(
       new URL('http://127.0.0.1:3000/v1/actions/machines.list'),
       expect.objectContaining({
         method: 'POST',
-        headers: expect.objectContaining({ authorization: 'Bearer pat_secret' }),
+        headers: expect.objectContaining({ authorization: 'Bearer ' + TEST_ALT_API_TOKEN }),
         body: JSON.stringify({ v: 1, input: {} }),
       }),
     );
@@ -193,7 +232,7 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await expect(client.actions.execute(
       'session.stop',
       { sessionId: 'session-1' },
@@ -220,7 +259,7 @@ describe('Happier SDK client', () => {
     ];
     vi.stubGlobal('fetch', vi.fn(async () => response(responses.shift())));
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await expect(client.actions.execute(
       'session.stop',
       { sessionId: 'session-1' },
@@ -237,7 +276,7 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
 
     // The original value is sent unchanged, including Unicode.
     await expect(client.actions.execute(
@@ -280,7 +319,7 @@ describe('Happier SDK client', () => {
       });
     }));
 
-    await connect({ endpoint: 'http://daemon', token: 'pat' })
+    await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .actions.execute('session.message.send', { sessionId: 'session-1', message: 'Continue.', localId: 'input-1' });
 
     expect(requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
@@ -298,7 +337,7 @@ describe('Happier SDK client', () => {
       });
     }));
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const error = await client.actions.execute('session.message.send', {
       sessionId: 'session-1',
       message: 'Continue.',
@@ -320,7 +359,7 @@ describe('Happier SDK client', () => {
       return response({ error: 'invalid_token' }, 401);
     }));
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const error = await client.actions.execute('session.message.send', {
       sessionId: 'session-1',
       message: 'Continue.',
@@ -344,7 +383,7 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    await connect({ endpoint: 'http://daemon', token: 'pat' })
+    await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .machine('machine-7')
       .sessions
       .get('session-1')
@@ -376,6 +415,64 @@ describe('Happier SDK client', () => {
     );
   });
 
+  it('defaults root fluent Session operations to their canonical Session target', async () => {
+    const requests: Array<Readonly<{ actionId: string; body: Record<string, unknown> }>> = [];
+    const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ actionId, body });
+      return responseForRequest(init, {
+        v: 1,
+        actionId,
+        execution: {
+          ok: true,
+          result: actionId === 'session.wait.idle'
+            ? { idle: true }
+            : actionId === 'session.transcript.get'
+              ? { messages: [] }
+              : { ok: true },
+        },
+      });
+    });
+    vi.stubGlobal('fetch', fetch);
+
+    const session = connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN })
+      .sessions.get('session-1');
+    await session.send('Continue.');
+    await session.sendAndWait('Continue and wait.');
+    await session.waitForIdle();
+    await session.history();
+    await session.stop();
+
+    expect(requests.map(({ actionId }) => actionId)).toEqual([
+      'session.message.send',
+      'session.message.send',
+      'session.wait.idle',
+      'session.transcript.get',
+      'session.stop',
+    ]);
+    for (const { body } of requests) {
+      expect(body.target).toEqual({ kind: 'session', sessionId: 'session-1' });
+    }
+  });
+
+  it('lets an explicit root fluent Session target override Session routing metadata', async () => {
+    const fetch = vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
+      v: 1,
+      actionId: 'session.message.send',
+      execution: { ok: true, result: { ok: true } },
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    await connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN })
+      .sessions.get('session-1')
+      .send('Continue.', { target: { kind: 'machine', machineId: 'machine-7' } });
+
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      target: { kind: 'machine', machineId: 'machine-7' },
+    });
+  });
+
   it('seals every machine-bound raw Action to its selected machine', async () => {
     const requests: unknown[] = [];
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -389,7 +486,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const machine = client.machine('machine-7');
     const otherMachine = { kind: 'machine', machineId: 'machine-8' } as const;
 
@@ -450,7 +547,7 @@ describe('Happier SDK client', () => {
     vi.stubGlobal('fetch', fetch);
     const signal = new AbortController().signal;
 
-    const client = connect({ endpoint: 'https://api.example.test/root/', token: 'pat_secret' });
+    const client = connect({ endpoint: 'https://api.example.test/root/', token: TEST_ALT_API_TOKEN });
     await expect(client.machines.list({ signal })).resolves.toEqual([{
       id: 'machine-1',
       active: true,
@@ -461,7 +558,7 @@ describe('Happier SDK client', () => {
       new URL('https://api.example.test/root/v1/machines'),
       expect.objectContaining({
         method: 'GET',
-        headers: { authorization: 'Bearer pat_secret' },
+        headers: { authorization: 'Bearer ' + TEST_ALT_API_TOKEN },
         signal: expect.any(AbortSignal),
       }),
     );
@@ -477,7 +574,7 @@ describe('Happier SDK client', () => {
     }])));
 
     await expect(
-      connect({ endpoint: 'https://api.example.test', token: 'pat' }).machines.list(),
+      connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN }).machines.list(),
     ).rejects.toBeInstanceOf(HappierTransportError);
   });
 
@@ -490,7 +587,7 @@ describe('Happier SDK client', () => {
     }));
     vi.stubGlobal('fetch', fetch);
 
-    const machine = connect({ endpoint: 'http://daemon', token: 'pat' }).machine('machine-7');
+    const machine = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).machine('machine-7');
     const spawnInput = {
       directory: '/repo',
       agentTarget: {
@@ -550,7 +647,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const machine = client.machine('machine-7');
     const otherMachine = { kind: 'machine', machineId: 'machine-8' } as const;
     expectTypeOf(machine).toEqualTypeOf<HappierMachineClient>();
@@ -560,9 +657,7 @@ describe('Happier SDK client', () => {
     expectTypeOf<HappierSessionSpawnInput['agentModeId']>().toEqualTypeOf<
       PublicActionInputById['session.spawn_new']['agentModeId']
     >();
-    expectTypeOf<HappierSessionSpawnInput['environmentVariables']>().toEqualTypeOf<
-      PublicActionInputById['session.spawn_new']['environmentVariables']
-    >();
+    expectTypeOf<HappierSessionSpawnInput>().not.toHaveProperty('environmentVariables');
     expectTypeOf<HappierSessionSpawnInput['agent']>().toEqualTypeOf<string>();
 
     const input = {
@@ -570,7 +665,6 @@ describe('Happier SDK client', () => {
       agent: 'codex',
       initialMessage: 'Inspect the failing tests.',
       agentModeId: 'review',
-      environmentVariables: { CI: 'true' },
       title: 'External agent session',
     } as const satisfies HappierSessionSpawnInput;
 
@@ -625,7 +719,6 @@ describe('Happier SDK client', () => {
             },
             initialInput: { text: 'Inspect the failing tests.' },
             agentModeId: 'review',
-            environmentVariables: { CI: 'true' },
             title: 'External agent session',
           },
         },
@@ -640,10 +733,11 @@ describe('Happier SDK client', () => {
       artifactId: 'approval-1',
       actionId: 'session.spawn_new',
     } as const;
-    const actionIds: string[] = [];
+    const requests: Array<Readonly<{ actionId: string; requestId?: string }>> = [];
     const fetch = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const actionId = decodeURIComponent(new URL(String(url)).pathname.split('/').at(-1) ?? '');
-      actionIds.push(actionId);
+      const requestId = JSON.parse(String(init?.body)).requestId;
+      requests.push({ actionId, ...(typeof requestId === 'string' ? { requestId } : {}) });
       if (actionId === 'agents.backends.list') {
         return response({
           v: 1,
@@ -662,15 +756,21 @@ describe('Happier SDK client', () => {
           },
         });
       }
+      const actionApproval = { ...approval, actionId };
       return responseForRequest(init, {
         v: 1,
         actionId,
-        execution: { ok: true, result: approval },
+        execution: { ok: true, result: actionApproval },
       });
     });
     vi.stubGlobal('fetch', fetch);
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' })
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
+    const rawApproval = await client.actions.execute('session.stop', { sessionId: 'session-1' });
+    expect(isHappierActionApprovalRequestCreated(rawApproval)).toBe(true);
+    expect(rawApproval).toEqual({ ...approval, actionId: 'session.stop' });
+
+    const failure = client
       .machine('machine-7')
       .sessions.spawn({ directory: '/repo', agent: 'codex' });
 
@@ -678,9 +778,35 @@ describe('Happier SDK client', () => {
     await expect(failure).rejects.toMatchObject({
       code: 'approval_required',
       details: approval,
+      requestId: expect.any(String),
     });
     await expect(failure).rejects.not.toBeInstanceOf(HappierSessionSpawnError);
-    expect(actionIds).toEqual(['agents.backends.list', 'session.spawn_new']);
+    const rejection = await failure.catch((error) => error);
+    expect(requests).toEqual([
+      { actionId: 'session.stop' },
+      { actionId: 'agents.backends.list' },
+      { actionId: 'session.spawn_new', requestId: expect.any(String) },
+    ]);
+    expect(rejection.requestId).toBe(requests[2]?.requestId);
+  });
+
+  it.each([
+    ['missing artifact identity', { kind: 'approval_request_created', actionId: 'session.stop' }],
+    ['mismatched Action identity', { kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'machines.list' }],
+  ] as const)('rejects a malformed raw approval result with %s', async (_case, approval) => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: URL | RequestInfo, init?: RequestInit) => responseForRequest(init, {
+      v: 1,
+      actionId: 'session.stop',
+      execution: { ok: true, result: approval },
+    })));
+
+    await expect(
+      connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
+        .actions.execute('session.stop', { sessionId: 'session-1' }),
+    ).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      message: 'The Happier Action API returned an invalid approval result.',
+    });
   });
 
   it('maps compact daemon-local session creation without a target', async () => {
@@ -725,7 +851,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const session = await connect({ endpoint: 'http://daemon', token: 'pat' }).sessions.spawn({
+    const session = await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).sessions.spawn({
       directory: '/repo',
       agent: 'codex',
     }, { requestId: 'request-1' });
@@ -799,7 +925,7 @@ describe('Happier SDK client', () => {
     vi.stubGlobal('fetch', fetch);
 
     const target = { kind: 'machine', machineId: 'machine-7' } as const;
-    await connect({ endpoint: 'https://api.example.test', token: 'pat' }).sessions.spawn({
+    await connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN }).sessions.spawn({
       directory: '/repo',
       agent: 'codex',
     }, { target, requestId: 'spawn-request-1' });
@@ -872,7 +998,7 @@ describe('Happier SDK client', () => {
       }));
       vi.stubGlobal('fetch', fetch);
 
-      const failure = connect({ endpoint: 'http://daemon', token: 'pat' })
+      const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
         .machine('machine-7')
         .sessions.spawn({ directory: '/repo', agent: 'codex' });
       await expect(failure).rejects.toBeInstanceOf(HappierAgentUnavailableError);
@@ -944,7 +1070,7 @@ describe('Happier SDK client', () => {
       });
       vi.stubGlobal('fetch', fetch);
 
-      const failure = connect({ endpoint: 'http://daemon', token: 'pat' })
+      const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
         .machine('machine-7')
         .sessions.spawn({
           directory: '/repo',
@@ -994,7 +1120,7 @@ describe('Happier SDK client', () => {
       execution: { ok: true, result: partialResult },
     })));
 
-    const result = await connect({ endpoint: 'http://daemon', token: 'pat' })
+    const result = await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .machine('machine-7')
       .actions.session.spawnNew({
         directory: '/repo',
@@ -1016,7 +1142,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const pending = client.actions.execute('machines.list', {});
     await client.close();
 
@@ -1028,14 +1154,13 @@ describe('Happier SDK client', () => {
   it('preserves a caller abort that occurs while reading an HTTP response body', async () => {
     const controller = new AbortController();
     const reason = new Error('caller stopped reading');
-    const response = new Response(null, { status: 200 });
-    vi.spyOn(response, 'json').mockImplementation(async () => {
-      controller.abort(reason);
-      throw reason;
+    undiciRequest.mockResolvedValueOnce({
+      statusCode: 200,
+      headers: {},
+      body: failingResponseBody(reason, () => controller.abort(reason)),
     });
-    vi.stubGlobal('fetch', vi.fn(async () => response));
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' })
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .actions.execute('machines.list', {}, { signal: controller.signal });
 
     await expect(failure).rejects.toBe(reason);
@@ -1043,24 +1168,27 @@ describe('Happier SDK client', () => {
 
   it('preserves client closure that occurs while reading an HTTP response body', async () => {
     let client: ReturnType<typeof connect>;
-    const response = new Response(null, { status: 200 });
-    vi.spyOn(response, 'json').mockImplementation(async () => {
-      void client.close();
-      throw new Error('response body was interrupted');
+    undiciRequest.mockResolvedValueOnce({
+      statusCode: 200,
+      headers: {},
+      body: failingResponseBody(new Error('response body was interrupted'), () => {
+        void client.close();
+      }),
     });
-    vi.stubGlobal('fetch', vi.fn(async () => response));
-    client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
 
     await expect(client.actions.execute('machines.list', {})).rejects.toBeInstanceOf(HappierClientClosedError);
   });
 
   it('normalizes an uninterrupted response-body failure as a transport error', async () => {
     const invalidJson = new SyntaxError('invalid JSON');
-    const response = new Response(null, { status: 200 });
-    vi.spyOn(response, 'json').mockRejectedValue(invalidJson);
-    vi.stubGlobal('fetch', vi.fn(async () => response));
+    undiciRequest.mockResolvedValueOnce({
+      statusCode: 200,
+      headers: {},
+      body: failingResponseBody(invalidJson),
+    });
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' }).actions.execute('machines.list', {});
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {});
 
     await expect(failure).rejects.toMatchObject({
       name: 'HappierTransportError',
@@ -1068,6 +1196,52 @@ describe('Happier SDK client', () => {
       status: 200,
       cause: invalidJson,
     });
+  });
+
+  it('rejects a response whose declared body exceeds the Protocol external Action ceiling', async () => {
+    const destroy = vi.fn();
+    undiciRequest.mockResolvedValueOnce({
+      statusCode: 200,
+      headers: { 'content-length': '24000001' },
+      body: {
+        destroy,
+        async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+          throw new Error('The SDK must reject the declared oversized body before consuming it.');
+        },
+      },
+    });
+
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
+      .actions.execute('machines.list', {});
+
+    await expect(failure).rejects.toMatchObject({
+      name: 'HappierTransportError',
+      code: 'response_too_large',
+      status: 200,
+      details: { maxSerializedBytes: 24_000_000 },
+    });
+    expect(destroy).toHaveBeenCalledOnce();
+  });
+
+  it('destroys a streamed response body as soon as it crosses the Protocol ceiling', async () => {
+    const destroy = vi.fn();
+    undiciRequest.mockResolvedValueOnce({
+      statusCode: 200,
+      headers: {},
+      body: {
+        destroy,
+        async *[Symbol.asyncIterator](): AsyncGenerator<Uint8Array> {
+          yield new Uint8Array(24_000_000);
+          yield new Uint8Array(1);
+          throw new Error('The SDK must stop after the first byte over the limit.');
+        },
+      },
+    });
+
+    await expect(
+      connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {}),
+    ).rejects.toMatchObject({ code: 'response_too_large' });
+    expect(destroy).toHaveBeenCalledOnce();
   });
 
   it('surfaces a non-JSON proxy outage without exposing its response body', async () => {
@@ -1079,7 +1253,7 @@ describe('Happier SDK client', () => {
       },
     })));
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' }).actions.execute('machines.list', {});
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {});
 
     await expect(failure).rejects.toMatchObject({
       name: 'HappierTransportError',
@@ -1096,7 +1270,7 @@ describe('Happier SDK client', () => {
       throw disconnection;
     }));
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' }).actions.execute('machines.list', {});
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {});
 
     await expect(failure).rejects.toBeInstanceOf(HappierTransportError);
     await expect(failure).rejects.toMatchObject({
@@ -1116,7 +1290,7 @@ describe('Happier SDK client', () => {
       },
     })));
 
-    const client = connect({ endpoint: 'http://server', token: 'pat' });
+    const client = connect({ endpoint: 'http://server', token: TEST_API_TOKEN });
     const failure = client.actions.execute('account.apiTokens.create', { label: 'automation' });
     await expect(failure).rejects.toMatchObject({
       code: 'present_user_required',
@@ -1137,7 +1311,7 @@ describe('Happier SDK client', () => {
       return responseForRequest(init, { v: 1, actionId, execution: { ok: true, result: [] } });
     }));
 
-    const actions = connect({ endpoint: 'http://daemon', token: 'pat' }).actions;
+    const actions = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions;
     await actions.search({ query: 'session' });
     await actions.invoke({ pluginId: 'acme.notes', localId: 'save' }, { note: 'Remember' });
 
@@ -1160,7 +1334,7 @@ describe('Happier SDK client', () => {
       return response({ v: 1, actionId, execution: { ok: true, result: {} } });
     }));
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await client.actions.get({ id: 'session.status.get' });
     await client.machine('machine-7').actions.get({ id: 'session.status.get' });
 
@@ -1190,7 +1364,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const actions = connect({ endpoint: 'http://daemon', token: 'pat' }).actions;
+    const actions = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions;
     const invokeDiscoveredId = (discoveredId: PublicActionResultById[
         'action.spec.search'
       ]['actionSpecs'][number]['id']) => actions.invoke(discoveredId, {});
@@ -1219,7 +1393,7 @@ describe('Happier SDK client', () => {
 
   it('surfaces HTTP authentication failures with their protocol code', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response({ error: 'invalid_token' }, 401)));
-    const failure = connect({ endpoint: 'http://daemon', token: 'bad' }).actions.execute('machines.list', {});
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {});
     await expect(failure).rejects.toBeInstanceOf(HappierTransportError);
     await expect(failure).rejects.toMatchObject({
       code: 'invalid_token',
@@ -1235,7 +1409,7 @@ describe('Happier SDK client', () => {
     const details = { error: 'invalid_request' as const, code };
     vi.stubGlobal('fetch', vi.fn(async () => response(details, status)));
 
-    const failure = connect({ endpoint: 'http://daemon', token: 'pat' }).actions.execute('machines.list', {});
+    const failure = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).actions.execute('machines.list', {});
 
     await expect(failure).rejects.toBeInstanceOf(HappierTransportError);
     await expect(failure).rejects.toMatchObject({
@@ -1278,7 +1452,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const iterator = connect({ endpoint: 'http://daemon', token: 'pat' })
+    const iterator = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .sessions.get('session-1').followTranscript()[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toEqual({
       done: false,
@@ -1342,7 +1516,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const iterator = connect({ endpoint: 'http://daemon', token: 'pat' })
+    const iterator = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN })
       .sessions.get('session-1').followTranscript()[Symbol.asyncIterator]();
     await expect(iterator.next()).resolves.toMatchObject({ value: { text: 'first' } });
     await expect(iterator.next()).resolves.toMatchObject({ value: { text: 'second' } });
@@ -1377,7 +1551,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const transcript = client.sessions.get('session-1').followTranscript();
     expectTypeOf(transcript).toEqualTypeOf<AsyncIterable<HappierTranscriptItem>>();
     expectTypeOf(null as HappierTranscriptItem).toEqualTypeOf<
@@ -1391,12 +1565,14 @@ describe('Happier SDK client', () => {
     expect(requests.at(-1)?.actionId).toBe('transcript.unfollow');
     expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(1);
 
-    const closingClient = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const closingClient = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     const closingIterator = closingClient.sessions.get('session-2').followTranscript()[Symbol.asyncIterator]();
     await closingIterator.next();
     await closingClient.close();
     expect(requests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(2);
-    for (const { body } of requests) expect(body).not.toHaveProperty('target');
+    for (const { body } of requests) {
+      expect(body.target).toEqual({ kind: 'session', sessionId: (body.input as { sessionId: string }).sessionId });
+    }
   });
 
   it('reads a typed execution-run stream and cancels it when the stream ends', async () => {
@@ -1426,13 +1602,12 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const target = { kind: 'machine', machineId: 'machine-7' } as const;
-    const client = connect({ endpoint: 'https://api.example.test', token: 'pat' });
+    const client = connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN });
     const stream = await client.runs.startStream({
       sessionId: 'session-1',
       runId: 'run-1',
       message: 'Continue.',
-    }, { target });
+    });
     expectTypeOf(stream).toEqualTypeOf<HappierExecutionRunStream>();
     expect(stream).toMatchObject({ runId: 'run-1', streamId: 'stream-1' });
 
@@ -1453,7 +1628,9 @@ describe('Happier SDK client', () => {
       'execution.run.stream.read',
       'execution.run.stream.cancel',
     ]);
-    for (const { body } of requests) expect(body.target).toEqual(target);
+    for (const { body } of requests) {
+      expect(body.target).toEqual({ kind: 'session', sessionId: 'session-1' });
+    }
   });
 
   it('cancels an execution-run stream as soon as its terminal page is delivered', async () => {
@@ -1483,7 +1660,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const stream = await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+    const stream = await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).runs.startStream({
       runId: 'run-1',
       message: 'Continue.',
     });
@@ -1529,7 +1706,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const stream = await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+    const stream = await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).runs.startStream({
       runId: 'run-1',
       message: 'Continue.',
     });
@@ -1569,7 +1746,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const stream = await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+    const stream = await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).runs.startStream({
       runId: 'run-1',
       message: 'Continue.',
     });
@@ -1597,7 +1774,7 @@ describe('Happier SDK client', () => {
     vi.stubGlobal('fetch', fetch);
 
     const controller = new AbortController();
-    await connect({ endpoint: 'http://daemon', token: 'pat' }).runs.startStream({
+    await connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN }).runs.startStream({
       runId: 'run-1',
       message: 'Continue.',
     }, { signal: controller.signal });
@@ -1621,7 +1798,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const client = connect({ endpoint: 'http://daemon', token: 'pat' });
+    const client = connect({ endpoint: 'http://daemon', token: TEST_API_TOKEN });
     await client.runs.startStream({ runId: 'run-1', message: 'Continue.' });
     await client.close();
 
@@ -1703,7 +1880,7 @@ describe('Happier SDK client', () => {
     });
     vi.stubGlobal('fetch', fetch);
 
-    const session = await connect({ endpoint: 'https://api.example.test', token: 'pat' })
+    const session = await connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN })
       .machine('machine-7')
       .sessions.spawn({ directory: '/repo', agent: 'codex' });
     const iterator = session.followTranscript()[Symbol.asyncIterator]();
@@ -1728,7 +1905,7 @@ describe('Happier SDK client', () => {
     }
     expect(transcriptRequests.filter(({ actionId }) => actionId === 'transcript.unfollow')).toHaveLength(1);
 
-    const machine = connect({ endpoint: 'https://api.example.test', token: 'pat' }).machine('machine-7');
+    const machine = connect({ endpoint: 'https://api.example.test', token: TEST_API_TOKEN }).machine('machine-7');
     const closingIterator = machine.sessions.get('session-2').followTranscript()[Symbol.asyncIterator]();
     await expect(closingIterator.next()).resolves.toEqual({ done: false, value: { role: 'assistant' } });
     await machine.close();

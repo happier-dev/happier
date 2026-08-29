@@ -1,3 +1,4 @@
+export { isHappierActionApprovalRequestCreated } from './approval.js';
 export {
   connect,
   type HappierActions,
@@ -44,4 +45,6 @@ export type {
   ActionTarget,
   ContributedActionId,
   HappierConnectOptions,
+  PublicActionExecutionResult,
+  RawActionExecute,
 } from './types.js';

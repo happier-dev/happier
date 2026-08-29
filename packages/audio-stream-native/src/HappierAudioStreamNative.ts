@@ -8,8 +8,8 @@ import type {
 } from './HappierAudioStreamNative.types';
 import type {
   VoiceAudioSessionPlatform,
-  VoiceAudioSessionPlatformEvent,
 } from './voiceAudioSessionCoordinator';
+import { parseVoiceAudioSessionPlatformEvent } from './voiceAudioSessionCoordinator';
 
 export const HAPPIER_AUDIO_STREAM_NATIVE_MODULE_NAME = 'HappierAudioStreamNative';
 
@@ -83,7 +83,10 @@ export function createHappierAudioStreamNativePlatform(
     restore: (request) => module.restoreAudioSession(request),
     subscribe: (listener) => module.addListener(
       'voiceAudioSessionEvent',
-      (event: VoiceAudioSessionPlatformEvent) => listener(event),
+      (event) => {
+        const parsed = parseVoiceAudioSessionPlatformEvent(event);
+        if (parsed) listener(parsed);
+      },
     ),
   };
 }

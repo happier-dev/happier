@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   usePluginCollectionQuery,
-  usePluginAccountSettings,
   usePluginUiDataClient,
   usePluginUiDataClientOrNull,
   type PluginUiCollectionQueryPager,
@@ -12,7 +11,6 @@ import {
   type PluginUiDataClient,
 } from './index.js';
 import { createUnavailablePluginUiAccountKv } from './accountKv.js';
-import { createUnavailablePluginUiAccountSettings } from './accountSettings.js';
 import { PluginUiDataProviderInternal } from './context.js';
 import { mountThroughReactNativeWebAsync } from '../rnwMount.testSupport.js';
 
@@ -55,7 +53,6 @@ describe('Plugin UI data provider', () => {
       },
       openCollectionQuery,
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     });
 
     function QueryProbe() {
@@ -108,7 +105,6 @@ describe('Plugin UI data provider', () => {
       },
       openCollectionQuery,
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     });
 
     function QueryProbe() {
@@ -153,7 +149,6 @@ describe('Plugin UI data provider', () => {
       },
       openCollectionQuery,
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     });
     const rowCommits: string[] = [];
 
@@ -231,40 +226,6 @@ describe('Plugin UI data provider', () => {
 
     mount.unmount();
     expect(pager.dispose).toHaveBeenCalledTimes(1);
-  });
-
-  it('exposes the mounted Account Settings scope and reports no scope without a Data client', async () => {
-    const settings = createUnavailablePluginUiAccountSettings();
-    const client: PluginUiDataClient = Object.freeze({
-      collection: () => {
-        throw new Error('This Account Settings probe does not use Collections.');
-      },
-      openCollectionQuery: async () => {
-        throw new Error('This Account Settings probe does not open a query.');
-      },
-      accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: settings,
-    });
-
-    function SettingsProbe({ expectedClient }: Readonly<{ expectedClient: PluginUiDataClient | null }>) {
-      const current = usePluginUiDataClientOrNull();
-      const accountSettings = usePluginAccountSettings();
-      return <output>{`${current === expectedClient}:${accountSettings === settings}`}</output>;
-    }
-
-    const mounted = await mountThroughReactNativeWebAsync(
-      <PluginUiDataProviderInternal client={client}>
-        <SettingsProbe expectedClient={client} />
-      </PluginUiDataProviderInternal>,
-    );
-    expect(mounted.container.textContent).toBe('true:true');
-    mounted.unmount();
-
-    const unavailable = await mountThroughReactNativeWebAsync(
-      <SettingsProbe expectedClient={null} />,
-    );
-    expect(unavailable.container.textContent).toBe('true:false');
-    unavailable.unmount();
   });
 
   it('reports an unavailable Collection query when the Account Data client is absent', async () => {

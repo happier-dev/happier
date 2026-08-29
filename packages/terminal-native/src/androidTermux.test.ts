@@ -44,7 +44,7 @@ describe('Android Termux renderer policy', () => {
     });
   });
 
-  it('keeps Android native unavailable until source, legal, packaging, ABI, and crash gates pass', () => {
+  it('keeps Android native unavailable until source, packaging, ABI, and crash gates pass', () => {
     expect(createAndroidTermuxRendererDiagnostic()).toEqual({
       availability: {
         available: false,
@@ -67,10 +67,6 @@ describe('Android Termux renderer policy', () => {
           detail: 'The selected Termux dependency closure has not been approved.',
         },
         {
-          reason: 'legal-not-approved',
-          detail: 'Android Termux legal/product approval has not passed.',
-        },
-        {
           reason: 'renderer-unavailable',
           detail: 'Repeatable Gradle/AAR packaging proof has not passed.',
         },
@@ -89,7 +85,6 @@ describe('Android Termux renderer policy', () => {
   it('reports fallback-required native availability when only the native accessibility model is unproven', () => {
     const diagnostic = createAndroidTermuxRendererDiagnostic({
       dependencyClosureApproved: true,
-      legalAccepted: true,
       artifactsLinked: true,
       gradleBuildProven: true,
       abiSmokePassed: true,
@@ -109,7 +104,6 @@ describe('Android Termux renderer policy', () => {
   it('reports native accessibility only after the Android accessibility model is proven', () => {
     expect(createAndroidTermuxRendererDiagnostic({
       dependencyClosureApproved: true,
-      legalAccepted: true,
       artifactsLinked: true,
       gradleBuildProven: true,
       abiSmokePassed: true,

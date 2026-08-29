@@ -146,6 +146,11 @@ function frame(host: string, testID: string): Record<string, unknown> {
     .props as Record<string, unknown>;
 }
 
+function gridRowFrames(): readonly Record<string, unknown>[] {
+  return renderer!.root.findAll((node) => node.type === 'View' && node.props.role === 'row')
+    .map((node) => node.props as Record<string, unknown>);
+}
+
 describe('plugin-ui selectable List collection semantics on native', () => {
   it('gives the collection its native row count', () => {
     renderSelectableList();
@@ -205,5 +210,44 @@ describe('plugin-ui selectable List collection semantics on native', () => {
     const charlie = frame('Pressable', 'row-c');
     expect(charlie['aria-posinset']).toBe(1);
     expect(charlie['aria-setsize']).toBe(1);
+  });
+
+  it('projects grid rows as selected row/cell structure with native positions', () => {
+    const context = createSurfaceContext();
+    act(() => {
+      renderer = create(
+        <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+          <List
+            accessibilityLabel="Repositories"
+            testID="repositories"
+            accessibilityPattern="grid"
+            items={entries}
+            keyForItem={(item) => item.id}
+            selection={{ selectedKey: 'b', onSelectedKeyChange: () => undefined }}
+            renderItem={(item) => <List.Item testID={`row-${item.id}`} title={item.label} />}
+          />
+        </PluginUiProvider>,
+      );
+    });
+
+    const collection = frame('FlatList', 'repositories');
+    expect(collection.role).toBe('grid');
+    expect(collection['aria-rowcount']).toBe(entries.length);
+    const rows = gridRowFrames();
+    expect(rows).toHaveLength(entries.length);
+    expect(rows.map((row) => row['aria-rowindex'])).toEqual([1, 2, 3]);
+    expect(rows.map((row) => row['aria-selected'])).toEqual([false, true, false]);
+    expect(rows.map((row) => row.accessibilityState)).toEqual([
+      { selected: false },
+      { selected: true },
+      { selected: false },
+    ]);
+    expect(rows[1]?.accessibilityCollectionItem).toEqual({
+      rowIndex: 1,
+      columnIndex: 0,
+      rowSpan: 1,
+      columnSpan: 1,
+      heading: false,
+    });
   });
 });

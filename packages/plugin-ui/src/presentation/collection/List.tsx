@@ -64,7 +64,11 @@ export type HappierListSectionProps = Readonly<{
    * technology still receives the header role, which has no such composition
    * constraint.
    */
-  virtualizedCollectionRole?: 'list' | 'listbox';
+  virtualizedCollectionRole?: 'list' | 'listbox' | 'grid';
+  /** @internal One-based row position for a virtualized grid section header. */
+  accessibilityRowIndex?: number;
+  /** @internal Total row count for a virtualized grid section header. */
+  accessibilityRowCount?: number;
   testID?: string;
   style?: HappierStyleProp;
 }>;
@@ -167,8 +171,12 @@ export type HappierListItemProps = Readonly<{
   itemGroupRadioIndex?: number;
   /** @internal Supplied by a virtualized collection owner that sees unmounted rows. */
   rovingCollectionItem?: HappierRovingCollectionItem;
-  /** @internal The virtualized listbox projection owns the option row role. */
+  /** @internal The virtualized listbox/grid projection owns the row role. */
   suppressListItemRole?: boolean;
+  /** @internal One-based grid row position, projected from the collection traversal. */
+  accessibilityRowIndex?: number;
+  /** @internal Grid's total row count, projected from the same traversal. */
+  accessibilityRowCount?: number;
 }>;
 
 const listStyle: ViewStyle = {
@@ -229,12 +237,45 @@ export function HappierListSection({
   children,
   title,
   virtualizedCollectionRole,
+  accessibilityRowIndex,
+  accessibilityRowCount,
   testID,
   style,
 }: HappierListSectionProps) {
   if (virtualizedCollectionRole !== undefined) {
     // `role` is the web projection and wins over `accessibilityRole` in React
     // Native Web, so native assistive technology still hears a section header.
+    if (virtualizedCollectionRole === 'grid') {
+      return (
+        <>
+          <View
+            role="row"
+            aria-label={title}
+            aria-rowindex={accessibilityRowIndex}
+            // @ts-expect-error React Native's published types omit collection-item facts.
+            accessibilityCollectionItem={accessibilityRowIndex === undefined || accessibilityRowCount === undefined
+              ? undefined
+              : {
+                  rowIndex: accessibilityRowIndex - 1,
+                  columnIndex: 0,
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  heading: true,
+                }}
+            accessibilityRole="header"
+            accessibilityLabel={title}
+            testID={testID}
+            style={[sectionStyle, style]}
+          >
+            <View role="columnheader">
+              {/** The permitted grid cell owns the visible heading. */}
+              <HappierText accessible={false}>{title}</HappierText>
+            </View>
+          </View>
+          {children}
+        </>
+      );
+    }
     return (
       <View
         role={virtualizedCollectionRole === 'listbox' ? 'group' : 'listitem'}
@@ -306,6 +347,8 @@ export function HappierListItem({
   itemGroupRadioIndex,
   rovingCollectionItem,
   suppressListItemRole,
+  accessibilityRowIndex,
+  accessibilityRowCount,
 }: HappierListItemProps) {
   const environmentTheme = useOptionalHappierUiTheme();
   const nativeMinimumTouchTarget = useHappierNativeMinimumInteractiveTargetSize();
@@ -434,6 +477,7 @@ export function HappierListItem({
   };
 
   const includeAccessory = behavior.accessoryPlacement === 'inside';
+  const isGridRow = suppressListItemRole === true && accessibilityRole === 'button';
   const row = isInteractive && resolvedTheme ? (
     <HappierPressable
       testID={testID}
@@ -467,9 +511,49 @@ export function HappierListItem({
     </HappierPressable>
   ) : renderSemanticContent(busy === true, includeAccessory);
 
+  const rowContent = isGridRow ? (
+    behavior.accessoryPlacement === 'outside' ? (
+      <>
+        {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
+        <View role="gridcell" style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
+        {/* @ts-expect-error React Native's role union omits RNW's standard gridcell role. */}
+        {accessory ? <View role="gridcell">{accessory}</View> : null}
+      </>
+    ) : (
+      // @ts-expect-error React Native's role union omits RNW's standard gridcell role.
+      <View role="gridcell">{row}</View>
+    )
+  ) : behavior.accessoryPlacement === 'outside' ? (
+    <View style={{
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
+      minWidth: 0,
+    }}>
+      <View style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
+      {accessory}
+    </View>
+  ) : row;
+
   return (
     <View
-      {...(suppressListItemRole ? {} : { role: 'listitem' })}
+      {...(suppressListItemRole ? (isGridRow ? {
+        role: 'row',
+        'aria-selected': selected === true ? true : false,
+        accessibilityState: { selected: selected === true },
+        'aria-rowindex': accessibilityRowIndex,
+        // Native Android reads the same row membership from this collection
+        // item fact; RN's public View types omit the platform prop.
+        accessibilityCollectionItem: accessibilityRowIndex === undefined || accessibilityRowCount === undefined
+          ? undefined
+          : {
+              rowIndex: accessibilityRowIndex - 1,
+              columnIndex: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              heading: false,
+            },
+      } : {}) : { role: 'listitem' })}
       aria-posinset={isInteractive ? undefined : accessibilityPositionInSet}
       aria-setsize={isInteractive ? undefined : accessibilitySetSize}
       {...(!isInteractive && accessibilityLabel ? { 'aria-label': accessibilityLabel, accessibilityLabel } : {})}
@@ -482,19 +566,14 @@ export function HappierListItem({
           }
         : {})}
       testID={isInteractive ? undefined : testID}
-      style={[itemStyle, style]}
+      style={[itemStyle, isGridRow ? {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
+        minWidth: 0,
+      } : undefined, style]}
     >
-      {behavior.accessoryPlacement === 'outside' ? (
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          flexWrap: accessoryWraps ? 'wrap' : 'nowrap',
-          minWidth: 0,
-        }}>
-          <View style={{ flex: 1, minWidth: accessoryWraps ? '50%' : 0 }}>{row}</View>
-          {accessory}
-        </View>
-      ) : row}
+      {rowContent}
       {rowDescriptionId ? (
         // Referenced only. `display: none` keeps it out of the row's visible
         // layout and out of its name computation, while the accessible-name

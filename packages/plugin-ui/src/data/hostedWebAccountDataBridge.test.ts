@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
+import { defineAccountCollection } from '@happier-dev/plugin-sdk/collections';
 
-import { createHostedWebPluginUiDataClient } from './hostedWebCollectionUiQueryBridge.js';
+import { createHostedWebPluginUiDataClient } from './hostedWebAccountDataBridge.js';
+
+const taskCollectionDefinition = defineAccountCollection({
+  id: 'tasks',
+  schemaVersion: 1,
+  schema: {
+    type: 'object',
+    properties: { id: { type: 'string' }, title: { type: 'string' } },
+    required: ['id', 'title'],
+    additionalProperties: false,
+  },
+  rowIdField: 'id',
+  identityFields: ['id'],
+  serverReadable: ['id'],
+  indexes: [{ id: 'by-id', fields: [{ field: 'id', direction: 'asc' }] }],
+  uiQueries: [],
+  relations: [],
+});
 
 const firstSnapshot = {
   status: 'ready',
@@ -49,7 +67,18 @@ function createTransportHarness(openSnapshots: readonly unknown[] = [firstSnapsh
   const changeListeners = new Set<ChangeListener>();
   const disconnectListeners = new Set<DisconnectListener>();
   let openCount = 0;
+  let disconnected = false;
   const request = vi.fn(async (operation: Readonly<Record<string, unknown>>) => {
+    if (disconnected && operation.kind === 'data') {
+      return {
+        kind: 'error',
+        error: {
+          code: 'plugin_account_storage_unavailable',
+          message: 'Hosted Account Data bridge retired.',
+          retryable: true,
+        },
+      };
+    }
     if (operation.kind === 'open') {
       openCount += 1;
       return {
@@ -63,6 +92,38 @@ function createTransportHarness(openSnapshots: readonly unknown[] = [firstSnapsh
     }
     if (operation.kind === 'close') {
       return { kind: 'closed', queryId: operation.queryId };
+    }
+    if (operation.kind === 'data') {
+      if (operation.operation === 'collection.identityTag') return { kind: 'data', value: 'exact-host-tag' };
+      if (operation.operation === 'collection.get') {
+        return { kind: 'data', value: { rowId: 'task-1', revision: 3, value: { id: 'task-1', title: 'One' } } };
+      }
+      if (operation.operation === 'collection.put') {
+        return { kind: 'data', value: { rowId: 'task-1', revision: 4, value: { id: 'task-1', title: 'One' } } };
+      }
+      if (operation.operation === 'collection.delete') {
+        return { kind: 'data', value: { rowId: 'task-1', revision: 5, deleted: true } };
+      }
+      if (operation.operation === 'collection.query') {
+        return { kind: 'data', value: { rows: [], changeCursor: 9 } };
+      }
+      if (operation.operation === 'collection.batch') {
+        return { kind: 'data', value: { status: 'updated', revision: 6, results: [{ rowId: 'task-1', revision: 6, deleted: false }] } };
+      }
+      if (operation.operation === 'collection.limits') {
+        return { kind: 'data', value: { maxBatchRows: 10, maxBatchBytes: 1000, maxRowEncodedBytes: 500, maxAccountRows: 100, maxAccountBytes: 10000, basis: 'deployment' } };
+      }
+      if (operation.operation === 'collection.measureBatch') {
+        return { kind: 'data', value: { overheadEncodedBytes: 20, operationEncodedBytes: [52] } };
+      }
+      if (operation.operation === 'accountKv.get') return { kind: 'data', value: { version: 2, value: { cursor: 7 } } };
+      if (operation.operation === 'accountKv.set') return { kind: 'data', value: { version: 3 } };
+      if (operation.operation === 'accountKv.delete') return { kind: 'data', value: { version: 4, deleted: true } };
+      if (operation.operation === 'accountKv.list') return { kind: 'data', value: { items: [{ key: 'cursor', version: 4, deleted: true }] } };
+      if (operation.operation === 'accountKv.transaction.begin') return { kind: 'data', value: 'transaction_1' };
+      if (operation.operation === 'accountKv.transaction.get') return { kind: 'data', value: { version: 4, deleted: true } };
+      if (operation.operation === 'accountKv.transaction.set') return { kind: 'data', value: { version: 5 } };
+      if (operation.operation === 'accountKv.transaction.commit') return { kind: 'data', value: null };
     }
     throw new Error('Unexpected bridge operation');
   });
@@ -84,6 +145,7 @@ function createTransportHarness(openSnapshots: readonly unknown[] = [firstSnapsh
       for (const listener of changeListeners) listener(change);
     },
     disconnect() {
+      disconnected = true;
       for (const listener of disconnectListeners) listener();
     },
   };
@@ -96,6 +158,60 @@ function createClient(harness: ReturnType<typeof createTransportHarness>) {
 }
 
 describe('hosted-web Collection UI-query guest pager', () => {
+  it('projects the complete generic Account-data client through the host-owned bridge', async () => {
+    const harness = createTransportHarness();
+    const client = createClient(harness);
+    const collection = client.collection(taskCollectionDefinition);
+
+    await expect(collection.identityTag({ field: 'id', components: ['provider', '1'] })).resolves.toBe('exact-host-tag');
+    await expect(collection.get('task-1')).resolves.toMatchObject({ revision: 3 });
+    await expect(collection.put({ id: 'task-1', title: 'One' }, { expectedRevision: 3 })).resolves.toMatchObject({ revision: 4 });
+    await expect(collection.delete('task-1', { expectedRevision: 4 })).resolves.toMatchObject({ deleted: true });
+    await expect(collection.query({ index: 'by-id', order: 'asc' })).resolves.toMatchObject({ changeCursor: 9 });
+    await expect(collection.batch([{ kind: 'assert', rowId: 'task-1', expectedRevision: 4 }])).resolves.toMatchObject({ status: 'updated' });
+    await expect(collection.limits()).resolves.toMatchObject({ maxBatchRows: 10 });
+    await expect(collection.measureBatch([{ kind: 'delete', rowId: 'task-1', expectedRevision: 4 }])).resolves.toEqual({ overheadEncodedBytes: 20, operationEncodedBytes: [52] });
+
+    await expect(client.accountKv.get('cursor')).resolves.toEqual({ version: 2, value: { cursor: 7 } });
+    await expect(client.accountKv.set('cursor', { cursor: 8 }, { expectedVersion: 2 })).resolves.toEqual({ version: 3 });
+    await expect(client.accountKv.delete('cursor', { expectedVersion: 3 })).resolves.toEqual({ version: 4, deleted: true });
+    await expect(client.accountKv.list({ prefix: 'cur' })).resolves.toMatchObject({ items: [{ key: 'cursor', deleted: true }] });
+    await expect(client.accountKv.transaction(async (transaction) => {
+      const previous = await transaction.get('cursor');
+      expect(previous).toEqual({ version: 4, deleted: true });
+      return await transaction.set('cursor', { cursor: 9 }, { expectedVersion: 4 });
+    })).resolves.toEqual({ version: 5 });
+
+    expect(harness.request.mock.calls.filter(([operation]) => operation.kind === 'data')).toHaveLength(16);
+    expect(JSON.stringify(harness.request.mock.calls)).not.toContain('account-a');
+  });
+
+  it('preserves typed host conflict and currentness failures at the public hosted boundary', async () => {
+    const harness = createTransportHarness();
+    harness.request.mockImplementation(async () => ({
+      kind: 'error',
+      error: { code: 'plugin_collection_conflict', message: 'stale row' },
+    }));
+    const client = createClient(harness);
+    const collection = client.collection(defineAccountCollection({
+      id: 'tasks', schemaVersion: 1,
+      schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+      rowIdField: 'id', identityFields: ['id'], serverReadable: ['id'], indexes: [], uiQueries: [], relations: [],
+    }));
+
+    await expect(collection.put({ id: 'task-1' }, { expectedRevision: 1 })).rejects.toMatchObject({
+      code: 'plugin_collection_conflict',
+      message: 'stale row',
+    });
+
+    harness.request.mockImplementation(async () => ({
+      kind: 'error',
+      error: { code: 'plugin_account_storage_unavailable', message: 'retired', retryable: true },
+    }));
+    await expect(client.accountKv.get('cursor')).rejects.toMatchObject({
+      code: 'plugin_account_storage_unavailable', retryable: true,
+    });
+  });
   it('uses only the Data bridge open/page/content-free-wakeup/close contract and never adds guest authority', async () => {
     const harness = createTransportHarness();
     const client = createClient(harness);
@@ -150,7 +266,7 @@ describe('hosted-web Collection UI-query guest pager', () => {
     unsubscribe();
   });
 
-  it('clears a mounted snapshot on bridge retirement and fails closed for generic Collection operations', async () => {
+  it('clears a mounted snapshot on bridge retirement and fails closed for generic Account-data operations', async () => {
     const harness = createTransportHarness();
     const client = createClient(harness);
     const pager = await client.openCollectionQuery({
@@ -164,13 +280,10 @@ describe('hosted-web Collection UI-query guest pager', () => {
     harness.disconnect();
     expect(pager.getSnapshot()).toEqual({ status: 'unavailable', rows: [], hasMore: false });
     expect(observed).toHaveBeenCalledTimes(1);
-    await expect(client.collection({ id: 'tasks' }).get('task-1')).rejects.toMatchObject({
-      code: 'plugin_collection_ui_query_unavailable',
+    await expect(client.collection(taskCollectionDefinition).get('task-1')).rejects.toMatchObject({
+      code: 'plugin_account_storage_unavailable',
     });
-    await expect(client.accountSettings.snapshot()).rejects.toMatchObject({
-      code: 'plugin_settings_persistence_unavailable',
-    });
-    expect(harness.request).toHaveBeenCalledTimes(1);
+    expect(harness.request).toHaveBeenCalledTimes(2);
   });
 
   it('keeps disconnect terminal when a deferred wakeup replacement rejects', async () => {

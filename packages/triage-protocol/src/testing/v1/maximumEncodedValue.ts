@@ -97,12 +97,15 @@ export const ASCII_FILL_ALPHABET: readonly string[] = Array.from(
  * keeps it from being counted as though it did.
  *
  * Each width carries both a letter-like and a non-letter representative, so a
- * grammar that admits one shape and not the other is still filled. Lone
- * surrogates are deliberately absent: they escape sixfold but are not
- * well-formed Unicode, and the strict JSON boundary rejects them before any
- * value reaches the gate this derivation measures against.
+ * grammar that admits one shape and not the other is still filled. The lone
+ * surrogate represents JSON strings that `JSON.stringify` escapes sixfold.
+ * Protocol's strict JSON owner deliberately preserves those values; an owning
+ * UTF-8 byte schema rejects them separately through its well-formed-Unicode
+ * measurement, while a code-point-bounded schema may admit them.
  */
 const WIDE_FILL_ALPHABET: readonly string[] = [
+    /** One UTF-16 code unit serialized as a six-byte JSON escape. */
+    '\ud800',
     /** Two UTF-8 bytes: a Latin-1 letter and a C1 control. */
     '\u00ff',
     '\u0080',

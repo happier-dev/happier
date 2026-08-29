@@ -8,57 +8,42 @@ import {
 import { PluginUiProviderInternal } from './components/PluginUiProvider.js';
 import {
   createHostedWebPluginUiDataClient,
-  createUnavailableHostedWebPluginUiDataClient,
-} from './data/hostedWebCollectionUiQueryBridge.js';
+} from './data/hostedWebAccountDataBridge.js';
 import type { PluginUiDataClient } from './data/types.js';
 
 // This symbol is set only by the SDK's hosted bootstrap after the canonical
 // framed lifecycle is ready. It is intentionally not a public RenderContext
 // field, and `createAuthorRenderContext` below strips every private property.
 const PLUGIN_UI_PRIVATE_HOSTED_WEB_COLLECTION_UI_QUERY_TRANSPORT_KEY = Symbol.for(
-  'happier.pluginUi.privateHostedWebCollectionUiQueryTransport.v1',
+  'happier.pluginUi.privateHostedWebAccountDataTransport.v1',
 );
 const PLUGIN_UI_PRIVATE_MOUNTED_COMPOSER_REF_KEY = Symbol.for(
   'happier.pluginUi.privateMountedComposerRef.v1',
 );
 
-type HostedWebAvailableCollectionUiQueryTransportCarrier = Readonly<{
+type HostedWebAvailableAccountDataTransportCarrier = Readonly<{
   kind: 'available';
   acquireTransport: Parameters<typeof createHostedWebPluginUiDataClient>[0]['acquireTransport'];
 }>;
 
-type HostedWebUnavailableCollectionUiQueryTransportCarrier = Readonly<{
-  kind: 'unavailable';
-}>;
-
 const hostedWebDataClients = new WeakMap<object, PluginUiDataClient>();
 
-function isHostedWebAvailableCollectionUiQueryTransportCarrier(
+function isHostedWebAvailableAccountDataTransportCarrier(
   value: unknown,
-): value is HostedWebAvailableCollectionUiQueryTransportCarrier {
+): value is HostedWebAvailableAccountDataTransportCarrier {
   return value !== null
     && typeof value === 'object'
     && Reflect.get(value, 'kind') === 'available'
     && typeof Reflect.get(value, 'acquireTransport') === 'function';
 }
 
-function isHostedWebUnavailableCollectionUiQueryTransportCarrier(
-  value: unknown,
-): value is HostedWebUnavailableCollectionUiQueryTransportCarrier {
-  return value !== null
-    && typeof value === 'object'
-    && Reflect.get(value, 'kind') === 'unavailable';
-}
-
 function resolveHostedWebDataClient(context: RenderContext): PluginUiDataClient | undefined {
   const existing = hostedWebDataClients.get(context);
   if (existing) return existing;
   const carrier = Reflect.get(context, PLUGIN_UI_PRIVATE_HOSTED_WEB_COLLECTION_UI_QUERY_TRANSPORT_KEY);
-  const dataClient = isHostedWebAvailableCollectionUiQueryTransportCarrier(carrier)
+  const dataClient = isHostedWebAvailableAccountDataTransportCarrier(carrier)
     ? createHostedWebPluginUiDataClient({ acquireTransport: carrier.acquireTransport })
-    : isHostedWebUnavailableCollectionUiQueryTransportCarrier(carrier)
-      ? createUnavailableHostedWebPluginUiDataClient()
-      : undefined;
+    : undefined;
   if (!dataClient) return undefined;
   hostedWebDataClients.set(context, dataClient);
   return dataClient;

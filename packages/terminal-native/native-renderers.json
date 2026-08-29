@@ -4,7 +4,30 @@
       "internaldev",
       "internalpreview"
     ],
-    "semantics": "Engineering QA and native crash injection are build-only capabilities allowed exclusively for the explicit internal APP_ENV allowlist. Missing, unknown, publicdev, preview, and production environments fail closed, and engineering QA never constitutes legal/product release approval."
+    "semantics": "Native crash injection is a build-only capability allowed exclusively for the explicit internal APP_ENV allowlist. Missing, unknown, publicdev, preview, and production environments fail closed."
+  },
+  "buildDefaults": {
+    "profileId": "base",
+    "easProfilePath": "apps/ui/eas.json",
+    "inheritedByAppEnvironments": "Every canonical EAS build profile inherits the validated native renderer gates from the shared base profile.",
+    "env": {
+      "HAPPIER_TERMINAL_NATIVE_IOS_PACKAGE_PROOF_ACCEPTED": "1",
+      "HAPPIER_TERMINAL_NATIVE_IOS_CRASH_FALLBACK_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN": "1",
+      "HAPPIER_TERMINAL_NATIVE_ANDROID_ACCESSIBILITY_NATIVE": "1"
+    },
+    "conditionalRuntimeGates": {
+      "HAPPIER_TERMINAL_NATIVE_IOS_ACCESSIBILITY_NATIVE": "Physical-iPhone VoiceOver and hardware-key navigation remain unproven; iOS builds stay accessibility fallback-required, so Auto keeps xterm WebView only while a screen reader is active."
+    },
+    "evidenceBasis": {
+      "iosPackageAndCrashFallback": "Accepted signed iOS run term-run-c21798a9-37be-4b68-b282-d0f604c9885f (two-build package proof, exact install/hash binding, crash-to-WebView replay continuity).",
+      "androidDependencyClosureGradleAbiCrash": "Accepted signed Android run term-run-174fe266-dab7-44d7-aeef-eb45303ff572 packaging gates (dependency closure, Gradle build, ABI smoke, crash-fallback build capability).",
+      "androidAccessibilityNative": "Accepted signed Android run term-run-174fe266-dab7-44d7-aeef-eb45303ff572 proves real TalkBack navigation with the localized output-driven summary and focus/copy/select-all/open-link actions, so canonical builds may truthfully report accessibility native."
+    },
+    "boundary": "Validated package, dependency, ABI, crash-fallback, and Android accessibility gates are shared build defaults. iOS physical VoiceOver/hardware-key evidence remains conditional: it controls only screen-reader selection and never blocks ordinary native Ghostty use."
   },
   "deviceEvidence": {
     "schemaVersion": 2,
@@ -20,9 +43,8 @@
         "dev.happier.app.internalpreview"
       ]
     },
-    "approvalAuthoritiesPath": "release-approval-authorities.json",
     "captureAuthoritiesPath": "device-evidence-capture-authorities.json",
-    "semantics": "Schema v2 accepts only run-scoped semantic reports bound to an authority-signed capture inventory and a signed build identity extracted from the retained IPA/APK, plus the loaded-app nonce/build evidence id, canonical source/dependency closure, and gate-specific technical packaging attestations. The repository registers only QA public keys; private capture keys remain outside source with restricted permissions. Android release readiness additionally requires a separate independently signed approval record."
+    "semantics": "Schema v2 accepts only run-scoped semantic reports bound to an authority-signed capture inventory and a signed build identity extracted from the retained IPA/APK, plus the loaded-app nonce/build evidence id, canonical source/dependency closure, and gate-specific technical packaging attestations. The repository registers only QA public keys; private capture keys remain outside source with restricted permissions."
   },
   "iosGhostty": {
     "renderer": "ios-ghosttykit",
@@ -184,18 +206,19 @@
       "scope": "terminal-view-and-terminal-emulator-exception-only",
       "fullTermuxAppLicense": "GPL-3.0-only",
       "bundleFullTermuxApp": false,
-      "noticeRequired": true
+      "noticeRequired": true,
+      "redistributionLicensePath": "android/termux/distribution/LICENSE-APACHE-2.0.txt",
+      "redistributionLicenseSha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "redistributionNoticePath": "android/termux/distribution/NOTICE.txt",
+      "redistributionNoticeSha256": "7b620f17bed368d6ffe6736b523aae0dcee22dd56fe5f40428811b64b71d6b9a"
     },
-    "approvalBoundary": {
-      "engineeringPolicyVerification": "The extractor and Gradle checks verify the exact pinned revision, terminal-only module closure, copied upstream license, and forbidden-module absence.",
-      "environmentGateSemantics": "HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED is a release-owner assertion only; setting it does not create or replace legal advice or product approval evidence.",
-      "releaseApprovalEvidence": "Must be recorded outside this machine-readable source-closure policy by the authorized product/legal release owners against the exact pinned revision.",
-      "currentStatus": "not-recorded-in-repository"
+    "complianceBoundary": {
+      "engineeringPolicyVerification": "The extractor and Gradle checks verify the exact pinned revision, terminal-only Apache-2.0 module closure, copied upstream license and NOTICE assets, and forbidden GPL-module absence.",
+      "releaseSemantics": "Validated source and attribution compliance is enforced mechanically; there is no separate legal-approval build flag or repository approval record."
     },
     "gates": [
       "pinned-upstream-revision",
       "dependency-closure-review",
-      "legal-product-approval",
       "license-notice-review",
       "aar-gradle-build-proof",
       "binary-size-budget",

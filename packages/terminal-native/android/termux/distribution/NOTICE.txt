@@ -1,0 +1,14 @@
+Happier native Android terminal attribution
+
+This application may include the Terminal Emulator for Android components from
+Termux's terminal-view and terminal-emulator modules.
+
+Upstream project: https://github.com/termux/termux-app
+Pinned revision: 401bbe54b8f4e68302b1ff70678015a24628fb1d
+Included modules: terminal-view, terminal-emulator
+License: Apache License 2.0
+
+The full Apache License 2.0 text is distributed alongside this notice as
+LICENSE-APACHE-2.0.txt. The GPL-3.0-only Termux application and termux-shared
+module are not included. Happier owns the remote-session adapter and does not
+spawn a local Termux process.

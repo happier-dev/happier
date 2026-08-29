@@ -1,9 +1,15 @@
 import {
+  ActionApprovalRequestCreatedResultSchema,
+  type ActionApprovalRequestCreatedResult,
+  EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   ExternalActionHttpErrorV1Schema,
   ExternalActionRequestIdV1Schema,
+  ExternalActionTargetV1Schema,
   parseExternalActionResponseEnvelopeV1,
   parseQualifiedPluginActionId,
 } from '@happier-dev/protocol/actions';
+import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { Agent, request as requestWithUndici } from 'undici';
 
 import { createGeneratedActions, MUTATING_PUBLIC_ACTION_IDS } from './actions/generated.js';
@@ -28,8 +34,11 @@ import {
 import type {
   ActionExecute,
   ActionExecutionOptions,
+  ActionTarget,
   ContributedActionId,
   HappierConnectOptions,
+  PublicActionExecutionResult,
+  RawActionExecute,
 } from './types.js';
 import type {
   PublicActionId,
@@ -37,10 +46,30 @@ import type {
   PublicActionResultById,
 } from './actions/generated.js';
 
-function requireNonEmpty(value: string, name: string): string {
-  const normalized = value.trim();
-  if (normalized.length === 0) throw new TypeError(`${name} must be non-empty`);
-  return normalized;
+function requireApiToken(value: string): string {
+  if (parseAccountApiTokenBearerV1(value) === null) {
+    throw new TypeError('token must be an exact Happier API Token');
+  }
+  return value;
+}
+
+function requireMachineId(value: string): string {
+  const parsed = ExternalActionTargetV1Schema.safeParse({
+    kind: 'machine',
+    machineId: value,
+  });
+  if (!parsed.success || parsed.data.kind !== 'machine') {
+    throw new TypeError('machineId must be a valid external Action target identifier');
+  }
+  return parsed.data.machineId;
+}
+
+function requireSessionId(value: string): string {
+  const parsed = SessionIdSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new TypeError('sessionId must be a valid Happier Session identifier');
+  }
+  return parsed.data;
 }
 
 /**
@@ -88,6 +117,70 @@ async function waitForCloseCleanup(cleanup: Promise<unknown>): Promise<void> {
   }
 }
 
+class ExternalActionResponseBodyTooLargeError extends Error {
+  constructor() {
+    super('The Happier API response exceeded the external Action response limit.');
+    this.name = 'ExternalActionResponseBodyTooLargeError';
+  }
+}
+
+type ExternalActionResponseBody = AsyncIterable<Uint8Array> & Readonly<{
+  once?: (event: 'error', listener: (error: Error) => void) => unknown;
+  destroy: (error?: Error) => unknown;
+}>;
+
+function rejectOversizedExternalActionResponse(body: ExternalActionResponseBody): never {
+  const error = new ExternalActionResponseBodyTooLargeError();
+  // Undici requires every response body to be consumed or explicitly
+  // destroyed. Stop an oversized response immediately so it cannot occupy a
+  // connection until the remote endpoint finishes sending it.
+  body.once?.('error', () => undefined);
+  body.destroy();
+  throw error;
+}
+
+function declaredResponseByteLength(
+  headers: Readonly<Record<string, string | string[] | undefined>>,
+): number | undefined {
+  const raw = responseHeader(headers, 'content-length');
+  if (raw === undefined || !/^[0-9]+$/u.test(raw)) return undefined;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+/**
+ * The server and daemon both cap one complete public Action response envelope.
+ * Enforce that same ceiling while consuming the body so a misconfigured endpoint
+ * cannot turn a finite API contract into an unbounded SDK allocation.
+ */
+async function readExternalActionResponseJson(
+  body: ExternalActionResponseBody,
+  headers: Readonly<Record<string, string | string[] | undefined>>,
+): Promise<unknown> {
+  const declaredLength = declaredResponseByteLength(headers);
+  if (declaredLength !== undefined && declaredLength > EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) {
+    rejectOversizedExternalActionResponse(body);
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  for await (const chunk of body) {
+    byteLength += chunk.byteLength;
+    if (byteLength > EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES) {
+      rejectOversizedExternalActionResponse(body);
+    }
+    chunks.push(chunk);
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 function transportErrorCode(body: unknown): string | undefined {
   const externalActionError = ExternalActionHttpErrorV1Schema.safeParse(body);
   if (externalActionError.success) return externalActionError.data.code;
@@ -104,37 +197,40 @@ function responseHeader(
   return Array.isArray(value) ? value[0] : value;
 }
 
-function isDeferredApprovalRequest(
+function parseDeferredApprovalRequest(
   value: unknown,
   actionId: string,
-): value is Readonly<{
-  kind: 'approval_request_created';
-  artifactId: string;
-  actionId: string;
-}> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  requestId?: string,
+): ActionApprovalRequestCreatedResult | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
   const candidate = value as Readonly<Record<string, unknown>>;
-  return candidate.kind === 'approval_request_created'
-    && typeof candidate.artifactId === 'string'
-    && candidate.artifactId.trim().length > 0
-    && candidate.actionId === actionId;
+  if (candidate.kind !== 'approval_request_created') return null;
+
+  const parsed = ActionApprovalRequestCreatedResultSchema.safeParse(value);
+  if (!parsed.success || parsed.data.actionId !== actionId) {
+    throw new HappierTransportError(
+      'The Happier Action API returned an invalid approval result.',
+      { details: value, requestId },
+    );
+  }
+  return parsed.data;
 }
 
 export type HappierActions = ReturnType<typeof createGeneratedActions> & Readonly<{
-  execute: ActionExecute;
+  execute: RawActionExecute;
   get: (
     input: PublicActionInputById['action.spec.get'],
     options?: ActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.spec.get']>;
+  ) => Promise<PublicActionExecutionResult<'action.spec.get'>>;
   search: (
     input: PublicActionInputById['action.spec.search'],
     options?: ActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.spec.search']>;
+  ) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
   invoke: (
     action: ContributedActionId,
     input: unknown,
     options?: ActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.invoke']>;
+  ) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
 
 /** Per-call controls for an Action client already bound to one Machine. */
@@ -144,7 +240,7 @@ export type HappierMachineActionExecute = <K extends PublicActionId>(
   actionId: K,
   input: PublicActionInputById[K],
   options?: HappierMachineActionExecutionOptions,
-) => Promise<PublicActionResultById[K]>;
+) => Promise<PublicActionExecutionResult<K>>;
 
 type MachineBoundActionMethods<T> = T extends (
   input: infer Input,
@@ -161,16 +257,16 @@ export type HappierMachineActions = MachineBoundActionMethods<ReturnType<typeof 
   get: (
     input: PublicActionInputById['action.spec.get'],
     options?: HappierMachineActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.spec.get']>;
+  ) => Promise<PublicActionExecutionResult<'action.spec.get'>>;
   search: (
     input: PublicActionInputById['action.spec.search'],
     options?: HappierMachineActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.spec.search']>;
+  ) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
   invoke: (
     action: ContributedActionId,
     input: unknown,
     options?: HappierMachineActionExecutionOptions,
-  ) => Promise<PublicActionResultById['action.invoke']>;
+  ) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
 
 export type HappierExecutionRuns<TOptions extends ActionExecutionOptions = ActionExecutionOptions> = Readonly<{
@@ -276,7 +372,7 @@ function assertMachineBoundTarget(
   );
 }
 
-function createActions(execute: ActionExecute): HappierActions {
+function createActions(execute: RawActionExecute): HappierActions {
   const generated = createGeneratedActions(execute);
   return Object.freeze({
     ...generated,
@@ -299,7 +395,7 @@ function createActions(execute: ActionExecute): HappierActions {
   });
 }
 
-function createMachineActions(execute: ActionExecute): HappierMachineActions {
+function createMachineActions(execute: RawActionExecute): HappierMachineActions {
   return createActions(execute);
 }
 
@@ -363,8 +459,16 @@ function createClient(
 
     let body: unknown;
     try {
-      body = await response.body.json();
+      body = await readExternalActionResponseJson(response.body, response.headers);
     } catch (error) {
+      if (error instanceof ExternalActionResponseBodyTooLargeError) {
+        throw new HappierTransportError(error.message, {
+          code: 'response_too_large',
+          status: response.statusCode,
+          requestId: params.requestId,
+          details: { maxSerializedBytes: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES },
+        });
+      }
       if (lifecycle.controller.signal.aborted && params.allowAfterClose !== true) {
         throw new HappierClientClosedError(params.requestId);
       }
@@ -400,7 +504,8 @@ function createClient(
     input: PublicActionInputById[K],
     options: ActionExecutionOptions = {},
     allowAfterClose = false,
-  ): Promise<PublicActionResultById[K]> => {
+    preserveDeferredApproval = true,
+  ): Promise<PublicActionExecutionResult<K>> => {
     const requestId = options.requestId === undefined
       ? (MUTATING_PUBLIC_ACTION_IDS.has(actionId) ? globalThis.crypto.randomUUID() : undefined)
       : requireExternalActionRequestId(options.requestId);
@@ -438,30 +543,48 @@ function createClient(
         requestId,
       );
     }
-    if (isDeferredApprovalRequest(externalActionResponse.execution.result, actionId)) {
+    const deferredApproval = parseDeferredApprovalRequest(
+      externalActionResponse.execution.result,
+      actionId,
+      requestId,
+    );
+    if (preserveDeferredApproval === false && deferredApproval !== null) {
       throw new HappierActionError(
         'approval_required',
         `The ${actionId} Action requires user approval before it can execute.`,
-        externalActionResponse.execution.result,
+        deferredApproval,
         requestId,
       );
     }
-    return externalActionResponse.execution.result as PublicActionResultById[K];
+    return (deferredApproval ?? externalActionResponse.execution.result) as PublicActionExecutionResult<K>;
   };
-  const execute: ActionExecute = (actionId, input, options) => executeRequest(actionId, input, options);
+  const rawExecute: RawActionExecute = (actionId, input, options) => executeRequest(actionId, input, options);
+  const executeCompletedRequest = async <K extends PublicActionId>(
+    actionId: K,
+    input: PublicActionInputById[K],
+    options?: ActionExecutionOptions,
+  ): Promise<PublicActionResultById[K]> => {
+    return await executeRequest(actionId, input, options, false, false) as PublicActionResultById[K];
+  };
+  const execute: ActionExecute = executeCompletedRequest;
   const createExecutionRuns = <TOptions extends ActionExecutionOptions>(params: Readonly<{
     execute: ActionExecute;
     cancel: (
       input: PublicActionInputById['execution.run.stream.cancel'],
       options: Readonly<Pick<ActionExecutionOptions, 'target'>>,
     ) => Promise<void>;
+    sessionTarget?: (sessionId: string) => ActionTarget;
   }>): HappierExecutionRuns<TOptions> => Object.freeze({
     startStream: async (input, options) => {
-      const scope = input.sessionId === undefined ? {} : { sessionId: input.sessionId };
-      const routing = options?.target === undefined ? {} : { target: options.target };
+      const sessionId = typeof input.sessionId === 'string'
+        ? requireSessionId(input.sessionId) : undefined;
+      const scope = sessionId === undefined ? {} : { sessionId };
+      const target = options?.target ?? (sessionId === undefined ? undefined : params.sessionTarget?.(sessionId));
+      const routing = target === undefined ? {} : { target };
+      const effectiveOptions = target === undefined ? options : { ...(options ?? {}), target };
       return await startExecutionRunStream({
         runId: input.runId,
-        start: () => params.execute('execution.run.stream.start', input, options),
+        start: () => params.execute('execution.run.stream.start', input, effectiveOptions),
         read: (readInput, signal) => params.execute('execution.run.stream.read', {
           ...scope,
           ...readInput,
@@ -478,19 +601,26 @@ function createClient(
 
   const createFollowTranscript = (
     transcriptExecute: ActionExecute,
-    target?: MachineActionTarget,
-  ) => (sessionId: string, options?: FollowTranscriptOptions) => (
-    createTranscriptIterable({
-      execute: transcriptExecute,
+    targetForSession: (sessionId: string) => ActionTarget,
+  ) => (sessionId: string, options?: FollowTranscriptOptions) => {
+    const id = requireSessionId(sessionId);
+    const target = targetForSession(id);
+    const scopedExecute: ActionExecute = (actionId, input, executeOptions) => transcriptExecute(
+      actionId,
+      input,
+      executeOptions?.target === undefined ? { ...(executeOptions ?? {}), target } : executeOptions,
+    );
+    return createTranscriptIterable({
+      execute: scopedExecute,
       release: async (input) => {
-        await executeRequest('transcript.unfollow', input, target === undefined ? {} : { target }, true);
+        await executeRequest('transcript.unfollow', input, { target }, true);
       },
-      sessionId: requireNonEmpty(sessionId, 'sessionId'),
+      sessionId: id,
       closeSignal: lifecycle.controller.signal,
       registerCloseCleanup: lifecycle.registerCloseCleanup,
       options,
-    })
-  );
+    });
+  };
   const machines = Object.freeze({
     async list(options: MachineListOptions = {}) {
       return parseMachineListResponse(await requestJson({
@@ -502,17 +632,31 @@ function createClient(
   });
   const machine = (machineId: string) => createClient(endpoint, token, lifecycle, {
     kind: 'machine',
-    machineId: requireNonEmpty(machineId, 'machineId'),
+    machineId: requireMachineId(machineId),
   });
   if (defaultTarget !== undefined) {
-    const machineExecute: ActionExecute = async (actionId, input, options) => {
+    const machineRawExecute: RawActionExecute = async (actionId, input, options) => {
       assertMachineBoundTarget(options?.target, defaultTarget, options?.requestId);
       return await executeRequest(actionId, input, { ...(options ?? {}), target: defaultTarget });
     };
+    const machineExecute: ActionExecute = async <K extends PublicActionId>(
+      actionId: K,
+      input: PublicActionInputById[K],
+      options?: ActionExecutionOptions,
+    ): Promise<PublicActionResultById[K]> => {
+      assertMachineBoundTarget(options?.target, defaultTarget, options?.requestId);
+      return await executeRequest(
+        actionId,
+        input,
+        { ...(options ?? {}), target: defaultTarget },
+        false,
+        false,
+      ) as PublicActionResultById[K];
+    };
     const sessions = createMachineSessions({
       execute: machineExecute,
-      followTranscript: createFollowTranscript(machineExecute, defaultTarget),
-      requireSessionId: (sessionId) => requireNonEmpty(sessionId, 'sessionId'),
+      followTranscript: createFollowTranscript(machineExecute, () => defaultTarget),
+      requireSessionId,
       spawn: (input, options) => machineExecute('session.spawn_new', input, options),
     });
     const runs = createExecutionRuns<HappierMachineActionExecutionOptions>({
@@ -522,7 +666,7 @@ function createClient(
       },
     });
     return Object.freeze({
-      actions: createMachineActions(machineExecute),
+      actions: createMachineActions(machineRawExecute),
       machines,
       sessions,
       runs,
@@ -531,16 +675,19 @@ function createClient(
     });
   }
 
-  const actions = createActions(execute);
-  const followTranscript = createFollowTranscript(execute);
+  const actions = createActions(rawExecute);
+  const sessionTarget = (sessionId: string): ActionTarget => ({ kind: 'session', sessionId });
+  const followTranscript = createFollowTranscript(execute, sessionTarget);
   const sessions = createSessions({
     execute,
+    sessionTarget,
     spawn: (input, options) => execute('session.spawn_new', input, options),
     followTranscript,
-    requireSessionId: (sessionId) => requireNonEmpty(sessionId, 'sessionId'),
+    requireSessionId,
   });
   const runs = createExecutionRuns<ActionExecutionOptions>({
     execute,
+    sessionTarget,
     cancel: async (input, options) => {
       await executeRequest('execution.run.stream.cancel', input, options, true);
     },
@@ -558,6 +705,6 @@ function createClient(
 
 export function connect(options: HappierConnectOptions): HappierClient {
   const endpoint = normalizeEndpoint(options.endpoint);
-  const token = requireNonEmpty(options.token, 'token');
+  const token = requireApiToken(options.token);
   return createClient(endpoint, token, createClientLifecycle());
 }

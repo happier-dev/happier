@@ -7,9 +7,10 @@ import { parseArgs } from 'node:util';
 
 const sdkDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(sdkDir, '..', '..');
+const consumerApiToken = 'hap_v1_123e4567-e89b-42d3-a456-426614174000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: 'utf8', stdio: 'pipe', maxBuffer: 100 * 1024 * 1024 });
+function run(command, args, cwd, { env = process.env } = {}) {
+  const result = spawnSync(command, args, { cwd, env, encoding: 'utf8', stdio: 'pipe', maxBuffer: 100 * 1024 * 1024 });
   if (result.status !== 0) throw new Error([`${command} ${args.join(' ')} failed with status ${result.status}`, result.stdout, result.stderr].filter(Boolean).join('\n'));
   return result.stdout.trim();
 }
@@ -41,43 +42,53 @@ export async function validateNodeNextConsumer({ tarballPath = null } = {}) {
         target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true,
         skipLibCheck: false, lib: ['ES2022', 'DOM'], types: ['node'],
         typeRoots: [join(repoRoot, 'node_modules', '@types')],
-        ...(sourceMode ? { paths: { '@happier-dev/sdk': [join(sdkDir, 'src', 'index.public.ts')] } } : {}),
+        ...(sourceMode ? { paths: {
+          '@happier-dev/sdk': [join(sdkDir, 'src', 'index.public.ts')],
+          '@happier-dev/protocol/auth/accountApiTokens': [join(repoRoot, 'packages', 'protocol', 'src', 'auth', 'accountApiTokens.ts')],
+          '@happier-dev/protocol/sessions/idsV1': [join(repoRoot, 'packages', 'protocol', 'src', 'sessions', 'idsV1.ts')],
+        } } : {}),
       },
       include: ['consumer.ts'],
     }, null, 2));
     await writeFile(join(fixture, 'consumer.ts'), [
       "import { connect, type PublicActionId } from '@happier-dev/sdk';",
       "const actionId: PublicActionId = 'machines.list';",
-      "const client = connect({ endpoint: 'http://127.0.0.1:3210', token: 'pat' });",
+      `const client = connect({ endpoint: 'http://127.0.0.1:3210', token: ${JSON.stringify(consumerApiToken)} });`,
       'void client.actions.execute(actionId, {});', 'void client.machines.list();', 'await client.close();', '',
     ].join('\n'));
 
     if (sourceMode) {
       run(process.execPath, [join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'), '--noEmit', '-p', join(fixture, 'tsconfig.json')], fixture);
-      await writeFile(join(fixture, 'examples.tsconfig.json'), JSON.stringify({
-        compilerOptions: {
-          target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true,
-          skipLibCheck: false, lib: ['ES2022', 'DOM'], types: ['node'],
-          typeRoots: [join(repoRoot, 'node_modules', '@types')],
-          paths: { '@happier-dev/sdk': [join(sdkDir, 'src', 'index.public.ts')] },
-        },
-        files: [
-          join(sdkDir, 'examples', 'basic', 'index.ts'),
-          join(sdkDir, 'examples', 'comprehensive', 'index.ts'),
-        ],
-      }, null, 2));
-      run(process.execPath, [join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'), '--noEmit', '-p', join(fixture, 'examples.tsconfig.json')], fixture);
+      for (const exampleName of ['basic', 'comprehensive']) {
+        const exampleTsconfigPath = join(fixture, `example-${exampleName}.tsconfig.json`);
+        await writeFile(exampleTsconfigPath, JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true,
+            skipLibCheck: false, lib: ['ES2022', 'DOM'], types: ['node'],
+            typeRoots: [join(repoRoot, 'node_modules', '@types')],
+            paths: {
+              '@happier-dev/sdk': [join(sdkDir, 'src', 'index.public.ts')],
+              '@happier-dev/protocol/auth/accountApiTokens': [join(repoRoot, 'packages', 'protocol', 'src', 'auth', 'accountApiTokens.ts')],
+              '@happier-dev/protocol/sessions/idsV1': [join(repoRoot, 'packages', 'protocol', 'src', 'sessions', 'idsV1.ts')],
+            },
+          },
+          files: [join(sdkDir, 'examples', exampleName, 'index.ts')],
+        }, null, 2));
+        run(process.execPath, [join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'), '--noEmit', '-p', exampleTsconfigPath], fixture);
+      }
       run(process.execPath, ['--import', join(repoRoot, 'node_modules/tsx/dist/loader.mjs'), '--input-type=module', '--eval', [
         `import { connect } from ${JSON.stringify(pathToFileURL(join(sdkDir, 'src/index.public.ts')).href)};`,
-        "const client = connect({ endpoint: 'http://127.0.0.1:3210', token: 'pat' });", 'await client.close();',
-      ].join('\n')], repoRoot);
+        `const client = connect({ endpoint: 'http://127.0.0.1:3210', token: ${JSON.stringify(consumerApiToken)} });`, 'await client.close();',
+      ].join('\n')], repoRoot, {
+        env: { ...process.env, TSX_TSCONFIG_PATH: join(fixture, 'tsconfig.json') },
+      });
       return;
     }
 
     const tarball = await assertExactTarball(tarballPath);
     run('npm', ['install', '--ignore-scripts', '--no-package-lock', tarball], fixture);
     run(process.execPath, [join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'), '--noEmit', '-p', join(fixture, 'tsconfig.json')], fixture);
-    run(process.execPath, ['--input-type=module', '--eval', "import { connect } from '@happier-dev/sdk'; const client = connect({ endpoint: 'http://127.0.0.1:3210', token: 'pat' }); await client.close();"], fixture);
+    run(process.execPath, ['--input-type=module', '--eval', `import { connect } from '@happier-dev/sdk'; const client = connect({ endpoint: 'http://127.0.0.1:3210', token: ${JSON.stringify(consumerApiToken)} }); await client.close();`], fixture);
     const installed = JSON.parse(await readFile(join(fixture, 'node_modules/@happier-dev/sdk/package.json'), 'utf8'));
     if (installed.name !== '@happier-dev/sdk') throw new Error('Installed SDK package identity mismatch');
   } finally { await rm(fixture, { recursive: true, force: true }); }

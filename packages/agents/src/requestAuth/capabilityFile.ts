@@ -19,6 +19,21 @@ export type ConnectedAccountRequestAuthCapabilityDocumentV2 = Readonly<{
   httpPort: number;
 }>;
 
+/**
+ * Exact UTF-8 ceiling for the compact, newline-terminated V2 document emitted
+ * by the canonical writer. The materialization id is the only variably-sized
+ * field; U+0001 is a valid, non-trimming one-byte UTF-8 value whose JSON form
+ * uses the maximum six-byte escape for every protocol-admitted byte.
+ */
+export const CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_MAX_SERIALIZED_UTF8_BYTES =
+  new TextEncoder().encode(`${JSON.stringify({
+    v: CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_VERSION,
+    materializationId: '\u0001'.repeat(CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH),
+    subjectScopeDigest: 'f'.repeat(64),
+    capability: 'A'.repeat(43),
+    httpPort: 65_535,
+  })}\n`).byteLength;
+
 function isSha256Digest(value: string): boolean {
   return /^[a-f0-9]{64}$/u.test(value);
 }

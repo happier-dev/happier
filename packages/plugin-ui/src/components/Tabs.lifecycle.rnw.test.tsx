@@ -1,4 +1,4 @@
-import { act, StrictMode, useEffect, useState } from 'react';
+import { act, startTransition, StrictMode, Suspense, useEffect, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
@@ -205,6 +205,103 @@ describe('Tabs panel retention and active interval', () => {
     expect(mount.container.textContent).toContain('reveal-2');
     expect(intervals).toHaveLength(2);
     expect(intervals[1]?.aborted).toBe(false);
+    mount.unmount();
+  });
+
+  it('prunes a removed retained value so re-adding it mounts a fresh panel', async () => {
+    let mountRuns = 0;
+
+    function RetainedPanel() {
+      const [value] = useState(() => {
+        mountRuns += 1;
+        return `retained-${mountRuns}`;
+      });
+      useTabPanelActivity();
+      return <Text value={value} />;
+    }
+
+    function Harness() {
+      const [selected, setSelected] = useState('retained');
+      const [present, setPresent] = useState(true);
+      return (
+        <>
+          <button data-testid="remove-retained" onClick={() => { setPresent(false); setSelected('other'); }}>Remove retained</button>
+          <button data-testid="add-retained" onClick={() => setPresent(true)}>Add retained</button>
+          <Tabs value={selected} onValueChange={setSelected} ariaLabel="Sections">
+            {present ? <Tabs.Item value="retained" title="Retained" retention="retain"><RetainedPanel /></Tabs.Item> : null}
+            <Tabs.Item value="other" title="Other"><Text value="Other content" /></Tabs.Item>
+          </Tabs>
+        </>
+      );
+    }
+
+    const mount = mountTabs(<Harness />);
+    expect(mountRuns).toBe(1);
+    await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="remove-retained"]')?.click(); });
+    await act(async () => { mount.container.querySelector<HTMLElement>('[data-testid="add-retained"]')?.click(); });
+    await selectTab(mount.container, 0);
+
+    expect(mountRuns).toBe(2);
+    mount.unmount();
+  });
+
+  it('does not let an abandoned render record a retained visit', () => {
+    let beginSuspendedRender: () => void = () => undefined;
+    let abandonSuspendedRender: () => void = () => undefined;
+    let readdPendingTab: () => void = () => undefined;
+    const neverSettles = new Promise<never>(() => {});
+
+    function SuspendedPanel(props: Readonly<{ suspend: boolean }>) {
+      if (props.suspend) throw neverSettles;
+      return <Text value="Pending content" />;
+    }
+
+    function Harness() {
+      const [selected, setSelected] = useState('base');
+      const [pendingPresent, setPendingPresent] = useState(false);
+      const [suspendPending, setSuspendPending] = useState(false);
+      beginSuspendedRender = () => {
+        startTransition(() => {
+          setPendingPresent(true);
+          setSelected('pending');
+          setSuspendPending(true);
+        });
+      };
+      abandonSuspendedRender = () => {
+        setPendingPresent(false);
+        setSelected('base');
+        setSuspendPending(false);
+      };
+      readdPendingTab = () => setPendingPresent(true);
+      return (
+        <Tabs value={selected} onValueChange={setSelected} ariaLabel="Sections">
+          <Tabs.Item value="base" title="Base" retention="retain"><Text value="Base content" /></Tabs.Item>
+          {pendingPresent ? (
+            <Tabs.Item value="pending" title="Pending" retention="retain">
+              <SuspendedPanel suspend={suspendPending} />
+            </Tabs.Item>
+          ) : null}
+        </Tabs>
+      );
+    }
+
+    const mount = mountTabs(
+      <Suspense fallback={<Text value="Suspended fallback" />}>
+        <Harness />
+      </Suspense>,
+    );
+    expect(mount.container.textContent).toContain('Base content');
+
+    // The transition renders Tabs with `pending` selected, then suspends. A
+    // synchronous update abandons that render before it can commit.
+    act(() => { beginSuspendedRender(); });
+    act(() => { abandonSuspendedRender(); });
+    expect(mount.container.textContent).toContain('Base content');
+
+    // Re-adding the same value while Base is selected must not resurrect a
+    // visit marker from the abandoned render.
+    act(() => { readdPendingTab(); });
+    expect(mount.container.textContent).not.toContain('Pending content');
     mount.unmount();
   });
 

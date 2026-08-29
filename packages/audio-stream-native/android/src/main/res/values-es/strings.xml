@@ -1,0 +1,4 @@
+<resources>
+  <string name="happier_voice_foreground_notification_channel">Conversación de voz</string>
+  <string name="happier_voice_foreground_notification_text">La conversación de voz está activa</string>
+</resources>

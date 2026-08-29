@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative } from 'node:path';
@@ -127,6 +128,7 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
   const licenseClosure = await copyTermuxLicenseClosure({
     sourceRoot,
     targetRoot: null,
+    policy,
   });
   if (licenseClosure.status !== 'ok') {
     return licenseClosure;
@@ -148,6 +150,7 @@ export async function installTermuxAndroidSource({ sourceRoot, vendorRoot, obser
       sourceRoot,
       targetRoot: tempRoot,
       closure: licenseClosure.closure,
+      policy,
     });
 
     const metadata = {
@@ -343,7 +346,7 @@ async function patchTermuxViewResourceImports(root) {
   }));
 }
 
-async function copyTermuxLicenseClosure({ sourceRoot, targetRoot, closure }) {
+async function copyTermuxLicenseClosure({ sourceRoot, targetRoot, closure, policy }) {
   const upstreamLicensePath = join(sourceRoot, 'LICENSE.md');
   if (!await exists(upstreamLicensePath)) {
     return {
@@ -358,7 +361,24 @@ async function copyTermuxLicenseClosure({ sourceRoot, targetRoot, closure }) {
     upstreamLicensePath: TERMUX_UPSTREAM_LICENSE_FILE,
     upstreamNoticePath: upstreamNoticeSource == null ? null : TERMUX_UPSTREAM_NOTICE_FILE,
     noticePath: TERMUX_PACKAGE_NOTICE_PATH,
+    redistributionLicensePath: policy.license.redistributionLicensePath,
+    redistributionLicenseSha256: policy.license.redistributionLicenseSha256,
+    redistributionNoticePath: policy.license.redistributionNoticePath,
+    redistributionNoticeSha256: policy.license.redistributionNoticeSha256,
   };
+
+  const redistributionLicensePath = join(packageRoot, resolvedClosure.redistributionLicensePath);
+  const redistributionNoticePath = join(packageRoot, resolvedClosure.redistributionNoticePath);
+  if (!await exists(redistributionLicensePath)
+    || !await exists(redistributionNoticePath)
+    || await sha256File(redistributionLicensePath) !== resolvedClosure.redistributionLicenseSha256
+    || await sha256File(redistributionNoticePath) !== resolvedClosure.redistributionNoticeSha256) {
+    return {
+      status: 'blocked',
+      reason: 'termux-redistribution-license-closure-invalid',
+      detail: 'The complete Apache-2.0 license and Termux attribution must match the policy-pinned distribution files.',
+    };
+  }
 
   if (targetRoot != null) {
     await cp(upstreamLicensePath, join(targetRoot, resolvedClosure.upstreamLicensePath));
@@ -397,9 +417,17 @@ async function validateTermuxVendorProvenance({ sourceRoot, policy, metadata }) 
     || closure.upstreamLicensePath !== TERMUX_UPSTREAM_LICENSE_FILE
     || (closure.upstreamNoticePath !== null && closure.upstreamNoticePath !== TERMUX_UPSTREAM_NOTICE_FILE)
     || closure.noticePath !== TERMUX_PACKAGE_NOTICE_PATH
+    || closure.redistributionLicensePath !== policy.license.redistributionLicensePath
+    || closure.redistributionLicenseSha256 !== policy.license.redistributionLicenseSha256
+    || closure.redistributionNoticePath !== policy.license.redistributionNoticePath
+    || closure.redistributionNoticeSha256 !== policy.license.redistributionNoticeSha256
     || !await exists(join(sourceRoot, TERMUX_UPSTREAM_LICENSE_FILE))
     || (closure.upstreamNoticePath != null && !await exists(join(sourceRoot, closure.upstreamNoticePath)))
-    || !await exists(join(packageRoot, TERMUX_PACKAGE_NOTICE_PATH))) {
+    || !await exists(join(packageRoot, TERMUX_PACKAGE_NOTICE_PATH))
+    || !await exists(join(packageRoot, closure.redistributionLicensePath))
+    || !await exists(join(packageRoot, closure.redistributionNoticePath))
+    || await sha256File(join(packageRoot, closure.redistributionLicensePath)) !== closure.redistributionLicenseSha256
+    || await sha256File(join(packageRoot, closure.redistributionNoticePath)) !== closure.redistributionNoticeSha256) {
     return {
       reason: 'termux-source-license-closure-missing',
       detail: 'Termux vendor source must retain its upstream license and the package Android notice closure.',
@@ -407,6 +435,10 @@ async function validateTermuxVendorProvenance({ sourceRoot, policy, metadata }) 
   }
 
   return null;
+}
+
+async function sha256File(filePath) {
+  return createHash('sha256').update(await readFile(filePath)).digest('hex');
 }
 
 async function findForbiddenReferences({ sourceRoot, forbiddenTokens }) {

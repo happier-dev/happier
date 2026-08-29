@@ -34,6 +34,7 @@ target, so the daemon executes on its current Machine.
 ```ts
 import {
   connect,
+  isHappierActionApprovalRequestCreated,
   HappierSessionInitialInputError,
   type HappierSession,
 } from '@happier-dev/sdk';
@@ -92,19 +93,8 @@ does not expose a Session-capable identity, `sessions.spawn()` rejects with
 `HappierAgentUnavailableError` and its typed `reason`.
 
 Discover that inventory instead of guessing an id. `sessions.spawn()` resolves
-your `agent` value against the same read-only catalog Action, and that Action
-is also available as a typed method on the client you will spawn with (the root
-client at a daemon-local endpoint, or the machine-bound client for an exact
-machine):
-
-```ts
-const inventory = await serverClient.actions.agents.backends.list({ includeDisabled: true });
-const usableAgentIds = inventory.items
-  .filter((item) => item.enabled)
-  .map((item) => item.agentId);
-```
-
-Then pass one of the listed `agentId`s to `sessions.spawn({ agent, ... })`.
+your `agent` value against the same read-only catalog Action. After selecting a
+machine below, use that machine-bound client for discovery and spawning.
 Missing, disabled, or identity-less Agents fail typed at spawn time even when
 this discovery step is skipped.
 
@@ -129,6 +119,13 @@ if (eligibleMachines.length > 1) {
   throw new Error(`Select one machine explicitly: ${candidateIds}`);
 }
 const serverClient = serverAccount.machine(machine.id);
+const inventory = await serverClient.actions.agents.backends.list({ includeDisabled: true });
+const usableAgentIds = inventory.items
+  .filter((item) => item.enabled)
+  .map((item) => item.agentId);
+if (!usableAgentIds.includes('codex')) {
+  throw new Error('The selected machine does not have an enabled Codex Agent.');
+}
 const session = await serverClient.sessions.spawn({ directory: process.cwd(), agent: 'codex' });
 ```
 
@@ -148,6 +145,10 @@ separately below rather than making either first-run example depend on one.
 
 `machine(id)` returns a target-bound view that shares the root client's
 lifecycle. Calling `await close()` on either view aborts outstanding work for both.
+For an existing Session, `sessions.get(sessionId)` binds its operations to that
+Session automatically. The same handle therefore works at daemon-local and
+server endpoints without duplicating `sessionId` in an execution target. An
+explicit target remains available when deliberate machine pinning is needed.
 
 For a correlated send that settles only after the target Session becomes idle,
 use `session.sendAndWait(message, input?, executionOptions?)`. It calls the
@@ -160,12 +161,15 @@ it requires approval. `HappierTransportError` instead means the SDK could not
 complete or validate the HTTP exchange, such as a network failure, a
 non-success HTTP status, invalid JSON, or an invalid response envelope.
 
-When policy defers an Action for user approval, typed SDK calls reject with
-`HappierActionError` whose `code` is `approval_required`. Its `details`
-preserve the canonical approval result
-`{ kind: 'approval_request_created', artifactId, actionId }`. The SDK neither
-waits for nor decides that approval; for `sessions.spawn()`, no Session has
-been created yet.
+When policy defers an Action for user approval, raw and generated Action methods
+resolve with the canonical admitted result
+`{ kind: 'approval_request_created', artifactId, actionId }`; generic results are
+never reinterpreted by the transport. Curated Session helpers retain their explicit
+ergonomics and reject with `HappierActionError` whose code is `approval_required`
+and whose details preserve that result. The SDK neither waits for nor decides the
+approval; for `sessions.spawn()`, no Session has been created yet. Use
+`isHappierActionApprovalRequestCreated(result)` before reading an Action-specific
+result from a raw or generated method that may be deferred.
 
 Both the daemon-local and server origins cap the complete serialized response
 envelope—not only the Action result—at 24,000,000 UTF-8 bytes. If execution
@@ -207,18 +211,29 @@ the daemon supplies its current Machine when the target is omitted.
 
 ```ts
 const discovered = await happier.actions.search({ query: 'save note' });
+if (isHappierActionApprovalRequestCreated(discovered)) {
+  throw new Error(`Approval required: ${discovered.artifactId}`);
+}
 const qualifiedId = discovered.actionSpecs.find(
   (action) => action.id === 'acme.notes/actions/save-note',
 )?.id;
 if (!qualifiedId) throw new Error('The expected contributed Action is not available.');
-const { actionSpec } = await happier.actions.get({ id: qualifiedId });
+const definition = await happier.actions.get({ id: qualifiedId });
+if (isHappierActionApprovalRequestCreated(definition)) {
+  throw new Error(`Approval required: ${definition.artifactId}`);
+}
+const { actionSpec } = definition;
 console.log(actionSpec.inputSchema);
 
 // Construct input that satisfies actionSpec.inputSchema before invoking.
 // Required fields may be expressed inside oneOf/anyOf branches, not only in
 // the schema's top-level `required` array.
 const input = { /* fields declared by this Action */ };
-await happier.actions.invoke(qualifiedId, input);
+const invocation = await happier.actions.invoke(qualifiedId, input);
+if (isHappierActionApprovalRequestCreated(invocation)) {
+  throw new Error(`Approval required: ${invocation.artifactId}`);
+}
+console.log(invocation);
 ```
 
 The convenience method also accepts the canonical structured
@@ -289,7 +304,10 @@ early loop exit or `await close()` releases its `transcript.unfollow` lease. Use
 handle exposes `runId`, `streamId`, `cancel()`, and an async iterator; normal
 completion, early iterator return, an abort signal, and `await close()` all cancel
 the canonical stream. A machine-bound client's stream start, reads, and cancel
-stay on that same target. Snapshot Actions remain ordinary methods.
+stay on that same target. On a root client, a run input with `sessionId`
+automatically binds start, reads, and cancel to that Session; a detached run still
+needs an explicit machine target at a server endpoint. Snapshot Actions remain
+ordinary methods.
 
 ## Release posture
 

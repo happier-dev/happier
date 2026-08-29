@@ -37,6 +37,16 @@ export type VoiceAudioSessionApplyResult = Readonly<{
   route: string | null;
 }>;
 
+export const VOICE_AUDIO_GRAPH_TERMINAL_REASONS = Object.freeze([
+  'media_services_reset',
+  'configuration_unrecoverable',
+  'recording_resume_failed',
+  'interruption_resume_failed',
+] as const);
+
+export type VoiceAudioGraphTerminalReason =
+  (typeof VOICE_AUDIO_GRAPH_TERMINAL_REASONS)[number];
+
 export type VoiceAudioSessionPlatformEvent =
   | Readonly<{ generation: number; kind: 'interruption_began' }>
   | Readonly<{ generation: number; kind: 'interruption_ended'; shouldResume: boolean }>
@@ -66,8 +76,70 @@ export type VoiceAudioSessionPlatformEvent =
   | Readonly<{
     generation: number;
     kind: 'audio_graph_terminal';
-    reason: 'media_services_reset' | 'configuration_unrecoverable';
+    reason: VoiceAudioGraphTerminalReason;
   }>;
+
+const voiceAudioGraphTerminalReasons = new Set<string>(
+  VOICE_AUDIO_GRAPH_TERMINAL_REASONS,
+);
+
+/** Validates the closed native event contract before it reaches lifecycle owners. */
+export function parseVoiceAudioSessionPlatformEvent(
+  value: unknown,
+): VoiceAudioSessionPlatformEvent | null {
+  if (!value || typeof value !== 'object') return null;
+  const event = value as Readonly<Record<string, unknown>>;
+  if (!Number.isInteger(event.generation) || (event.generation as number) < 0) return null;
+  const generation = event.generation as number;
+  switch (event.kind) {
+    case 'interruption_began':
+    case 'focus_duckable':
+    case 'restoration_completed':
+      return { generation, kind: event.kind };
+    case 'interruption_ended':
+      return typeof event.shouldResume === 'boolean'
+        ? { generation, kind: event.kind, shouldResume: event.shouldResume }
+        : null;
+    case 'focus_changed':
+      return event.state === 'gained'
+        || event.state === 'lost_transient'
+        || event.state === 'lost_permanent'
+        || event.state === 'not_required'
+        ? { generation, kind: event.kind, state: event.state }
+        : null;
+    case 'route_changed':
+      return typeof event.route === 'string'
+        ? { generation, kind: event.kind, route: event.route }
+        : null;
+    case 'lifecycle_changed':
+      return event.state === 'foreground' || event.state === 'background'
+        ? { generation, kind: event.kind, state: event.state }
+        : null;
+    case 'capabilities_changed':
+      return typeof event.aecAvailable === 'boolean' && typeof event.aecActive === 'boolean'
+        ? {
+          generation,
+          kind: event.kind,
+          aecAvailable: event.aecAvailable,
+          aecActive: event.aecActive,
+        }
+        : null;
+    case 'restoration_failed':
+      return typeof event.reason === 'string'
+        ? { generation, kind: event.kind, reason: event.reason }
+        : null;
+    case 'audio_graph_terminal':
+      return typeof event.reason === 'string' && voiceAudioGraphTerminalReasons.has(event.reason)
+        ? {
+          generation,
+          kind: event.kind,
+          reason: event.reason as VoiceAudioGraphTerminalReason,
+        }
+        : null;
+    default:
+      return null;
+  }
+}
 
 export type VoiceAudioSessionPlatform = Readonly<{
   apply: (request: VoiceAudioSessionApplyRequest) => Promise<VoiceAudioSessionApplyResult>;

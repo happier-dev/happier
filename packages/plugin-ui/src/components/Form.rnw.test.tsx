@@ -394,6 +394,30 @@ describe('canonical Action Form presentation', () => {
     }
   });
 
+  it('rejects semantically duplicate options through the canonical comparator', () => {
+    expect(() => mountThroughReactNativeWeb(
+      <HappierSelect
+        label="Connected account"
+        options={[
+          {
+            value: { service: { pluginId: 'acme', localId: 'github' }, accountId: 'one' },
+            label: 'First account',
+          },
+          {
+            value: { service: { pluginId: 'acme', localId: 'github' }, accountId: 'one' },
+            label: 'Duplicate account',
+          },
+        ]}
+        value={undefined}
+        onChange={() => undefined}
+        isEqual={(left, right) => left.accountId === right.accountId
+          && left.service.pluginId === right.service.pluginId
+          && left.service.localId === right.service.localId}
+        theme={SURFACE_THEME_FIXTURE}
+      />,
+    )).toThrow(/duplicate values/u);
+  });
+
   it('keeps exact Connected Account option values semantically selected and captions accessible on RNW', () => {
     const account = {
       service: { pluginId: 'com.acme.accounts', localId: 'service' },

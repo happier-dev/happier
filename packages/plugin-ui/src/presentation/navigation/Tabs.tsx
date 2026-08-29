@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -204,16 +205,26 @@ export function HappierTabs(props: Readonly<{
   const tabs = Children.toArray(props.children)
     .filter((child): child is ReactElement<HappierTabDescriptor> => isValidElement(child))
     .map((child) => child.props);
+  const admittedTabValues = new Set<string>();
+  for (const tab of tabs) {
+    if (admittedTabValues.has(tab.value)) {
+      throw new Error(`Tabs contains duplicate tab value '${tab.value}'.`);
+    }
+    admittedTabValues.add(tab.value);
+  }
   const selected = tabs.find((tab) => tab.value === props.value) ?? tabs.find((tab) => !tab.disabled);
   const tabRefs = useRef(new Map<string, View>());
   // Which trigger currently holds focus, published by the trigger itself while
   // it still exists. A removed node cannot be identified afterwards.
   const focusedTabValue = useRef<string | null>(null);
   const visitedPanels = useRef(new Set<string>());
-  const reportedReconciliation = useRef<string | null>(null);
+  const reportedReconciliation = useRef<Readonly<{ requested: string; resolved: string }> | null>(null);
   const selectedValue = selected?.value;
-  const reconciliationKey = selectedValue !== undefined && selectedValue !== props.value
-    ? `${props.value}\u0000${selectedValue}`
+  // Keep the mismatch as a tuple of the two opaque values. Delimiters are not
+  // identity: an author is allowed to use any string, including one that
+  // contains a delimiter chosen by the implementation.
+  const reconciliationTuple = selectedValue !== undefined && selectedValue !== props.value
+    ? { requested: props.value, resolved: selectedValue }
     : null;
 
   // Rendering a fallback panel while leaving the controlled owner on a removed
@@ -221,22 +232,34 @@ export function HappierTabs(props: Readonly<{
   // Report each exact mismatch once; a parent that intentionally declines the
   // update does not receive an effect-loop callback on every render.
   useEffect(() => {
-    if (reconciliationKey === null) {
+    if (reconciliationTuple === null) {
       reportedReconciliation.current = null;
       return;
     }
-    if (reportedReconciliation.current === reconciliationKey) return;
-    reportedReconciliation.current = reconciliationKey;
+    const reported = reportedReconciliation.current;
+    if (reported?.requested === reconciliationTuple.requested && reported.resolved === reconciliationTuple.resolved) return;
+    reportedReconciliation.current = reconciliationTuple;
     props.onValueChange(selectedValue!);
-  }, [props.onValueChange, reconciliationKey, selectedValue]);
+  }, [props.onValueChange, reconciliationTuple, selectedValue]);
 
-  // Visiting is monotone and derived from the selection React is already
-  // rendering, so recording it here needs no second render pass. A panel is
-  // never prefetched: a retained tab mounts on its first visit and only then
-  // survives a later switch.
-  if (selectedValue !== undefined) visitedPanels.current.add(selectedValue);
+  // Visiting is monotone, but only committed renders may change the marker.
+  // An abandoned concurrent render must not erase a committed retained panel
+  // or falsely record a tab that never reached the screen. The render path
+  // therefore reads the last committed set and always mounts the selected tab
+  // even before the commit effect records its first visit.
+  const presentTabValues = useMemo(() => Children.toArray(props.children)
+    .filter((child): child is ReactElement<HappierTabDescriptor> => isValidElement(child))
+    .map((child) => child.props.value), [props.children]);
+  const presentTabValueSet = useMemo(() => new Set(presentTabValues), [presentTabValues]);
+  const committedVisitedPanels = visitedPanels.current;
+  useLayoutEffect(() => {
+    for (const value of visitedPanels.current) {
+      if (!presentTabValueSet.has(value)) visitedPanels.current.delete(value);
+    }
+    if (selectedValue !== undefined) visitedPanels.current.add(selectedValue);
+  }, [presentTabValueSet, presentTabValues, selectedValue]);
   const mountedPanels = tabs.flatMap((tab) => (
-    tab.value === selectedValue || (tab.retention === 'retain' && visitedPanels.current.has(tab.value))
+    tab.value === selectedValue || (tab.retention === 'retain' && committedVisitedPanels.has(tab.value))
       ? [tab.value]
       : []
   ));
@@ -254,19 +277,18 @@ export function HappierTabs(props: Readonly<{
   // so the collection hands focus to the trigger a reader would return to: its
   // single roving tab stop. Only a reader whose focus was still inside this
   // tablist is moved — a reader who had already left keeps their place.
-  const presentTabValues = tabs.map((tab) => tab.value).join('\u001f');
   const fallbackTabValue = tabStopIndex === null ? undefined : tabs[tabStopIndex]?.value;
   useEffect(() => {
     const previouslyFocused = focusedTabValue.current;
     if (previouslyFocused === null) return;
-    if (presentTabValues.split('\u001f').includes(previouslyFocused)) return;
+    if (tabs.some((tab) => tab.value === previouslyFocused)) return;
     if (fallbackTabValue === undefined) {
       focusedTabValue.current = null;
       return;
     }
     focusedTabValue.current = fallbackTabValue;
     tabRefs.current.get(fallbackTabValue)?.focus?.();
-  }, [fallbackTabValue, presentTabValues]);
+  }, [fallbackTabValue, tabs]);
 
   return (
     <View testID={props.testID} style={{ gap: props.theme.spacing.medium }}>

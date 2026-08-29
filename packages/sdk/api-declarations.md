@@ -98,10 +98,10 @@ Declared by `dist/connect.d.ts` as `HappierActions`.
 
 ```ts
 type HappierActions = ReturnType<typeof createGeneratedActions> & Readonly<{
-    execute: ActionExecute;
-    get: (input: PublicActionInputById['action.spec.get'], options?: ActionExecutionOptions) => Promise<PublicActionResultById['action.spec.get']>;
-    search: (input: PublicActionInputById['action.spec.search'], options?: ActionExecutionOptions) => Promise<PublicActionResultById['action.spec.search']>;
-    invoke: (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => Promise<PublicActionResultById['action.invoke']>;
+    execute: RawActionExecute;
+    get: (input: PublicActionInputById['action.spec.get'], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.spec.get'>>;
+    search: (input: PublicActionInputById['action.spec.search'], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
+    invoke: (action: ContributedActionId, input: unknown, options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
 ```
 
@@ -222,7 +222,7 @@ type HappierMachine = Readonly<{
 Declared by `dist/connect.d.ts` as `HappierMachineActionExecute`.
 
 ```ts
-type HappierMachineActionExecute = <K extends PublicActionId>(actionId: K, input: PublicActionInputById[K], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionResultById[K]>;
+type HappierMachineActionExecute = <K extends PublicActionId>(actionId: K, input: PublicActionInputById[K], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionExecutionResult<K>>;
 ```
 
 
@@ -242,9 +242,9 @@ Declared by `dist/connect.d.ts` as `HappierMachineActions`.
 ```ts
 type HappierMachineActions = MachineBoundActionMethods<ReturnType<typeof createGeneratedActions>> & Readonly<{
     execute: HappierMachineActionExecute;
-    get: (input: PublicActionInputById['action.spec.get'], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionResultById['action.spec.get']>;
-    search: (input: PublicActionInputById['action.spec.search'], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionResultById['action.spec.search']>;
-    invoke: (action: ContributedActionId, input: unknown, options?: HappierMachineActionExecutionOptions) => Promise<PublicActionResultById['action.invoke']>;
+    get: (input: PublicActionInputById['action.spec.get'], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.spec.get'>>;
+    search: (input: PublicActionInputById['action.spec.search'], options?: HappierMachineActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.spec.search'>>;
+    invoke: (action: ContributedActionId, input: unknown, options?: HappierMachineActionExecutionOptions) => Promise<PublicActionExecutionResult<'action.invoke'>>;
 }>;
 ```
 
@@ -341,7 +341,7 @@ class HappierSessionSpawnError extends Error {
 Declared by `dist/fluent/sessions.d.ts` as `HappierSessionSpawnInput`.
 
 ```ts
-type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput'> & Readonly<{
+type HappierSessionSpawnInput = Readonly<Omit<SessionSpawnActionInput, 'agentTarget' | 'executionTarget' | 'initialInput' | 'environmentVariables'> & Readonly<{
     agent: string;
     initialMessage?: string;
 }>>;
@@ -411,6 +411,15 @@ type MachineListOptions = Readonly<{
 ```
 
 
+### `.` — `PublicActionExecutionResult` (type)
+
+Declared by `dist/types.d.ts` as `PublicActionExecutionResult`.
+
+```ts
+type PublicActionExecutionResult<K extends PublicActionId> = PublicActionResultById[K] | ActionApprovalRequestCreatedResult;
+```
+
+
 ### `.` — `PublicActionId` (type)
 
 Declared by `dist/actions/generated.d.ts` as `PublicActionId`.
@@ -448,12 +457,30 @@ type PublicActionResultById = Readonly<{
 ```
 
 
+### `.` — `RawActionExecute` (type)
+
+Declared by `dist/types.d.ts` as `RawActionExecute`.
+
+```ts
+type RawActionExecute = <K extends PublicActionId>(actionId: K, input: PublicActionInputById[K], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<K>>;
+```
+
+
 ### `.` — `connect` (value)
 
 Declared by `dist/connect.d.ts` as `connect`.
 
 ```ts
 function connect(options: HappierConnectOptions): HappierClient;
+```
+
+
+### `.` — `isHappierActionApprovalRequestCreated` (value)
+
+Declared by `dist/approval.d.ts` as `isHappierActionApprovalRequestCreated`.
+
+```ts
+function isHappierActionApprovalRequestCreated(value: unknown): value is ActionApprovalRequestCreatedResult;
 ```
 
 
@@ -467,582 +494,587 @@ Reached from a published signature; not itself a published export.
 type GeneratedActions = Readonly<{
     readonly account: Readonly<{
         readonly apiTokens: Readonly<{
-            readonly create: (input: PublicActionInputById["account.apiTokens.create"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.apiTokens.create"]>;
-            readonly list: (input: PublicActionInputById["account.apiTokens.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.apiTokens.list"]>;
-            readonly revoke: (input: PublicActionInputById["account.apiTokens.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.apiTokens.revoke"]>;
-            readonly revokeAll: (input: PublicActionInputById["account.apiTokens.revokeAll"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.apiTokens.revokeAll"]>;
+            readonly create: (input: PublicActionInputById["account.apiTokens.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.apiTokens.create">>;
+            readonly list: (input: PublicActionInputById["account.apiTokens.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.apiTokens.list">>;
+            readonly revoke: (input: PublicActionInputById["account.apiTokens.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.apiTokens.revoke">>;
+            readonly revokeAll: (input: PublicActionInputById["account.apiTokens.revokeAll"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.apiTokens.revokeAll">>;
         }>;
         readonly plugins: Readonly<{
             readonly data: Readonly<{
-                readonly erase: (input: PublicActionInputById["account.plugins.data.erase"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.plugins.data.erase"]>;
+                readonly erase: (input: PublicActionInputById["account.plugins.data.erase"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.plugins.data.erase">>;
             }>;
         }>;
         readonly sessions: Readonly<{
-            readonly signOutEverywhere: (input: PublicActionInputById["account.sessions.signOutEverywhere"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["account.sessions.signOutEverywhere"]>;
+            readonly signOutEverywhere: (input: PublicActionInputById["account.sessions.signOutEverywhere"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.sessions.signOutEverywhere">>;
         }>;
     }>;
     readonly action: Readonly<{
-        readonly invoke: (input: PublicActionInputById["action.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["action.invoke"]>;
+        readonly invoke: (input: PublicActionInputById["action.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"action.invoke">>;
         readonly options: Readonly<{
-            readonly resolve: (input: PublicActionInputById["action.options.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["action.options.resolve"]>;
+            readonly resolve: (input: PublicActionInputById["action.options.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"action.options.resolve">>;
         }>;
         readonly spec: Readonly<{
-            readonly get: (input: PublicActionInputById["action.spec.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["action.spec.get"]>;
-            readonly search: (input: PublicActionInputById["action.spec.search"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["action.spec.search"]>;
+            readonly get: (input: PublicActionInputById["action.spec.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"action.spec.get">>;
+            readonly search: (input: PublicActionInputById["action.spec.search"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"action.spec.search">>;
         }>;
     }>;
     readonly agents: Readonly<{
         readonly backends: Readonly<{
-            readonly list: (input: PublicActionInputById["agents.backends.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["agents.backends.list"]>;
+            readonly list: (input: PublicActionInputById["agents.backends.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"agents.backends.list">>;
         }>;
         readonly configOptions: Readonly<{
-            readonly list: (input: PublicActionInputById["agents.config_options.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["agents.config_options.list"]>;
+            readonly list: (input: PublicActionInputById["agents.config_options.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"agents.config_options.list">>;
         }>;
         readonly models: Readonly<{
-            readonly list: (input: PublicActionInputById["agents.models.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["agents.models.list"]>;
+            readonly list: (input: PublicActionInputById["agents.models.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"agents.models.list">>;
         }>;
         readonly sessionModes: Readonly<{
-            readonly list: (input: PublicActionInputById["agents.session_modes.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["agents.session_modes.list"]>;
+            readonly list: (input: PublicActionInputById["agents.session_modes.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"agents.session_modes.list">>;
         }>;
     }>;
     readonly approval: Readonly<{
         readonly request: Readonly<{
-            readonly create: (input: PublicActionInputById["approval.request.create"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["approval.request.create"]>;
-            readonly decide: (input: PublicActionInputById["approval.request.decide"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["approval.request.decide"]>;
-            readonly get: (input: PublicActionInputById["approval.request.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["approval.request.get"]>;
-            readonly list: (input: PublicActionInputById["approval.request.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["approval.request.list"]>;
+            readonly create: (input: PublicActionInputById["approval.request.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"approval.request.create">>;
+            readonly decide: (input: PublicActionInputById["approval.request.decide"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"approval.request.decide">>;
+            readonly get: (input: PublicActionInputById["approval.request.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"approval.request.get">>;
+            readonly list: (input: PublicActionInputById["approval.request.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"approval.request.list">>;
         }>;
     }>;
     readonly browser: Readonly<{
         readonly automation: Readonly<{
-            readonly cancelActive: (input: PublicActionInputById["browser.automation.cancelActive"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.cancelActive"]>;
-            readonly click: (input: PublicActionInputById["browser.automation.click"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.click"]>;
-            readonly drag: (input: PublicActionInputById["browser.automation.drag"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.drag"]>;
-            readonly focus: (input: PublicActionInputById["browser.automation.focus"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.focus"]>;
-            readonly goBack: (input: PublicActionInputById["browser.automation.goBack"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.goBack"]>;
-            readonly goForward: (input: PublicActionInputById["browser.automation.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.goForward"]>;
-            readonly hover: (input: PublicActionInputById["browser.automation.hover"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.hover"]>;
-            readonly navigate: (input: PublicActionInputById["browser.automation.navigate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.navigate"]>;
-            readonly press: (input: PublicActionInputById["browser.automation.press"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.press"]>;
-            readonly queryElements: (input: PublicActionInputById["browser.automation.queryElements"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.queryElements"]>;
-            readonly reload: (input: PublicActionInputById["browser.automation.reload"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.reload"]>;
-            readonly scroll: (input: PublicActionInputById["browser.automation.scroll"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.scroll"]>;
-            readonly select: (input: PublicActionInputById["browser.automation.select"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.select"]>;
-            readonly semanticSnapshot: (input: PublicActionInputById["browser.automation.semanticSnapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.semanticSnapshot"]>;
-            readonly setValue: (input: PublicActionInputById["browser.automation.setValue"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.setValue"]>;
-            readonly snapshot: (input: PublicActionInputById["browser.automation.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.snapshot"]>;
-            readonly status: (input: PublicActionInputById["browser.automation.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.status"]>;
-            readonly tap: (input: PublicActionInputById["browser.automation.tap"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.tap"]>;
+            readonly cancelActive: (input: PublicActionInputById["browser.automation.cancelActive"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.cancelActive">>;
+            readonly click: (input: PublicActionInputById["browser.automation.click"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.click">>;
+            readonly drag: (input: PublicActionInputById["browser.automation.drag"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.drag">>;
+            readonly focus: (input: PublicActionInputById["browser.automation.focus"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.focus">>;
+            readonly goBack: (input: PublicActionInputById["browser.automation.goBack"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.goBack">>;
+            readonly goForward: (input: PublicActionInputById["browser.automation.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.goForward">>;
+            readonly hover: (input: PublicActionInputById["browser.automation.hover"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.hover">>;
+            readonly navigate: (input: PublicActionInputById["browser.automation.navigate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.navigate">>;
+            readonly press: (input: PublicActionInputById["browser.automation.press"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.press">>;
+            readonly queryElements: (input: PublicActionInputById["browser.automation.queryElements"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.queryElements">>;
+            readonly reload: (input: PublicActionInputById["browser.automation.reload"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.reload">>;
+            readonly scroll: (input: PublicActionInputById["browser.automation.scroll"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.scroll">>;
+            readonly select: (input: PublicActionInputById["browser.automation.select"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.select">>;
+            readonly semanticSnapshot: (input: PublicActionInputById["browser.automation.semanticSnapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.semanticSnapshot">>;
+            readonly setValue: (input: PublicActionInputById["browser.automation.setValue"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.setValue">>;
+            readonly snapshot: (input: PublicActionInputById["browser.automation.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.snapshot">>;
+            readonly status: (input: PublicActionInputById["browser.automation.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.status">>;
+            readonly tap: (input: PublicActionInputById["browser.automation.tap"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.tap">>;
             readonly timeline: Readonly<{
-                readonly get: (input: PublicActionInputById["browser.automation.timeline.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.timeline.get"]>;
+                readonly get: (input: PublicActionInputById["browser.automation.timeline.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.timeline.get">>;
             }>;
-            readonly type: (input: PublicActionInputById["browser.automation.type"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.type"]>;
-            readonly upload: (input: PublicActionInputById["browser.automation.upload"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.upload"]>;
-            readonly waitFor: (input: PublicActionInputById["browser.automation.waitFor"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.automation.waitFor"]>;
+            readonly type: (input: PublicActionInputById["browser.automation.type"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.type">>;
+            readonly upload: (input: PublicActionInputById["browser.automation.upload"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.upload">>;
+            readonly waitFor: (input: PublicActionInputById["browser.automation.waitFor"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.automation.waitFor">>;
         }>;
         readonly context: Readonly<{
             readonly annotation: Readonly<{
-                readonly attachComment: (input: PublicActionInputById["browser.context.annotation.attachComment"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.attachComment"]>;
-                readonly attachStroke: (input: PublicActionInputById["browser.context.annotation.attachStroke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.attachStroke"]>;
-                readonly attachStyleIntent: (input: PublicActionInputById["browser.context.annotation.attachStyleIntent"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.attachStyleIntent"]>;
-                readonly cancel: (input: PublicActionInputById["browser.context.annotation.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.cancel"]>;
-                readonly captureElement: (input: PublicActionInputById["browser.context.annotation.captureElement"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.captureElement"]>;
-                readonly captureRegion: (input: PublicActionInputById["browser.context.annotation.captureRegion"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.captureRegion"]>;
-                readonly start: (input: PublicActionInputById["browser.context.annotation.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.annotation.start"]>;
+                readonly attachComment: (input: PublicActionInputById["browser.context.annotation.attachComment"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachComment">>;
+                readonly attachStroke: (input: PublicActionInputById["browser.context.annotation.attachStroke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachStroke">>;
+                readonly attachStyleIntent: (input: PublicActionInputById["browser.context.annotation.attachStyleIntent"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.attachStyleIntent">>;
+                readonly cancel: (input: PublicActionInputById["browser.context.annotation.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.cancel">>;
+                readonly captureElement: (input: PublicActionInputById["browser.context.annotation.captureElement"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.captureElement">>;
+                readonly captureRegion: (input: PublicActionInputById["browser.context.annotation.captureRegion"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.captureRegion">>;
+                readonly start: (input: PublicActionInputById["browser.context.annotation.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.annotation.start">>;
             }>;
-            readonly attachToAgentTurn: (input: PublicActionInputById["browser.context.attachToAgentTurn"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.attachToAgentTurn"]>;
-            readonly attachToComposer: (input: PublicActionInputById["browser.context.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.attachToComposer"]>;
-            readonly captureConsoleSummary: (input: PublicActionInputById["browser.context.captureConsoleSummary"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.captureConsoleSummary"]>;
-            readonly captureNetworkSummary: (input: PublicActionInputById["browser.context.captureNetworkSummary"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.captureNetworkSummary"]>;
-            readonly capturePage: (input: PublicActionInputById["browser.context.capturePage"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.capturePage"]>;
-            readonly captureScreenshot: (input: PublicActionInputById["browser.context.captureScreenshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.captureScreenshot"]>;
-            readonly captureSelectedElement: (input: PublicActionInputById["browser.context.captureSelectedElement"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.captureSelectedElement"]>;
-            readonly clear: (input: PublicActionInputById["browser.context.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.context.clear"]>;
+            readonly attachToAgentTurn: (input: PublicActionInputById["browser.context.attachToAgentTurn"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.attachToAgentTurn">>;
+            readonly attachToComposer: (input: PublicActionInputById["browser.context.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.attachToComposer">>;
+            readonly captureConsoleSummary: (input: PublicActionInputById["browser.context.captureConsoleSummary"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.captureConsoleSummary">>;
+            readonly captureNetworkSummary: (input: PublicActionInputById["browser.context.captureNetworkSummary"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.captureNetworkSummary">>;
+            readonly capturePage: (input: PublicActionInputById["browser.context.capturePage"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.capturePage">>;
+            readonly captureScreenshot: (input: PublicActionInputById["browser.context.captureScreenshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.captureScreenshot">>;
+            readonly captureSelectedElement: (input: PublicActionInputById["browser.context.captureSelectedElement"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.captureSelectedElement">>;
+            readonly clear: (input: PublicActionInputById["browser.context.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.context.clear">>;
         }>;
         readonly diagnostics: Readonly<{
-            readonly clear: (input: PublicActionInputById["browser.diagnostics.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.clear"]>;
+            readonly clear: (input: PublicActionInputById["browser.diagnostics.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.clear">>;
             readonly elementPicker: Readonly<{
-                readonly cancel: (input: PublicActionInputById["browser.diagnostics.elementPicker.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.elementPicker.cancel"]>;
-                readonly start: (input: PublicActionInputById["browser.diagnostics.elementPicker.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.elementPicker.start"]>;
+                readonly cancel: (input: PublicActionInputById["browser.diagnostics.elementPicker.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.elementPicker.cancel">>;
+                readonly start: (input: PublicActionInputById["browser.diagnostics.elementPicker.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.elementPicker.start">>;
             }>;
-            readonly eval: (input: PublicActionInputById["browser.diagnostics.eval"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.eval"]>;
-            readonly getProperties: (input: PublicActionInputById["browser.diagnostics.getProperties"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.getProperties"]>;
-            readonly pause: (input: PublicActionInputById["browser.diagnostics.pause"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.pause"]>;
-            readonly releaseObjectGroup: (input: PublicActionInputById["browser.diagnostics.releaseObjectGroup"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.releaseObjectGroup"]>;
-            readonly resume: (input: PublicActionInputById["browser.diagnostics.resume"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.resume"]>;
-            readonly snapshot: (input: PublicActionInputById["browser.diagnostics.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.diagnostics.snapshot"]>;
+            readonly eval: (input: PublicActionInputById["browser.diagnostics.eval"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.eval">>;
+            readonly getProperties: (input: PublicActionInputById["browser.diagnostics.getProperties"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.getProperties">>;
+            readonly pause: (input: PublicActionInputById["browser.diagnostics.pause"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.pause">>;
+            readonly releaseObjectGroup: (input: PublicActionInputById["browser.diagnostics.releaseObjectGroup"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.releaseObjectGroup">>;
+            readonly resume: (input: PublicActionInputById["browser.diagnostics.resume"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.resume">>;
+            readonly snapshot: (input: PublicActionInputById["browser.diagnostics.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.diagnostics.snapshot">>;
         }>;
-        readonly goBack: (input: PublicActionInputById["browser.goBack"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.goBack"]>;
-        readonly goForward: (input: PublicActionInputById["browser.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.goForward"]>;
-        readonly navigate: (input: PublicActionInputById["browser.navigate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.navigate"]>;
+        readonly goBack: (input: PublicActionInputById["browser.goBack"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.goBack">>;
+        readonly goForward: (input: PublicActionInputById["browser.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.goForward">>;
+        readonly navigate: (input: PublicActionInputById["browser.navigate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.navigate">>;
         readonly recording: Readonly<{
-            readonly attachToComposer: (input: PublicActionInputById["browser.recording.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.attachToComposer"]>;
-            readonly cancel: (input: PublicActionInputById["browser.recording.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.cancel"]>;
-            readonly cleanupExpired: (input: PublicActionInputById["browser.recording.cleanupExpired"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.cleanupExpired"]>;
-            readonly discard: (input: PublicActionInputById["browser.recording.discard"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.discard"]>;
-            readonly listForView: (input: PublicActionInputById["browser.recording.listForView"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.listForView"]>;
-            readonly start: (input: PublicActionInputById["browser.recording.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.start"]>;
-            readonly status: (input: PublicActionInputById["browser.recording.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.status"]>;
-            readonly stop: (input: PublicActionInputById["browser.recording.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.recording.stop"]>;
+            readonly attachToComposer: (input: PublicActionInputById["browser.recording.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.attachToComposer">>;
+            readonly cancel: (input: PublicActionInputById["browser.recording.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.cancel">>;
+            readonly cleanupExpired: (input: PublicActionInputById["browser.recording.cleanupExpired"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.cleanupExpired">>;
+            readonly discard: (input: PublicActionInputById["browser.recording.discard"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.discard">>;
+            readonly listForView: (input: PublicActionInputById["browser.recording.listForView"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.listForView">>;
+            readonly start: (input: PublicActionInputById["browser.recording.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.start">>;
+            readonly status: (input: PublicActionInputById["browser.recording.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.status">>;
+            readonly stop: (input: PublicActionInputById["browser.recording.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.stop">>;
         }>;
-        readonly reload: (input: PublicActionInputById["browser.reload"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.reload"]>;
-        readonly stop: (input: PublicActionInputById["browser.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.stop"]>;
+        readonly reload: (input: PublicActionInputById["browser.reload"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.reload">>;
+        readonly stop: (input: PublicActionInputById["browser.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.stop">>;
         readonly target: Readonly<{
-            readonly set: (input: PublicActionInputById["browser.target.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.target.set"]>;
+            readonly set: (input: PublicActionInputById["browser.target.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.target.set">>;
         }>;
         readonly view: Readonly<{
-            readonly close: (input: PublicActionInputById["browser.view.close"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.view.close"]>;
-            readonly focus: (input: PublicActionInputById["browser.view.focus"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.view.focus"]>;
-            readonly open: (input: PublicActionInputById["browser.view.open"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["browser.view.open"]>;
+            readonly close: (input: PublicActionInputById["browser.view.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.view.close">>;
+            readonly focus: (input: PublicActionInputById["browser.view.focus"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.view.focus">>;
+            readonly open: (input: PublicActionInputById["browser.view.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.view.open">>;
         }>;
     }>;
     readonly bugreport: Readonly<{
-        readonly collectDiagnostics: (input: PublicActionInputById["bugreport.collectDiagnostics"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["bugreport.collectDiagnostics"]>;
-        readonly getLogTail: (input: PublicActionInputById["bugreport.getLogTail"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["bugreport.getLogTail"]>;
-        readonly uploadArtifact: (input: PublicActionInputById["bugreport.uploadArtifact"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["bugreport.uploadArtifact"]>;
+        readonly collectDiagnostics: (input: PublicActionInputById["bugreport.collectDiagnostics"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"bugreport.collectDiagnostics">>;
+        readonly getLogTail: (input: PublicActionInputById["bugreport.getLogTail"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"bugreport.getLogTail">>;
+        readonly uploadArtifact: (input: PublicActionInputById["bugreport.uploadArtifact"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"bugreport.uploadArtifact">>;
     }>;
     readonly daemon: Readonly<{
         readonly filesystem: Readonly<{
-            readonly browseDirectory: (input: PublicActionInputById["daemon.filesystem.browseDirectory"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.browseDirectory"]>;
-            readonly getDirectoryTree: (input: PublicActionInputById["daemon.filesystem.getDirectoryTree"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.getDirectoryTree"]>;
-            readonly listDirectory: (input: PublicActionInputById["daemon.filesystem.listDirectory"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.listDirectory"]>;
-            readonly listRoots: (input: PublicActionInputById["daemon.filesystem.listRoots"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.listRoots"]>;
-            readonly readFile: (input: PublicActionInputById["daemon.filesystem.readFile"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.readFile"]>;
-            readonly writeFile: (input: PublicActionInputById["daemon.filesystem.writeFile"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.filesystem.writeFile"]>;
+            readonly browseDirectory: (input: PublicActionInputById["daemon.filesystem.browseDirectory"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.browseDirectory">>;
+            readonly getDirectoryTree: (input: PublicActionInputById["daemon.filesystem.getDirectoryTree"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.getDirectoryTree">>;
+            readonly listDirectory: (input: PublicActionInputById["daemon.filesystem.listDirectory"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.listDirectory">>;
+            readonly listRoots: (input: PublicActionInputById["daemon.filesystem.listRoots"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.listRoots">>;
+            readonly readFile: (input: PublicActionInputById["daemon.filesystem.readFile"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.readFile">>;
+            readonly writeFile: (input: PublicActionInputById["daemon.filesystem.writeFile"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.writeFile">>;
         }>;
         readonly promptAssets: Readonly<{
-            readonly delete: (input: PublicActionInputById["daemon.promptAssets.delete"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.promptAssets.delete"]>;
-            readonly discover: (input: PublicActionInputById["daemon.promptAssets.discover"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.promptAssets.discover"]>;
+            readonly delete: (input: PublicActionInputById["daemon.promptAssets.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.promptAssets.delete">>;
+            readonly discover: (input: PublicActionInputById["daemon.promptAssets.discover"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.promptAssets.discover">>;
         }>;
         readonly promptRegistry: Readonly<{
-            readonly install: (input: PublicActionInputById["daemon.promptRegistry.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.promptRegistry.install"]>;
-            readonly scanSource: (input: PublicActionInputById["daemon.promptRegistry.scanSource"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["daemon.promptRegistry.scanSource"]>;
+            readonly install: (input: PublicActionInputById["daemon.promptRegistry.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.promptRegistry.install">>;
+            readonly scanSource: (input: PublicActionInputById["daemon.promptRegistry.scanSource"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.promptRegistry.scanSource">>;
         }>;
     }>;
     readonly devices: Readonly<{
         readonly simulator: Readonly<{
             readonly input: Readonly<{
-                readonly button: (input: PublicActionInputById["devices.simulator.input.button"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.button"]>;
-                readonly key: (input: PublicActionInputById["devices.simulator.input.key"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.key"]>;
-                readonly pinch: (input: PublicActionInputById["devices.simulator.input.pinch"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.pinch"]>;
-                readonly rotate: (input: PublicActionInputById["devices.simulator.input.rotate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.rotate"]>;
-                readonly swipe: (input: PublicActionInputById["devices.simulator.input.swipe"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.swipe"]>;
-                readonly tap: (input: PublicActionInputById["devices.simulator.input.tap"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.tap"]>;
-                readonly text: (input: PublicActionInputById["devices.simulator.input.text"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.input.text"]>;
+                readonly button: (input: PublicActionInputById["devices.simulator.input.button"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.button">>;
+                readonly key: (input: PublicActionInputById["devices.simulator.input.key"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.key">>;
+                readonly pinch: (input: PublicActionInputById["devices.simulator.input.pinch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.pinch">>;
+                readonly rotate: (input: PublicActionInputById["devices.simulator.input.rotate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.rotate">>;
+                readonly swipe: (input: PublicActionInputById["devices.simulator.input.swipe"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.swipe">>;
+                readonly tap: (input: PublicActionInputById["devices.simulator.input.tap"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.tap">>;
+                readonly text: (input: PublicActionInputById["devices.simulator.input.text"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.input.text">>;
             }>;
             readonly lease: Readonly<{
-                readonly acquire: (input: PublicActionInputById["devices.simulator.lease.acquire"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.lease.acquire"]>;
-                readonly release: (input: PublicActionInputById["devices.simulator.lease.release"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.lease.release"]>;
-                readonly renew: (input: PublicActionInputById["devices.simulator.lease.renew"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.lease.renew"]>;
+                readonly acquire: (input: PublicActionInputById["devices.simulator.lease.acquire"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.lease.acquire">>;
+                readonly release: (input: PublicActionInputById["devices.simulator.lease.release"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.lease.release">>;
+                readonly renew: (input: PublicActionInputById["devices.simulator.lease.renew"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.lease.renew">>;
             }>;
-            readonly list: (input: PublicActionInputById["devices.simulator.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.list"]>;
+            readonly list: (input: PublicActionInputById["devices.simulator.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.list">>;
             readonly sideband: Readonly<{
-                readonly request: (input: PublicActionInputById["devices.simulator.sideband.request"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.sideband.request"]>;
+                readonly request: (input: PublicActionInputById["devices.simulator.sideband.request"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.sideband.request">>;
             }>;
             readonly stream: Readonly<{
                 readonly fps: Readonly<{
-                    readonly set: (input: PublicActionInputById["devices.simulator.stream.fps.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.stream.fps.set"]>;
+                    readonly set: (input: PublicActionInputById["devices.simulator.stream.fps.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.stream.fps.set">>;
                 }>;
-                readonly keyframe: (input: PublicActionInputById["devices.simulator.stream.keyframe"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.stream.keyframe"]>;
+                readonly keyframe: (input: PublicActionInputById["devices.simulator.stream.keyframe"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.stream.keyframe">>;
                 readonly quality: Readonly<{
-                    readonly set: (input: PublicActionInputById["devices.simulator.stream.quality.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.stream.quality.set"]>;
+                    readonly set: (input: PublicActionInputById["devices.simulator.stream.quality.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.stream.quality.set">>;
                 }>;
                 readonly scale: Readonly<{
-                    readonly set: (input: PublicActionInputById["devices.simulator.stream.scale.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.stream.scale.set"]>;
+                    readonly set: (input: PublicActionInputById["devices.simulator.stream.scale.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.stream.scale.set">>;
                 }>;
-                readonly snapshot: (input: PublicActionInputById["devices.simulator.stream.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["devices.simulator.stream.snapshot"]>;
+                readonly snapshot: (input: PublicActionInputById["devices.simulator.stream.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"devices.simulator.stream.snapshot">>;
             }>;
         }>;
     }>;
     readonly execution: Readonly<{
         readonly run: Readonly<{
-            readonly action: (input: PublicActionInputById["execution.run.action"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.action"]>;
-            readonly ensure: (input: PublicActionInputById["execution.run.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.ensure"]>;
-            readonly ensureOrStart: (input: PublicActionInputById["execution.run.ensure_or_start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.ensure_or_start"]>;
-            readonly get: (input: PublicActionInputById["execution.run.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.get"]>;
-            readonly list: (input: PublicActionInputById["execution.run.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.list"]>;
-            readonly send: (input: PublicActionInputById["execution.run.send"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.send"]>;
-            readonly start: (input: PublicActionInputById["execution.run.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.start"]>;
-            readonly stop: (input: PublicActionInputById["execution.run.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.stop"]>;
+            readonly action: (input: PublicActionInputById["execution.run.action"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.action">>;
+            readonly ensure: (input: PublicActionInputById["execution.run.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.ensure">>;
+            readonly ensureOrStart: (input: PublicActionInputById["execution.run.ensure_or_start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.ensure_or_start">>;
+            readonly get: (input: PublicActionInputById["execution.run.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.get">>;
+            readonly list: (input: PublicActionInputById["execution.run.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.list">>;
+            readonly send: (input: PublicActionInputById["execution.run.send"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.send">>;
+            readonly start: (input: PublicActionInputById["execution.run.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.start">>;
+            readonly stop: (input: PublicActionInputById["execution.run.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.stop">>;
             readonly stream: Readonly<{
-                readonly cancel: (input: PublicActionInputById["execution.run.stream.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.stream.cancel"]>;
-                readonly read: (input: PublicActionInputById["execution.run.stream.read"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.stream.read"]>;
-                readonly start: (input: PublicActionInputById["execution.run.stream.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.stream.start"]>;
+                readonly cancel: (input: PublicActionInputById["execution.run.stream.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.stream.cancel">>;
+                readonly read: (input: PublicActionInputById["execution.run.stream.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.stream.read">>;
+                readonly start: (input: PublicActionInputById["execution.run.stream.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.stream.start">>;
             }>;
-            readonly wait: (input: PublicActionInputById["execution.run.wait"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["execution.run.wait"]>;
+            readonly wait: (input: PublicActionInputById["execution.run.wait"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"execution.run.wait">>;
         }>;
     }>;
     readonly localServices: Readonly<{
         readonly actions: Readonly<{
-            readonly copyUrl: (input: PublicActionInputById["localServices.actions.copyUrl"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.copyUrl"]>;
-            readonly forget: (input: PublicActionInputById["localServices.actions.forget"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.forget"]>;
-            readonly openPreview: (input: PublicActionInputById["localServices.actions.openPreview"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.openPreview"]>;
-            readonly restartManaged: (input: PublicActionInputById["localServices.actions.restartManaged"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.restartManaged"]>;
-            readonly stopManaged: (input: PublicActionInputById["localServices.actions.stopManaged"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.stopManaged"]>;
-            readonly terminateDetected: (input: PublicActionInputById["localServices.actions.terminateDetected"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.actions.terminateDetected"]>;
+            readonly copyUrl: (input: PublicActionInputById["localServices.actions.copyUrl"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.copyUrl">>;
+            readonly forget: (input: PublicActionInputById["localServices.actions.forget"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.forget">>;
+            readonly openPreview: (input: PublicActionInputById["localServices.actions.openPreview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.openPreview">>;
+            readonly restartManaged: (input: PublicActionInputById["localServices.actions.restartManaged"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.restartManaged">>;
+            readonly stopManaged: (input: PublicActionInputById["localServices.actions.stopManaged"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.stopManaged">>;
+            readonly terminateDetected: (input: PublicActionInputById["localServices.actions.terminateDetected"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.actions.terminateDetected">>;
         }>;
         readonly inventory: Readonly<{
-            readonly list: (input: PublicActionInputById["localServices.inventory.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.inventory.list"]>;
-            readonly refresh: (input: PublicActionInputById["localServices.inventory.refresh"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.inventory.refresh"]>;
+            readonly list: (input: PublicActionInputById["localServices.inventory.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.inventory.list">>;
+            readonly refresh: (input: PublicActionInputById["localServices.inventory.refresh"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.inventory.refresh">>;
         }>;
         readonly launcher: Readonly<{
             readonly history: Readonly<{
-                readonly clear: (input: PublicActionInputById["localServices.launcher.history.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.launcher.history.clear"]>;
+                readonly clear: (input: PublicActionInputById["localServices.launcher.history.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.launcher.history.clear">>;
             }>;
-            readonly openPreview: (input: PublicActionInputById["localServices.launcher.openPreview"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.launcher.openPreview"]>;
-            readonly registerPreview: (input: PublicActionInputById["localServices.launcher.registerPreview"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.launcher.registerPreview"]>;
-            readonly snapshot: (input: PublicActionInputById["localServices.launcher.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.launcher.snapshot"]>;
-            readonly start: (input: PublicActionInputById["localServices.launcher.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.launcher.start"]>;
+            readonly openPreview: (input: PublicActionInputById["localServices.launcher.openPreview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.launcher.openPreview">>;
+            readonly registerPreview: (input: PublicActionInputById["localServices.launcher.registerPreview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.launcher.registerPreview">>;
+            readonly snapshot: (input: PublicActionInputById["localServices.launcher.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.launcher.snapshot">>;
+            readonly start: (input: PublicActionInputById["localServices.launcher.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.launcher.start">>;
         }>;
         readonly preview: Readonly<{
-            readonly openOrCreate: (input: PublicActionInputById["localServices.preview.openOrCreate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.preview.openOrCreate"]>;
-            readonly revoke: (input: PublicActionInputById["localServices.preview.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.preview.revoke"]>;
-            readonly status: (input: PublicActionInputById["localServices.preview.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.preview.status"]>;
+            readonly openOrCreate: (input: PublicActionInputById["localServices.preview.openOrCreate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.preview.openOrCreate">>;
+            readonly revoke: (input: PublicActionInputById["localServices.preview.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.preview.revoke">>;
+            readonly status: (input: PublicActionInputById["localServices.preview.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.preview.status">>;
         }>;
         readonly publicPreview: Readonly<{
-            readonly copyUrl: (input: PublicActionInputById["localServices.publicPreview.copyUrl"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.publicPreview.copyUrl"]>;
-            readonly create: (input: PublicActionInputById["localServices.publicPreview.create"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.publicPreview.create"]>;
-            readonly revoke: (input: PublicActionInputById["localServices.publicPreview.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.publicPreview.revoke"]>;
-            readonly status: (input: PublicActionInputById["localServices.publicPreview.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["localServices.publicPreview.status"]>;
+            readonly copyUrl: (input: PublicActionInputById["localServices.publicPreview.copyUrl"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.publicPreview.copyUrl">>;
+            readonly create: (input: PublicActionInputById["localServices.publicPreview.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.publicPreview.create">>;
+            readonly revoke: (input: PublicActionInputById["localServices.publicPreview.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.publicPreview.revoke">>;
+            readonly status: (input: PublicActionInputById["localServices.publicPreview.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"localServices.publicPreview.status">>;
         }>;
     }>;
     readonly machines: Readonly<{
-        readonly list: (input: PublicActionInputById["machines.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["machines.list"]>;
+        readonly list: (input: PublicActionInputById["machines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.list">>;
     }>;
     readonly memory: Readonly<{
-        readonly ensureUpToDate: (input: PublicActionInputById["memory.ensure_up_to_date"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["memory.ensure_up_to_date"]>;
-        readonly getWindow: (input: PublicActionInputById["memory.get_window"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["memory.get_window"]>;
-        readonly search: (input: PublicActionInputById["memory.search"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["memory.search"]>;
+        readonly ensureUpToDate: (input: PublicActionInputById["memory.ensure_up_to_date"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"memory.ensure_up_to_date">>;
+        readonly getWindow: (input: PublicActionInputById["memory.get_window"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"memory.get_window">>;
+        readonly search: (input: PublicActionInputById["memory.search"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"memory.search">>;
     }>;
     readonly paths: Readonly<{
-        readonly listRecent: (input: PublicActionInputById["paths.list_recent"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["paths.list_recent"]>;
+        readonly listRecent: (input: PublicActionInputById["paths.list_recent"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"paths.list_recent">>;
     }>;
     readonly peerMediation: Readonly<{
         readonly observability: Readonly<{
-            readonly snapshot: (input: PublicActionInputById["peerMediation.observability.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["peerMediation.observability.snapshot"]>;
-            readonly subscribe: (input: PublicActionInputById["peerMediation.observability.subscribe"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["peerMediation.observability.subscribe"]>;
-            readonly unsubscribe: (input: PublicActionInputById["peerMediation.observability.unsubscribe"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["peerMediation.observability.unsubscribe"]>;
+            readonly snapshot: (input: PublicActionInputById["peerMediation.observability.snapshot"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"peerMediation.observability.snapshot">>;
+            readonly subscribe: (input: PublicActionInputById["peerMediation.observability.subscribe"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"peerMediation.observability.subscribe">>;
+            readonly unsubscribe: (input: PublicActionInputById["peerMediation.observability.unsubscribe"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"peerMediation.observability.unsubscribe">>;
         }>;
     }>;
     readonly plugin: Readonly<{
         readonly webhook: Readonly<{
             readonly endpoint: Readonly<{
-                readonly checkCorrespondence: (input: PublicActionInputById["plugin.webhook.endpoint.checkCorrespondence"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.checkCorrespondence"]>;
+                readonly checkCorrespondence: (input: PublicActionInputById["plugin.webhook.endpoint.checkCorrespondence"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.checkCorrespondence">>;
                 readonly credential: Readonly<{
-                    readonly configure: (input: PublicActionInputById["plugin.webhook.endpoint.credential.configure"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.credential.configure"]>;
-                    readonly finishRotation: (input: PublicActionInputById["plugin.webhook.endpoint.credential.finishRotation"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.credential.finishRotation"]>;
-                    readonly rotate: (input: PublicActionInputById["plugin.webhook.endpoint.credential.rotate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.credential.rotate"]>;
+                    readonly configure: (input: PublicActionInputById["plugin.webhook.endpoint.credential.configure"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.credential.configure">>;
+                    readonly finishRotation: (input: PublicActionInputById["plugin.webhook.endpoint.credential.finishRotation"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.credential.finishRotation">>;
+                    readonly rotate: (input: PublicActionInputById["plugin.webhook.endpoint.credential.rotate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.credential.rotate">>;
                 }>;
-                readonly ensure: (input: PublicActionInputById["plugin.webhook.endpoint.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.ensure"]>;
-                readonly read: (input: PublicActionInputById["plugin.webhook.endpoint.read"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.read"]>;
-                readonly retarget: (input: PublicActionInputById["plugin.webhook.endpoint.retarget"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.retarget"]>;
-                readonly revoke: (input: PublicActionInputById["plugin.webhook.endpoint.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugin.webhook.endpoint.revoke"]>;
+                readonly ensure: (input: PublicActionInputById["plugin.webhook.endpoint.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.ensure">>;
+                readonly read: (input: PublicActionInputById["plugin.webhook.endpoint.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.read">>;
+                readonly retarget: (input: PublicActionInputById["plugin.webhook.endpoint.retarget"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.retarget">>;
+                readonly revoke: (input: PublicActionInputById["plugin.webhook.endpoint.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugin.webhook.endpoint.revoke">>;
             }>;
         }>;
     }>;
     readonly plugins: Readonly<{
         readonly change: Readonly<{
-            readonly status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.change.status"]>;
+            readonly status: (input: PublicActionInputById["plugins.change.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.change.status">>;
         }>;
         readonly dev: Readonly<{
-            readonly build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.build"]>;
-            readonly install: (input: PublicActionInputById["plugins.dev.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.install"]>;
-            readonly submit: (input: PublicActionInputById["plugins.dev.submit"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.submit"]>;
-            readonly test: (input: PublicActionInputById["plugins.dev.test"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.test"]>;
-            readonly typecheck: (input: PublicActionInputById["plugins.dev.typecheck"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.dev.typecheck"]>;
+            readonly build: (input: PublicActionInputById["plugins.dev.build"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.build">>;
+            readonly install: (input: PublicActionInputById["plugins.dev.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.install">>;
+            readonly submit: (input: PublicActionInputById["plugins.dev.submit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.submit">>;
+            readonly test: (input: PublicActionInputById["plugins.dev.test"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.test">>;
+            readonly typecheck: (input: PublicActionInputById["plugins.dev.typecheck"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.dev.typecheck">>;
         }>;
-        readonly doctor: (input: PublicActionInputById["plugins.doctor"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.doctor"]>;
-        readonly install: (input: PublicActionInputById["plugins.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.install"]>;
-        readonly list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.list"]>;
-        readonly pack: (input: PublicActionInputById["plugins.pack"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.pack"]>;
+        readonly doctor: (input: PublicActionInputById["plugins.doctor"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.doctor">>;
+        readonly install: (input: PublicActionInputById["plugins.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.install">>;
+        readonly list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.list">>;
+        readonly pack: (input: PublicActionInputById["plugins.pack"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.pack">>;
         readonly permissions: Readonly<{
             readonly grants: Readonly<{
-                readonly dismissRequest: (input: PublicActionInputById["plugins.permissions.grants.dismissRequest"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.permissions.grants.dismissRequest"]>;
-                readonly grant: (input: PublicActionInputById["plugins.permissions.grants.grant"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.permissions.grants.grant"]>;
-                readonly list: (input: PublicActionInputById["plugins.permissions.grants.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.permissions.grants.list"]>;
-                readonly request: (input: PublicActionInputById["plugins.permissions.grants.request"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.permissions.grants.request"]>;
+                readonly dismissRequest: (input: PublicActionInputById["plugins.permissions.grants.dismissRequest"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.permissions.grants.dismissRequest">>;
+                readonly grant: (input: PublicActionInputById["plugins.permissions.grants.grant"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.permissions.grants.grant">>;
+                readonly list: (input: PublicActionInputById["plugins.permissions.grants.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.permissions.grants.list">>;
+                readonly request: (input: PublicActionInputById["plugins.permissions.grants.request"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.permissions.grants.request">>;
             }>;
         }>;
-        readonly reload: (input: PublicActionInputById["plugins.reload"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.reload"]>;
-        readonly scaffold: (input: PublicActionInputById["plugins.scaffold"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.scaffold"]>;
+        readonly reload: (input: PublicActionInputById["plugins.reload"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.reload">>;
+        readonly scaffold: (input: PublicActionInputById["plugins.scaffold"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.scaffold">>;
         readonly sessionHooks: Readonly<{
-            readonly disable: (input: PublicActionInputById["plugins.sessionHooks.disable"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.sessionHooks.disable"]>;
-            readonly enable: (input: PublicActionInputById["plugins.sessionHooks.enable"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.sessionHooks.enable"]>;
-            readonly install: (input: PublicActionInputById["plugins.sessionHooks.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.sessionHooks.install"]>;
+            readonly disable: (input: PublicActionInputById["plugins.sessionHooks.disable"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.sessionHooks.disable">>;
+            readonly enable: (input: PublicActionInputById["plugins.sessionHooks.enable"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.sessionHooks.enable">>;
+            readonly install: (input: PublicActionInputById["plugins.sessionHooks.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.sessionHooks.install">>;
             readonly status: Readonly<{
-                readonly get: (input: PublicActionInputById["plugins.sessionHooks.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.sessionHooks.status.get"]>;
+                readonly get: (input: PublicActionInputById["plugins.sessionHooks.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.sessionHooks.status.get">>;
             }>;
-            readonly uninstall: (input: PublicActionInputById["plugins.sessionHooks.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.sessionHooks.uninstall"]>;
+            readonly uninstall: (input: PublicActionInputById["plugins.sessionHooks.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.sessionHooks.uninstall">>;
         }>;
         readonly settings: Readonly<{
-            readonly get: (input: PublicActionInputById["plugins.settings.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.get"]>;
-            readonly list: (input: PublicActionInputById["plugins.settings.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.list"]>;
-            readonly reset: (input: PublicActionInputById["plugins.settings.reset"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.reset"]>;
+            readonly get: (input: PublicActionInputById["plugins.settings.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.get">>;
+            readonly list: (input: PublicActionInputById["plugins.settings.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.list">>;
+            readonly reset: (input: PublicActionInputById["plugins.settings.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.reset">>;
             readonly secret: Readonly<{
-                readonly bind: (input: PublicActionInputById["plugins.settings.secret.bind"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.secret.bind"]>;
-                readonly delete: (input: PublicActionInputById["plugins.settings.secret.delete"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.secret.delete"]>;
-                readonly status: (input: PublicActionInputById["plugins.settings.secret.status"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.secret.status"]>;
-                readonly unbind: (input: PublicActionInputById["plugins.settings.secret.unbind"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.secret.unbind"]>;
+                readonly bind: (input: PublicActionInputById["plugins.settings.secret.bind"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.secret.bind">>;
+                readonly delete: (input: PublicActionInputById["plugins.settings.secret.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.secret.delete">>;
+                readonly status: (input: PublicActionInputById["plugins.settings.secret.status"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.secret.status">>;
+                readonly unbind: (input: PublicActionInputById["plugins.settings.secret.unbind"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.secret.unbind">>;
             }>;
-            readonly set: (input: PublicActionInputById["plugins.settings.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.settings.set"]>;
+            readonly set: (input: PublicActionInputById["plugins.settings.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.settings.set">>;
         }>;
-        readonly uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["plugins.uninstall"]>;
+        readonly uninstall: (input: PublicActionInputById["plugins.uninstall"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.uninstall">>;
     }>;
     readonly projects: Readonly<{
-        readonly list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["projects.list"]>;
+        readonly list: (input: PublicActionInputById["projects.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"projects.list">>;
     }>;
     readonly promptAsset: Readonly<{
-        readonly export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_asset.export"]>;
+        readonly export: (input: PublicActionInputById["prompt_asset.export"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_asset.export">>;
     }>;
     readonly promptBundle: Readonly<{
-        readonly update: (input: PublicActionInputById["prompt_bundle.update"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_bundle.update"]>;
+        readonly update: (input: PublicActionInputById["prompt_bundle.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_bundle.update">>;
     }>;
     readonly promptDoc: Readonly<{
-        readonly update: (input: PublicActionInputById["prompt_doc.update"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_doc.update"]>;
+        readonly update: (input: PublicActionInputById["prompt_doc.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_doc.update">>;
     }>;
     readonly promptRegistry: Readonly<{
-        readonly install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompt_registry.install"]>;
+        readonly install: (input: PublicActionInputById["prompt_registry.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompt_registry.install">>;
     }>;
     readonly prompts: Readonly<{
         readonly invocation: Readonly<{
-            readonly resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocation.resolve"]>;
+            readonly resolve: (input: PublicActionInputById["prompts.invocation.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompts.invocation.resolve">>;
         }>;
         readonly invocations: Readonly<{
-            readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["prompts.invocations.list"]>;
+            readonly list: (input: PublicActionInputById["prompts.invocations.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"prompts.invocations.list">>;
         }>;
     }>;
     readonly review: Readonly<{
         readonly engines: Readonly<{
-            readonly list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["review.engines.list"]>;
+            readonly list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.engines.list">>;
         }>;
-        readonly start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["review.start"]>;
+        readonly start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.start">>;
     }>;
     readonly reviews: Readonly<{
         readonly comments: Readonly<{
-            readonly attachEvidence: (input: PublicActionInputById["reviews.comments.attachEvidence"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.attachEvidence"]>;
-            readonly bulkTransition: (input: PublicActionInputById["reviews.comments.bulkTransition"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.bulkTransition"]>;
-            readonly claimPublicationDispatch: (input: PublicActionInputById["reviews.comments.claimPublicationDispatch"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.claimPublicationDispatch"]>;
-            readonly create: (input: PublicActionInputById["reviews.comments.create"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.create"]>;
-            readonly edit: (input: PublicActionInputById["reviews.comments.edit"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.edit"]>;
-            readonly get: (input: PublicActionInputById["reviews.comments.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.get"]>;
-            readonly list: (input: PublicActionInputById["reviews.comments.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.list"]>;
-            readonly redact: (input: PublicActionInputById["reviews.comments.redact"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.redact"]>;
-            readonly reply: (input: PublicActionInputById["reviews.comments.reply"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.reply"]>;
-            readonly setDisposition: (input: PublicActionInputById["reviews.comments.setDisposition"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.setDisposition"]>;
-            readonly transition: (input: PublicActionInputById["reviews.comments.transition"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["reviews.comments.transition"]>;
+            readonly attachEvidence: (input: PublicActionInputById["reviews.comments.attachEvidence"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.attachEvidence">>;
+            readonly bulkTransition: (input: PublicActionInputById["reviews.comments.bulkTransition"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.bulkTransition">>;
+            readonly claimPublicationDispatch: (input: PublicActionInputById["reviews.comments.claimPublicationDispatch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.claimPublicationDispatch">>;
+            readonly create: (input: PublicActionInputById["reviews.comments.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.create">>;
+            readonly edit: (input: PublicActionInputById["reviews.comments.edit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.edit">>;
+            readonly get: (input: PublicActionInputById["reviews.comments.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.get">>;
+            readonly list: (input: PublicActionInputById["reviews.comments.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.list">>;
+            readonly redact: (input: PublicActionInputById["reviews.comments.redact"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.redact">>;
+            readonly reply: (input: PublicActionInputById["reviews.comments.reply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.reply">>;
+            readonly setDisposition: (input: PublicActionInputById["reviews.comments.setDisposition"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.setDisposition">>;
+            readonly transition: (input: PublicActionInputById["reviews.comments.transition"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.transition">>;
         }>;
     }>;
     readonly scm: Readonly<{
         readonly diffSummary: Readonly<{
-            readonly generate: (input: PublicActionInputById["scm.diffSummary.generate"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.diffSummary.generate"]>;
+            readonly generate: (input: PublicActionInputById["scm.diffSummary.generate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.diffSummary.generate">>;
         }>;
         readonly hostingRepository: Readonly<{
-            readonly describePublishTargets: (input: PublicActionInputById["scm.hostingRepository.describePublishTargets"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.hostingRepository.describePublishTargets"]>;
-            readonly publish: (input: PublicActionInputById["scm.hostingRepository.publish"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.hostingRepository.publish"]>;
+            readonly describePublishTargets: (input: PublicActionInputById["scm.hostingRepository.describePublishTargets"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.hostingRepository.describePublishTargets">>;
+            readonly publish: (input: PublicActionInputById["scm.hostingRepository.publish"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.hostingRepository.publish">>;
         }>;
         readonly pullRequest: Readonly<{
-            readonly checkout: (input: PublicActionInputById["scm.pullRequest.checkout"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.checkout"]>;
-            readonly get: (input: PublicActionInputById["scm.pullRequest.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.get"]>;
-            readonly list: (input: PublicActionInputById["scm.pullRequest.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.list"]>;
-            readonly openCompose: (input: PublicActionInputById["scm.pullRequest.openCompose"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.openCompose"]>;
-            readonly openOrReuse: (input: PublicActionInputById["scm.pullRequest.openOrReuse"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.openOrReuse"]>;
-            readonly prepareWorktree: (input: PublicActionInputById["scm.pullRequest.prepareWorktree"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.prepareWorktree"]>;
-            readonly runStacked: (input: PublicActionInputById["scm.pullRequest.runStacked"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.pullRequest.runStacked"]>;
+            readonly checkout: (input: PublicActionInputById["scm.pullRequest.checkout"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.checkout">>;
+            readonly get: (input: PublicActionInputById["scm.pullRequest.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.get">>;
+            readonly list: (input: PublicActionInputById["scm.pullRequest.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.list">>;
+            readonly openCompose: (input: PublicActionInputById["scm.pullRequest.openCompose"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.openCompose">>;
+            readonly openOrReuse: (input: PublicActionInputById["scm.pullRequest.openOrReuse"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.openOrReuse">>;
+            readonly prepareWorktree: (input: PublicActionInputById["scm.pullRequest.prepareWorktree"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.prepareWorktree">>;
+            readonly runStacked: (input: PublicActionInputById["scm.pullRequest.runStacked"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.pullRequest.runStacked">>;
         }>;
         readonly repository: Readonly<{
-            readonly clone: (input: PublicActionInputById["scm.repository.clone"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.clone"]>;
-            readonly init: (input: PublicActionInputById["scm.repository.init"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.init"]>;
-            readonly removeIndexLock: (input: PublicActionInputById["scm.repository.removeIndexLock"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["scm.repository.removeIndexLock"]>;
+            readonly clone: (input: PublicActionInputById["scm.repository.clone"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.repository.clone">>;
+            readonly init: (input: PublicActionInputById["scm.repository.init"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.repository.init">>;
+            readonly removeIndexLock: (input: PublicActionInputById["scm.repository.removeIndexLock"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"scm.repository.removeIndexLock">>;
         }>;
     }>;
     readonly servers: Readonly<{
-        readonly list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["servers.list"]>;
+        readonly list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"servers.list">>;
     }>;
     readonly session: Readonly<{
         readonly activity: Readonly<{
-            readonly get: (input: PublicActionInputById["session.activity.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.activity.get"]>;
+            readonly get: (input: PublicActionInputById["session.activity.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.activity.get">>;
         }>;
-        readonly archive: (input: PublicActionInputById["session.archive"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.archive"]>;
-        readonly checkpoint: (input: PublicActionInputById["session.checkpoint"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.checkpoint"]>;
-        readonly checkpointCodeRollback: (input: PublicActionInputById["session.checkpoint_code_rollback"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.checkpoint_code_rollback"]>;
-        readonly continueWithReplay: (input: PublicActionInputById["session.continue_with_replay"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.continue_with_replay"]>;
+        readonly archive: (input: PublicActionInputById["session.archive"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.archive">>;
+        readonly checkpoint: (input: PublicActionInputById["session.checkpoint"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.checkpoint">>;
+        readonly checkpointCodeRollback: (input: PublicActionInputById["session.checkpoint_code_rollback"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.checkpoint_code_rollback">>;
+        readonly continueWithReplay: (input: PublicActionInputById["session.continue_with_replay"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.continue_with_replay">>;
         readonly events: Readonly<{
-            readonly get: (input: PublicActionInputById["session.events.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.events.get"]>;
+            readonly get: (input: PublicActionInputById["session.events.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.events.get">>;
         }>;
-        readonly fork: (input: PublicActionInputById["session.fork"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.fork"]>;
+        readonly fork: (input: PublicActionInputById["session.fork"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.fork">>;
         readonly goal: Readonly<{
-            readonly clear: (input: PublicActionInputById["session.goal.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.goal.clear"]>;
-            readonly get: (input: PublicActionInputById["session.goal.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.goal.get"]>;
-            readonly set: (input: PublicActionInputById["session.goal.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.goal.set"]>;
+            readonly clear: (input: PublicActionInputById["session.goal.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.goal.clear">>;
+            readonly get: (input: PublicActionInputById["session.goal.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.goal.get">>;
+            readonly set: (input: PublicActionInputById["session.goal.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.goal.set">>;
         }>;
         readonly handoff: Readonly<{
-            readonly start: (input: PublicActionInputById["session.handoff"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.handoff"]>;
+            readonly start: (input: PublicActionInputById["session.handoff"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.handoff">>;
             readonly status: Readonly<{
-                readonly get: (input: PublicActionInputById["session.handoff.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.handoff.status.get"]>;
+                readonly get: (input: PublicActionInputById["session.handoff.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.handoff.status.get">>;
             }>;
         }>;
         readonly history: Readonly<{
-            readonly get: (input: PublicActionInputById["session.history.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.history.get"]>;
+            readonly get: (input: PublicActionInputById["session.history.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.history.get">>;
         }>;
-        readonly list: (input: PublicActionInputById["session.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.list"]>;
+        readonly list: (input: PublicActionInputById["session.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.list">>;
         readonly log: Readonly<{
-            readonly tail: (input: PublicActionInputById["session.log.tail"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.log.tail"]>;
+            readonly tail: (input: PublicActionInputById["session.log.tail"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.log.tail">>;
         }>;
         readonly message: Readonly<{
-            readonly send: (input: PublicActionInputById["session.message.send"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.message.send"]>;
+            readonly send: (input: PublicActionInputById["session.message.send"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.message.send">>;
         }>;
         readonly messages: Readonly<{
             readonly recent: Readonly<{
-                readonly get: (input: PublicActionInputById["session.messages.recent.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.messages.recent.get"]>;
+                readonly get: (input: PublicActionInputById["session.messages.recent.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.messages.recent.get">>;
             }>;
         }>;
         readonly mode: Readonly<{
-            readonly set: (input: PublicActionInputById["session.mode.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.mode.set"]>;
+            readonly set: (input: PublicActionInputById["session.mode.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.mode.set">>;
         }>;
         readonly model: Readonly<{
-            readonly set: (input: PublicActionInputById["session.model.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.model.set"]>;
+            readonly set: (input: PublicActionInputById["session.model.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.model.set">>;
         }>;
-        readonly open: (input: PublicActionInputById["session.open"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.open"]>;
+        readonly open: (input: PublicActionInputById["session.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.open">>;
         readonly pendingInput: Readonly<{
-            readonly interruptAndRun: (input: PublicActionInputById["session.pendingInput.interruptAndRun"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.pendingInput.interruptAndRun"]>;
+            readonly interruptAndRun: (input: PublicActionInputById["session.pendingInput.interruptAndRun"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.pendingInput.interruptAndRun">>;
         }>;
         readonly permission: Readonly<{
             readonly remote: Readonly<{
                 readonly grants: Readonly<{
-                    readonly list: (input: PublicActionInputById["session.permission.remote.grants.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.permission.remote.grants.list"]>;
-                    readonly revoke: (input: PublicActionInputById["session.permission.remote.grants.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.permission.remote.grants.revoke"]>;
+                    readonly list: (input: PublicActionInputById["session.permission.remote.grants.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.permission.remote.grants.list">>;
+                    readonly revoke: (input: PublicActionInputById["session.permission.remote.grants.revoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.permission.remote.grants.revoke">>;
                 }>;
             }>;
-            readonly respond: (input: PublicActionInputById["session.permission.respond"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.permission.respond"]>;
+            readonly respond: (input: PublicActionInputById["session.permission.respond"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.permission.respond">>;
         }>;
         readonly permissionMode: Readonly<{
-            readonly set: (input: PublicActionInputById["session.permission_mode.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.permission_mode.set"]>;
+            readonly set: (input: PublicActionInputById["session.permission_mode.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.permission_mode.set">>;
         }>;
-        readonly restore: (input: PublicActionInputById["session.restore"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.restore"]>;
-        readonly rollback: (input: PublicActionInputById["session.rollback"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.rollback"]>;
+        readonly restore: (input: PublicActionInputById["session.restore"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.restore">>;
+        readonly rollback: (input: PublicActionInputById["session.rollback"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.rollback">>;
         readonly skillCatalog: Readonly<{
-            readonly list: (input: PublicActionInputById["session.skill_catalog.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.skill_catalog.list"]>;
+            readonly list: (input: PublicActionInputById["session.skill_catalog.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.skill_catalog.list">>;
         }>;
-        readonly spawnNew: (input: PublicActionInputById["session.spawn_new"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.spawn_new"]>;
+        readonly spawnNew: (input: PublicActionInputById["session.spawn_new"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.spawn_new">>;
         readonly status: Readonly<{
-            readonly get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.status.get"]>;
+            readonly get: (input: PublicActionInputById["session.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.status.get">>;
         }>;
-        readonly stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.stop"]>;
+        readonly stop: (input: PublicActionInputById["session.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.stop">>;
         readonly target: Readonly<{
             readonly primary: Readonly<{
-                readonly set: (input: PublicActionInputById["session.target.primary.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.primary.set"]>;
+                readonly set: (input: PublicActionInputById["session.target.primary.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.target.primary.set">>;
             }>;
             readonly tracked: Readonly<{
-                readonly set: (input: PublicActionInputById["session.target.tracked.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.target.tracked.set"]>;
+                readonly set: (input: PublicActionInputById["session.target.tracked.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.target.tracked.set">>;
             }>;
         }>;
         readonly terminalComposer: Readonly<{
-            readonly clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.terminalComposer.clear"]>;
+            readonly clear: (input: PublicActionInputById["session.terminalComposer.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.terminalComposer.clear">>;
         }>;
         readonly title: Readonly<{
-            readonly set: (input: PublicActionInputById["session.title.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.title.set"]>;
+            readonly set: (input: PublicActionInputById["session.title.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.title.set">>;
         }>;
         readonly transcript: Readonly<{
-            readonly get: (input: PublicActionInputById["session.transcript.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.transcript.get"]>;
+            readonly get: (input: PublicActionInputById["session.transcript.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.transcript.get">>;
         }>;
-        readonly unarchive: (input: PublicActionInputById["session.unarchive"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.unarchive"]>;
+        readonly unarchive: (input: PublicActionInputById["session.unarchive"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.unarchive">>;
         readonly usageLimit: Readonly<{
-            readonly checkNow: (input: PublicActionInputById["session.usageLimit.checkNow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.usageLimit.checkNow"]>;
-            readonly consumeResetCredit: (input: PublicActionInputById["session.usageLimit.consumeResetCredit"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.usageLimit.consumeResetCredit"]>;
+            readonly checkNow: (input: PublicActionInputById["session.usageLimit.checkNow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.usageLimit.checkNow">>;
+            readonly consumeResetCredit: (input: PublicActionInputById["session.usageLimit.consumeResetCredit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.usageLimit.consumeResetCredit">>;
             readonly waitResume: Readonly<{
-                readonly cancel: (input: PublicActionInputById["session.usageLimit.waitResume.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.usageLimit.waitResume.cancel"]>;
-                readonly enable: (input: PublicActionInputById["session.usageLimit.waitResume.enable"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.usageLimit.waitResume.enable"]>;
+                readonly cancel: (input: PublicActionInputById["session.usageLimit.waitResume.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.usageLimit.waitResume.cancel">>;
+                readonly enable: (input: PublicActionInputById["session.usageLimit.waitResume.enable"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.usageLimit.waitResume.enable">>;
             }>;
         }>;
         readonly userAction: Readonly<{
-            readonly answer: (input: PublicActionInputById["session.user_action.answer"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.user_action.answer"]>;
+            readonly answer: (input: PublicActionInputById["session.user_action.answer"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.user_action.answer">>;
         }>;
         readonly vendorPluginCatalog: Readonly<{
-            readonly list: (input: PublicActionInputById["session.vendor_plugin_catalog.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.vendor_plugin_catalog.list"]>;
+            readonly list: (input: PublicActionInputById["session.vendor_plugin_catalog.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.vendor_plugin_catalog.list">>;
         }>;
         readonly wait: Readonly<{
-            readonly idle: (input: PublicActionInputById["session.wait.idle"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.wait.idle"]>;
+            readonly idle: (input: PublicActionInputById["session.wait.idle"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.wait.idle">>;
         }>;
         readonly workState: Readonly<{
-            readonly get: (input: PublicActionInputById["session.work_state.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["session.work_state.get"]>;
+            readonly get: (input: PublicActionInputById["session.work_state.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"session.work_state.get">>;
         }>;
     }>;
     readonly sessions: Readonly<{
         readonly external: Readonly<{
             readonly backgroundFollow: Readonly<{
-                readonly set: (input: PublicActionInputById["sessions.external.backgroundFollow.set"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.backgroundFollow.set"]>;
+                readonly set: (input: PublicActionInputById["sessions.external.backgroundFollow.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.backgroundFollow.set">>;
             }>;
-            readonly follow: (input: PublicActionInputById["sessions.external.follow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.follow"]>;
+            readonly follow: (input: PublicActionInputById["sessions.external.follow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.follow">>;
             readonly link: Readonly<{
-                readonly ensure: (input: PublicActionInputById["sessions.external.link.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.link.ensure"]>;
+                readonly ensure: (input: PublicActionInputById["sessions.external.link.ensure"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.link.ensure">>;
             }>;
-            readonly listCandidates: (input: PublicActionInputById["sessions.external.candidates.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.candidates.list"]>;
+            readonly listCandidates: (input: PublicActionInputById["sessions.external.candidates.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.candidates.list">>;
             readonly operation: Readonly<{
-                readonly cancel: (input: PublicActionInputById["sessions.external.operation.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.operation.cancel"]>;
-                readonly discard: (input: PublicActionInputById["sessions.external.operation.discard"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.operation.discard"]>;
-                readonly resume: (input: PublicActionInputById["sessions.external.operation.resume"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.operation.resume"]>;
-                readonly retry: (input: PublicActionInputById["sessions.external.operation.retry"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.operation.retry"]>;
+                readonly cancel: (input: PublicActionInputById["sessions.external.operation.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.operation.cancel">>;
+                readonly discard: (input: PublicActionInputById["sessions.external.operation.discard"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.operation.discard">>;
+                readonly resume: (input: PublicActionInputById["sessions.external.operation.resume"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.operation.resume">>;
+                readonly retry: (input: PublicActionInputById["sessions.external.operation.retry"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.operation.retry">>;
                 readonly status: Readonly<{
-                    readonly get: (input: PublicActionInputById["sessions.external.operation.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.operation.status.get"]>;
+                    readonly get: (input: PublicActionInputById["sessions.external.operation.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.operation.status.get">>;
                 }>;
             }>;
-            readonly pageTranscript: (input: PublicActionInputById["sessions.external.transcript.page"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.transcript.page"]>;
-            readonly readAfterTranscript: (input: PublicActionInputById["sessions.external.transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.transcript.readAfter"]>;
+            readonly pageTranscript: (input: PublicActionInputById["sessions.external.transcript.page"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.transcript.page">>;
+            readonly readAfterTranscript: (input: PublicActionInputById["sessions.external.transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.transcript.readAfter">>;
             readonly status: Readonly<{
-                readonly get: (input: PublicActionInputById["sessions.external.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.status.get"]>;
+                readonly get: (input: PublicActionInputById["sessions.external.status.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.status.get">>;
             }>;
             readonly takeover: Readonly<{
-                readonly start: (input: PublicActionInputById["sessions.external.takeover.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.takeover.start"]>;
+                readonly start: (input: PublicActionInputById["sessions.external.takeover.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.takeover.start">>;
             }>;
-            readonly unfollow: (input: PublicActionInputById["sessions.external.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.external.unfollow"]>;
+            readonly unfollow: (input: PublicActionInputById["sessions.external.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.external.unfollow">>;
         }>;
         readonly spawn: Readonly<{
             readonly connectedServices: Readonly<{
-                readonly list: (input: PublicActionInputById["sessions.spawn.connected_services.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.spawn.connected_services.list"]>;
+                readonly list: (input: PublicActionInputById["sessions.spawn.connected_services.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.spawn.connected_services.list">>;
             }>;
             readonly mcpServers: Readonly<{
-                readonly preview: (input: PublicActionInputById["sessions.spawn.mcp_servers.preview"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.spawn.mcp_servers.preview"]>;
+                readonly preview: (input: PublicActionInputById["sessions.spawn.mcp_servers.preview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.spawn.mcp_servers.preview">>;
             }>;
             readonly profiles: Readonly<{
-                readonly list: (input: PublicActionInputById["sessions.spawn.profiles.list"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["sessions.spawn.profiles.list"]>;
+                readonly list: (input: PublicActionInputById["sessions.spawn.profiles.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.spawn.profiles.list">>;
             }>;
+        }>;
+        readonly subagents: Readonly<{
+            readonly get: (input: PublicActionInputById["sessions.subagents.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.subagents.get">>;
+            readonly list: (input: PublicActionInputById["sessions.subagents.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.subagents.list">>;
+            readonly watch: (input: PublicActionInputById["sessions.subagents.watch"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"sessions.subagents.watch">>;
         }>;
     }>;
     readonly subagents: Readonly<{
         readonly delegate: Readonly<{
-            readonly start: (input: PublicActionInputById["subagents.delegate.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["subagents.delegate.start"]>;
+            readonly start: (input: PublicActionInputById["subagents.delegate.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"subagents.delegate.start">>;
         }>;
         readonly plan: Readonly<{
-            readonly start: (input: PublicActionInputById["subagents.plan.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["subagents.plan.start"]>;
+            readonly start: (input: PublicActionInputById["subagents.plan.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"subagents.plan.start">>;
         }>;
     }>;
     readonly transcript: Readonly<{
-        readonly follow: (input: PublicActionInputById["transcript.follow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.follow"]>;
-        readonly import: (input: PublicActionInputById["transcript.import"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.import"]>;
-        readonly page: (input: PublicActionInputById["transcript.page"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.page"]>;
-        readonly readAfter: (input: PublicActionInputById["transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.readAfter"]>;
-        readonly search: (input: PublicActionInputById["transcript.search"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.search"]>;
-        readonly unfollow: (input: PublicActionInputById["transcript.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["transcript.unfollow"]>;
+        readonly follow: (input: PublicActionInputById["transcript.follow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.follow">>;
+        readonly import: (input: PublicActionInputById["transcript.import"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.import">>;
+        readonly page: (input: PublicActionInputById["transcript.page"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.page">>;
+        readonly readAfter: (input: PublicActionInputById["transcript.readAfter"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.readAfter">>;
+        readonly search: (input: PublicActionInputById["transcript.search"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.search">>;
+        readonly unfollow: (input: PublicActionInputById["transcript.unfollow"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"transcript.unfollow">>;
     }>;
     readonly ui: Readonly<{
         readonly currentContext: Readonly<{
             readonly command: Readonly<{
-                readonly invoke: (input: PublicActionInputById["ui.current_context.command.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.command.invoke"]>;
+                readonly invoke: (input: PublicActionInputById["ui.current_context.command.invoke"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.current_context.command.invoke">>;
             }>;
-            readonly read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.current_context.read"]>;
+            readonly read: (input: PublicActionInputById["ui.current_context.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.current_context.read">>;
         }>;
         readonly pet: Readonly<{
-            readonly choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.pet.choose"]>;
+            readonly choose: (input: PublicActionInputById["ui.pet.choose"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.pet.choose">>;
         }>;
         readonly voiceAgent: Readonly<{
-            readonly teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_agent.teleport"]>;
+            readonly teleport: (input: PublicActionInputById["ui.voice_agent.teleport"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_agent.teleport">>;
         }>;
         readonly voiceGlobal: Readonly<{
-            readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["ui.voice_global.reset"]>;
+            readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.reset">>;
         }>;
     }>;
     readonly voiceAgent: Readonly<{
-        readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionResultById["voice_agent.start"]>;
+        readonly start: (input: PublicActionInputById["voice_agent.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"voice_agent.start">>;
     }>;
 }>;
 ```
@@ -1053,7 +1085,7 @@ type GeneratedActions = Readonly<{
 Reached from a published signature; not itself a published export.
 
 ```ts
-function createGeneratedActions(execute: ActionExecute): GeneratedActions;
+function createGeneratedActions(execute: RawActionExecute): GeneratedActions;
 ```
 
 
@@ -1127,6 +1159,28 @@ Reached from a published signature; not itself a published export.
 
 ```ts
 type WithoutSessionId<T> = T extends object ? Omit<T, 'sessionId'> : never;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/actions/actionExecutionResult.d.ts` — `ActionApprovalRequestCreatedResult`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+type ActionApprovalRequestCreatedResult = Readonly<z.infer<typeof ActionApprovalRequestCreatedResultSchema>>;
+```
+
+
+### `node_modules/@happier-dev/protocol/dist/actions/actionExecutionResult.d.ts` — `ActionApprovalRequestCreatedResultSchema`
+
+Reached from a published signature; not itself a published export.
+
+```ts
+const ActionApprovalRequestCreatedResultSchema: z.ZodObject<{
+    kind: z.ZodLiteral<"approval_request_created">;
+    artifactId: z.ZodString;
+    actionId: z.ZodString;
+}, z.core.$strict>;
 ```
 
 
@@ -11572,7 +11626,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                             }, z.core.$strict>;
                         }, z.core.$strict>>>;
                     }, z.core.$strict>>;
-                    environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
                         id: z.ZodString;
@@ -11838,7 +11891,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                             }, z.core.$strict>;
                         }, z.core.$strict>>>;
                     }, z.core.$strict>>;
-                    environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
                     agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                         v: z.ZodLiteral<1>;
                         id: z.ZodString;
@@ -12274,7 +12326,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                     }, z.core.$strict>;
                 }, z.core.$strict>>>;
             }, z.core.$strict>>;
-            environmentVariables: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
             agentSessionStartupInstructionsV1: z.ZodOptional<z.ZodReadonly<z.ZodObject<{
                 v: z.ZodLiteral<1>;
                 id: z.ZodString;
@@ -12737,9 +12788,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
                 z.ZodString
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
-            serverId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
-        }, z.core.$loose>;
+        }, z.core.$strict>;
     },
     {
         readonly id: 'agents.config_options.list';
@@ -12817,8 +12867,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             modelId: z.ZodOptional<z.ZodString>;
-            serverId: z.ZodOptional<z.ZodString>;
-        }, z.core.$loose>;
+        }, z.core.$strict>;
     },
     {
         readonly id: 'agents.session_modes.list';
@@ -12890,14 +12939,13 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             ]>>;
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
-            serverId: z.ZodOptional<z.ZodString>;
-        }, z.core.$loose>;
+        }, z.core.$strict>;
     },
     {
         readonly id: 'sessions.spawn.profiles.list';
         readonly title: 'List spawn profiles';
         readonly sideEffectClass: 'read';
-        readonly description: 'List backend profile references available for new sessions without exposing secret bindings.';
+        readonly description: 'List Agent launch profile references available for new sessions without exposing secret bindings.';
         readonly safety: 'safe';
         readonly placements: readonly [
             "voice_panel"
@@ -13026,8 +13074,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
             machineId: z.ZodOptional<z.ZodString>;
             limit: z.ZodOptional<z.ZodNumber>;
             includeUnavailable: z.ZodOptional<z.ZodBoolean>;
-            serverId: z.ZodOptional<z.ZodString>;
-        }, z.core.$loose>;
+        }, z.core.$strict>;
     },
     {
         readonly id: 'sessions.spawn.mcp_servers.preview';
@@ -15231,19 +15278,6 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly [
         ];
         readonly bindings: {
             readonly rpcMethod: 'session.permission.respond';
-        };
-        readonly surfaceBindings: {
-            readonly plugin: {
-                readonly inputSchema: z.ZodObject<{
-                    requestId: z.ZodString;
-                    decision: z.ZodEnum<{
-                        allow: "allow";
-                        deny: "deny";
-                    }>;
-                }, z.core.$strict>;
-                readonly bindInput: typeof bindPluginCurrentSessionInput;
-                readonly projectOutput: typeof projectPluginSessionInteractionResponse;
-            };
         };
         readonly surfaces: {
             readonly ui: true;
@@ -24060,9 +24094,6 @@ const INTERNAL_ACTION_REASONS: Readonly<{
     readonly 'session.handoff.prepare_target_result.get': 'Private handoff coordination receipt read; session.handoff.status.get is the user projection.';
     readonly 'session.handoff.commit': 'Private handoff lifecycle commit phase; users invoke session.handoff instead.';
     readonly 'session.handoff.abort': 'Private handoff lifecycle abort phase; users invoke session.handoff instead.';
-    readonly 'sessions.subagents.list': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.';
-    readonly 'sessions.subagents.get': 'Raw host lifecycle projection read; user operations use the planning/delegation Actions.';
-    readonly 'sessions.subagents.watch': 'Raw host lifecycle projection watch; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.upsert': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.updateStatus': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
     readonly 'sessions.subagents.complete': 'Host lifecycle projection maintenance; user operations use the planning/delegation Actions.';
@@ -24137,6 +24168,11 @@ const PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS: Readonly<{
                 workspaceId: z.ZodString;
             }, z.core.$strict>
         ], "kind">>;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
         includeRevoked: z.ZodDefault<z.ZodBoolean>;
         includeResolvedRequests: z.ZodDefault<z.ZodBoolean>;
         limit: z.ZodDefault<z.ZodNumber>;
@@ -24178,6 +24214,11 @@ const PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS: Readonly<{
             }, z.core.$strict>
         ], "kind">;
         reason: z.ZodString;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
         subject: z.ZodDiscriminatedUnion<[
             z.ZodObject<{
                 kind: z.ZodLiteral<"general">;
@@ -24200,6 +24241,11 @@ const PLUGIN_PERMISSION_GRANT_PLUGIN_INPUT_SCHEMAS: Readonly<{
     'plugins.permissions.grants.revoke': z.ZodObject<{
         grantId: z.ZodString;
         reason: z.ZodOptional<z.ZodString>;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
 }>;
 ```
@@ -74840,6 +74886,7 @@ const AutomationConversationActionOutputSchemasV1: Readonly<{
             kind: z.ZodLiteral<"blocked">;
             reason: z.ZodEnum<{
                 capacity: "capacity";
+                noEnabledAssignment: "noEnabledAssignment";
                 occurrenceConflict: "occurrenceConflict";
                 resultDeliveryUnsupported: "resultDeliveryUnsupported";
                 temporarilyUnavailable: "temporarilyUnavailable";
@@ -74883,6 +74930,9 @@ const AutomationEventActionInputSchemasV1: Readonly<{
         transport: z.ZodDiscriminatedUnion<[
             z.ZodObject<{
                 kind: z.ZodLiteral<"checkpointedPull">;
+            }, z.core.$strict>,
+            z.ZodObject<{
+                kind: z.ZodLiteral<"socket">;
             }, z.core.$strict>,
             z.ZodObject<{
                 kind: z.ZodLiteral<"durablePush">;
@@ -74989,6 +75039,9 @@ const AutomationEventActionInputSchemasV1: Readonly<{
                     kind: z.ZodLiteral<"checkpointedPull">;
                 }, z.core.$strict>,
                 z.ZodObject<{
+                    kind: z.ZodLiteral<"socket">;
+                }, z.core.$strict>,
+                z.ZodObject<{
                     kind: z.ZodLiteral<"durablePush">;
                     webhookEndpointId: z.ZodString;
                 }, z.core.$strict>
@@ -75042,6 +75095,14 @@ const AutomationEventActionOutputSchemasV1: Readonly<{
                 observationTransport: z.ZodDiscriminatedUnion<[
                     z.ZodObject<{
                         kind: z.ZodLiteral<"checkpointedPull">;
+                        watcherMaterializationRef: z.ZodObject<{
+                            machineId: z.ZodString;
+                            materializationId: z.ZodString;
+                            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+                        }, z.core.$strict>;
+                    }, z.core.$strict>,
+                    z.ZodObject<{
+                        kind: z.ZodLiteral<"socket">;
                         watcherMaterializationRef: z.ZodObject<{
                             machineId: z.ZodString;
                             materializationId: z.ZodString;
@@ -75152,6 +75213,7 @@ const AutomationEventActionOutputSchemasV1: Readonly<{
                 kind: z.ZodLiteral<"blocked">;
                 reason: z.ZodEnum<{
                     capacity: "capacity";
+                    noEnabledAssignment: "noEnabledAssignment";
                     occurrenceConflict: "occurrenceConflict";
                     temporarilyUnavailable: "temporarilyUnavailable";
                 }>;
@@ -75401,6 +75463,11 @@ const PluginPermissionGrantActionInputSchemasV1: Readonly<{
                 installReviewPrincipalDigest: z.core.$ZodBranded<z.ZodString, "PluginInstallReviewPrincipalDigest", "out">;
             }, z.core.$strict>
         ], "kind">>;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
         includeRevoked: z.ZodDefault<z.ZodBoolean>;
         includeResolvedRequests: z.ZodDefault<z.ZodBoolean>;
         limit: z.ZodDefault<z.ZodNumber>;
@@ -75469,6 +75536,11 @@ const PluginPermissionGrantActionInputSchemasV1: Readonly<{
             }, z.core.$strict>
         ], "kind">;
         reason: z.ZodString;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
     'plugins.permissions.grants.grant': z.ZodObject<{
         requestId: z.ZodString;
@@ -75477,6 +75549,11 @@ const PluginPermissionGrantActionInputSchemasV1: Readonly<{
     'plugins.permissions.grants.revoke': z.ZodObject<{
         grantId: z.ZodString;
         reason: z.ZodOptional<z.ZodString>;
+        caller: z.ZodOptional<z.ZodObject<{
+            machineId: z.ZodString;
+            materializationId: z.ZodString;
+            pluginId: z.ZodType<string, string, z.core.$ZodTypeInternals<string, string>>;
+        }, z.core.$strict>>;
     }, z.core.$strict>;
     'plugins.permissions.grants.dismissRequest': z.ZodObject<{
         requestId: z.ZodString;

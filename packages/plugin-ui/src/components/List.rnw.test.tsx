@@ -209,6 +209,88 @@ describe('plugin-ui List item presentation', () => {
     mount.unmount();
   });
 
+  it('uses grid semantics without inventing a primary button for an action-only row', () => {
+    const entries = [
+      { id: 'more', title: 'More entries may exist' },
+      { id: 'selected', title: 'Selected entry' },
+    ] as const;
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List
+          accessibilityLabel="Entries"
+          accessibilityPattern="grid"
+          items={entries}
+          keyForItem={(item) => item.id}
+          selection={{
+            selectedKey: 'selected',
+            onSelectedKeyChange: () => undefined,
+            isItemActivatable: (item) => item.id !== 'more',
+          }}
+          renderItem={(item) => (
+            <List.Item
+              title={item.title}
+              accessory={<Button title="Load more" onPress={() => undefined} />}
+            />
+          )}
+        />
+      </PluginUiProvider>,
+    );
+
+    const grid = mount.container.querySelector<HTMLElement>('[role="grid"]');
+    const row = grid?.querySelector<HTMLElement>('[role="row"]');
+    const buttons = Array.from(row?.querySelectorAll<HTMLElement>('[role="button"]') ?? []);
+    expect(grid?.getAttribute('aria-label')).toBe('Entries');
+    expect(grid?.getAttribute('aria-rowcount')).toBe('2');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute('aria-rowindex')).toBe('1');
+    expect(row?.getAttribute('aria-selected')).toBe('false');
+    expect(row?.querySelectorAll(':scope > [role="gridcell"]')).toHaveLength(2);
+    expect(grid?.querySelector('[role="option"]')).toBeNull();
+    expect(row?.querySelector('button button')).toBeNull();
+    expect(buttons).toHaveLength(1);
+    expect(buttons.some((button) => button.textContent?.includes('Load more'))).toBe(true);
+    const selectedRow = grid?.querySelectorAll<HTMLElement>('[role="row"]')[1];
+    expect(selectedRow?.getAttribute('aria-rowindex')).toBe('2');
+    expect(selectedRow?.getAttribute('aria-selected')).toBe('true');
+    mount.unmount();
+  });
+
+  it('keeps grid selection separate from roving keyboard focus', async () => {
+    const entries = [
+      { id: 'first', title: 'First entry' },
+      { id: 'more', title: 'More entries may exist' },
+    ] as const;
+    const context = createSurfaceContext();
+    function GridHarness() {
+      const [selectedKey, setSelectedKey] = useState<string | null>('first');
+      return (
+        <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+          <List
+            accessibilityLabel="Entries"
+            accessibilityPattern="grid"
+            items={entries}
+            keyForItem={(item) => item.id}
+            selection={{ selectedKey, onSelectedKeyChange: setSelectedKey }}
+            renderItem={(item) => <List.Item title={item.title} />}
+          />
+        </PluginUiProvider>
+      );
+    }
+
+    const mount = mountThroughReactNativeWeb(<GridHarness />);
+    let rows = Array.from(mount.container.querySelectorAll<HTMLElement>('[role="row"]'));
+    const firstControl = rows[0]?.querySelector<HTMLElement>('[role="button"]');
+    await act(async () => {
+      firstControl?.focus();
+      firstControl?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    rows = Array.from(mount.container.querySelectorAll<HTMLElement>('[role="row"]'));
+    expect(document.activeElement).toBe(rows[1]?.querySelector('[role="button"]'));
+    expect(rows.map((row) => row.getAttribute('aria-selected'))).toEqual(['true', 'false']);
+    mount.unmount();
+  });
+
   it('keeps an independently interactive accessory outside its selectable row', () => {
     const entries = [{ id: 'more', title: 'More entries may exist' }] as const;
     const context = createSurfaceContext();

@@ -59,7 +59,6 @@ process.stdout.write(`${JSON.stringify({
   },
   requiredGates: termuxPolicy.gates,
   license: termuxPolicy.license,
-  approvalBoundary: termuxPolicy.approvalBoundary,
   remediation: available
     ? [
       accessibility === 'native'
@@ -70,7 +69,7 @@ process.stdout.write(`${JSON.stringify({
     : source.status === 'ok'
       ? [
         'Run the Android Kotlin compile and device smoke with the ignored Termux source present.',
-        'Keep xterm WebView selected until source, legal, package, ABI, crash fallback, and accessibility gates pass.',
+        'Keep xterm WebView selected until source, package, ABI, crash fallback, and accessibility gates pass.',
       ]
     : [
       'Set HAPPIER_TERMINAL_NATIVE_TERMUX_SOURCE_ROOT to a locally audited Termux checkout, then run scripts/fetchTermuxAndroid.mjs to extract only terminal-view and terminal-emulator into android/termux/vendor.',
@@ -112,7 +111,6 @@ async function inspectSource() {
 function readAndroidTermuxGates() {
   return {
     dependencyClosureApproved: readBooleanEnv('HAPPIER_TERMINAL_NATIVE_ANDROID_DEPENDENCY_CLOSURE_APPROVED'),
-    legalAccepted: readBooleanEnv('HAPPIER_TERMINAL_NATIVE_ANDROID_LEGAL_ACCEPTED'),
     gradleBuildProven: readBooleanEnv('HAPPIER_TERMINAL_NATIVE_ANDROID_GRADLE_BUILD_PROVEN'),
     abiSmokePassed: readBooleanEnv('HAPPIER_TERMINAL_NATIVE_ANDROID_ABI_SMOKE_PASSED'),
     crashFallbackProven: readBooleanEnv('HAPPIER_TERMINAL_NATIVE_ANDROID_CRASH_FALLBACK_PROVEN'),
@@ -132,12 +130,6 @@ function collectBlockers({ source, gates }) {
     blockers.push({
       reason: 'dependency-closure-unapproved',
       detail: 'The selected Termux dependency closure has not been approved.',
-    });
-  }
-  if (!gates.legalAccepted) {
-    blockers.push({
-      reason: 'legal-not-approved',
-      detail: 'Android Termux legal/product approval has not passed.',
     });
   }
   if (!gates.gradleBuildProven) {

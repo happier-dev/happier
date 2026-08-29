@@ -88,6 +88,42 @@ function createNativePlatformReportingRequestedAecAsActive() {
 }
 
 describe('VoiceAudioSessionCoordinator', () => {
+  it('admits every native audio-graph terminal reason and drops malformed native events', () => {
+    let emitNative: (event: unknown) => void = () => {};
+    const nativeModule = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      configureAudioSession: vi.fn(),
+      restoreAudioSession: vi.fn(),
+      addListener: vi.fn((_eventName: string, listener: (event: unknown) => void) => {
+        emitNative = listener;
+        return { remove: vi.fn() };
+      }),
+    } as unknown as HappierAudioStreamNativeModule;
+    const listener = vi.fn();
+    createHappierAudioStreamNativePlatform(nativeModule).subscribe?.(listener);
+    const terminalReasons = [
+      'media_services_reset',
+      'configuration_unrecoverable',
+      'recording_resume_failed',
+      'interruption_resume_failed',
+    ] as const;
+
+    for (const reason of terminalReasons) {
+      emitNative({ generation: 7, kind: 'audio_graph_terminal', reason });
+    }
+    emitNative({ generation: 7, kind: 'audio_graph_terminal', reason: 'unknown_native_reason' });
+    emitNative({ generation: 'wrong', kind: 'interruption_began' });
+
+    expect(listener.mock.calls.map(([event]) => event)).toEqual(
+      terminalReasons.map((reason) => ({
+        generation: 7,
+        kind: 'audio_graph_terminal',
+        reason,
+      })),
+    );
+  });
+
   it('does not admit required AEC from a pre-capture configuration request, but admits it after the host capture confirms activation', async () => {
     const { nativeModule, platform } = createNativePlatformReportingRequestedAecAsActive();
     const coordinator = createVoiceAudioSessionCoordinator({ platform });

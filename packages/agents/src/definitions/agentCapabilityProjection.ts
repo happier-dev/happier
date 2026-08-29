@@ -76,11 +76,22 @@ export type AuthoredAgentSessionCapabilitiesV2 =
   & Omit<PluginAgentSessionCapabilitiesV2, 'open' | 'conversationRollback' | 'usageLimitRecovery'>
   & Readonly<{ open: readonly AuthoredAgentSessionOpenRouteV2[] }>;
 
-export type AuthoredAgentCapabilitiesV2 = Readonly<{
-  surfaces?: readonly AuthoredAgentCapabilitySurfaceV2[];
-  sessions?: AuthoredAgentSessionCapabilitiesV2;
-  executionRuns?: PluginAgentExecutionRunCapabilitiesV2;
-}>;
+export type AuthoredAgentCapabilitiesV2 =
+  | Readonly<{
+    surfaces?: readonly AuthoredAgentCapabilitySurfaceV2[];
+    sessions: AuthoredAgentSessionCapabilitiesV2;
+    executionRuns?: never;
+  }>
+  | Readonly<{
+    surfaces?: readonly AuthoredAgentCapabilitySurfaceV2[];
+    sessions?: never;
+    executionRuns: PluginAgentExecutionRunCapabilitiesV2;
+  }>
+  | Readonly<{
+    surfaces?: readonly AuthoredAgentCapabilitySurfaceV2[];
+    sessions?: never;
+    executionRuns?: never;
+  }>;
 
 function declaresSessionFork(facts: AgentDefinitionCapabilityFacts): boolean {
   const { sessionFork } = facts.sessionCapabilities;
@@ -188,7 +199,7 @@ export function projectAgentCapabilitiesV2FromDefinition(
   return {
     ...(surfaces.length > 0 ? { surfaces } : {}),
     ...(sessions ? { sessions } : {}),
-    ...(authored.executionRuns ? { executionRuns: authored.executionRuns } : {}),
+    ...(!sessions && authored.executionRuns ? { executionRuns: authored.executionRuns } : {}),
     ...(tools ? { tools } : {}),
   };
 }

@@ -90,7 +90,7 @@ describe('runtimeDescriptorReaderRegistry', () => {
     });
   });
 
-  it('derives connected-service bindings only from released flat metadata', () => {
+  it('derives connected-service bindings from released flat metadata', () => {
     expect(readSessionMetadataConnectedServiceBindings({
       codexBackendMode: 'appServer',
       codexSessionId: 'thread-1',

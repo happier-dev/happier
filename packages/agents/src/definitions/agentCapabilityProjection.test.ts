@@ -136,7 +136,7 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
     })).toEqual({ executionRuns: { open: ['create'], checkpoint: false, stop: true } });
   });
 
-  it('carries every capability the definition does not own straight through', () => {
+  it('keeps Session-primary Agent projection exclusive from authored finite execution runs', () => {
     const projected = projectAgentCapabilitiesV2FromDefinition(NO_CAPABILITIES, {
       sessions: {
         open: ['create', 'resume'],
@@ -146,7 +146,7 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
         workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
       },
       executionRuns: { open: ['create'], checkpoint: true, stop: true },
-    });
+    } as never);
 
     expect(projected.sessions).toMatchObject({
       delivery: ['newTurn', 'steer', 'followUp'],
@@ -154,7 +154,7 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
       configuration: true,
       workStateSources: [{ id: 'goals', itemKinds: ['goal'] }],
     });
-    expect(projected.executionRuns).toEqual({ open: ['create'], checkpoint: true, stop: true });
+    expect(projected).not.toHaveProperty('executionRuns');
   });
 
   it('projects only declared tool-delivery modes from the Agent definition', () => {

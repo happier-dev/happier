@@ -21,6 +21,10 @@ export {
   type HappierTextSelectabilityScopeProps,
 } from './text/Text.js';
 export {
+  resolveHappierDiffViewerRequest,
+  type HappierDiffViewerRequest,
+} from './content/DiffViewer.js';
+export {
   HAPPIER_TONE_COLOR_TOKEN,
   type HappierTextVariant,
   type HappierTone,

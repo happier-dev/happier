@@ -305,6 +305,7 @@ describe('author package boundary', () => {
       || specifier === '@happier-dev/plugin-sdk/contributions'
       || specifier === '@happier-dev/plugin-sdk/ui'
       || specifier === '@happier-dev/plugin-sdk/testing'
+      || specifier === '@happier-dev/plugin-sdk/voice/client'
     ))).toBe(true);
     expect(imports).not.toContain('@happier-dev/plugin-ui/testing');
     expect(imports).not.toContain('@happier-dev/plugin-ui/compatibility');
@@ -313,6 +314,7 @@ describe('author package boundary', () => {
       'tsconfig.nodenext.json',
       'tsconfig.vite.json',
       'tsconfig.metro.json',
+      'tsconfig.voice-native.json',
       'tsconfig.runtime.json',
       'vite.config.ts',
     ]) {
@@ -322,6 +324,13 @@ describe('author package boundary', () => {
       readFileSync(join(fixtureRoot, 'tsconfig.metro.json'), 'utf8'),
     ) as { compilerOptions?: { customConditions?: string[] } };
     expect(metroConfig.compilerOptions?.customConditions).toContain('react-native');
+    const voiceNativeConfig = JSON.parse(
+      readFileSync(join(fixtureRoot, 'tsconfig.voice-native.json'), 'utf8'),
+    ) as { compilerOptions?: { customConditions?: string[]; lib?: string[]; skipLibCheck?: boolean; types?: string[] } };
+    expect(voiceNativeConfig.compilerOptions?.customConditions).toContain('react-native');
+    expect(voiceNativeConfig.compilerOptions?.lib).toEqual(['ES2022']);
+    expect(voiceNativeConfig.compilerOptions?.skipLibCheck).toBe(false);
+    expect(voiceNativeConfig.compilerOptions?.types).toEqual(['react-native']);
     const baseConfig = JSON.parse(
       readFileSync(join(fixtureRoot, 'tsconfig.base.json'), 'utf8'),
     ) as { compilerOptions?: { skipLibCheck?: boolean; types?: string[] }; exclude?: string[] };

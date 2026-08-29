@@ -5,9 +5,9 @@ import type { PluginUiAccountKv } from './types.js';
 /**
  * The one truthful "Account KV cannot be reached from here" scope.
  *
- * A surface realm that has no Account KV path — today the isolated hosted-web
- * renderer, whose host bridge carries Collection UI queries only — reports it
- * with this rather than silently succeeding or growing a second KV path.
+ * A deliberately partial test or host realm that has no Account KV path
+ * reports it with this rather than silently succeeding or growing a second KV
+ * implementation. Production hosted web uses the canonical host Data bridge.
  */
 export function createUnavailablePluginUiAccountKv(): PluginUiAccountKv {
   const unavailable = async (): Promise<never> => {

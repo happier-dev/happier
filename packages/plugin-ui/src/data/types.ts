@@ -5,7 +5,6 @@ import type {
   PluginCollectionUiQueryRequestV1,
   PluginCollectionUiQueryResultV1,
 } from '@happier-dev/plugin-sdk/collections';
-import type { ScopedSettingsService } from '@happier-dev/plugin-sdk/settings';
 import type { AccountKvService } from '@happier-dev/plugin-sdk/storage';
 
 /**
@@ -70,26 +69,6 @@ export type PluginUiCollectionQueryPager = Readonly<{
 export type PluginUiAccountKv = AccountKvService;
 
 /**
- * The plugin's own Account Settings scope, reached directly from a mounted
- * surface.
- *
- * It is the same record, the same declared fields, the same JSON-schema
- * admission and the same revision CAS the plugin's daemon side gets from
- * `settings.forScope({ kind: 'account' })` — because both realms drive the one
- * Account Settings record owner over the one Account. A surface therefore reads
- * and writes exactly what its daemon side wrote, with no daemon reachable.
- *
- * `describe` and `watch` are deliberately absent rather than stubbed. A mounted
- * surface already receives its declaration through the host, and inventing a
- * second change feed here would be a second freshness owner for a record the
- * Account owner already fences by revision.
- */
-export type PluginUiAccountSettings = Pick<
-  ScopedSettingsService,
-  'snapshot' | 'get' | 'set' | 'reset'
->;
-
-/**
  * Host-private provider input exposed to authors only through the public hook.
  * The host creates it for one captured Account lifetime; authors receive no
  * transport, Account scope, or persisted contract facts.
@@ -103,6 +82,4 @@ export type PluginUiDataClient = Readonly<{
   ): Promise<PluginUiCollectionQueryPager>;
   /** The plugin's own Account KV scope for this mounted surface. */
   readonly accountKv: PluginUiAccountKv;
-  /** The plugin's own Account Settings scope for this mounted surface. */
-  readonly accountSettings: PluginUiAccountSettings;
 }>;

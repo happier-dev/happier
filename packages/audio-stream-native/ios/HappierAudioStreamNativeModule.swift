@@ -22,9 +22,31 @@ private enum AudioGraphConfigurationOutcome {
   case unrecoverable
 }
 
+/// The tap and converter bind the complete hardware stream description, not
+/// only its rate and channel count. Reusing that graph after any format-layout
+/// change is unproven and must fail closed.
+private func audioFormatsMatchForGraphRestart(
+  _ current: AVAudioFormat,
+  _ baseline: AVAudioFormat
+) -> Bool {
+  guard
+    let currentDescription = current.streamDescription?.pointee,
+    let baselineDescription = baseline.streamDescription?.pointee
+  else { return false }
+  return currentDescription.mSampleRate == baselineDescription.mSampleRate
+    && currentDescription.mFormatID == baselineDescription.mFormatID
+    && currentDescription.mFormatFlags == baselineDescription.mFormatFlags
+    && currentDescription.mBytesPerPacket == baselineDescription.mBytesPerPacket
+    && currentDescription.mFramesPerPacket == baselineDescription.mFramesPerPacket
+    && currentDescription.mBytesPerFrame == baselineDescription.mBytesPerFrame
+    && currentDescription.mChannelsPerFrame == baselineDescription.mChannelsPerFrame
+    && currentDescription.mBitsPerChannel == baselineDescription.mBitsPerChannel
+}
+
 private final class AudioStreamSession {
   private let queue: DispatchQueue
   private let emitFrame: (_ event: [String: Any]) -> Void
+  private let emitCaptureTerminal: (_ event: [String: Any]) -> Void
   private let emitPlaybackEvent: (_ eventName: String, _ event: [String: Any]) -> Void
 
   let streamId: String
@@ -49,10 +71,12 @@ private final class AudioStreamSession {
   private var playbackEpoch = 0
   private var playbackCursorBaseMs = 0.0
   private var playbackTimelineCursorMs = 0.0
+  private var captureConversionFailed = false
 
   init(
     queue: DispatchQueue,
     emitFrame: @escaping (_ event: [String: Any]) -> Void,
+    emitCaptureTerminal: @escaping (_ event: [String: Any]) -> Void,
     emitPlaybackEvent: @escaping (_ eventName: String, _ event: [String: Any]) -> Void,
     streamId: String,
     generation: Int,
@@ -62,6 +86,7 @@ private final class AudioStreamSession {
   ) {
     self.queue = queue
     self.emitFrame = emitFrame
+    self.emitCaptureTerminal = emitCaptureTerminal
     self.emitPlaybackEvent = emitPlaybackEvent
     self.streamId = streamId
     self.generation = generation
@@ -114,23 +139,66 @@ private final class AudioStreamSession {
       }
     }
 
+    let hardwareInputFormat = input.outputFormat(forBus: 0)
+    guard hardwareInputFormat.sampleRate > 0, hardwareInputFormat.channelCount > 0 else {
+      throw NSError(domain: "HappierAudioStreamNative", code: 100, userInfo: [NSLocalizedDescriptionKey: "invalid_hardware_audio_format"])
+    }
     guard
-      let format = AVAudioFormat(
+      let canonicalCaptureFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16,
         sampleRate: sampleRate,
         channels: AVAudioChannelCount(channels),
         interleaved: true
-      )
+      ),
+      let captureConverter = AVAudioConverter(from: hardwareInputFormat, to: canonicalCaptureFormat)
     else {
       throw NSError(domain: "HappierAudioStreamNative", code: 100, userInfo: [NSLocalizedDescriptionKey: "invalid_audio_format"])
     }
 
-    let framesPerBuffer = max(256, Int(sampleRate * Double(frameMs) / 1000.0))
-    input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(framesPerBuffer), format: format) { [weak self] buffer, _ in
+    let hardwareFramesPerBuffer = max(
+      256,
+      Int(hardwareInputFormat.sampleRate * Double(frameMs) / 1000.0)
+    )
+    input.installTap(
+      onBus: 0,
+      bufferSize: AVAudioFrameCount(hardwareFramesPerBuffer),
+      format: hardwareInputFormat
+    ) { [weak self] buffer, _ in
       guard let self else { return }
-      guard let mData = buffer.audioBufferList.pointee.mBuffers.mData else { return }
+      let outputCapacity = max(
+        1,
+        Int(ceil(Double(buffer.frameLength) * canonicalCaptureFormat.sampleRate / hardwareInputFormat.sampleRate)) + 32
+      )
+      guard let converted = AVAudioPCMBuffer(
+        pcmFormat: canonicalCaptureFormat,
+        frameCapacity: AVAudioFrameCount(outputCapacity)
+      ) else { return }
+      var suppliedInput = false
+      var conversionError: NSError?
+      let status = captureConverter.convert(to: converted, error: &conversionError) { _, inputStatus in
+        if suppliedInput {
+          inputStatus.pointee = .noDataNow
+          return nil
+        }
+        suppliedInput = true
+        inputStatus.pointee = .haveData
+        return buffer
+      }
+      guard status != .error, conversionError == nil else {
+        self.queue.async {
+          guard !self.captureConversionFailed else { return }
+          self.captureConversionFailed = true
+          self.emitCaptureTerminal([
+            "streamId": self.streamId,
+            "generation": self.generation,
+            "reason": "read_error",
+          ])
+        }
+        return
+      }
+      guard let mData = converted.audioBufferList.pointee.mBuffers.mData else { return }
 
-      let byteSize = Int(buffer.audioBufferList.pointee.mBuffers.mDataByteSize)
+      let byteSize = Int(converted.audioBufferList.pointee.mBuffers.mDataByteSize)
       if byteSize <= 0 { return }
 
       let bytes = Data(bytes: mData, count: byteSize)
@@ -158,7 +226,8 @@ private final class AudioStreamSession {
       try engine.start()
       self.engine = engine
       self.player = player
-      self.builtInputFormat = input.outputFormat(forBus: 0)
+      self.builtInputFormat = hardwareInputFormat
+      self.captureConversionFailed = false
     } catch {
       input.removeTap(onBus: 0)
       player.stop()
@@ -190,6 +259,7 @@ private final class AudioStreamSession {
     engine.stop()
     self.engine = nil
     self.builtInputFormat = nil
+    self.captureConversionFailed = false
     self.accumulated.removeAll(keepingCapacity: false)
   }
 
@@ -202,10 +272,7 @@ private final class AudioStreamSession {
     guard let engine else { return .inactive }
     guard let baseline = builtInputFormat else { return .unrecoverable }
     let current = engine.inputNode.outputFormat(forBus: 0)
-    guard
-      current.sampleRate == baseline.sampleRate,
-      current.channelCount == baseline.channelCount
-    else { return .unrecoverable }
+    guard audioFormatsMatchForGraphRestart(current, baseline) else { return .unrecoverable }
     if engine.isRunning { return .intact }
     do {
       try engine.start()
@@ -309,6 +376,14 @@ private final class AudioStreamSession {
       throw NSError(domain: "HappierAudioStreamNative", code: 306, userInfo: [NSLocalizedDescriptionKey: "invalid_playback_buffer"])
     }
     playbackFormat = format
+    // Give the player the provider's canonical PCM format explicitly. The
+    // engine's main mixer owns conversion from that format to the current
+    // output route; provider PCM is never scheduled against an implicit stale
+    // hardware format.
+    engine?.disconnectNodeOutput(player)
+    if let engine {
+      engine.connect(player, to: engine.mainMixerNode, format: format)
+    }
     playbackGeneration = generation
     playbackChannels = channels
     maxPlaybackFrames = Int(requestedFrames)
@@ -420,6 +495,7 @@ private final class EncodedAudioPlaybackSession: NSObject, AVAudioPlayerDelegate
   let playbackId: String
   private let player: AVAudioPlayer
   private let emit: (_ status: String, _ reason: String?) -> Void
+  private var pausedByInterruption = false
 
   init(
     playbackId: String,
@@ -451,15 +527,35 @@ private final class EncodedAudioPlaybackSession: NSObject, AVAudioPlayerDelegate
     emit("started", nil)
   }
 
-  func setPaused(_ paused: Bool) {
+  func setPaused(_ paused: Bool) throws {
+    pausedByInterruption = false
     if paused {
       player.pause()
     } else if !player.isPlaying {
-      _ = player.play()
+      guard player.play() else {
+        throw NSError(
+          domain: "HappierAudioStreamNative",
+          code: 402,
+          userInfo: [NSLocalizedDescriptionKey: "encoded_audio_resume_failed"]
+        )
+      }
     }
   }
 
+  func suspendForInterruption() {
+    guard player.isPlaying else { return }
+    player.pause()
+    pausedByInterruption = true
+  }
+
+  func resumeAfterInterruption() -> Bool {
+    guard pausedByInterruption else { return true }
+    pausedByInterruption = false
+    return player.play()
+  }
+
   func stop() {
+    pausedByInterruption = false
     player.stop()
     player.delegate = nil
   }
@@ -478,6 +574,8 @@ public final class HappierAudioStreamNativeModule: Module {
   private var active: AudioStreamSession? = nil
   private var fileRecorder: AVAudioRecorder? = nil
   private var fileRecordingId: String? = nil
+  private var fileRecordingMuted = false
+  private var fileRecordingPausedByInterruption = false
   private var encodedPlayback: EncodedAudioPlaybackSession? = nil
   private var audioSessionGeneration: Int = 0
   private var audioSessionConfigured = false
@@ -488,6 +586,16 @@ public final class HappierAudioStreamNativeModule: Module {
   /// burst of notifications, and repeating the terminal event would race the
   /// lifecycle owner already tearing the session down.
   private var audioGraphTerminalReported = false
+
+  private func retireEncodedPlayback(status: String? = nil, reason: String? = nil) {
+    guard let playback = encodedPlayback else { return }
+    encodedPlayback = nil
+    playback.stop()
+    guard let status else { return }
+    var event: [String: Any] = ["playbackId": playback.playbackId, "status": status]
+    if let reason { event["reason"] = reason }
+    sendEvent("encodedAudioPlayback", event)
+  }
 
   private func emitAudioSessionEvent(_ event: [String: Any], generation: Int? = nil) {
     var payload = event
@@ -510,6 +618,12 @@ public final class HappierAudioStreamNativeModule: Module {
     audioGraphTerminalReported = true
     active?.stop()
     active = nil
+    fileRecorder?.stop()
+    fileRecorder = nil
+    fileRecordingId = nil
+    fileRecordingMuted = false
+    fileRecordingPausedByInterruption = false
+    retireEncodedPlayback(status: "failed", reason: reason)
     emitAudioSessionEvent(["kind": "audio_graph_terminal", "reason": reason], generation: generation)
   }
 
@@ -534,7 +648,68 @@ public final class HappierAudioStreamNativeModule: Module {
       // including the pre-session state captured to restore later. Restoring a
       // category onto a session the system already reset is not a restoration.
       self.previousAudioSessionState = nil
+      self.fileRecorder?.stop()
+      self.fileRecorder = nil
+      self.fileRecordingId = nil
+      self.fileRecordingMuted = false
+      self.fileRecordingPausedByInterruption = false
+      self.retireEncodedPlayback(status: "failed", reason: "media_services_reset")
       self.reportAudioGraphTerminal(reason: "media_services_reset", generation: generation)
+    }
+  }
+
+  private func handleInterruptionBegan(generation: Int) {
+    queue.async { [weak self] in
+      guard let self, generation == self.audioSessionGeneration else { return }
+      if let recorder = self.fileRecorder, recorder.isRecording, !self.fileRecordingMuted {
+        recorder.pause()
+        self.fileRecordingPausedByInterruption = true
+      }
+      self.encodedPlayback?.suspendForInterruption()
+      self.emitAudioSessionEvent(["kind": "interruption_began"], generation: generation)
+    }
+  }
+
+  private func handleInterruptionEnded(generation: Int, shouldResume: Bool) {
+    queue.async { [weak self] in
+      guard let self, generation == self.audioSessionGeneration else { return }
+      var resumed = shouldResume
+      if shouldResume {
+        do {
+          try AVAudioSession.sharedInstance().setActive(true, options: [])
+        } catch {
+          resumed = false
+        }
+        if resumed, self.fileRecordingPausedByInterruption, !self.fileRecordingMuted,
+           let recorder = self.fileRecorder {
+          guard recorder.record() else {
+            self.fileRecordingPausedByInterruption = false
+            self.reportAudioGraphTerminal(reason: "recording_resume_failed", generation: generation)
+            self.emitAudioSessionEvent(["kind": "interruption_ended", "shouldResume": false], generation: generation)
+            return
+          }
+          self.fileRecordingPausedByInterruption = false
+        }
+        if resumed, let encodedPlayback = self.encodedPlayback {
+          if !encodedPlayback.resumeAfterInterruption() {
+            self.retireEncodedPlayback(status: "failed", reason: "encoded_audio_resume_failed")
+            resumed = false
+          }
+        }
+        if resumed {
+          switch self.active?.handleConfigurationChange() ?? .inactive {
+          case .inactive, .intact:
+            break
+          case .unrecoverable:
+            resumed = false
+            self.reportAudioGraphTerminal(reason: "interruption_resume_failed", generation: generation)
+          }
+        }
+      }
+      self.emitAudioSessionEvent([
+        "kind": "interruption_ended",
+        "shouldResume": resumed,
+      ], generation: generation)
     }
   }
 
@@ -550,11 +725,11 @@ public final class HappierAudioStreamNativeModule: Module {
       let rawType = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
       let type = rawType.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
       if type == .began {
-        self.emitAudioSessionEvent(["kind": "interruption_began"], generation: generation)
+        self.handleInterruptionBegan(generation: generation)
       } else if type == .ended {
         let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
         let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
-        self.emitAudioSessionEvent(["kind": "interruption_ended", "shouldResume": shouldResume], generation: generation)
+        self.handleInterruptionEnded(generation: generation, shouldResume: shouldResume)
       }
     })
     notificationObservers.append(center.addObserver(
@@ -680,8 +855,9 @@ public final class HappierAudioStreamNativeModule: Module {
     fileRecorder?.stop()
     fileRecorder = nil
     fileRecordingId = nil
-    encodedPlayback?.stop()
-    encodedPlayback = nil
+    fileRecordingMuted = false
+    fileRecordingPausedByInterruption = false
+    retireEncodedPlayback()
     let session = AVAudioSession.sharedInstance()
     if let previous = previousAudioSessionState {
       try session.setCategory(previous.category, mode: previous.mode, options: previous.options)
@@ -719,8 +895,9 @@ public final class HappierAudioStreamNativeModule: Module {
         self.fileRecorder?.stop()
         self.fileRecorder = nil
         self.fileRecordingId = nil
-        self.encodedPlayback?.stop()
-        self.encodedPlayback = nil
+        self.fileRecordingMuted = false
+        self.fileRecordingPausedByInterruption = false
+        self.retireEncodedPlayback()
         try? self.restoreAudioSession(self.audioSessionGeneration + 1)
       }
     }
@@ -761,6 +938,8 @@ public final class HappierAudioStreamNativeModule: Module {
         }
         self.fileRecorder = recorder
         self.fileRecordingId = recordingId
+        self.fileRecordingMuted = false
+        self.fileRecordingPausedByInterruption = false
         return ["recordingId": recordingId]
       }
     }
@@ -768,9 +947,19 @@ public final class HappierAudioStreamNativeModule: Module {
     AsyncFunction("setFileRecordingMuted") { (params: [String: Any]) -> Void in
       let recordingId = (params["recordingId"] as? String) ?? ""
       let muted = (params["muted"] as? Bool) ?? false
-      self.queue.sync {
+      try self.queue.sync {
         guard recordingId == self.fileRecordingId, let recorder = self.fileRecorder else { return }
-        if muted { recorder.pause() } else { recorder.record() }
+        if muted {
+          recorder.pause()
+          self.fileRecordingMuted = true
+          self.fileRecordingPausedByInterruption = false
+        } else {
+          guard recorder.record() else {
+            throw NSError(domain: "HappierAudioStreamNative", code: 406, userInfo: [NSLocalizedDescriptionKey: "file_recording_resume_failed"])
+          }
+          self.fileRecordingMuted = false
+          self.fileRecordingPausedByInterruption = false
+        }
       }
     }
 
@@ -782,6 +971,8 @@ public final class HappierAudioStreamNativeModule: Module {
         }
         self.fileRecorder = nil
         self.fileRecordingId = nil
+        self.fileRecordingMuted = false
+        self.fileRecordingPausedByInterruption = false
         recorder.stop()
         return ["uri": recorder.url.absoluteString]
       }
@@ -797,7 +988,7 @@ public final class HappierAudioStreamNativeModule: Module {
         guard !playbackId.isEmpty, let url = URL(string: uri), url.isFileURL else {
           throw NSError(domain: "HappierAudioStreamNative", code: 409, userInfo: [NSLocalizedDescriptionKey: "invalid_encoded_audio_uri"])
         }
-        self.encodedPlayback?.stop()
+        self.retireEncodedPlayback(status: "replaced", reason: "encoded_audio_replaced")
         let playback = try EncodedAudioPlaybackSession(
           playbackId: playbackId,
           url: url,
@@ -825,9 +1016,9 @@ public final class HappierAudioStreamNativeModule: Module {
     AsyncFunction("setEncodedAudioPlaybackPaused") { (params: [String: Any]) -> Void in
       let playbackId = (params["playbackId"] as? String) ?? ""
       let paused = (params["paused"] as? Bool) ?? false
-      self.queue.sync {
+      try self.queue.sync {
         guard self.encodedPlayback?.playbackId == playbackId else { return }
-        self.encodedPlayback?.setPaused(paused)
+        try self.encodedPlayback?.setPaused(paused)
       }
     }
 
@@ -835,8 +1026,7 @@ public final class HappierAudioStreamNativeModule: Module {
       let playbackId = (params["playbackId"] as? String) ?? ""
       self.queue.sync {
         guard self.encodedPlayback?.playbackId == playbackId else { return }
-        self.encodedPlayback?.stop()
-        self.encodedPlayback = nil
+        self.retireEncodedPlayback()
       }
     }
 
@@ -873,6 +1063,9 @@ public final class HappierAudioStreamNativeModule: Module {
             queue: self.queue,
             emitFrame: { event in
               self.sendEvent("audioFrame", event)
+            },
+            emitCaptureTerminal: { event in
+              self.sendEvent("captureTerminal", event)
             },
             emitPlaybackEvent: { eventName, event in
               self.sendEvent(eventName, event)

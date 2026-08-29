@@ -90,16 +90,6 @@ describe('terminal native availability', () => {
 
     expect(availability.normalizeTerminalNativeAvailability({
       available: false,
-      reason: 'legal-not-approved',
-      detail: 'legal gate pending',
-    })).toEqual({
-      available: false,
-      reason: 'legal-not-approved',
-      detail: 'legal gate pending',
-    });
-
-    expect(availability.normalizeTerminalNativeAvailability({
-      available: false,
       reason: 'package-proof-unaccepted',
       detail: 'package proof pending',
     })).toEqual({

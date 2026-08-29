@@ -3,8 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
-import { CodeBlock, Markdown } from './index.js';
+import { CodeBlock, DiffViewer, Markdown } from './index.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
+import {
+  PluginUiPresentationHostProviderInternal,
+  type PluginUiPresentationHost,
+} from '../presentationHost/context.js';
 
 describe('bounded Markdown and Code presentation', () => {
   it('degrades safely to selectable literal content when no host renderer is installed', () => {
@@ -65,5 +69,66 @@ describe('bounded Markdown and Code presentation', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('read-only DiffViewer presentation', () => {
+  const unifiedDiff = [
+    'diff --git a/src/provider.ts b/src/provider.ts',
+    '--- a/src/provider.ts',
+    '+++ b/src/provider.ts',
+    '@@ -1 +1 @@',
+    '-const ready = false;',
+    '+const ready = true;',
+  ].join('\n');
+
+  it('keeps a selectable literal fallback when no product renderer is mounted', () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <DiffViewer
+          unifiedDiff={unifiedDiff}
+          filePath="src/provider.ts"
+          label="Changes in src/provider.ts"
+        />
+      </PluginUiProvider>,
+    );
+
+    expect(mount.container.textContent).toContain('Changes in src/provider.ts');
+    expect(mount.container.textContent).toContain('+const ready = true;');
+    mount.unmount();
+  });
+
+  it('delegates the bounded diff request to the incumbent product renderer', () => {
+    const renderDiffViewer = vi.fn(() => <span data-testid="host-diff">rendered diff</span>);
+    const host = {
+      renderMarkdown: () => null,
+      renderCodeBlock: () => null,
+      renderDiffViewer,
+      renderPopover: () => null,
+      renderIcon: () => null,
+    } as unknown as PluginUiPresentationHost;
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <PluginUiPresentationHostProviderInternal host={host}>
+          <DiffViewer
+            unifiedDiff={unifiedDiff}
+            filePath="src/provider.ts"
+            label="Changes in src/provider.ts"
+            testID="provider-diff"
+          />
+        </PluginUiPresentationHostProviderInternal>
+      </PluginUiProvider>,
+    );
+
+    expect(renderDiffViewer).toHaveBeenCalledWith({
+      unifiedDiff,
+      filePath: 'src/provider.ts',
+      testID: 'provider-diff',
+    });
+    expect(mount.container.textContent).toContain('Changes in src/provider.ts');
+    expect(mount.container.querySelector('[data-testid="host-diff"]')).not.toBeNull();
+    mount.unmount();
   });
 });
