@@ -111,7 +111,21 @@ describe("Automation schedule trigger firing (integration)", () => {
             },
         });
         automationId = created.id;
-        const [fast, slow, disabled] = created.triggers;
+        // Trigger rows are returned in their canonical stable-id order, not
+        // the request array order. Select by semantic cadence/enablement so
+        // this fixture does not couple to persistence ordering.
+        const fast = created.triggers.find((trigger) =>
+            trigger.kind === "schedule" && trigger.enabled && trigger.everyMs === 60_000,
+        );
+        const slow = created.triggers.find((trigger) =>
+            trigger.kind === "schedule" && trigger.enabled && trigger.everyMs === 120_000,
+        );
+        const disabled = created.triggers.find((trigger) =>
+            trigger.kind === "schedule" && !trigger.enabled && trigger.everyMs === 60_000,
+        );
+        expect(fast).toBeDefined();
+        expect(slow).toBeDefined();
+        expect(disabled).toBeDefined();
         expect(fast).toMatchObject({ kind: "schedule", enabled: true, everyMs: 60_000 });
         expect(slow).toMatchObject({ kind: "schedule", enabled: true, everyMs: 120_000 });
         expect(disabled).toMatchObject({ kind: "schedule", enabled: false, everyMs: 60_000 });

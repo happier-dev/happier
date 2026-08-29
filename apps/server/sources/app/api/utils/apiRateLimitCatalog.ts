@@ -47,6 +47,13 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "share.public.manage": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
     "share.session.create": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "user" },
     "liveActivity.hostedRelay": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "ip" },
+    // Bearer-only Action ingress is keyed by IP so rate limiting never
+    // performs a second PAT verification before the route's onRequest auth.
+    actions: { defaultMax: 600, defaultWindow: "1 minute", keyMode: "ip" },
+    "accountDirectory.read": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
+    "accountDirectory.mutate": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
+    "accountDirectory.assertionMint": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "user" },
+    "accountDirectory.assertionRedeem": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "ip" },
 } as const satisfies Record<string, ApiRateLimitDefaults>;
 
 export type ApiHotEndpointRateLimitId = keyof typeof API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS;

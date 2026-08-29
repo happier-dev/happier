@@ -31,6 +31,17 @@ describe("apiRateLimitCatalog", () => {
         );
     });
 
+    it("provides an IP-keyed bucket for bearer-only external Actions", () => {
+        const rateLimit = resolveApiHotEndpointRateLimit({
+            HAPPIER_API_RATE_LIMITS_ENABLED: "1",
+        }, "actions");
+        expect(rateLimit).toEqual(expect.objectContaining({
+            max: 600,
+            timeWindow: "1 minute",
+            keyGenerator: expect.any(Function),
+        }));
+    });
+
     it("resolves the authenticated peer-mediation route-grant bucket from its dedicated env keys", () => {
         const rateLimit = resolveApiHotEndpointRateLimit({
             HAPPIER_API_RATE_LIMITS_ENABLED: "1",

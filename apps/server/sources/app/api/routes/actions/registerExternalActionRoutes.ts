@@ -17,6 +17,7 @@ import {
 import {
     type ExternalActionDaemonDispatcher,
 } from "@/app/api/socket/externalActionDispatcher";
+import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 import type { Fastify } from "../../types";
 
@@ -150,6 +151,7 @@ export function registerExternalActionRoutes(
     }>("/v1/actions/:actionId", {
         bodyLimit: EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
         config: { allowApiToken: true, cors: false, connectionAuthFailureError: "invalid_token" },
+        rateLimit: resolveApiHotEndpointRateLimit(process.env, "actions"),
         errorHandler: (error, _request, reply) => {
             if (isFastifyBodyLimitError(error)) {
                 sendExternalActionHttpError(reply, "request_too_large");
@@ -159,7 +161,7 @@ export function registerExternalActionRoutes(
                 sendExternalActionHttpError(reply, "invalid_envelope");
                 return;
             }
-            throw error;
+            sendExternalActionHttpError(reply, "internal_error");
         },
         onRequest: async (request, reply) => {
             reply.header("cache-control", "no-store");

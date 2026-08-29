@@ -209,6 +209,17 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         for (const chunk of automationPortableQueryChunks({ values: triggerRows, bindingsPerValue: 9 })) {
             await db.automationTrigger.createMany({ data: [...chunk] });
         }
+        // Assignments reference real Account machines. The production schema
+        // enforces this FK, so seed the fan-out machines before inserting the
+        // assignment rows used by this bind-ceiling regression.
+        const fanOutMachines = automationRows.map((automation) => ({
+            id: `fan-out-execution-${automation.id}`,
+            accountId: current.accountId,
+            metadata: "{}",
+        }));
+        for (const chunk of automationPortableQueryChunks({ values: fanOutMachines, bindingsPerValue: 9 })) {
+            await db.machine.createMany({ data: [...chunk] });
+        }
         const fanOutAssignmentRows = automationRows.map((automation) => ({
             automationId: automation.id,
             machineId: `fan-out-execution-${automation.id}`,

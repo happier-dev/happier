@@ -12,7 +12,7 @@ import {
 import { NotFoundSchema } from "../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "./connectedServicesV2/profileIdSchema";
 import {
-    readLegacyConnectedServiceQuotaCompatibilitySource,
+    readLegacyConnectedServiceQuotaCompatibilityRecordWithSource,
     requestLegacyConnectedServiceQuotaCompatibilityRefresh,
     unlinkLegacyConnectedServiceQuotaCompatibilitySource,
     writeLegacyConnectedServiceQuotaCompatibilityRecord,
@@ -23,7 +23,6 @@ import {
     requestReleasedConnectedServiceQuotaRefresh,
 } from "./qualifiedConnectedAccounts/legacyQuotaSnapshotCompatibility";
 import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
-import { readProviderAccountUsageRecord } from "./providerAccountUsage";
 import {
     ConnectedServiceUsageSourceBindingError,
     ConnectedServiceUsageSourceOwnershipError,
@@ -133,9 +132,6 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
-        const account = await readE2eeAccount(userId);
-        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
-
         const ref = {
             service:
                 resolveLegacyQualifiedConnectedAccountService(
@@ -143,12 +139,15 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                 ),
             accountId: profileId,
         };
-        const exactSource =
-            await readLegacyConnectedServiceQuotaCompatibilitySource({
+        const admitted =
+            await readLegacyConnectedServiceQuotaCompatibilityRecordWithSource({
             accountId: userId,
-            source: { ref, bindingKind: "account" },
+            ref,
         });
-        if (!exactSource) {
+        if (admitted.status === "storage_mode_mismatch") {
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
+        if (admitted.status === "not_found") {
             const predecessor =
                 await readReleasedConnectedServiceQuotaSnapshot({
                     accountId: userId,
@@ -173,10 +172,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                 },
             });
         }
-        const record = await readProviderAccountUsageRecord({
-            accountId: userId,
-            recordId: exactSource.recordId,
-        });
+        const record = admitted.record;
         const projection =
             record?.metadata?.legacyQuotaCompatibilityProjections?.find(
                 (candidate) =>

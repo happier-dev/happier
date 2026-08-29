@@ -59,6 +59,38 @@ vi.mock("@/app/share/sessionParticipants", () => ({
     getSessionParticipantUserIds,
 }));
 
+const sessionFindUnique = vi.hoisted(() => vi.fn());
+vi.mock("@/storage/db", () => ({
+    db: {
+        accessKey: {
+            findUnique: accessKeyFindUnique,
+        },
+        session: {
+            findUnique: sessionFindUnique,
+        },
+    },
+}));
+
+function buildPublicationRow(overrides: Record<string, unknown> = {}) {
+    return {
+        accountId: "u1",
+        seq: 5,
+        currentStorageState: "hosted",
+        acceptedThroughServerSeq: null,
+        materializationPublicationId: null,
+        materializedThroughSourceAt: null,
+        publishedThroughServerSeq: null,
+        lastViewedSessionSeq: 5,
+        latestReadyEventSeq: null,
+        latestReadyEventAt: null,
+        createdAt: new Date("2026-08-29T00:00:00Z"),
+        updatedAt: new Date("2026-08-29T00:00:00Z"),
+        meaningfulActivityAt: null,
+        lastActiveAt: new Date("2026-08-29T00:00:00Z"),
+        ...overrides,
+    };
+}
+
 const activeAccessKey = vi.hoisted(() => ({
     machineId: "m1",
     machine: {
@@ -67,13 +99,6 @@ const activeAccessKey = vi.hoisted(() => ({
     },
 }));
 const accessKeyFindUnique = vi.hoisted(() => vi.fn(async (): Promise<typeof activeAccessKey | null> => activeAccessKey));
-vi.mock("@/storage/db", () => ({
-    db: {
-        accessKey: {
-            findUnique: accessKeyFindUnique,
-        },
-    },
-}));
 
 vi.mock("@/config/env", () => ({
     parseIntEnv: (_value: string | undefined, fallback: number) => fallback,
@@ -114,6 +139,8 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
         accessKeyFindUnique.mockResolvedValue(activeAccessKey);
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(buildPublicationRow());
         checkSessionAccess.mockImplementation(async (userId, sessionId) => ({
             userId,
             sessionId,
@@ -122,6 +149,159 @@ describe("sessionUpdateHandler (execution-run-updated)", () => {
         }));
         requireAccessLevel.mockReturnValue(true);
         getSessionParticipantUserIds.mockResolvedValue(["u1", "u2"]);
+    });
+
+    it("suppresses execution-run-updated for a finite collaborator once the transcript publication is finite", async () => {
+        sessionFindUnique.mockResolvedValue(buildPublicationRow({
+            currentStorageState: "server_partial",
+            acceptedThroughServerSeq: 7,
+        }));
+        checkSessionAccess.mockResolvedValue({
+            userId: "u1",
+            sessionId: "s1",
+            level: "edit",
+            isOwner: true,
+        } as any);
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        (socket as any).data = {
+            machineId: "m1",
+            sessionScopedBinding: {
+                sessionId: "s1",
+                machineId: "m1",
+                proof: "machine-access-key",
+            },
+        };
+        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any;
+        sessionUpdateHandler("u1", socket as any, connection);
+
+        const handler = getSocketHandler(socket, "execution-run-updated");
+        await handler({
+            sid: "s1",
+            run: {
+                runId: "run_1",
+                callId: "call_1",
+                sidechainId: "call_1",
+                intent: "review",
+                backendTarget: { kind: "builtInAgent", agentId: "claude" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+                status: "running",
+                startedAtMs: 123,
+            },
+        });
+
+        expect(sessionFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "s1" } }));
+        expect(emitEphemeral).toHaveBeenCalledTimes(1);
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "u1",
+            payload: expect.objectContaining({
+                type: "execution-run-updated",
+                run: expect.objectContaining({ runId: "run_1", status: "running" }),
+            }),
+        }));
+    });
+
+    it("suppresses execution-run-updated for a collaborator under a malformed non-hosted publication state", async () => {
+        sessionFindUnique.mockResolvedValue(buildPublicationRow({
+            currentStorageState: "machine_only",
+            acceptedThroughServerSeq: null,
+        }));
+        checkSessionAccess.mockResolvedValue({
+            userId: "u1",
+            sessionId: "s1",
+            level: "edit",
+            isOwner: true,
+        } as any);
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        (socket as any).data = {
+            machineId: "m1",
+            sessionScopedBinding: {
+                sessionId: "s1",
+                machineId: "m1",
+                proof: "machine-access-key",
+            },
+        };
+        sessionUpdateHandler(
+            "u1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "execution-run-updated");
+        await handler({
+            sid: "s1",
+            run: {
+                runId: "run_1",
+                callId: "call_1",
+                sidechainId: "call_1",
+                intent: "review",
+                backendTarget: { kind: "builtInAgent", agentId: "claude" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+                status: "running",
+                startedAtMs: 123,
+            },
+        });
+
+        expect(emitEphemeral).toHaveBeenCalledTimes(1);
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1" }));
+    });
+
+    it("fails closed without any execution-run-updated delivery when the publication row is unavailable", async () => {
+        sessionFindUnique.mockResolvedValue(null);
+        checkSessionAccess.mockResolvedValue({
+            userId: "u1",
+            sessionId: "s1",
+            level: "edit",
+            isOwner: true,
+        } as any);
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = createFakeSocket();
+        (socket as any).data = {
+            machineId: "m1",
+            sessionScopedBinding: {
+                sessionId: "s1",
+                machineId: "m1",
+                proof: "machine-access-key",
+            },
+        };
+        sessionUpdateHandler(
+            "u1",
+            socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any,
+        );
+
+        const handler = getSocketHandler(socket, "execution-run-updated");
+        await handler({
+            sid: "s1",
+            run: {
+                runId: "run_1",
+                callId: "call_1",
+                sidechainId: "call_1",
+                intent: "review",
+                backendTarget: { kind: "builtInAgent", agentId: "claude" },
+                permissionMode: "read_only",
+                retentionPolicy: "ephemeral",
+                runClass: "bounded",
+                ioMode: "request_response",
+                status: "running",
+                startedAtMs: 123,
+            },
+        });
+
+        expect(emitEphemeral).not.toHaveBeenCalled();
     });
 
     it("broadcasts execution-run-updated ephemeral updates from a daemon session socket to all session participants", async () => {
@@ -535,6 +715,8 @@ describe("sessionUpdateHandler (transcript-stream-segment)", () => {
         getSessionParticipantUserIds.mockReset();
         accessKeyFindUnique.mockReset();
         accessKeyFindUnique.mockResolvedValue(activeAccessKey);
+        sessionFindUnique.mockReset();
+        sessionFindUnique.mockResolvedValue(buildPublicationRow());
         checkSessionAccess.mockResolvedValue({
             userId: "u1",
             sessionId: "s1",

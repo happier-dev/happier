@@ -11,6 +11,7 @@ import { authRoutes } from "./authRoutes";
 import { encryptString } from "@/modules/encrypt";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { enableAuthentication } from "../../utils/enableAuthentication";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -19,6 +20,7 @@ function createTestApp() {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>() as any;
+    enableAuthentication(typed);
     return trackApp(typed);
 }
 
@@ -177,7 +179,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        await db.account.create({ data: { publicKey: publicKeyHex } });
+        await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
 
         const app = createTestApp();
         authRoutes(app as any);
@@ -201,7 +203,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
@@ -267,7 +269,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
@@ -301,7 +303,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
@@ -341,7 +343,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
@@ -398,7 +400,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
@@ -456,7 +458,7 @@ describe("authRoutes (auth policy) (integration)", () => {
         });
 
         const { body, publicKeyHex } = createAuthBody();
-        const account = await db.account.create({ data: { publicKey: publicKeyHex } });
+        const account = await db.account.create({ data: { publicKey: publicKeyHex, encryptionMode: "plain" } });
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,

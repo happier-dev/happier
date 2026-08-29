@@ -147,6 +147,8 @@ type ExternalLinkedTakeoverAdmissionRecord = Readonly<{
      * ambiguous acknowledgement reuses this exact value.
      */
     attemptId: string;
+    /** The canonical operation claim admitted for this attempt. */
+    operationClaimId: string;
     /** The daemon operation revision at which this attempt was first admitted. */
     operationRevision: number;
     expectedSessionMetadataVersion: number;
@@ -522,10 +524,13 @@ function readExternalLinkedTakeoverAdmissionRecord(
         record.v !== 1
         || typeof record.machineId !== "string"
         || !record.machineId
+        || typeof record.operationClaimId !== "string"
+        || !record.operationClaimId
         || Object.keys(record).some((key) => ![
             "v",
             "machineId",
             "attemptId",
+            "operationClaimId",
             "operationRevision",
             "expectedSessionMetadataVersion",
             "expectedSessionSeq",
@@ -562,6 +567,7 @@ function readExternalLinkedTakeoverAdmissionRecord(
         v: 1,
         machineId: record.machineId,
         attemptId: parsed.data.attemptId,
+        operationClaimId: record.operationClaimId,
         operationRevision: parsed.data.expectedRevision,
         expectedSessionMetadataVersion: parsed.data.expectedSessionMetadataVersion,
         expectedSessionSeq: parsed.data.expectedSessionSeq,
@@ -578,6 +584,7 @@ function externalLinkedTakeoverAdmissionRecordFromCommand(
         v: 1,
         machineId,
         attemptId: command.attemptId,
+        operationClaimId: command.claim.operationClaimId,
         operationRevision: command.expectedRevision,
         expectedSessionMetadataVersion: command.expectedSessionMetadataVersion,
         expectedSessionSeq: command.expectedSessionSeq,
@@ -702,11 +709,21 @@ function externalLinkedAdmissionFencesMatch(
         })();
 }
 
+/**
+ * Whether the incoming command is an exact replay of the one admitted
+ * attempt: the same attempt, the same canonical operation claim, the same
+ * daemon operation revision, and identical expected Session/Pending/stable
+ * storage fences. A lost-ack replay re-acknowledges only this exact command;
+ * a lower revision or a different claim at the same revision is superseded
+ * state, not a replay.
+ */
 function externalLinkedAdmissionAttemptMatches(
     stored: ExternalLinkedTakeoverAdmissionRecord,
     current: ExternalLinkedTakeoverAdmissionCommand,
 ): boolean {
     return stored.attemptId === current.attemptId
+        && stored.operationClaimId === current.claim.operationClaimId
+        && stored.operationRevision === current.expectedRevision
         && stored.expectedSessionMetadataVersion
             === current.expectedSessionMetadataVersion
         && stored.expectedSessionSeq === current.expectedSessionSeq

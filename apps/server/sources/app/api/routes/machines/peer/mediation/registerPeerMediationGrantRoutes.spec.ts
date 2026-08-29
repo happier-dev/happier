@@ -137,6 +137,29 @@ describe("registerPeerMediationGrantRoutes", () => {
         expect(malformed.response).toMatchObject({ ok: false, reasonCode: "invalid_request" });
     });
 
+    it("mints an endpoint-bound iroh machine grant through the existing transfer authority", async () => {
+        const route = createRoute();
+        const { response } = await route.invoke({
+            userId: "account_1",
+            body: {
+                ...baseBody,
+                routeKind: "iroh_peer",
+                endpointFingerprint: "iroh_endpoint_1",
+            },
+        });
+
+        expect(response).toMatchObject({
+            ok: true,
+            grant: {
+                payload: {
+                    routeKind: "iroh_peer",
+                    machineId: "machine_1",
+                    endpointFingerprint: "iroh_endpoint_1",
+                },
+            },
+        });
+    });
+
     it("mints a loopback route grant for the authenticated account", async () => {
         const route = createRoute();
 

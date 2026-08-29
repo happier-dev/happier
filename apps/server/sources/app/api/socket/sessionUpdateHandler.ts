@@ -1233,6 +1233,8 @@ export function sessionUpdateHandler(
 
             const participantUserIds = await getSessionParticipantUserIds({ sessionId: sid });
             if (!participantUserIds || participantUserIds.length === 0) return;
+            const publication = await loadSessionTranscriptPublicationRecipientProjection(sid);
+            if (!publication) return;
 
             const payload = {
                 type: 'execution-run-updated' as const,
@@ -1240,11 +1242,21 @@ export function sessionUpdateHandler(
                 run: parsedRun.data,
             };
 
-            // Broadcast to all participants. Execution runs are a UI optimization; clients must still treat this as a hint.
+            // Live execution-run facts carry no sequence anchor, so every
+            // recipient is resolved through the canonical publication ceiling:
+            // the owner and hosted-session participants receive the live hint,
+            // while a finite collaborator is suppressed until the run's
+            // transcript output is published to them.
             for (const participantUserId of participantUserIds) {
+                const recipientPayload = projectSessionTranscriptPublicationUnanchoredProjection(
+                    payload,
+                    publication,
+                    participantUserId,
+                );
+                if (recipientPayload.kind === "suppress") continue;
                 eventRouter.emitEphemeral({
                     userId: participantUserId,
-                    payload,
+                    payload: recipientPayload.value,
                     recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
                     skipSenderConnection: participantUserId === userId ? connection : undefined,
                 });

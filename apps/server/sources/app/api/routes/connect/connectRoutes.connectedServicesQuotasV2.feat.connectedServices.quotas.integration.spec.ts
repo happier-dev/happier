@@ -6,11 +6,17 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { connectRoutes } from "./connectRoutes";
 import {
     closeProviderAccountUsageTrackedApps,
+    createProviderAccountUsageRecordKey,
     createProviderAccountUsageTestApp,
+    createUsageSnapshot,
 } from "./providerAccountUsageTestkit";
 import {
     createLegacyCredentialFixtureIdentity,
 } from "./testkit/qualifiedConnectedAccountFixtureIdentity";
+import {
+    readLegacyConnectedServiceQuotaCompatibilityRecordWithSource,
+} from "./qualifiedConnectedAccounts/usageRepository";
+import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
 
 async function createConnectedServiceProfileBinding(
     accountId: string,
@@ -327,5 +333,82 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         });
         expect(missing.statusCode).toBe(404);
         expect(missing.json()).toEqual({ error: "connect_quotas_not_found" });
+    });
+
+    it("admits the canonical PAU record before projecting the released V2 shape", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await createReadyE2eeAccount();
+        await createConnectedServiceProfileBinding(
+            user.id,
+            "acct_quota_v2_admission",
+        );
+
+        const app = createProviderAccountUsageTestApp();
+        connectRoutes(app as never);
+        await app.ready();
+        const write = await app.inject({
+            method: "POST",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": user.id,
+            },
+            payload: {
+                sealed: {
+                    format: "account_scoped_v1",
+                    ciphertext:
+                        "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=",
+                },
+                metadata: {
+                    fetchedAt: 1_234,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                },
+            },
+        });
+        expect(write.statusCode, write.body).toBe(200);
+
+        const stored = await db.providerAccountUsageRecord.findFirstOrThrow({
+            where: { accountId: user.id },
+        });
+        const snapshot = createUsageSnapshot({
+            fetchedAt: 1_234,
+            recordKey: createProviderAccountUsageRecordKey({
+                accountSubjectId: "acct_quota_v2_admission",
+            }),
+            planLabel: "mode-drift",
+        });
+        await db.providerAccountUsageRecord.update({
+            where: { id: stored.id },
+            data: {
+                payloadMode: "plain_json_v1",
+                snapshot,
+                sealedPayload: null,
+            },
+        });
+
+        await expect(
+            readLegacyConnectedServiceQuotaCompatibilityRecordWithSource({
+                accountId: user.id,
+                ref: {
+                    service: resolveLegacyQualifiedConnectedAccountService(
+                        "openai-codex",
+                    ),
+                    accountId: "work",
+                },
+            }),
+        ).resolves.toEqual({ status: "storage_mode_mismatch" });
+
+        const read = await app.inject({
+            method: "GET",
+            url: "/v2/connect/openai-codex/profiles/work/quotas",
+            headers: { "x-test-user-id": user.id },
+        });
+        expect(read.statusCode).toBe(404);
+        expect(read.json()).toEqual({ error: "connect_quotas_not_found" });
     });
 });

@@ -103,6 +103,17 @@ const LoopbackPeerMediationGrantRequestSchema = z.object({
     scope: DirectRouteGrantScopeV1Schema,
 }).strict();
 
+// Native machine/1 grants use the same signed grant authority as loopback
+// mediation, but are admitted only for the endpoint-bound Iroh route.
+const IrohPeerMediationGrantRequestSchema = z.object({
+    machineId: z.string().min(1),
+    flowKind: z.enum(["bounded_transfer", "machine_rpc"]),
+    routeKind: z.literal("iroh_peer"),
+    endpointFingerprint: z.string().min(1),
+    ttlMs: z.number().int().positive(),
+    scope: DirectRouteGrantScopeV1Schema,
+}).strict();
+
 const LiveStreamServerRelayAuthorizationRequestSchema = z.object({
     machineId: z.string().min(1),
     targetMachineId: z.string().min(1),
@@ -143,6 +154,7 @@ const VoiceMediaServerRelayAuthorizationRequestSchema = z.object({
 const PeerMediationGrantRequestSchema = z.union([
     DirectRouteGrantRequestV2Schema,
     LoopbackPeerMediationGrantRequestSchema,
+    IrohPeerMediationGrantRequestSchema,
     LiveStreamServerRelayAuthorizationRequestSchema,
     TcpTunnelServerRelayAuthorizationRequestSchema,
     VoiceMediaServerRelayAuthorizationRequestSchema,

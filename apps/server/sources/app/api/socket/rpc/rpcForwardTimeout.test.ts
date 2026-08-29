@@ -15,11 +15,11 @@ describe('resolveRpcForwardTimeoutMs', () => {
     });
 
     it('keeps server-origin external Actions under caller and lifecycle cancellation', () => {
-        for (const requestedTimeoutMs of [1, 30_001, 300_000]) {
+        for (const [requestedTimeoutMs, expected] of [[1, 30_000], [30_001, 30_001], [300_000, 300_000]] as const) {
             expect(resolveRpcForwardTimeoutMs(
                 `machine-one:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
                 requestedTimeoutMs,
-            )).toBe(2_147_483_647);
+            )).toBe(expected);
         }
     });
 

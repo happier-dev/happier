@@ -44,6 +44,7 @@ model Account {
     /// Server-readable Automation operational policy; never stored in private Account settings.
     automationMaxActiveRunsPerMachine Int @default(4)
     automationRunRetention String @default("thirtyDays")
+    preferredHomeServerIdentityId String?
 
     // Profile
     firstName String?
@@ -69,6 +70,8 @@ model Account {
     AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
     ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
+    homeDirectoryEntries   AccountHomeDirectoryEntry[]
+    directoryLinks         AccountDirectoryLink[]
     ProviderAccountUsageRecord    ProviderAccountUsageRecord[]
     ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
@@ -122,6 +125,37 @@ model Account {
     SessionOrganizationOrderEntry SessionOrganizationOrderEntry[]
     SessionOrganizationLabel      SessionOrganizationLabel[]
     SessionOrganizationCheckpoint SessionOrganizationCheckpoint?
+}
+
+model AccountHomeDirectoryEntry {
+    accountId              String
+    homeServerIdentityId   String
+    canonicalServerUrl     String
+    label                  String
+    connectionDescriptor   Json
+    createdAt              DateTime @default(now())
+    updatedAt              DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@id([accountId, homeServerIdentityId])
+    @@index([accountId, updatedAt])
+}
+
+model AccountDirectoryLink {
+    accountId                 String
+    issuerServerIdentityId    String
+    issuerSubjectId           String
+    issuerSigningKeyId        String
+    issuerSigningPublicKey    Bytes
+    createdAt                 DateTime @default(now())
+    updatedAt                 DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@id([issuerServerIdentityId, issuerSubjectId])
+    @@unique([accountId, issuerServerIdentityId])
+    @@index([accountId])
 }
 
 model AccountSettingsSnapshot {

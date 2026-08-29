@@ -7,7 +7,7 @@ import {
     createDirectRouteGrantSigningInputV1,
     createDirectRouteGrantSigningInputV2,
     validateMachineRpcGrantAllowedMethods,
-    type DirectPeerRouteKindV1,
+    type AuthorizedPeerEndpointRouteKindV1,
     type DirectRouteGrantPayloadV1,
     type DirectRouteGrantPayloadV2,
     type DirectRouteGrantScopeV1,
@@ -56,7 +56,7 @@ export type MintDirectRouteGrantV1Input = Readonly<{
     accountId: string;
     machineId: string;
     flowKind: PeerFlowKindV1;
-    routeKind: DirectPeerRouteKindV1 | "server_relay";
+    routeKind: AuthorizedPeerEndpointRouteKindV1 | "server_relay";
     scope: DirectRouteGrantScopeV1;
     endpointFingerprint?: string;
     nowMs: number;

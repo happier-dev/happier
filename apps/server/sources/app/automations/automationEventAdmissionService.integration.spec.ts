@@ -1842,10 +1842,6 @@ describe("Automation Event admission", () => {
                 }),
             },
         });
-        await db.automationAssignment.create({
-            data: { automationId: AUTOMATION_ID, machineId: MACHINE_ID, enabled: true },
-        });
-
         await expect(admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
@@ -1917,7 +1913,7 @@ describe("Automation Event admission", () => {
             template: { t: "plain", v: { v: 1, prompt: "frozen v1" } },
             triggerEvidence: { t: "plain", v: frozenTriggerEvidence },
             target: eventAdmissionSpawnTarget(),
-            assignmentMachineIds: [],
+            assignmentMachineIds: [MACHINE_ID],
         });
         expect(expectedRecipe.kind).toBe("available");
         if (expectedRecipe.kind !== "available") return;
@@ -2700,13 +2696,6 @@ describe("Automation Event admission", () => {
 
     it("commits an Event Run wake and hands its initial revision to the incumbent claim owner", async () => {
         await seed();
-        await db.automationAssignment.create({
-            data: {
-                automationId: AUTOMATION_ID,
-                machineId: MACHINE_ID,
-                enabled: true,
-            },
-        });
         const emitUpdate = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(() => {});
 
         const admitted = await admitAutomationEventV1({
@@ -2799,14 +2788,6 @@ describe("Automation Event admission", () => {
                 }),
             },
         });
-        await db.automationAssignment.create({
-            data: {
-                automationId: AUTOMATION_ID,
-                machineId: MACHINE_ID,
-                enabled: true,
-            },
-        });
-
         const admitted = await admitAutomationEventV1({
             accountId: ACCOUNT_ID,
             caller,
@@ -2952,13 +2933,6 @@ describe("Automation Event admission", () => {
 
     it("keeps Event capacity with an admitted Run after its Definition is disabled", async () => {
         await seed();
-        await db.automationAssignment.create({
-            data: {
-                automationId: AUTOMATION_ID,
-                machineId: MACHINE_ID,
-                enabled: true,
-            },
-        });
         await db.automation.create({
             data: {
                 id: SECOND_AUTOMATION_ID,
@@ -3634,13 +3608,6 @@ describe("Automation Event admission", () => {
         const { github } = sources;
         const publisherKeyPair = tweetnacl.sign.keyPair();
         await seedGithubCheckpointedPull({ github, keyPair: publisherKeyPair });
-        await db.automationAssignment.create({
-            data: {
-                automationId: AUTOMATION_ID,
-                machineId: MACHINE_ID,
-                enabled: true,
-            },
-        });
         const githubMaterialization = {
             pluginId: github.pluginId,
             machineId: MACHINE_ID,

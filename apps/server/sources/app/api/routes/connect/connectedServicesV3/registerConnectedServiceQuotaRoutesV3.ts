@@ -13,8 +13,7 @@ import {
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "../connectedServicesV2/profileIdSchema";
 import {
-    readLegacyConnectedServiceQuotaCompatibilitySource,
-    readQualifiedProviderAccountUsageRecord,
+    readQualifiedConnectedAccountUsageRecordWithSource,
     requestLegacyConnectedServiceQuotaCompatibilityRefresh,
     unlinkLegacyConnectedServiceQuotaCompatibilitySource,
     writeLegacyConnectedServiceQuotaCompatibilityRecord,
@@ -155,23 +154,13 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                 ),
             accountId: profileId,
         };
-        const source =
-            await readLegacyConnectedServiceQuotaCompatibilitySource({
-                accountId: userId,
-                source: { ref, bindingKind: "account" },
-            });
-        if (!source) {
-            return reply.code(404).send({
-                error: "connect_quotas_not_found",
-            });
-        }
         // Admission is owned by the adjacent V4 ProviderAccountUsage read: one
         // transaction admits the persisted Account encryption mode and the
         // record's payload mode together. Source-less PAU history remains
         // absent from this compatibility projection without being deleted.
-        const admitted = await readQualifiedProviderAccountUsageRecord({
+        const admitted = await readQualifiedConnectedAccountUsageRecordWithSource({
             accountId: userId,
-            recordId: source.recordId,
+            ref,
         });
         if (admitted.status === "storage_mode_mismatch") {
             return reply.code(409).send({
@@ -234,15 +223,13 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
             response: {
                 200: z.object({ success: z.literal(true) }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
+                409: z.object({ error: z.literal("provider_account_usage_storage_mode_mismatch") }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
-
-        const account = await readPlainAccount(userId);
-        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
         const result =
             await requestLegacyConnectedServiceQuotaCompatibilityRefresh({
@@ -255,6 +242,11 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                     accountId: profileId,
                 },
             });
+        if (result === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
         if (result === "not_found") {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
         }
@@ -272,15 +264,13 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
             response: {
                 200: z.object({ success: z.literal(true) }),
                 404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
+                409: z.object({ error: z.literal("provider_account_usage_storage_mode_mismatch") }),
             },
         },
     }, async (request, reply) => {
         const userId = request.userId;
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
-
-        const account = await readPlainAccount(userId);
-        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
         const result =
             await unlinkLegacyConnectedServiceQuotaCompatibilitySource({
@@ -293,6 +283,11 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                     accountId: profileId,
                 },
             });
+        if (result === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
         if (result === "not_found") {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
         }

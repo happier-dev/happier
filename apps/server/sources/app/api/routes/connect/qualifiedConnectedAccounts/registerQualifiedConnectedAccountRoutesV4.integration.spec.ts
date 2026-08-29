@@ -1238,6 +1238,89 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     error:
                         "provider_account_usage_storage_mode_mismatch",
                 });
+
+                const modeMismatchQuota = await app.inject({
+                    method: "GET",
+                    url:
+                        "/v4/connect/qualified/quotas?ref="
+                        + encodeURIComponent(encodedRef),
+                    headers,
+                });
+                expect(modeMismatchQuota.statusCode).toBe(409);
+                expect(modeMismatchQuota.json()).toEqual({
+                    error:
+                        "provider_account_usage_storage_mode_mismatch",
+                });
+
+                const beforeMismatchMutation =
+                    await db.providerAccountUsageRecord.findUnique({
+                        where: {
+                            accountId_recordId: {
+                                accountId: account.id,
+                                recordId: snapshot.recordId,
+                            },
+                        },
+                        select: {
+                            payloadMode: true,
+                            refreshRequestedAt: true,
+                        },
+                    });
+                const modeMismatchRefresh = await app.inject({
+                    method: "POST",
+                    url:
+                        "/v4/connect/qualified/provider-account-usage/record/refresh",
+                    headers,
+                    payload: { recordId: snapshot.recordId },
+                });
+                expect(modeMismatchRefresh.statusCode).toBe(409);
+                expect(modeMismatchRefresh.json()).toEqual({
+                    error:
+                        "provider_account_usage_storage_mode_mismatch",
+                });
+                const afterMismatchMutation =
+                    await db.providerAccountUsageRecord.findUnique({
+                        where: {
+                            accountId_recordId: {
+                                accountId: account.id,
+                                recordId: snapshot.recordId,
+                            },
+                        },
+                        select: {
+                            payloadMode: true,
+                            refreshRequestedAt: true,
+                        },
+                    });
+                expect(afterMismatchMutation).toEqual(
+                    beforeMismatchMutation,
+                );
+                const modeMismatchQuotaRefresh = await app.inject({
+                    method: "POST",
+                    url: "/v4/connect/qualified/quotas/refresh",
+                    headers,
+                    payload: { ref },
+                });
+                expect(modeMismatchQuotaRefresh.statusCode).toBe(409);
+                expect(modeMismatchQuotaRefresh.json()).toEqual({
+                    error: "provider_account_usage_storage_mode_mismatch",
+                });
+                const modeMismatchUnlink = await app.inject({
+                    method: "DELETE",
+                    url: "/v4/connect/qualified/quotas?ref=" + encodeURIComponent(encodedRef),
+                    headers,
+                });
+                expect(modeMismatchUnlink.statusCode).toBe(409);
+                expect(modeMismatchUnlink.json()).toEqual({
+                    error: "provider_account_usage_storage_mode_mismatch",
+                });
+                const modeMismatchDeleteRecord = await app.inject({
+                    method: "DELETE",
+                    url: "/v4/connect/qualified/provider-account-usage/record?recordId=" + encodeURIComponent(snapshot.recordId),
+                    headers,
+                });
+                expect(modeMismatchDeleteRecord.statusCode).toBe(409);
+                expect(modeMismatchDeleteRecord.json()).toEqual({
+                    error: "provider_account_usage_storage_mode_mismatch",
+                });
                 await db.account.update({
                     where: { id: account.id },
                     data: { encryptionMode: "plain" },

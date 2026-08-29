@@ -484,6 +484,71 @@ describe("Automation Event source status", () => {
         });
     });
 
+    it("does not carry occurrence timestamps into a newly current trigger revision", async () => {
+        await seed();
+        const identity = {
+            kind: "source" as const,
+            automationId: AUTOMATION_ID,
+            triggerId: TRIGGER_ID,
+            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+            sourceSelectorId: SOURCE_SELECTOR_ID,
+        };
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...identity,
+                triggerRevision: TRIGGER_REVISION,
+                state: "observing",
+                code: "none",
+                lastObservedAt: 1_723_247_200_000,
+                lastDispositionAt: 1_723_247_200_001,
+                nextRetryAt: null,
+                observedDelta: 1,
+                admittedDelta: 1,
+                skippedDelta: 0,
+            },
+        });
+        await db.automationTrigger.update({
+            where: { id: TRIGGER_ID },
+            data: { revision: TRIGGER_REVISION + 1 },
+        });
+
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...identity,
+                triggerRevision: TRIGGER_REVISION + 1,
+                state: "backingOff",
+                code: "admissionUnavailable",
+                nextRetryAt: null,
+                observedDelta: 0,
+                admittedDelta: 0,
+                skippedDelta: 0,
+            },
+        });
+
+        await expect(db.automationEventSourceStatus.findUnique({
+            where: { triggerId: TRIGGER_ID },
+            select: {
+                triggerRevision: true,
+                lastObservedAt: true,
+                lastDispositionAt: true,
+                observedCount: true,
+                admittedCount: true,
+                skippedCount: true,
+            },
+        })).resolves.toEqual({
+            triggerRevision: TRIGGER_REVISION + 1,
+            lastObservedAt: null,
+            lastDispositionAt: null,
+            observedCount: 0,
+            admittedCount: 0,
+            skippedCount: 0,
+        });
+    });
+
     it("batch-projects only the exact current Event source and catalog reconciliation status", async () => {
         await seed();
         await reportAutomationEventSourceStatusV1({
@@ -851,6 +916,61 @@ describe("Automation Event source status", () => {
         await expect(db.automationEventSourceStatus.findUnique({
             where: { triggerId: TRIGGER_ID },
         })).resolves.toMatchObject({ state: "observing", observedCount: 1, admittedCount: 1 });
+    });
+
+    it("preserves occurrence timestamps when connection health alone changes", async () => {
+        await seed();
+        const lastObservedAt = 1_723_247_200_000;
+        const lastDispositionAt = 1_723_247_200_001;
+        const identity = {
+            kind: "source" as const,
+            automationId: AUTOMATION_ID,
+            triggerId: TRIGGER_ID,
+            triggerRevision: TRIGGER_REVISION,
+            eventRef: { pluginId: PLUGIN_ID, localId: EVENT_LOCAL_ID },
+            sourceSelectorId: SOURCE_SELECTOR_ID,
+        };
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...identity,
+                state: "observing",
+                code: "none",
+                lastObservedAt,
+                lastDispositionAt,
+                nextRetryAt: null,
+                observedDelta: 1,
+                admittedDelta: 1,
+                skippedDelta: 0,
+            },
+        });
+
+        await reportAutomationEventSourceStatusV1({
+            accountId: ACCOUNT_ID,
+            caller,
+            input: {
+                ...identity,
+                state: "backingOff",
+                code: "admissionUnavailable",
+                nextRetryAt: null,
+                observedDelta: 0,
+                admittedDelta: 0,
+                skippedDelta: 0,
+            },
+        });
+
+        const status = await db.automationEventSourceStatus.findUniqueOrThrow({
+            where: { triggerId: TRIGGER_ID },
+        });
+        expect(status).toMatchObject({
+            state: "backingOff",
+            code: "admissionUnavailable",
+            observedCount: 1,
+            admittedCount: 1,
+        });
+        expect(status.lastObservedAt?.getTime()).toBe(lastObservedAt);
+        expect(status.lastDispositionAt?.getTime()).toBe(lastDispositionAt);
     });
 
     it("rejects a source report when the caller's current Event no longer supports its stored transport", async () => {

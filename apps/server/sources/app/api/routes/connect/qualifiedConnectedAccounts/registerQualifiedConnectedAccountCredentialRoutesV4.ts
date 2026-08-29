@@ -573,6 +573,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 200: QualifiedConnectedAccountQuotaResponseV4Schema,
                 400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: NotFoundResponseSchema,
+                409: QualifiedProviderAccountUsageReadErrorV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -594,6 +595,16 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_quotas_not_found",
             });
         }
+        if ("status" in quota && quota.status === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
+        if ("status" in quota && quota.status === "not_found") {
+            return reply.code(404).send({
+                error: "connect_quotas_not_found",
+            });
+        }
         return reply.send(quota);
     });
 
@@ -605,6 +616,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 200: QualifiedConnectedAccountSuccessV4Schema,
                 400: z.object({ error: z.literal("invalid-params") }).strict(),
                 404: NotFoundResponseSchema,
+                409: QualifiedProviderAccountUsageReadErrorV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -621,6 +633,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             accountId: request.userId,
             ref,
         });
+        if (result === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
         if (result === "not_found") {
             return reply.code(404).send({
                 error: "connect_quotas_not_found",
@@ -636,6 +653,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             response: {
                 200: QualifiedConnectedAccountSuccessV4Schema,
                 404: NotFoundResponseSchema,
+                409: QualifiedProviderAccountUsageReadErrorV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -644,6 +662,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 accountId: request.userId,
                 ref: request.body.ref,
             });
+        if (result === "storage_mode_mismatch") {
+            return reply.code(409).send({
+                error: "provider_account_usage_storage_mode_mismatch",
+            });
+        }
         if (result === "not_found") {
             return reply.code(404).send({
                 error: "connect_quotas_not_found",
@@ -1406,6 +1429,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 response: {
                     200: QualifiedConnectedAccountSuccessV4Schema,
                     404: NotFoundResponseSchema,
+                    409: QualifiedProviderAccountUsageReadErrorV4Schema,
                 },
             },
         },
@@ -1415,6 +1439,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 accountId: request.userId,
                 recordId: request.query.recordId,
             });
+            if (result === "storage_mode_mismatch") {
+                return reply.code(409).send({
+                    error: "provider_account_usage_storage_mode_mismatch",
+                });
+            }
             if (result === "not_found") {
                 return reply.code(404).send({
                     error: "provider_account_usage_not_found",
@@ -1433,6 +1462,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 response: {
                     200: QualifiedConnectedAccountSuccessV4Schema,
                     404: NotFoundResponseSchema,
+                    409: QualifiedProviderAccountUsageReadErrorV4Schema,
                 },
             },
         },
@@ -1442,6 +1472,11 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 accountId: request.userId,
                 recordId: request.body.recordId,
             });
+            if (result === "storage_mode_mismatch") {
+                return reply.code(409).send({
+                    error: "provider_account_usage_storage_mode_mismatch",
+                });
+            }
             if (result === "not_found") {
                 return reply.code(404).send({
                     error: "provider_account_usage_not_found",

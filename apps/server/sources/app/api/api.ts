@@ -49,6 +49,11 @@ import { V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./routes/session/v
 import { startAutomationReplyHandoffWorker } from "@/app/automations/automationReplyHandoffWorker";
 import { startAutomationScheduleWorker } from "@/app/automations/automationScheduleWorker";
 import { registerExternalActionRoutes } from "./routes/actions/registerExternalActionRoutes";
+import { createHomeSearchService } from "@/app/search/homeSearchService";
+import { registerHomeSearchRoutes } from "@/app/search/homeSearchRoutes";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { db } from "@/storage/db";
+import { join } from "node:path";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -171,6 +176,23 @@ export async function startApi() {
 
     // Routes
     registerApiRoutes(typed);
+    let homeSearchService: Awaited<ReturnType<typeof createHomeSearchService>> | null = null;
+    if ((process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER) === 'sqlite'
+        && (process.env.HAPPIER_FILES_BACKEND ?? process.env.HAPPY_FILES_BACKEND) === 'local') {
+        const dataDir = String(process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim();
+        if (dataDir) {
+            homeSearchService = await createHomeSearchService({
+                dbPath: join(dataDir, 'derived', 'search.sqlite'),
+                homeServerIdentityId: await getOrCreateServerIdentityId(process.env),
+                storagePolicy: String(process.env.HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY ?? process.env.HAPPY_FEATURE_ENCRYPTION__STORAGE_POLICY ?? 'plaintext_only'),
+            });
+            registerHomeSearchRoutes(typed, {
+                service: homeSearchService,
+                resolveVisibleSessionIds: async (userId) => (await db.session.findMany({ where: { accountId: userId }, select: { id: true } })).map((session) => session.id),
+            });
+            onShutdown('home-search', async () => { homeSearchService?.close(); });
+        }
+    }
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;

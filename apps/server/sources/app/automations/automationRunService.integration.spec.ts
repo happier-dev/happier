@@ -1322,6 +1322,93 @@ describe("automationRunService (integration)", () => {
         });
     });
 
+    it("commits outcomeUnknown after an unrelated Account write moves only the global sequence", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-unknown-unrelated-seq",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
+        await inTx(async (tx) => {
+            await markAccountChanged(tx, {
+                accountId: seeded.account.id,
+                kind: "kv",
+                entityId: "unrelated-key-before-outcome-unknown",
+            });
+        });
+        const movedWitness = await readAutomationAccountCurrentness(seeded.account.id);
+        expect(movedWitness.version).toBeGreaterThan(startWitness.version);
+        expect(movedWitness.mode).toBe(startWitness.mode);
+        expect(movedWitness.contentKeyFingerprint).toBe(startWitness.contentKeyFingerprint);
+
+        const settle = readExecutionDispatchSettlementOwner();
+        await expect(settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: startWitness,
+            outcome: {
+                kind: "outcomeUnknown",
+                errorCode: "execution_run_target_unavailable",
+            },
+        })).resolves.not.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionAttempt: true,
+                errorCode: true,
+            },
+        })).resolves.toEqual({
+            state: "outcome_uncertain",
+            executionDispatchState: "outcomeUnknown",
+            executionAttempt: 1,
+            errorCode: "execution_run_target_unavailable",
+        });
+    });
+
+    it("refuses outcomeUnknown when the dispatch witness names a different Account encryption identity", async () => {
+        const seeded = await seedExecutionDispatchRun({
+            id: "run-execution-dispatch-unknown-mode-transition",
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+        const startWitness = await readAutomationAccountCurrentness(seeded.account.id);
+
+        const settle = readExecutionDispatchSettlementOwner();
+        await expect(settle({
+            accountId: seeded.account.id,
+            runId: seeded.run.id,
+            machineId: seeded.machine.id,
+            attempt: 1,
+            accountCurrentness: {
+                ...startWitness,
+                mode: "e2ee",
+                contentKeyFingerprint: "different-current-key",
+            },
+            outcome: {
+                kind: "outcomeUnknown",
+                errorCode: "execution_run_target_unavailable",
+            },
+        })).resolves.toBeNull();
+        await expect(db.automationRun.findUniqueOrThrow({
+            where: { id: seeded.run.id },
+            select: {
+                state: true,
+                executionDispatchState: true,
+                executionAttempt: true,
+            },
+        })).resolves.toEqual({
+            state: "running",
+            executionDispatchState: "dispatchPermitted",
+            executionAttempt: 1,
+        });
+    });
+
     it("keeps a permitted dispatch uncertain when generic cancellation races the worker and still retains the learned native identity", async () => {
         const seeded = await seedExecutionDispatchRun({
             id: "run-execution-dispatch-cancel-race",
@@ -2178,7 +2265,7 @@ describe("automationRunService (integration)", () => {
     );
 
     it.each(["failed", "cancelled"] as const)(
-        "moves an awaiting Conversation handoff to blocked when the Run is terminally %s",
+        "moves an awaiting Conversation handoff to blocked when the Run settles through %s",
         async (terminalState) => {
             const seeded = await seedConversationRunForResultValidation();
             const before = await db.automationRun.findUniqueOrThrow({
@@ -2201,7 +2288,10 @@ describe("automationRunService (integration)", () => {
                 });
 
             expect(settled).toEqual(expect.objectContaining({
-                state: terminalState,
+                // A running Run has crossed the external-effect boundary;
+                // cancellation therefore settles as outcome_uncertain while
+                // a failed Run remains failed.
+                state: terminalState === "cancelled" ? "outcome_uncertain" : terminalState,
                 replyHandoffState: "blocked",
                 replyHandoffDueAt: null,
                 replyHandoffReceiptEnvelope: null,
@@ -2987,7 +3077,7 @@ describe("automationRunService (integration)", () => {
         await expect(cancelAutomationRun({
             accountId: seeded.accountId,
             runId: cancelledRun.id,
-        })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+        })).resolves.toEqual(expect.objectContaining({ state: "outcome_uncertain" }));
         await expect(failAutomationRun({
             accountId: seeded.accountId,
             runId: cancelledRun.id,
@@ -3034,9 +3124,9 @@ describe("automationRunService (integration)", () => {
                 errorCode: "session_start_cancelled_after_create",
             });
             expect(retained).toEqual(expect.objectContaining({
-                state: "cancelled",
+                state: "outcome_uncertain",
                 producedSessionId: cancelledSession.id,
-                errorCode: null,
+                errorCode: "execution_run_outcome_unknown",
             }));
             expect(lifecycleUpdates).toEqual([]);
             expect(legacyUpdates).toEqual([
@@ -3044,7 +3134,7 @@ describe("automationRunService (integration)", () => {
                     body: expect.objectContaining({
                         t: "automation-run-updated",
                         runId: cancelledRun.id,
-                        state: "cancelled",
+                        state: "outcome_uncertain",
                     }),
                 }),
             ]);
@@ -3056,10 +3146,10 @@ describe("automationRunService (integration)", () => {
             where: { runId: cancelledRun.id },
             orderBy: [{ ts: "asc" }],
             select: { type: true },
-        })).resolves.toEqual([{ type: "run_cancelled" }]);
+        })).resolves.toEqual([{ type: "run_outcome_uncertain" }]);
     });
 
-    it("retains a canonical created Session before cancellation without changing the Run lifecycle", async () => {
+    it("retains a canonical created Session before cancellation while preserving outcome uncertainty", async () => {
         const seeded = await createAccountMachineAutomation({
             publicKey: "pk-automation-run-retain-before-cancel",
             machineId: "machine-retain-before-cancel",
@@ -3175,7 +3265,7 @@ describe("automationRunService (integration)", () => {
             accountId: seeded.accountId,
             runId: run.id,
         })).resolves.toEqual(expect.objectContaining({
-            state: "cancelled",
+            state: "outcome_uncertain",
             producedSessionId: session.id,
         }));
     });
@@ -3221,7 +3311,7 @@ describe("automationRunService (integration)", () => {
         await expect(cancelAutomationRun({
             accountId: seeded.accountId,
             runId: run.id,
-        })).resolves.toEqual(expect.objectContaining({ state: "cancelled" }));
+        })).resolves.toEqual(expect.objectContaining({ state: "outcome_uncertain" }));
         const before = await db.automationRun.findUniqueOrThrow({
             where: { id: run.id },
             select: {
@@ -3258,7 +3348,7 @@ describe("automationRunService (integration)", () => {
         await expect(db.automationRunEvent.findMany({
             where: { runId: run.id },
             select: { type: true },
-        })).resolves.toEqual([{ type: "run_cancelled" }]);
+        })).resolves.toEqual([{ type: "run_outcome_uncertain" }]);
     });
 
     it("refuses noncanonical, stale, and non-Session retention candidates", async () => {

@@ -1059,14 +1059,15 @@ export async function settleAutomationExecutionDispatch(params: Readonly<{
     return await inTx(async (tx) => {
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(tx, params.accountId);
         if (accountFence.status !== "ready") return null;
-        // A strict `started` response reports an external execution that has
-        // already happened. Its identity is the only pointer back to something
-        // that may still be running, so an unrelated Account write that moved
-        // only the global sequence must not discard it; an encryption-mode or
-        // content-key transition still fences the write. Every other outcome
-        // is a pre-effect or redispatch-permission decision and keeps the
-        // exact post-start witness S.
-        const currentnessHolds = params.outcome.kind === "started"
+        // `started` and `outcomeUnknown` both report after the external start
+        // effect may have happened. An unrelated Account write that moved only
+        // the global sequence must not discard either truthful result; an
+        // encryption-mode or content-key transition still fences the write.
+        // `noRunCreated` is a pre-effect redispatch-permission decision and
+        // therefore keeps the exact post-start witness S.
+        const mayHaveProducedExternalEffect = params.outcome.kind === "started"
+            || params.outcome.kind === "outcomeUnknown";
+        const currentnessHolds = mayHaveProducedExternalEffect
             ? await hasCompatibleAutomationAccountEncryptionTx({
                 tx,
                 accountId: params.accountId,
@@ -1239,6 +1240,22 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
     accountCurrentness: AutomationAccountCurrentnessWitnessV1;
     now: Date;
 }>): Promise<AutomationRunItem | null> {
+    // Lease expiry is a post-effect decision: the dispatch lease was already
+    // permitted, but the daemon did not return a settlement.  The external
+    // effect may therefore have happened even when unrelated Account writes
+    // advanced Account.seq after the daemon's witness.  Preserve the same
+    // r0.46 authority split as the explicit outcomeUnknown settlement: an
+    // encryption-mode/content-key transition refuses the write, while a
+    // sequence-only change does not.  The exact Run/machine/attempt/revision
+    // CAS below remains the linearization point and prevents stale lease
+    // recovery from mutating a newer attempt.
+    if (!await hasCompatibleAutomationAccountEncryptionTx({
+        tx: params.tx,
+        accountId: params.accountId,
+        expected: params.accountCurrentness,
+    })) {
+        return null;
+    }
     const updated = await params.tx.automationRun.updateMany({
         where: {
             id: params.runId,
@@ -1249,7 +1266,6 @@ export async function markAbandonedAutomationExecutionDispatchOutcomeUnknownTx(p
             executionInputEnvelope: params.executionInputEnvelope,
             executionDispatchState: params.expectedExecutionDispatchState,
             leaseExpiresAt: { lt: params.now },
-            account: { is: { seq: params.accountCurrentness.version } },
         },
         data: {
             state: "outcome_uncertain",
@@ -1449,15 +1465,17 @@ async function failAutomationRunInternal(params: {
         if (!previousRun) {
             // Cancellation may race a completed canonical Session create. The
             // incumbent fail/cancel owner retains only that known new-Session
-            // identity; it never changes the cancelled terminality or creates a
-            // second receipt/settlement path.
+            // identity; it never changes terminality or creates a second
+            // receipt/settlement path. A running cancellation is
+            // `outcome_uncertain`, so a late failure acknowledgement can
+            // attach the same canonical Session without rewriting uncertainty.
             const cancelledRun = await tx.automationRun.findFirst({
                 where: {
                     id: params.runId,
                     accountId: params.accountId,
                     claimedByMachineId: params.machineId,
                     ...(params.attempt === undefined ? {} : { attempt: params.attempt }),
-                    state: "cancelled",
+                    state: { in: ["cancelled", "outcome_uncertain"] },
                 },
                 select: automationRunItemSelect,
             });
@@ -1504,7 +1522,7 @@ async function failAutomationRunInternal(params: {
                     accountId: params.accountId,
                     claimedByMachineId: params.machineId,
                     attempt: cancelledRun.attempt,
-                    state: "cancelled",
+                    state: cancelledRun.state,
                     revision: cancelledRun.revision,
                     executionInputEnvelope: cancelledRun.executionInputEnvelope,
                     producedSessionId: null,
@@ -1521,7 +1539,7 @@ async function failAutomationRunInternal(params: {
                 accountId: params.accountId,
                 runId: params.runId,
             });
-            if (!run || run.state !== "cancelled") return null;
+            if (!run || run.state !== cancelledRun.state) return null;
             const cursor = await markRunAutomationChanged({
                 tx,
                 accountId: params.accountId,
@@ -1531,7 +1549,7 @@ async function failAutomationRunInternal(params: {
                 emitAutomationRunTransition({
                     accountId: params.accountId,
                     run: run as AutomationRunItem,
-                    previousState: "cancelled",
+                    previousState: cancelledRun.state,
                     cursor,
                 });
             });

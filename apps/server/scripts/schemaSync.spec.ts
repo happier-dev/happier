@@ -6,6 +6,15 @@ import { AccountApiTokensCreateActionInputV1Schema } from "@happier-dev/protocol
 import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
 describe("schemaSync", () => {
+    it("keeps the reconciled 0.2 Session columns intact when the Directory migration is applied", () => {
+        const migration = readFileSync(
+            join(process.cwd(), "prisma/migrations/20260830120000_add_account_directory_models/migration.sql"),
+            "utf8",
+        );
+        expect(migration).not.toMatch(/DROP\s+(COLUMN|INDEX|TABLE)[^;]*(unreadSince|needsAttention)/iu);
+        expect(migration).not.toMatch(/DROP\s+(COLUMN|INDEX|TABLE)[^;]*(serviceAccount|quota)/iu);
+    });
+
     it("generates provider-specific schemas from prisma/schema.prisma", () => {
         const master = `
 generator client {

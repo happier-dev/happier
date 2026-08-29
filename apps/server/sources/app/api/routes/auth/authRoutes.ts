@@ -11,6 +11,7 @@ import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
 import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
 import { z } from "zod";
+import { registerHomeLoginRoute } from "@/app/accountDirectory/accountDirectoryRoutes";
 
 function hasAnyViableNonKeyChallengeAuthMethod(env: NodeJS.ProcessEnv): boolean {
     const feature = resolveAuthFeature(env);
@@ -65,4 +66,5 @@ export function authRoutes(app: Fastify): void {
     registerTerminalAuthRequestRoutes(app, { terminalAuthPolicy, isTerminalAuthExpired });
     registerAccountAuthRoutes(app);
     registerPairingAuthRoutes(app);
+    registerHomeLoginRoute(app);
 }

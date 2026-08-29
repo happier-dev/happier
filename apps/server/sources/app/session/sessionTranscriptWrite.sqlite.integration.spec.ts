@@ -2862,6 +2862,27 @@ describe("canonical transcript sequence writer on SQLite", () => {
             attemptId: "attempt-1",
         });
 
+        // A stale lower revision of the same attempt with the original claim is
+        // never re-acknowledged after a newer admission of that attempt: a
+        // lost-ack replay re-acknowledges the exact same command only.
+        await expect(execute({
+            ...command,
+            publisherPrecondition: {
+                machineId,
+                committedFenceMs: reclaimedFence.getTime(),
+            },
+        })).resolves.toMatchObject({ kind: "error", errorCode: "invalid_state" });
+
+        // The same attempt at the stored revision under a different operation
+        // claim is rejected rather than echoed as a positive acknowledgement.
+        await expect(execute({
+            ...reclaimed,
+            claim: {
+                ...reclaimed.claim,
+                operationClaimId: "external-linked-takeover-impostor-claim",
+            },
+        })).resolves.toMatchObject({ kind: "error", errorCode: "invalid_state" });
+
         const retryFence = new Date(reclaimedFence.getTime() + 10);
         await db.session.update({
             where: { id: session.id },

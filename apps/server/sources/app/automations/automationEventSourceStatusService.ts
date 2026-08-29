@@ -312,6 +312,8 @@ async function reportSourceStatus(params: Readonly<{
         where: key,
         select: {
             triggerRevision: true,
+            lastObservedAt: true,
+            lastDispositionAt: true,
             observedCount: true,
             admittedCount: true,
             skippedCount: true,
@@ -334,8 +336,12 @@ async function reportSourceStatus(params: Readonly<{
         reporterImmutableGenerationId: params.caller.immutableGenerationId,
         state: params.input.state,
         code: params.input.code === "none" ? null : params.input.code,
-        lastObservedAt: toNullableDate(params.input.lastObservedAt),
-        lastDispositionAt: toNullableDate(params.input.lastDispositionAt),
+        lastObservedAt: params.input.lastObservedAt === undefined
+            ? currentRevisionStatus?.lastObservedAt ?? null
+            : toNullableDate(params.input.lastObservedAt),
+        lastDispositionAt: params.input.lastDispositionAt === undefined
+            ? currentRevisionStatus?.lastDispositionAt ?? null
+            : toNullableDate(params.input.lastDispositionAt),
         nextRetryAt: toNullableDate(params.input.nextRetryAt),
         observedCount: addBoundedCounter(
             currentRevisionStatus?.observedCount ?? 0,

@@ -893,16 +893,22 @@ function conflictFor(input: Readonly<{
     absenceEpoch: number;
 }>): Readonly<{ rowId: string; revision: number | null; deleted: boolean }> | null {
     const existing = input.existing;
-    if (input.operation.expectedRevision === "absent") {
-        if (input.operation.expectedAbsenceEpoch !== input.absenceEpoch) {
-            return { rowId: input.operation.rowId, revision: existing?.revision ?? null, deleted: existing?.deletedAt !== null };
+    if (input.operation.kind === "put") {
+        if (input.operation.expectedRevision === "absent") {
+            if (input.operation.expectedAbsenceEpoch !== input.absenceEpoch) {
+                return {
+                    rowId: input.operation.rowId,
+                    revision: existing?.revision ?? null,
+                    deleted: existing ? existing.deletedAt !== null : false,
+                };
+            }
+            if (!existing) return null;
+            return {
+                rowId: input.operation.rowId,
+                revision: existing.revision,
+                deleted: existing.deletedAt !== null,
+            };
         }
-        if (!existing) return null;
-        return {
-            rowId: input.operation.rowId,
-            revision: existing.revision,
-            deleted: existing.deletedAt !== null,
-        };
     }
     if (!existing || existing.revision !== input.operation.expectedRevision) {
         return {
@@ -1711,11 +1717,12 @@ async function mutatePluginCollectionInTx(input: Readonly<{
         } },
         select: { epoch: true },
     });
+    const currentAbsenceEpoch = absenceEpoch?.epoch ?? 0;
     const conflicts = operations
         .map((operation) => conflictFor({
             operation,
             existing: existingByRowId.get(operation.rowId),
-            absenceEpoch: absenceEpoch?.epoch ?? 0,
+            absenceEpoch: currentAbsenceEpoch,
         }))
         .filter((conflict): conflict is NonNullable<typeof conflict> => conflict !== null);
     if (conflicts.length > 0) {
@@ -1753,7 +1760,11 @@ async function mutatePluginCollectionInTx(input: Readonly<{
     for (const operation of operations) {
         if (operation.kind === "assert") continue;
         const existing = existingByRowId.get(operation.rowId);
-        const revision = (existing?.revision ?? 0) + 1;
+        // Physical forget removes the row that normally carries revision
+        // history. Seed a later absent create from the Collection absence
+        // epoch so an old exact-revision forget can never match a recreated
+        // row (the epoch is advanced beyond the forgotten revision below).
+        const revision = existing ? existing.revision + 1 : currentAbsenceEpoch + 1;
         if (operation.kind === "put") {
             const projection = validatePutContent({
                 contract: resolved.contract,
@@ -2046,12 +2057,20 @@ export async function forgetPluginCollection(input: Readonly<{
                 pluginId: resolved.contract.pluginId,
                 collectionId: resolved.contract.collectionId,
                 rowId: request.rowId,
-                revision: request.expectedRevision,
-                deletedAt: { not: null },
             },
-            select: { id: true },
+            select: { id: true, revision: true, deletedAt: true },
         });
-        if (!row) return PluginCollectionForgetResultV1Schema.parse({ status: "conflict" });
+        // Forget is idempotent for the exact historical identity. No row, or
+        // a row whose monotonic revision has moved on, means that identity is
+        // already physically absent. Never let a response-loss retry touch the
+        // newer row. An exact live revision, however, was not logically
+        // deleted and cannot be forgotten.
+        if (!row || row.revision !== request.expectedRevision) {
+            return PluginCollectionForgetResultV1Schema.parse({ status: "forgotten" });
+        }
+        if (row.deletedAt === null) {
+            return PluginCollectionForgetResultV1Schema.parse({ status: "conflict" });
+        }
         const epoch = await tx.pluginCollectionAbsenceEpoch.upsert({
             where: { accountId_pluginId_collectionId: {
                 accountId: input.accountId,
@@ -2065,11 +2084,12 @@ export async function forgetPluginCollection(input: Readonly<{
                 epoch: 0,
             },
             update: {},
-            select: { id: true },
+            select: { id: true, epoch: true },
         });
+        const nextEpoch = Math.max(epoch.epoch, row.revision) + 1;
         const advanced = await tx.pluginCollectionAbsenceEpoch.updateMany({
             where: { id: epoch.id, epoch: request.expectedAbsenceEpoch },
-            data: { epoch: { increment: 1 } },
+            data: { epoch: nextEpoch },
         });
         if (advanced.count !== 1) return PluginCollectionForgetResultV1Schema.parse({ status: "conflict" });
         await tx.pluginCollectionRow.delete({ where: { id: row.id } });

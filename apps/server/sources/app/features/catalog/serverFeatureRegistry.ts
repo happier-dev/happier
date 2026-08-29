@@ -35,11 +35,13 @@ import { resolveServerUsageAnalyticsCapabilitiesFeature } from '../serverUsageAn
 import { resolveLiveActivityRemoteUpdatesFeature } from '../liveActivityRemoteUpdatesFeature';
 import { resolveSessionProtocolCapabilitiesFeature } from '../sessionProtocolCapabilitiesFeature';
 import { resolveAccountStoredContentCompatibilityFeature } from '../accountStoredContentCompatibilityFeature';
+import { resolveAccountDirectoryFeature } from '../accountDirectoryFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
 export const serverFeatureRegistry = Object.freeze([
     () => resolveAccountStoredContentCompatibilityFeature(),
+    (env) => resolveAccountDirectoryFeature(env),
     () => resolveSessionProtocolCapabilitiesFeature(),
     (env) => resolveServerUrlCapabilitiesFeature(env),
     (env) => resolveServerRetentionCapabilitiesFeature(env),

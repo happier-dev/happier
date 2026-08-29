@@ -1439,6 +1439,7 @@ describe("plugin collection UI query route", () => {
             () => db.pluginCollectionRelation.deleteMany(),
             () => db.pluginCollectionRow.deleteMany(),
             () => db.pluginCollectionIndexState.deleteMany(),
+            () => db.pluginCollectionAbsenceEpoch.deleteMany(),
             () => db.accountPluginIntent.deleteMany(),
             () => db.accountPluginRelease.deleteMany(),
             () => db.pluginCollectionContract.deleteMany(),
@@ -1492,6 +1493,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "task-old-mode",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "encrypted", c: oldModeContent },
                     projection: { status: "open", title: "Old-mode writer" },
                 }],
@@ -1855,6 +1857,7 @@ describe("plugin collection UI query route", () => {
                     content: { t: "plain", v: { privateNote: "secret-task-a" } },
                     projection: { status: "open", title: "First open" },
                 },
+                absenceEpoch: 0,
             });
 
             const first = await app.inject({
@@ -2828,6 +2831,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId,
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { status: "open", "occurred-at": occurredAt },
                     }],
@@ -2924,6 +2928,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-written",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "never projected" } },
                         projection: { status: "open", title: "Written task" },
                     }],
@@ -3017,6 +3022,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-written",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "new" } },
                         projection: { status: "open", title: "Written" },
                     },
@@ -3067,6 +3073,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-after-conflict",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "must not persist" } },
                         projection: { status: "open", title: "Must not persist" },
                     },
@@ -3144,6 +3151,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-after-tombstone-assert",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "must not persist" } },
                         projection: { status: "open", title: "Must not persist" },
                     },
@@ -3211,6 +3219,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "task-tombstone",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: {
                         t: "plain",
                         v: { privateNote: "must not resurrect" },
@@ -3242,6 +3251,165 @@ describe("plugin collection UI query route", () => {
         })).resolves.toBe(1);
     });
 
+    it("rejects a stale absent writer after physical forget and accepts a fresh observed epoch", async () => {
+        const accountId = "account-collection-forget-aba";
+        const { ref } = await seedCurrentCollectionAccount({
+            accountId,
+            rows: [{
+                rowId: "task-forget-aba",
+                status: "open",
+                title: "Forget ABA",
+                revision: 3,
+            }],
+        });
+        const writerContext = {
+            schemaVersion: ref.schemaVersion,
+            contractDigest: ref.contractDigest,
+        };
+
+        let observedAbsenceEpoch = -1;
+        await withPluginDataApp(async (app) => {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/get",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": accountId,
+                    ...V3_HEADERS,
+                },
+                payload: {
+                    pluginId: PLUGIN_ID,
+                    collectionId: COLLECTION_ID,
+                    rowId: "task-forget-aba",
+                },
+            });
+            expect(response.statusCode).toBe(200);
+            const snapshot = PluginCollectionGetResultV1Schema.parse(response.json());
+            expect(snapshot.row?.revision).toBe(3);
+            observedAbsenceEpoch = snapshot.absenceEpoch;
+        });
+        expect(observedAbsenceEpoch).toBe(0);
+
+        await expect(mutatePluginCollection({
+            accountId,
+            request: {
+                pluginId: ref.pluginId,
+                collectionId: ref.collectionId,
+                writerContext,
+                operations: [{
+                    kind: "delete",
+                    rowId: "task-forget-aba",
+                    expectedRevision: 3,
+                }],
+            },
+        })).resolves.toMatchObject({
+            status: "updated",
+            results: [{ rowId: "task-forget-aba", revision: 4, deleted: true }],
+        });
+
+        await withPluginDataApp(async (app) => {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/forget",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": accountId,
+                    ...V3_HEADERS,
+                },
+                payload: {
+                    pluginId: PLUGIN_ID,
+                    collectionId: COLLECTION_ID,
+                    writerContext,
+                    rowId: "task-forget-aba",
+                    expectedRevision: 4,
+                    expectedAbsenceEpoch: observedAbsenceEpoch,
+                },
+            });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ status: "forgotten" });
+        });
+        await expect(db.pluginCollectionRow.count({
+            where: {
+                accountId,
+                pluginId: PLUGIN_ID,
+                collectionId: COLLECTION_ID,
+                rowId: "task-forget-aba",
+            },
+        })).resolves.toBe(0);
+
+        await expect(mutatePluginCollection({
+            accountId,
+            request: {
+                pluginId: ref.pluginId,
+                collectionId: ref.collectionId,
+                writerContext,
+                operations: [{
+                    kind: "put",
+                    rowId: "task-forget-aba",
+                    expectedRevision: "absent",
+                    expectedAbsenceEpoch: observedAbsenceEpoch,
+                    content: { t: "plain", v: { privateNote: "stale" } },
+                    projection: { status: "open", title: "Stale" },
+                }],
+            },
+        })).resolves.toEqual({
+            status: "conflict",
+            conflicts: [{ rowId: "task-forget-aba", revision: null, deleted: false }],
+        });
+
+        let freshAbsenceEpoch = -1;
+        await withPluginDataApp(async (app) => {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/plugins/data/get",
+                headers: {
+                    "content-type": "application/json",
+                    "x-test-user-id": accountId,
+                    ...V3_HEADERS,
+                },
+                payload: {
+                    pluginId: PLUGIN_ID,
+                    collectionId: COLLECTION_ID,
+                    rowId: "task-forget-aba",
+                },
+            });
+            expect(response.statusCode).toBe(200);
+            const snapshot = PluginCollectionGetResultV1Schema.parse(response.json());
+            expect(snapshot.row).toBeNull();
+            freshAbsenceEpoch = snapshot.absenceEpoch;
+        });
+        expect(freshAbsenceEpoch).toBeGreaterThan(observedAbsenceEpoch);
+
+        await expect(mutatePluginCollection({
+            accountId,
+            request: {
+                pluginId: ref.pluginId,
+                collectionId: ref.collectionId,
+                writerContext,
+                operations: [{
+                    kind: "put",
+                    rowId: "task-forget-aba",
+                    expectedRevision: "absent",
+                    expectedAbsenceEpoch: freshAbsenceEpoch,
+                    content: { t: "plain", v: { privateNote: "fresh" } },
+                    projection: { status: "open", title: "Fresh" },
+                }],
+            },
+        })).resolves.toMatchObject({
+            status: "updated",
+            results: [{ rowId: "task-forget-aba", revision: freshAbsenceEpoch + 1, deleted: false }],
+        });
+        await expect(db.pluginCollectionRow.findFirstOrThrow({
+            where: {
+                accountId,
+                pluginId: PLUGIN_ID,
+                collectionId: COLLECTION_ID,
+                rowId: "task-forget-aba",
+            },
+            select: { revision: true, deletedAt: true },
+        })).resolves.toEqual({ revision: freshAbsenceEpoch + 1, deletedAt: null });
+    });
+
     it("preserves a provider timeout from the pre-mutation quota census", async () => {
         harness.resetEnv({ HAPPIER_DB_TX_MAX_RETRIES: "0" });
         const accountId = "account-collection-pre-census-provider-timeout";
@@ -3270,6 +3438,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-new",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "new" } },
                         projection: { status: "open", title: "New" },
                     }],
@@ -3364,6 +3533,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "task-new",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: { privateNote: "new" } },
                     projection: { status: "open", title: "New" },
                 }],
@@ -3399,6 +3569,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId,
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: { privateNote: rowId } },
                     projection: { status: "open", title: rowId },
                 }],
@@ -3517,6 +3688,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "small-write",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: { privateNote: "small" } },
                     projection: { status: "open", title: "Small" },
                 }],
@@ -3560,6 +3732,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "unrelated-small-write",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: { privateNote: "small" } },
                     projection: { status: "open", title: "Small" },
                 }],
@@ -3632,6 +3805,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-new",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "new" } },
                         projection: { status: "open", title: "New task" },
                     }],
@@ -3686,6 +3860,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-too-large",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "x".repeat(256) } },
                         projection: { status: "open", title: "x".repeat(256) },
                     }],
@@ -3731,6 +3906,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-1",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "first" } },
                         projection: { status: "open", title: "First" },
                     },
@@ -3738,6 +3914,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-2",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: { privateNote: "second" } },
                         projection: { status: "open", title: "Second" },
                     },
@@ -3984,6 +4161,7 @@ describe("plugin collection UI query route", () => {
                     kind: "put",
                     rowId: "task-new",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: { privateNote: "new" } },
                     projection: { status: "open", title: "New" },
                 }],
@@ -4023,6 +4201,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "project-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "project-a", title: "Project A" },
                     }],
@@ -4049,6 +4228,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "task-a", title: "Task A", "project-id": "project-a" },
                     }],
@@ -4187,6 +4367,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "task-a", title: "Task A", "machine-id": "machine-a" },
                     }],
@@ -4208,6 +4389,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-b",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "task-b", title: "Task B", "machine-id": "missing-machine" },
                     }],
@@ -4274,6 +4456,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-e2ee",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "encrypted", c: ciphertext },
                         projection: {
                             id: "task-e2ee",
@@ -4317,6 +4500,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "project-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "project-a", title: "Project A" },
                     }],
@@ -4337,6 +4521,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "task-a", title: "Task A", "project-id": "project-a" },
                     }],
@@ -4483,6 +4668,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "project-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "project-a", title: "Project A" },
                     }],
@@ -4504,6 +4690,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put" as const,
                         rowId,
                         expectedRevision: "absent" as const,
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain" as const, v: {} },
                         projection: { id: rowId, title: `Task ${rowId}`, "project-id": "project-a" },
                     })),
@@ -4550,6 +4737,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put" as const,
                         rowId,
                         expectedRevision: "absent" as const,
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain" as const, v: {} },
                         projection: { id: rowId, title: `Project ${rowId}` },
                     })),
@@ -4572,6 +4760,7 @@ describe("plugin collection UI query route", () => {
                             kind: "put",
                             rowId: "task-a",
                             expectedRevision: "absent",
+                            expectedAbsenceEpoch: 0,
                             content: { t: "plain", v: {} },
                             projection: { id: "task-a", title: "Task A", "project-id": "project-a" },
                         },
@@ -4579,6 +4768,7 @@ describe("plugin collection UI query route", () => {
                             kind: "put",
                             rowId: "task-b",
                             expectedRevision: "absent",
+                            expectedAbsenceEpoch: 0,
                             content: { t: "plain", v: {} },
                             projection: { id: "task-b", title: "Task B", "project-id": "project-b" },
                         },
@@ -4653,6 +4843,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "project-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "project-a", title: "Project A" },
                     }],
@@ -4673,6 +4864,7 @@ describe("plugin collection UI query route", () => {
                         kind: "put",
                         rowId: "task-a",
                         expectedRevision: "absent",
+                        expectedAbsenceEpoch: 0,
                         content: { t: "plain", v: {} },
                         projection: { id: "task-a", title: "Task A", "project-id": "project-a" },
                     }],

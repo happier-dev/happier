@@ -99,6 +99,7 @@ describe("plugin Collection mutation", () => {
                     kind: "put",
                     rowId: "task-a",
                     expectedRevision: "absent",
+                    expectedAbsenceEpoch: 0,
                     content: { t: "plain", v: {} },
                     projection: {},
                 }],

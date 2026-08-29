@@ -1236,59 +1236,21 @@ export async function listQualifiedUsageSourcesForRecord(
 
 export async function readQualifiedProviderAccountUsageRecord(
     params: Readonly<{ accountId: string; recordId: string }>,
-): Promise<
-    | Readonly<{
-        status: "resolved";
-        record: StoredProviderAccountUsageRecord;
-        sources: QualifiedConnectedServiceUsageSourceV4[];
-    }>
-    | Readonly<{ status: "not_found" }>
-    | Readonly<{ status: "storage_mode_mismatch" }>
-> {
-    return await inTx(async (tx) => {
-        const account = await tx.account.findUnique({
-            where: { id: params.accountId },
-            select: {
-                publicKey: true,
-                encryptionMode: true,
-                contentPublicKey: true,
-                contentPublicKeySig: true,
-            },
-        });
-        const currentness = account
-            ? deriveAccountEncryptionCurrentnessFromRow(account)
-            : null;
-        if (currentness?.status !== "ready") {
-            return { status: "storage_mode_mismatch" };
-        }
-        const sources = await listQualifiedUsageSourcesForRecordInStorage(
-            tx,
-            params,
-        );
-        if (sources.length === 0) return { status: "not_found" };
-        const record = await readProviderAccountUsageRecord(params, tx);
-        if (!record) return { status: "not_found" };
-        const expectedPayloadMode =
-            currentness.currentness.encryptionMode === "plain"
-                ? "plain_json_v1"
-                : "sealed_account_scoped_v1";
-        if (record.payloadMode !== expectedPayloadMode) {
-            return { status: "storage_mode_mismatch" };
-        }
-        return { status: "resolved", record, sources };
-    });
+): Promise<QualifiedProviderAccountUsageAdmission> {
+    return await inTx(async (tx) =>
+        await admitQualifiedProviderAccountUsageRecordInTx(tx, params));
 }
 
 export async function deleteQualifiedProviderAccountUsageRecord(
     params: Readonly<{ accountId: string; recordId: string }>,
-): Promise<"deleted" | "not_found"> {
+): Promise<"deleted" | "not_found" | "storage_mode_mismatch"> {
     return await inTx(async (tx) => {
-        const sources = await listQualifiedUsageSourcesForRecordInStorage(
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(
             tx,
             params,
         );
-        if (sources.length === 0) return "not_found";
-        for (const source of sources) {
+        if (admitted.status !== "resolved") return admitted.status;
+        for (const source of admitted.sources) {
             try {
                 await resolveQualifiedCredential(tx, {
                     accountId: params.accountId,
@@ -1328,14 +1290,14 @@ export async function clearQualifiedConnectedAccountUsageForAccountInTx(
 
 export async function requestQualifiedProviderAccountUsageRefresh(
     params: Readonly<{ accountId: string; recordId: string }>,
-): Promise<"written" | "not_found"> {
+): Promise<"written" | "not_found" | "storage_mode_mismatch"> {
     return await inTx(async (tx) => {
-        const sources = await listQualifiedUsageSourcesForRecordInStorage(
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(
             tx,
             params,
         );
-        if (sources.length === 0) return "not_found";
-        for (const source of sources) {
+        if (admitted.status !== "resolved") return admitted.status;
+        for (const source of admitted.sources) {
             try {
                 await resolveQualifiedCredential(tx, {
                     accountId: params.accountId,
@@ -1361,12 +1323,13 @@ async function readFirstQualifiedSourceForRef(
         ref: QualifiedConnectedAccountRef;
         allowLegacyUnfencedCredential?: boolean;
     }>,
+    storage?: QualifiedUsageStorage,
 ) {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     const qualifiedIdentityDigest =
         createQualifiedConnectedAccountIdentityDigest(ref);
     try {
-        return await inTx(async (tx) => {
+        const readInStorage = async (tx: QualifiedUsageStorage) => {
             const binding = await resolveQualifiedCredential(tx, {
                 accountId: params.accountId,
                 ref,
@@ -1438,7 +1401,8 @@ async function readFirstQualifiedSourceForRef(
                 };
             }
             return null;
-        });
+        };
+        return await (storage ? readInStorage(storage) : inTx(readInStorage));
     } catch (error) {
         if (
             error instanceof ConnectedServiceUsageSourceBindingError
@@ -1464,30 +1428,70 @@ export async function readQualifiedConnectedAccountUsageRecord(
 ): Promise<StoredProviderAccountUsageRecord | null> {
     const resolved =
         await readQualifiedConnectedAccountUsageRecordWithSource(params);
-    return resolved?.record ?? null;
+    return resolved.status === "resolved" ? resolved.record : null;
 }
 
-async function readQualifiedConnectedAccountUsageRecordWithSource(
+export async function readQualifiedConnectedAccountUsageRecordWithSource(
     params: Readonly<{
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
 ): Promise<Readonly<{
-    sourceResolution:
-        QualifiedConnectedServiceUsageSourceResolutionV4;
+    status: "resolved";
+    sourceResolution: QualifiedConnectedServiceUsageSourceResolutionV4;
     record: StoredProviderAccountUsageRecord;
-}> | null> {
-    const source = await readFirstQualifiedSourceForRef(params);
-    if (!source) return null;
-    const record = await readProviderAccountUsageRecord({
-        accountId: params.accountId,
-        recordId: source.recordId,
+}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
+    return await inTx(async (tx) => {
+        const source = await readFirstQualifiedSourceForRef(params, tx);
+        if (!source) return { status: "not_found" as const };
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
+            accountId: params.accountId,
+            recordId: source.recordId,
+        });
+        if (admitted.status !== "resolved") return admitted;
+        return {
+            status: "resolved" as const,
+            sourceResolution: source,
+            record: admitted.record,
+        };
     });
-    if (!record || record.recordId !== source.recordId) return null;
-    return {
-        sourceResolution: source,
-        record,
-    };
+}
+
+/**
+ * Reads the released V2 quota projection through the canonical PAU admission
+ * owner. The adapter keeps the historical not-found surface while preserving
+ * a typed storage-mode mismatch for the route to map to that same 404.
+ */
+export async function readLegacyConnectedServiceQuotaCompatibilityRecordWithSource(
+    params: Readonly<{
+        accountId: string;
+        ref: QualifiedConnectedAccountRef;
+    }>,
+): Promise<Readonly<{
+    status: "resolved";
+    sourceResolution: ExactQualifiedConnectedServiceUsageSource;
+    record: StoredProviderAccountUsageRecord;
+}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
+    return await inTx(async (tx) => {
+        const source = await readFirstQualifiedSourceForRef({
+            ...params,
+            allowLegacyUnfencedCredential: true,
+        }, tx);
+        if (!source) return { status: "not_found" as const };
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(
+            tx,
+            {
+                accountId: params.accountId,
+                recordId: source.recordId,
+            },
+        );
+        if (admitted.status !== "resolved") return admitted;
+        return {
+            status: "resolved" as const,
+            sourceResolution: source,
+            record: admitted.record,
+        };
+    });
 }
 
 export async function readQualifiedConnectedAccountQuota(
@@ -1500,7 +1504,7 @@ export async function readQualifiedConnectedAccountQuota(
         await readQualifiedConnectedAccountUsageRecordWithSource(
             params,
         );
-    if (!resolved) return null;
+    if (resolved.status !== "resolved") return resolved;
     const { record, sourceResolution } = resolved;
     const metadata = {
         fetchedAt:
@@ -1555,7 +1559,7 @@ async function unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission(
         ref: QualifiedConnectedAccountRef;
         allowLegacyUnfencedCredential?: boolean;
     }>,
-): Promise<"removed" | "not_found"> {
+): Promise<"removed" | "not_found" | "storage_mode_mismatch"> {
     const ref = QualifiedConnectedAccountRefSchema.parse(params.ref);
     const qualifiedIdentityDigest =
         createQualifiedConnectedAccountIdentityDigest(ref);
@@ -1596,6 +1600,14 @@ async function unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission(
             },
         });
         if (rows.length === 0) return "not_found";
+        const admittedRecordIds = new Set(rows.map((row) => row.providerAccountUsageRecordId));
+        for (const recordId of admittedRecordIds) {
+            const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
+                accountId: params.accountId,
+                recordId,
+            });
+            if (admitted.status !== "resolved") return admitted.status;
+        }
         for (const row of rows) {
             const source = mapQualifiedSourceRow(row);
             if (!qualifiedConnectedAccountRefsEqual(source.ref, ref)) {
@@ -1625,7 +1637,7 @@ export async function unlinkQualifiedConnectedAccountQuota(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"removed" | "not_found"> {
+): Promise<"removed" | "not_found" | "storage_mode_mismatch"> {
     return await unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission(
         params,
     );
@@ -1636,7 +1648,7 @@ export async function unlinkLegacyConnectedServiceQuotaCompatibilitySource(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"removed" | "not_found"> {
+): Promise<"removed" | "not_found" | "storage_mode_mismatch"> {
     return await unlinkQualifiedConnectedAccountQuotaWithCredentialAdmission({
         ...params,
         allowLegacyUnfencedCredential: true,
@@ -1648,12 +1660,19 @@ export async function requestQualifiedConnectedAccountQuotaRefresh(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"written" | "not_found"> {
-    const source = await readFirstQualifiedSourceForRef(params);
-    if (!source) return "not_found";
-    return await requestProviderAccountUsageRefresh({
-        accountId: params.accountId,
-        recordId: source.recordId,
+): Promise<"written" | "not_found" | "storage_mode_mismatch"> {
+    return await inTx(async (tx) => {
+        const source = await readFirstQualifiedSourceForRef(params, tx);
+        if (!source) return "not_found";
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
+            accountId: params.accountId,
+            recordId: source.recordId,
+        });
+        if (admitted.status !== "resolved") return admitted.status;
+        return await requestProviderAccountUsageRefresh({
+            accountId: params.accountId,
+            recordId: source.recordId,
+        }, tx);
     });
 }
 
@@ -1662,14 +1681,65 @@ export async function requestLegacyConnectedServiceQuotaCompatibilityRefresh(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"written" | "not_found"> {
-    const source = await readFirstQualifiedSourceForRef({
-        ...params,
-        allowLegacyUnfencedCredential: true,
+): Promise<"written" | "not_found" | "storage_mode_mismatch"> {
+    return await inTx(async (tx) => {
+        const source = await readFirstQualifiedSourceForRef({
+            ...params,
+            allowLegacyUnfencedCredential: true,
+        }, tx);
+        if (!source) return "not_found";
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
+            accountId: params.accountId,
+            recordId: source.recordId,
+        });
+        if (admitted.status !== "resolved") return admitted.status;
+        return await requestProviderAccountUsageRefresh({
+            accountId: params.accountId,
+            recordId: source.recordId,
+        }, tx);
     });
-    if (!source) return "not_found";
-    return await requestProviderAccountUsageRefresh({
-        accountId: params.accountId,
-        recordId: source.recordId,
+}
+type QualifiedProviderAccountUsageAdmission =
+    | Readonly<{
+        status: "resolved";
+        record: StoredProviderAccountUsageRecord;
+        sources: QualifiedConnectedServiceUsageSourceV4[];
+    }>
+    | Readonly<{ status: "not_found" }>
+    | Readonly<{ status: "storage_mode_mismatch" }>;
+
+async function admitQualifiedProviderAccountUsageRecordInTx(
+    tx: QualifiedUsageStorage,
+    params: Readonly<{ accountId: string; recordId: string }>,
+): Promise<QualifiedProviderAccountUsageAdmission> {
+    const account = await tx.account.findUnique({
+        where: { id: params.accountId },
+        select: {
+            publicKey: true,
+            encryptionMode: true,
+            contentPublicKey: true,
+            contentPublicKeySig: true,
+        },
     });
+    const currentness = account
+        ? deriveAccountEncryptionCurrentnessFromRow(account)
+        : null;
+    if (currentness?.status !== "ready") {
+        return { status: "storage_mode_mismatch" };
+    }
+    const sources = await listQualifiedUsageSourcesForRecordInStorage(
+        tx,
+        params,
+    );
+    if (sources.length === 0) return { status: "not_found" };
+    const record = await readProviderAccountUsageRecord(params, tx);
+    if (!record) return { status: "not_found" };
+    const expectedPayloadMode =
+        currentness.currentness.encryptionMode === "plain"
+            ? "plain_json_v1"
+            : "sealed_account_scoped_v1";
+    if (record.payloadMode !== expectedPayloadMode) {
+        return { status: "storage_mode_mismatch" };
+    }
+    return { status: "resolved", record, sources };
 }
