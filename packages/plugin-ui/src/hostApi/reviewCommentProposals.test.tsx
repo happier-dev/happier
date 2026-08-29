@@ -1,6 +1,7 @@
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { PluginHostApiProvider } from '../advanced/index.js';

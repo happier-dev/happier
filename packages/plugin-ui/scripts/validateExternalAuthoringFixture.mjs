@@ -56,6 +56,19 @@ const EXTERNAL_SEMANTIC_FRAMEWORK_ENTRIES = Object.freeze([
 const EXTERNAL_AUTHORING_FIXTURE_OWNED_TYPE_PACKAGES = Object.freeze(['@types/react-dom']);
 const EXACT_PAIR_PACKAGE_NAMES = new Set([SDK_PACKAGE_NAME, PLUGIN_UI_PACKAGE_NAME]);
 
+/**
+ * The two evidence bases this fixture owns. The release-owned `tarball` mode
+ * packs exact artifacts and is invoked by release automation; the
+ * `current-source` mode is the canonical finite feature lane (master r0.124):
+ * it installs the current development-source package outputs through the
+ * incumbent `happier plugins dev install` producer — the same canonical owner
+ * ordinary external authors and the loaded-QA harness use — and runs the same
+ * public-author journey without any tarball, archive, or candidate gate.
+ */
+const TARBALL_MODE = 'tarball';
+const CURRENT_SOURCE_MODE = 'current-source';
+const EXTERNAL_AUTHORING_FIXTURE_MODES = new Set([TARBALL_MODE, CURRENT_SOURCE_MODE]);
+
 function pathIsInside(rootPath, candidatePath) {
   const rel = relative(resolve(rootPath), resolve(candidatePath));
   return rel === ''
@@ -88,6 +101,7 @@ const EXTERNAL_TARGET_PUBLIC_IMPORTS = new Set([
   '@happier-dev/plugin-sdk/protocol',
   '@happier-dev/plugin-sdk/ui',
   '@happier-dev/plugin-sdk/ui/build',
+  '@happier-dev/plugin-sdk/sessions',
   '@happier-dev/plugin-sdk/sessions/external',
   '@happier-dev/plugin-ui',
   'react',
@@ -210,6 +224,13 @@ function readFixtureOwnedTypePackageSpec(packageName) {
 }
 
 function readFlag(argv, flag) {
+  const inlinePrefix = `${flag}=`;
+  const inlineArgument = argv.find((argument) => argument.startsWith(inlinePrefix));
+  if (inlineArgument !== undefined) {
+    const value = inlineArgument.slice(inlinePrefix.length);
+    if (!value) throw new Error(`Missing value for ${flag}`);
+    return value;
+  }
   const index = argv.indexOf(flag);
   if (index === -1) return undefined;
   const value = argv[index + 1];
@@ -226,6 +247,18 @@ function rejectLegacyArtifactArgument(argv, flag) {
 export function parseExternalAuthoringFixtureArgs(argv) {
   rejectLegacyArtifactArgument(argv, '--candidate');
   rejectLegacyArtifactArgument(argv, '--artifact-source');
+  const mode = readFlag(argv, '--mode') ?? TARBALL_MODE;
+  if (!EXTERNAL_AUTHORING_FIXTURE_MODES.has(mode)) {
+    throw new Error(`Unsupported --mode '${mode}'; expected one of ${[...EXTERNAL_AUTHORING_FIXTURE_MODES].join(', ')}`);
+  }
+  if (mode === CURRENT_SOURCE_MODE) {
+    for (const flag of ['--sdk-tarball', '--plugin-ui-tarball']) {
+      if (argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))) {
+        throw new Error(`current-source mode does not accept ${flag}; it stages the current workspace package outputs directly`);
+      }
+    }
+    return Object.freeze({ mode });
+  }
   const sdkTarballPath = readFlag(argv, '--sdk-tarball');
   const pluginUiTarballPath = readFlag(argv, '--plugin-ui-tarball');
   if (!sdkTarballPath) throw new Error('Missing --sdk-tarball <sdk-tarball>');
@@ -236,7 +269,7 @@ export function parseExternalAuthoringFixtureArgs(argv) {
   if (resolve(sdkTarballPath) === resolve(pluginUiTarballPath)) {
     throw new Error('External author proof SDK and Plugin UI tarballs must be distinct files');
   }
-  return Object.freeze({ sdkTarballPath, pluginUiTarballPath });
+  return Object.freeze({ mode, sdkTarballPath, pluginUiTarballPath });
 }
 
 function rejectProgrammaticArtifactSource({ artifactSource, candidateManifestPath }) {
@@ -300,19 +333,15 @@ function readPacketDependencyVersions(bindings, groupName) {
   });
 }
 
-export async function resolveInstalledExternalAuthoringToolchainBindings({ consumerRoot } = {}) {
-  if (typeof consumerRoot !== 'string' || consumerRoot.trim() === '') {
-    throw new Error('Exact installed SDK toolchain packet requires a consumer root');
+async function resolveExternalAuthoringToolchainBindingsFromSdkPackageRoot({ sdkPackageRoot, label }) {
+  if (typeof sdkPackageRoot !== 'string' || sdkPackageRoot.trim() === '') {
+    throw new Error(`Exact ${label} SDK toolchain packet requires a package root`);
   }
-  const physicalConsumerRoot = await realpath(consumerRoot);
-  const sdkRoot = join(physicalConsumerRoot, 'node_modules', ...SDK_PACKAGE_NAME.split('/'));
-  const [physicalSdkRoot, packageEntry] = await Promise.all([
-    realpath(sdkRoot),
-    Promise.resolve(createRequire(join(physicalConsumerRoot, 'package.json')).resolve(`${SDK_PACKAGE_NAME}/ui/build`)),
-  ]);
+  const physicalSdkRoot = await realpath(sdkPackageRoot);
+  const packageEntry = createRequire(join(physicalSdkRoot, 'package.json')).resolve(`${SDK_PACKAGE_NAME}/ui/build`);
   const physicalEntry = await realpath(packageEntry);
   if (!pathIsInside(physicalSdkRoot, physicalEntry)) {
-    throw new Error('Exact installed SDK toolchain packet resolved outside the installed SDK archive');
+    throw new Error(`Exact ${label} SDK toolchain packet resolved outside its own package`);
   }
   const installedSdkBuild = await import(pathToFileURL(physicalEntry).href);
   const bindings = installedSdkBuild.PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1;
@@ -324,14 +353,35 @@ export async function resolveInstalledExternalAuthoringToolchainBindings({ consu
   });
 }
 
+export async function resolveInstalledExternalAuthoringToolchainBindings({ consumerRoot } = {}) {
+  if (typeof consumerRoot !== 'string' || consumerRoot.trim() === '') {
+    throw new Error('Exact installed SDK toolchain packet requires a consumer root');
+  }
+  const physicalConsumerRoot = await realpath(consumerRoot);
+  const sdkRoot = join(physicalConsumerRoot, 'node_modules', ...SDK_PACKAGE_NAME.split('/'));
+  return await resolveExternalAuthoringToolchainBindingsFromSdkPackageRoot({
+    sdkPackageRoot: sdkRoot,
+    label: 'installed',
+  });
+}
+
 /**
- * Resolves every framework/build dependency from the exact installed SDK
- * packet, so the candidate's own closure is the only authority for anything it
- * ships. The one fixture-owned declaration package is deliberately kept out of
- * that packet because it is not an authored runtime/toolchain contract.
+ * Reads the toolchain packet from the current workspace SDK build outputs.
+ * This is the current-source mode's authority for support-package versions:
+ * the packet the current development source emits is exactly what an external
+ * author resolves from the staged physical copy.
  */
-export async function resolveExternalAuthoringSupportPackageVersions({ consumerRoot } = {}) {
-  const bindings = await resolveInstalledExternalAuthoringToolchainBindings({ consumerRoot });
+export async function resolveWorkspaceExternalAuthoringSupportPackageVersions({
+  pluginSdkPackageRoot = join(repositoryRoot, 'packages', 'plugin-sdk'),
+} = {}) {
+  const bindings = await resolveExternalAuthoringToolchainBindingsFromSdkPackageRoot({
+    sdkPackageRoot: pluginSdkPackageRoot,
+    label: 'workspace',
+  });
+  return buildExternalAuthoringSupportPackageVersions(bindings);
+}
+
+function buildExternalAuthoringSupportPackageVersions(bindings) {
   const packetOwnedDependencies = Object.entries({
     ...bindings.dependencies,
     ...bindings.devDependencies,
@@ -344,6 +394,17 @@ export async function resolveExternalAuthoringSupportPackageVersions({ consumerR
     ...packetOwnedDependencies,
     ...supplementalDependencies,
   ]));
+}
+
+/**
+ * Resolves every framework/build dependency from the exact installed SDK
+ * packet, so the candidate's own closure is the only authority for anything it
+ * ships. The one fixture-owned declaration package is deliberately kept out of
+ * that packet because it is not an authored runtime/toolchain contract.
+ */
+export async function resolveExternalAuthoringSupportPackageVersions({ consumerRoot } = {}) {
+  const bindings = await resolveInstalledExternalAuthoringToolchainBindings({ consumerRoot });
+  return buildExternalAuthoringSupportPackageVersions(bindings);
 }
 
 export function buildExternalAuthoringBootstrapPackageJson({
@@ -359,6 +420,31 @@ export function buildExternalAuthoringBootstrapPackageJson({
       '@happier-dev/plugin-sdk': packageFileSpecifier(sdkTarballPath),
       '@happier-dev/plugin-ui': packageFileSpecifier(pluginUiTarballPath),
     },
+  };
+}
+
+/**
+ * The current-source consumer manifest. The pair is declared at the exact
+ * prepublication author version `0.0.0`, which is the contract the incumbent
+ * `happier plugins dev install` producer requires to materialize the current
+ * development-source packages — with their complete vendored dependency
+ * closure — into this consumer. Because the pair is manifest-declared, the
+ * package materializer reifies them itself and no package-manager command can
+ * prune them afterwards.
+ */
+export function buildCurrentSourceExternalAuthoringBootstrapPackageJson({
+  supportPackageVersions,
+}) {
+  return {
+    name: 'happier-plugin-ui-external-author-current-source-bootstrap',
+    version: '0.0.0',
+    private: true,
+    type: 'module',
+    dependencies: {
+      [SDK_PACKAGE_NAME]: '0.0.0',
+      [PLUGIN_UI_PACKAGE_NAME]: '0.0.0',
+    },
+    devDependencies: { ...supportPackageVersions },
   };
 }
 
@@ -434,6 +520,7 @@ export async function assertPackedTargetInstallations({
   consumerRoot,
   repositoryRoot: workspaceRoot,
   expectedPackages,
+  basis = 'tarball',
 }) {
   const physicalConsumerRoot = await realpath(consumerRoot);
   const physicalWorkspaceRoot = await realpath(workspaceRoot).catch(() => resolve(workspaceRoot));
@@ -446,14 +533,20 @@ export async function assertPackedTargetInstallations({
     );
     const stats = await lstat(packageInstallRoot);
     const physicalPackageRoot = await realpath(packageInstallRoot);
+    if (stats.isSymbolicLink() && basis !== 'current-source') {
+      // A tarball extraction is always a real directory; a symlink here is
+      // reported through the same resolution-failure contract.
+      throw new Error(
+        `External fixture resolved ${expectedPackage.packageName} through workspace source instead of its ${basis === 'tarball' ? 'tarball' : 'current-source physical copy'}`,
+      );
+    }
     if (
-      stats.isSymbolicLink()
-      || !stats.isDirectory()
+      (!stats.isDirectory() && !stats.isSymbolicLink())
       || !pathIsInside(physicalConsumerRoot, physicalPackageRoot)
       || pathIsInside(physicalWorkspaceRoot, physicalPackageRoot)
     ) {
       throw new Error(
-        `External fixture resolved ${expectedPackage.packageName} through workspace source instead of its tarball`,
+        `External fixture resolved ${expectedPackage.packageName} through workspace source instead of its ${basis === 'tarball' ? 'tarball' : 'current-source physical copy'}`,
       );
     }
 
@@ -496,6 +589,54 @@ export async function assertPackedTargetInstallations({
     }));
   }
   return Object.freeze(installedPackages);
+}
+
+/**
+ * Installs the current development-source public author pair through the one
+ * canonical CLI producer. `happier plugins dev install` — the same incumbent
+ * owner the loaded-QA harness invokes via the source CLI entry — materializes
+ * the prepublication author packages with their complete vendored dependency
+ * closure and reifies the consumer manifest in one managed-package run. This
+ * fixture performs no copying of its own and runs no package-manager command
+ * afterwards, so nothing can prune or partially close what the canonical
+ * producer installed. `assertPackedTargetInstallations` then re-verifies the
+ * same invariants a packed install must satisfy (independent consumer root,
+ * no workspace source, manifest identity, generated SDK inventory).
+ */
+export async function installCurrentSourceExternalAuthoringPackages({
+  temporaryRoot,
+  consumerRoot,
+  supportPackageVersions = {},
+}) {
+  if (pathIsInside(repositoryRoot, temporaryRoot)) {
+    throw new Error('Current-source external author staging must stay outside the workspace');
+  }
+  await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify(
+    buildCurrentSourceExternalAuthoringBootstrapPackageJson({ supportPackageVersions }),
+    null,
+    2,
+  )}\n`);
+  runCommand(process.execPath, [
+    join(repositoryRoot, 'apps/cli/bin/happier.mjs'),
+    'plugins',
+    'dev',
+    'install',
+    consumerRoot,
+  ], {
+    cwd: repositoryRoot,
+    stage: 'canonical-plugin-development-install',
+    timeout: 600_000,
+  });
+
+  return await assertPackedTargetInstallations({
+    consumerRoot,
+    repositoryRoot,
+    expectedPackages: [
+      { packageName: SDK_PACKAGE_NAME },
+      { packageName: PLUGIN_UI_PACKAGE_NAME },
+    ],
+    basis: 'current-source',
+  });
 }
 
 async function assertPluginUiResolvesTopLevelSdk({ consumerRoot }) {
@@ -806,60 +947,83 @@ export async function assertExternalAuthoringViteDevServer({
   }
 }
 
-async function runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot }) {
+async function runExternalAuthoringFixtureInRoot({ mode = TARBALL_MODE, tarballPaths, temporaryRoot }) {
   if (pathIsInside(repositoryRoot, temporaryRoot)) {
     throw new Error('External author fixture must run outside the workspace');
   }
 
   const consumerRoot = join(temporaryRoot, 'consumer');
   await mkdir(consumerRoot, { recursive: true });
-  await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify(
-    buildExternalAuthoringBootstrapPackageJson({
-      sdkTarballPath: tarballPaths.sdkTarballPath,
-      pluginUiTarballPath: tarballPaths.pluginUiTarballPath,
-    }),
-    null,
-    2,
-  )}\n`);
 
-  runNpmCommand([
-    'install',
-    '--ignore-scripts',
-    '--no-audit',
-    '--no-fund',
-    '--no-package-lock',
-  ], {
-    cwd: consumerRoot,
-    cacheDir: join(temporaryRoot, 'npm-cache'),
-    stage: 'install-exact-tarballs',
-  });
+  let installedPackages;
+  if (mode === CURRENT_SOURCE_MODE) {
+    // One canonical dependency-preparation invocation installs the support
+    // packet and stages the pair: the incumbent `happier plugins dev install`
+    // producer materializes the prepublication author packages (complete
+    // vendored closure) and reifies the consumer manifest in one managed run.
+    // No npm command runs here or afterwards, so the npm-prune ordering can
+    // never contradict the install.
+    installedPackages = await installCurrentSourceExternalAuthoringPackages({
+      temporaryRoot,
+      consumerRoot,
+      supportPackageVersions: await resolveWorkspaceExternalAuthoringSupportPackageVersions(),
+    });
+  } else {
+    await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify(
+      buildExternalAuthoringBootstrapPackageJson({
+        sdkTarballPath: tarballPaths.sdkTarballPath,
+        pluginUiTarballPath: tarballPaths.pluginUiTarballPath,
+      }),
+      null,
+      2,
+    )}\n`);
 
-  const [sdkArtifact, pluginUiArtifact] = await assertPackedTargetInstallations({
-    consumerRoot,
-    repositoryRoot,
-    expectedPackages: [
-      { packageName: SDK_PACKAGE_NAME },
-      { packageName: PLUGIN_UI_PACKAGE_NAME },
-    ],
-  });
+    runNpmCommand([
+      'install',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--no-package-lock',
+    ], {
+      cwd: consumerRoot,
+      cacheDir: join(temporaryRoot, 'npm-cache'),
+      stage: 'install-exact-tarballs',
+    });
+
+    installedPackages = await assertPackedTargetInstallations({
+      consumerRoot,
+      repositoryRoot,
+      expectedPackages: [
+        { packageName: SDK_PACKAGE_NAME },
+        { packageName: PLUGIN_UI_PACKAGE_NAME },
+      ],
+    });
+  }
+  const [sdkArtifact, pluginUiArtifact] = installedPackages;
 
   // The author source and manifest do not exist in this clean root until the
   // exact public SDK/UI pair has been installed and verified.
   await cp(fixtureSourceRoot, consumerRoot, { recursive: true });
   const supportPackageVersions = await resolveExternalAuthoringSupportPackageVersions({ consumerRoot });
-  runNpmCommand([
-    'install',
-    '--ignore-scripts',
-    '--no-save',
-    '--no-audit',
-    '--no-fund',
-    '--no-package-lock',
-    ...Object.entries(supportPackageVersions).map(([name, version]) => `${name}@${version}`),
-  ], {
-    cwd: consumerRoot,
-    cacheDir: join(temporaryRoot, 'npm-cache'),
-    stage: 'install-declared-external-dependencies',
-  });
+  if (mode !== CURRENT_SOURCE_MODE) {
+    // Tarball consumers resolve their support packet from the registry. The
+    // current-source consumer already received the identical packet from the
+    // canonical `plugins dev install` producer, and any package-manager run
+    // here would discard that install's layout.
+    runNpmCommand([
+      'install',
+      '--ignore-scripts',
+      '--no-save',
+      '--no-audit',
+      '--no-fund',
+      '--no-package-lock',
+      ...Object.entries(supportPackageVersions).map(([name, version]) => `${name}@${version}`),
+    ], {
+      cwd: consumerRoot,
+      cacheDir: join(temporaryRoot, 'npm-cache'),
+      stage: 'install-declared-external-dependencies',
+    });
+  }
   await assertPackedTargetInstallations({
     consumerRoot,
     repositoryRoot,
@@ -867,6 +1031,7 @@ async function runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot }
       { packageName: SDK_PACKAGE_NAME, version: sdkArtifact.version },
       { packageName: PLUGIN_UI_PACKAGE_NAME, version: pluginUiArtifact.version },
     ],
+    basis: mode,
   });
   await writeFile(join(consumerRoot, 'package.json'), `${JSON.stringify(
     buildExternalAuthoringFixturePackageJson({
@@ -972,10 +1137,50 @@ async function runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot }
     consumerRoot,
     // This advanced public author tier is otherwise mounted only by the RNW
     // semantic proof. Resolve it through Vite development as well, so the
-    // packed `/advanced`, `/presentation`, and `/environment` entries cannot regress
+    // public `/advanced`, `/presentation`, and `/environment` entries cannot regress
     // behind a production-only build.
     entryPaths: ['/src/browser.tsx', '/src/semanticSurface.tsx'],
   });
+
+  // The packed-author/packed-host tail is release-representation evidence. In
+  // the current-source mode the framework-owned semantic proof mounts the
+  // same staged consumer directly, and no pack/install identity is claimed.
+  if (mode === CURRENT_SOURCE_MODE) {
+    runCommand(process.execPath, [
+      requireFromPluginUi.resolve('vitest/vitest.mjs'),
+      'run',
+      '--config',
+      join(packageRoot, 'scripts/externalAuthoringSemanticProof.vitest.config.ts'),
+    ], {
+      cwd: packageRoot,
+      env: {
+        HAPPIER_PLUGIN_UI_EXTERNAL_AUTHORING_ROOT: consumerRoot,
+        HAPPIER_PLUGIN_UI_EXTERNAL_TARGET_ROOT: externalTargetRoot,
+        HAPPIER_PLUGIN_UI_EXTERNAL_CONTRIBUTOR_ROOT: externalContributorRoot,
+      },
+      stage: 'framework-owned-current-source-public-semantic-lifecycle',
+      timeout: 60_000,
+    });
+
+    return Object.freeze({
+      mode: CURRENT_SOURCE_MODE,
+      consumerRoot,
+      externalTargetPackage: Object.freeze({
+        root: externalTargetRoot,
+        declarations: externalTargetDeclarations,
+      }),
+      externalContributorPackage: Object.freeze({
+        root: externalContributorRoot,
+        declarations: externalContributorDeclarations,
+      }),
+      browserOutputRoot,
+      viteDevelopmentServer,
+      packages: Object.freeze({
+        sdk: sdkArtifact,
+        pluginUi: pluginUiArtifact,
+      }),
+    });
+  }
 
   const fixturePackRoot = join(temporaryRoot, 'fixture-pack');
   await mkdir(fixturePackRoot, { recursive: true });
@@ -1074,24 +1279,47 @@ async function runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot }
 }
 
 /**
- * Build the external-author fixture from exact package tarballs. The default
- * root is deleted after the proof. A caller that creates and supplies its own
- * external root owns cleanup, which permits a real browser to load the same
- * packed bytes before they are discarded.
+ * Build the external-author fixture and prove its public author journey.
+ *
+ * Mode `tarball` (default, release-owned) builds from exact package tarballs.
+ * Mode `current-source` (the canonical finite feature lane, master r0.124)
+ * stages the current workspace package outputs as a physical copy and runs
+ * the same journey with no tarball, archive, or candidate gate.
+ *
+ * The default root is deleted after the proof. A caller that creates and
+ * supplies its own external root owns cleanup, which permits a real browser
+ * to load the same bytes before they are discarded.
  */
 export async function runExternalAuthoringFixture({
+  mode = TARBALL_MODE,
   sdkTarballPath,
   pluginUiTarballPath,
   artifactSource,
   candidateManifestPath,
   temporaryRoot: requestedTemporaryRoot,
 } = {}) {
-  const tarballPaths = await resolveExternalAuthoringFixtureTarballPaths({
-    sdkTarballPath,
-    pluginUiTarballPath,
-    artifactSource,
-    candidateManifestPath,
-  });
+  if (!EXTERNAL_AUTHORING_FIXTURE_MODES.has(mode)) {
+    throw new Error(`Unsupported fixture mode '${mode}'; expected one of ${[...EXTERNAL_AUTHORING_FIXTURE_MODES].join(', ')}`);
+  }
+  if (mode === CURRENT_SOURCE_MODE) {
+    const mixedInput = [
+      ['sdkTarballPath', sdkTarballPath],
+      ['pluginUiTarballPath', pluginUiTarballPath],
+      ['artifactSource', artifactSource],
+      ['candidateManifestPath', candidateManifestPath],
+    ].find(([, value]) => value !== undefined);
+    if (mixedInput) {
+      throw new Error(`current-source mode does not accept ${mixedInput[0]}; it stages the current workspace package outputs directly`);
+    }
+  }
+  const tarballPaths = mode === CURRENT_SOURCE_MODE
+    ? undefined
+    : await resolveExternalAuthoringFixtureTarballPaths({
+      sdkTarballPath,
+      pluginUiTarballPath,
+      artifactSource,
+      candidateManifestPath,
+    });
   if (requestedTemporaryRoot !== undefined) {
     const temporaryRoot = resolve(requestedTemporaryRoot);
     if (pathIsInside(repositoryRoot, temporaryRoot)) {
@@ -1106,16 +1334,16 @@ export async function runExternalAuthoringFixture({
     if ((await readdir(physicalTemporaryRoot)).length > 0) {
       throw new Error('Caller-retained external fixture root must be an empty owned directory.');
     }
-    return await runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot: physicalTemporaryRoot });
+    return await runExternalAuthoringFixtureInRoot({ mode, tarballPaths, temporaryRoot: physicalTemporaryRoot });
   }
   return await withTemporaryExternalAuthoringRoot(async (temporaryRoot) => (
-    await runExternalAuthoringFixtureInRoot({ tarballPaths, temporaryRoot })
+    await runExternalAuthoringFixtureInRoot({ mode, tarballPaths, temporaryRoot })
   ));
 }
 
 export async function main(argv = process.argv.slice(2)) {
-  const { sdkTarballPath, pluginUiTarballPath } = parseExternalAuthoringFixtureArgs(argv);
-  const result = await runExternalAuthoringFixture({ sdkTarballPath, pluginUiTarballPath });
+  const { mode, sdkTarballPath, pluginUiTarballPath } = parseExternalAuthoringFixtureArgs(argv);
+  const result = await runExternalAuthoringFixture({ mode, sdkTarballPath, pluginUiTarballPath });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

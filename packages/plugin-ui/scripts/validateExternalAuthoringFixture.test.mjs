@@ -101,6 +101,60 @@ test('external author fixture bootstraps exact tarballs before its packable auth
   assert.equal(Object.hasOwn(packedHostPackageJson.dependencies, 'react-test-renderer'), false);
 });
 
+test('current-source mode parses without tarballs and rejects mixing the release tarball inputs', () => {
+  assert.equal(typeof fixtureHarness.parseExternalAuthoringFixtureArgs, 'function');
+
+  assert.deepEqual(
+    fixtureHarness.parseExternalAuthoringFixtureArgs(['--mode', 'current-source']),
+    { mode: 'current-source' },
+  );
+  assert.deepEqual(
+    fixtureHarness.parseExternalAuthoringFixtureArgs(['--mode=current-source']),
+    { mode: 'current-source' },
+  );
+  // The release-owned tarball inputs belong to the tarball mode only; a
+  // current-source run must never silently depend on a packed artifact.
+  assert.throws(
+    () => fixtureHarness.parseExternalAuthoringFixtureArgs([
+      '--mode',
+      'current-source',
+      '--sdk-tarball',
+      '/packed/sdk.tgz',
+    ]),
+    /current-source mode does not accept --sdk-tarball/u,
+  );
+  assert.throws(
+    () => fixtureHarness.parseExternalAuthoringFixtureArgs(['--mode', 'packed-candidate']),
+    /Unsupported --mode/u,
+  );
+  // Default (no --mode) stays the release-owned tarball mode.
+  assert.throws(
+    () => fixtureHarness.parseExternalAuthoringFixtureArgs([]),
+    /Missing --sdk-tarball/u,
+  );
+});
+
+test('programmatic current-source runs reject unsupported modes and mixed release inputs', async () => {
+  await assert.rejects(
+    () => fixtureHarness.runExternalAuthoringFixture({ mode: 'packed-candidate' }),
+    /Unsupported fixture mode/u,
+  );
+  for (const [field, value] of [
+    ['sdkTarballPath', '/packed/sdk.tgz'],
+    ['pluginUiTarballPath', '/packed/plugin-ui.tgz'],
+    ['artifactSource', '/packed/artifacts'],
+    ['candidateManifestPath', '/packed/candidate.json'],
+  ]) {
+    await assert.rejects(
+      () => fixtureHarness.runExternalAuthoringFixture({
+        mode: 'current-source',
+        [field]: value,
+      }),
+      new RegExp(`current-source mode does not accept ${field}`, 'u'),
+    );
+  }
+});
+
 test('external author proof accepts only one direct absolute SDK and Plugin UI tarball pair', () => {
   assert.equal(typeof fixtureHarness.parseExternalAuthoringFixtureArgs, 'function');
 
@@ -112,6 +166,7 @@ test('external author proof accepts only one direct absolute SDK and Plugin UI t
       '/packed/plugin-ui.tgz',
     ]),
     {
+      mode: 'tarball',
       sdkTarballPath: '/packed/sdk.tgz',
       pluginUiTarballPath: '/packed/plugin-ui.tgz',
     },
@@ -256,6 +311,100 @@ test('external authoring support versions are projected from the exact installed
     ]) {
       assert.equal(Object.hasOwn(supportPackageVersions, retiredDependency), false);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('current-source support versions are projected from the workspace SDK toolchain packet', async () => {
+  assert.equal(typeof fixtureHarness.resolveWorkspaceExternalAuthoringSupportPackageVersions, 'function');
+  const root = await mkdtemp(join(tmpdir(), 'plugin-ui-workspace-toolchain-packet-'));
+  try {
+    const sdkPackageRoot = join(root, 'plugin-sdk');
+    const bindings = {
+      dependencies: {
+        '@happier-dev/plugin-sdk': '0.0.0',
+        '@happier-dev/plugin-ui': '0.0.0',
+        react: '19.2.0',
+        'react-native-web': '19.3.0',
+      },
+      devDependencies: {
+        '@types/react': '19.4.0',
+        '@typescript/native': 'npm:typescript@7.0.2',
+        vite: '7.2.0',
+      },
+    };
+    await mkdir(join(sdkPackageRoot, 'dist', 'ui', 'build'), { recursive: true });
+    await Promise.all([
+      writeFile(join(sdkPackageRoot, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugin-sdk',
+        version: '0.0.0',
+        type: 'module',
+        exports: { './ui/build': './dist/ui/build/index.js' },
+      })),
+      writeFile(
+        join(sdkPackageRoot, 'dist', 'ui', 'build', 'index.js'),
+        `export const PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 = ${JSON.stringify(bindings)};\n`,
+      ),
+    ]);
+
+    const supportPackageVersions = await fixtureHarness.resolveWorkspaceExternalAuthoringSupportPackageVersions({
+      pluginSdkPackageRoot: sdkPackageRoot,
+    });
+    assert.equal(supportPackageVersions.react, '19.2.0');
+    assert.equal(supportPackageVersions.vite, '7.2.0');
+    assert.equal(supportPackageVersions['@typescript/native'], 'npm:typescript@7.0.2');
+    assert.equal(Object.hasOwn(supportPackageVersions, '@happier-dev/plugin-sdk'), false);
+    assert.equal(Object.hasOwn(supportPackageVersions, '@happier-dev/plugin-ui'), false);
+    assert.equal(
+      supportPackageVersions['@types/react-dom'],
+      JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).devDependencies?.['@types/react-dom'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('current-source install delegates to the canonical CLI dev build and stages a complete physical closure', async () => {
+  assert.equal(typeof fixtureHarness.installCurrentSourceExternalAuthoringPackages, 'function');
+  // The prepublication version `0.0.0` is the exact contract the incumbent
+  // `happier plugins dev install` producer requires to materialize the pair
+  // from current source. A manifest that omitted the pair (or pinned real
+  // versions) would reintroduce the manual partial closure and its
+  // package-manager prune contradiction.
+  const bootstrap = fixtureHarness.buildCurrentSourceExternalAuthoringBootstrapPackageJson({
+    supportPackageVersions: { react: '19.2.0' },
+  });
+  assert.equal(bootstrap.dependencies['@happier-dev/plugin-sdk'], '0.0.0');
+  assert.equal(bootstrap.dependencies['@happier-dev/plugin-ui'], '0.0.0');
+  assert.equal(bootstrap.devDependencies.react, '19.2.0');
+
+  const root = await mkdtemp(join(tmpdir(), 'plugin-ui-current-source-install-'));
+  try {
+    const temporaryRoot = join(root, 'external');
+    const consumerRoot = join(temporaryRoot, 'consumer');
+    await mkdir(consumerRoot, { recursive: true });
+    const installed = await fixtureHarness.installCurrentSourceExternalAuthoringPackages({
+      temporaryRoot,
+      consumerRoot,
+    });
+    assert.deepEqual(installed.map((entry) => entry.packageName).sort(), [
+      '@happier-dev/plugin-sdk',
+      '@happier-dev/plugin-ui',
+    ]);
+    const sdkInstallRoot = join(consumerRoot, 'node_modules', '@happier-dev', 'plugin-sdk');
+    assert.equal(existsSync(join(sdkInstallRoot, 'dist', 'index.js')), true);
+    assert.equal(existsSync(join(sdkInstallRoot, 'API.md')), true);
+    assert.equal(existsSync(join(sdkInstallRoot, 'capability-matrix.json')), true);
+    // The published author closure, never workspace source.
+    assert.equal(existsSync(join(sdkInstallRoot, 'src')), false);
+    // The canonical producer vendors the complete internal dependency closure
+    // inside the installed package: the copied-sdk ERR_MODULE_NOT_FOUND
+    // regression for `@happier-dev/protocol` cannot recur.
+    const requireFromInstalledSdk = createRequire(join(sdkInstallRoot, 'package.json'));
+    const physicalSdkRoot = await realpath(sdkInstallRoot);
+    const resolvedProtocol = await realpath(requireFromInstalledSdk.resolve('@happier-dev/protocol'));
+    assert.equal(resolvedProtocol.startsWith(physicalSdkRoot), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

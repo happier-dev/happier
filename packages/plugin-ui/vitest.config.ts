@@ -90,7 +90,10 @@ export default defineConfig({
           name: 'rnw',
           globals: false,
           environment: 'jsdom',
-          env: { HAPPIER_FEATURE_POLICY_ENV: '' },
+          // React's dev/prod CJS build is chosen by NODE_ENV, and only the dev
+          // build exports `act`. Pin it so an exported production NODE_ENV in a
+          // contributor shell cannot fail every mount test at once.
+          env: { HAPPIER_FEATURE_POLICY_ENV: '', NODE_ENV: 'test' },
           setupFiles: ['./src/rnwTestSetup.ts'],
           include: ['src/**/*.rnw.test.tsx'],
           exclude: sharedExclude,

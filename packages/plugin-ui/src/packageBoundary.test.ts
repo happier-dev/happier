@@ -165,6 +165,11 @@ describe('author package boundary', () => {
     expect(packageJson.scripts?.['test:external-authoring']).toBe(
       'node --test ./scripts/validateExternalAuthoringFixture.test.mjs',
     );
+    const currentSourceAuthoringScript = packageJson.scripts?.['test:external-authoring:current-source'] ?? '';
+    expect(currentSourceAuthoringScript).toContain(
+      'node ./scripts/validateExternalAuthoringFixture.mjs',
+    );
+    expect(currentSourceAuthoringScript).toMatch(/--mode(?:=|\s+)current-source(?:\s|$)/u);
     expect(packageJson.scripts?.['test:external-authoring:tarballs']).toBe(
       'node ./scripts/validateExternalAuthoringFixture.mjs',
     );

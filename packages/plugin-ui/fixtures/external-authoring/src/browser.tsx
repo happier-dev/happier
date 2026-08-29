@@ -59,6 +59,7 @@ const browserHostApi: PluginUiHostApi = {
   executeAction: async () => unsupportedBrowserHostMethod(),
   selectActionInput: async () => unsupportedBrowserHostMethod(),
   openNewSession: async () => unsupportedBrowserHostMethod(),
+  settleEphemeralInput: async () => unsupportedBrowserHostMethod(),
   readResource: async () => unsupportedBrowserHostMethod(),
   statOpenableContent: async () => unsupportedBrowserHostMethod(),
   readOpenableContent: async () => unsupportedBrowserHostMethod(),

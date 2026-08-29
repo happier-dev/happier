@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { create, type ReactTestRenderer } from 'react-test-renderer';
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const nativePlatform = vi.hoisted(() => ({

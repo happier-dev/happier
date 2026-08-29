@@ -75,6 +75,7 @@
     "test:local": "vitest run --config ./vitest.config.ts && yarn -s test:external-authoring",
     "test:finite": "yarn -s test:local",
     "test:external-authoring": "node --test ./scripts/validateExternalAuthoringFixture.test.mjs",
+    "test:external-authoring:current-source": "yarn --cwd ../plugin-sdk -s build:finite && yarn -s build:finite && node ./scripts/validateExternalAuthoringFixture.mjs --mode current-source",
     "test:external-authoring:tarballs": "node ./scripts/validateExternalAuthoringFixture.mjs",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
     "typecheck:local": "yarn --cwd ../plugin-sdk -s check:public-toolchain && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json",

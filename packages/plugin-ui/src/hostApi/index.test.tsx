@@ -6,7 +6,8 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { ReactElement } from 'react';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {

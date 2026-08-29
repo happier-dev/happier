@@ -681,7 +681,7 @@ Declared by `dist/components/Icon.d.ts` as `IconProps`.
 type IconProps = Readonly<{
     name: IconName;
     size?: HappierIconSize;
-    tone?: 'default' | 'secondary' | 'danger' | 'accent';
+    tone?: HappierTone;
     accessibilityLabel?: string;
     testID?: string;
 }>;
@@ -761,6 +761,7 @@ type ItemProps = Readonly<{
     detailNumberOfLines?: number;
     icon?: ReactNode;
     accessory?: ReactNode;
+    accessoryOutsidePressable?: boolean;
     accessoryWraps?: boolean;
     tone?: HappierTone;
     onPress?: (event?: HappierGestureResponderEvent) => unknown;
@@ -1329,6 +1330,32 @@ type PluginTranslationValues = Readonly<Record<string, string | number>>;
 ```
 
 
+### `.` — `PluginUiEphemeralSharedScope` (type)
+
+Declared by `dist/hostApi/ephemeralSharedScope.public.d.ts` as `PluginUiEphemeralSharedScope`.
+
+```ts
+type PluginUiEphemeralSharedScope = Readonly<{
+    acquire<T>(localKey: string, create: () => Readonly<{
+        value: T;
+        dispose(): void;
+    }>): PluginUiEphemeralSharedValueLease<T> | null;
+}>;
+```
+
+
+### `.` — `PluginUiEphemeralSharedValueLease` (type)
+
+Declared by `dist/hostApi/ephemeralSharedScope.public.d.ts` as `PluginUiEphemeralSharedValueLease`.
+
+```ts
+type PluginUiEphemeralSharedValueLease<T> = Readonly<{
+    value: T;
+    release(): void;
+}>;
+```
+
+
 ### `.` — `PluginUiFocusTarget` (type)
 
 Declared by `dist/components/Focus.d.ts` as `PluginUiFocusTarget`.
@@ -1474,6 +1501,48 @@ type ProgressProps = Readonly<{
     label: string;
     labelKey?: string;
     testID?: string;
+}>;
+```
+
+
+### `.` — `ReviewCommentProposalQueryV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalQueryV1`.
+
+```ts
+type ReviewCommentProposalQueryV1 = Readonly<{
+    linkedSessionIds: readonly string[];
+    entry: Readonly<{
+        kind: 'pullRequest';
+        url?: string;
+    }> | Readonly<{
+        kind: 'issue';
+        id: string;
+    }>;
+}>;
+```
+
+
+### `.` — `ReviewCommentProposalReadV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalReadV1`.
+
+```ts
+type ReviewCommentProposalReadV1 = Readonly<{
+    status: 'loading' | 'ready' | 'failed';
+    proposals: readonly ReviewCommentProposalWithBodyV1[];
+}>;
+```
+
+
+### `.` — `ReviewCommentProposalWithBodyV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalWithBodyV1`.
+
+```ts
+type ReviewCommentProposalWithBodyV1 = Omit<ReviewCommentV1, 'body' | 'snapshot'> & Readonly<{
+    body: string;
+    snapshot: ReviewCommentSnapshotV1;
 }>;
 ```
 
@@ -2164,12 +2233,30 @@ function usePluginTranslation(): PluginTranslate;
 ```
 
 
+### `.` — `usePluginUiEphemeralSharedScope` (value)
+
+Declared by `dist/hostApi/context.d.ts` as `usePluginUiEphemeralSharedScope`.
+
+```ts
+function usePluginUiEphemeralSharedScope(): PluginUiEphemeralSharedScope | null;
+```
+
+
 ### `.` — `usePluginUiFocusTarget` (value)
 
 Declared by `dist/components/Focus.d.ts` as `usePluginUiFocusTarget`.
 
 ```ts
 function usePluginUiFocusTarget(): PluginUiFocusTarget;
+```
+
+
+### `.` — `useReviewCommentProposalsForEntry` (value)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `useReviewCommentProposalsForEntry`.
+
+```ts
+function useReviewCommentProposalsForEntry(query: ReviewCommentProposalQueryV1): ReviewCommentProposalReadV1;
 ```
 
 
@@ -2858,7 +2945,7 @@ Declared by `dist/components/Icon.d.ts` as `IconProps`.
 type IconProps = Readonly<{
     name: IconName;
     size?: HappierIconSize;
-    tone?: 'default' | 'secondary' | 'danger' | 'accent';
+    tone?: HappierTone;
     accessibilityLabel?: string;
     testID?: string;
 }>;
@@ -2938,6 +3025,7 @@ type ItemProps = Readonly<{
     detailNumberOfLines?: number;
     icon?: ReactNode;
     accessory?: ReactNode;
+    accessoryOutsidePressable?: boolean;
     accessoryWraps?: boolean;
     tone?: HappierTone;
     onPress?: (event?: HappierGestureResponderEvent) => unknown;
@@ -4849,6 +4937,32 @@ Re-exported from another package as `PluginUiActionResultFor`; that package owns
 ```
 
 
+### `./hostApi` — `PluginUiEphemeralSharedScope` (type)
+
+Declared by `dist/hostApi/ephemeralSharedScope.public.d.ts` as `PluginUiEphemeralSharedScope`.
+
+```ts
+type PluginUiEphemeralSharedScope = Readonly<{
+    acquire<T>(localKey: string, create: () => Readonly<{
+        value: T;
+        dispose(): void;
+    }>): PluginUiEphemeralSharedValueLease<T> | null;
+}>;
+```
+
+
+### `./hostApi` — `PluginUiEphemeralSharedValueLease` (type)
+
+Declared by `dist/hostApi/ephemeralSharedScope.public.d.ts` as `PluginUiEphemeralSharedValueLease`.
+
+```ts
+type PluginUiEphemeralSharedValueLease<T> = Readonly<{
+    value: T;
+    release(): void;
+}>;
+```
+
+
 ### `./hostApi` — `PluginUiHostApi` (type)
 
 Re-exported from another package as `PluginUiHostApi`; that package owns the declaration.
@@ -4904,6 +5018,48 @@ type PluginUiResourceSnapshot = Readonly<{
     pending: 'idle' | 'initial' | 'refresh';
     error?: PluginUiResourceError;
     subscription: 'unsupported' | 'establishing' | 'live' | 'reconnecting' | 'ended';
+}>;
+```
+
+
+### `./hostApi` — `ReviewCommentProposalQueryV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalQueryV1`.
+
+```ts
+type ReviewCommentProposalQueryV1 = Readonly<{
+    linkedSessionIds: readonly string[];
+    entry: Readonly<{
+        kind: 'pullRequest';
+        url?: string;
+    }> | Readonly<{
+        kind: 'issue';
+        id: string;
+    }>;
+}>;
+```
+
+
+### `./hostApi` — `ReviewCommentProposalReadV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalReadV1`.
+
+```ts
+type ReviewCommentProposalReadV1 = Readonly<{
+    status: 'loading' | 'ready' | 'failed';
+    proposals: readonly ReviewCommentProposalWithBodyV1[];
+}>;
+```
+
+
+### `./hostApi` — `ReviewCommentProposalWithBodyV1` (type)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `ReviewCommentProposalWithBodyV1`.
+
+```ts
+type ReviewCommentProposalWithBodyV1 = Omit<ReviewCommentV1, 'body' | 'snapshot'> & Readonly<{
+    body: string;
+    snapshot: ReviewCommentSnapshotV1;
 }>;
 ```
 
@@ -4970,6 +5126,24 @@ Declared by `dist/hostApi/context.d.ts` as `usePluginSurfaceActivity`.
 function usePluginSurfaceActivity(): Readonly<{
     active: boolean;
 }>;
+```
+
+
+### `./hostApi` — `usePluginUiEphemeralSharedScope` (value)
+
+Declared by `dist/hostApi/context.d.ts` as `usePluginUiEphemeralSharedScope`.
+
+```ts
+function usePluginUiEphemeralSharedScope(): PluginUiEphemeralSharedScope | null;
+```
+
+
+### `./hostApi` — `useReviewCommentProposalsForEntry` (value)
+
+Declared by `dist/hostApi/reviewCommentProposals.public.d.ts` as `useReviewCommentProposalsForEntry`.
+
+```ts
+function useReviewCommentProposalsForEntry(query: ReviewCommentProposalQueryV1): ReviewCommentProposalReadV1;
 ```
 
 
@@ -5637,10 +5811,19 @@ type HappierLayoutChangeEvent = Readonly<{
 
 ### `./presentation` — `HappierLayoutGap` (type)
 
-Declared by `dist/presentation/layout/Layout.d.ts` as `HappierLayoutGap`.
+Declared by `dist/presentation/layout/layoutSemantics.d.ts` as `HappierLayoutGap`.
 
 ```ts
 type HappierLayoutGap = 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge';
+```
+
+
+### `./presentation` — `HappierLayoutSpacing` (type)
+
+Declared by `dist/presentation/layout/layoutSemantics.d.ts` as `HappierLayoutSpacing`.
+
+```ts
+type HappierLayoutSpacing = Readonly<Record<Exclude<HappierLayoutGap, 'none'>, number>>;
 ```
 
 
@@ -6530,6 +6713,7 @@ type HappierStatusProps = Readonly<{
     theme: HappierUiTheme;
     contrast?: HappierUiAccessibility['contrast'];
     isPulsing?: boolean;
+    animationEnabled?: boolean;
     controlRef?: (instance: HappierFocusable | null) => void;
     testID?: string;
     accessibilityLiveRegion?: HappierAccessibilityLiveRegion;
@@ -7133,6 +7317,15 @@ function resolveHappierItemSemantics(input: HappierItemSemanticInput): Readonly<
 ```
 
 
+### `./presentation` — `resolveHappierLayoutGap` (value)
+
+Declared by `dist/presentation/layout/layoutSemantics.d.ts` as `resolveHappierLayoutGap`.
+
+```ts
+function resolveHappierLayoutGap(gap: HappierLayoutGap | undefined, spacing: HappierLayoutSpacing): number;
+```
+
+
 ### `./presentation` — `resolveHappierListMultiSelectionKeyboardIntent` (value)
 
 Declared by `dist/presentation/collection/multiSelection.d.ts` as `resolveHappierListMultiSelectionKeyboardIntent`.
@@ -7399,6 +7592,7 @@ Declared by `dist/testing/rnwSemanticAdapter.d.ts` as `PluginUiRnwSemanticSurfac
 ```ts
 type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
     physicalFocus?: (target: HappierFocusable) => boolean;
+    ephemeralSharedScope?: PluginUiEphemeralSharedScope;
     targetedSurfaces?: Readonly<{
         readCurrentMounts(): unknown;
         readContributorManifest(pluginId: string): unknown;
@@ -7917,6 +8111,10 @@ type VirtualizedListSharedProps<Item> = Readonly<{
     footer?: ReactNode;
     contentContainerStyle?: HappierStyleProp;
     preserveVisibleContentPositionOnPrepend?: boolean;
+    preserveVisibleContentPositionOnInsert?: Readonly<{
+        anchorKey: string;
+        revision: string | number;
+    }>;
     children?: never;
 }>;
 ```
@@ -8006,6 +8204,7 @@ type PluginHostApiProviderInternalProps = PluginHostApiProviderProps & Readonly<
     surfaceActivity?: Readonly<{
         active: boolean;
     }>;
+    ephemeralSharedScope?: PluginUiEphemeralSharedScope | null;
 }>;
 ```
 
@@ -8395,12 +8594,14 @@ type ScaledTextStyleArray<T extends readonly unknown[]> = number extends T['leng
 - `@happier-dev/protocol#PluginCollectionUiQueryErrorV1`
 - `@happier-dev/protocol#PluginCollectionUiQueryRequestV1`
 - `@happier-dev/protocol#PluginCollectionUiQueryResultV1`
+- `@happier-dev/protocol#ReviewCommentSnapshotV1`
+- `@happier-dev/protocol#ReviewCommentV1`
 - `@types/node#AbortSignal`
 - `@types/react#ComponentType`
+- `@types/react#Context`
+- `@types/react#Element`
 - `@types/react#FunctionComponentElement`
-- `@types/react#JSX`
 - `@types/react#NamedExoticComponent`
-- `@types/react#React`
 - `@types/react#ReactElement`
 - `@types/react#ReactNode`
 - `@types/react#RefAttributes`

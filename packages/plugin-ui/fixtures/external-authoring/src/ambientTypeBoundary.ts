@@ -71,34 +71,33 @@ const hostProducedConnectedAccountOptions: FormProps['hints'] = {
   }],
 };
 
-const privateAccessoryPlacement: ItemProps = {
+const independentAccessoryPlacement: ItemProps = {
   title: 'happier',
-  // @ts-expect-error The host decides this placement for its own overflow adapter.
-  accessoryOutsidePressable: undefined,
+  accessoryOutsidePressable: true,
 };
 
 const privateThemeInjection: ItemProps = {
   title: 'happier',
   // @ts-expect-error Theme is injected from the mounted PluginUiProvider.
-  theme: undefined,
+  theme: {},
 };
 
 const privateTouchTargetInjection: ItemProps = {
   title: 'happier',
   // @ts-expect-error The host owns the native touch-target floor.
-  minimumTouchTarget: undefined,
+  minimumTouchTarget: 44,
 };
 
 const privateSecondaryActionState: ItemProps = {
   title: 'happier',
   // @ts-expect-error Secondary-action state derives from public author actions.
-  hasSecondaryActions: undefined,
+  hasSecondaryActions: true,
 };
 
 const privateItemGroupIndex: ItemProps = {
   title: 'happier',
   // @ts-expect-error ItemGroup owns radio index projection.
-  itemGroupRadioIndex: undefined,
+  itemGroupRadioIndex: 0,
 };
 
 void authorHints;
@@ -109,7 +108,7 @@ void authorItemGroup;
 void authorItem;
 void hostResolvedOptionsSource;
 void hostProducedConnectedAccountOptions;
-void privateAccessoryPlacement;
+void independentAccessoryPlacement;
 void privateThemeInjection;
 void privateTouchTargetInjection;
 void privateSecondaryActionState;

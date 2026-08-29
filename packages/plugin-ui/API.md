@@ -122,6 +122,8 @@ Declaration: `dist/index.d.ts`
 - type `PluginActionResultFor` from `dist/index.d.ts`
 - type `PluginTranslate` from `dist/index.d.ts`
 - type `PluginTranslationValues` from `dist/index.d.ts`
+- type `PluginUiEphemeralSharedScope` from `dist/index.d.ts`
+- type `PluginUiEphemeralSharedValueLease` from `dist/index.d.ts`
 - type `PluginUiFocusTarget` from `dist/index.d.ts`
 - type `PluginUiHostApi` from `dist/index.d.ts`
 - type `PluginUiResourceError` from `dist/index.d.ts`
@@ -133,6 +135,9 @@ Declaration: `dist/index.d.ts`
 - type `PopoverProps` from `dist/index.d.ts`
 - value `Progress` from `dist/index.d.ts`
 - type `ProgressProps` from `dist/index.d.ts`
+- type `ReviewCommentProposalQueryV1` from `dist/index.d.ts`
+- type `ReviewCommentProposalReadV1` from `dist/index.d.ts`
+- type `ReviewCommentProposalWithBodyV1` from `dist/index.d.ts`
 - value `Row` from `dist/index.d.ts`
 - type `RowProps` from `dist/index.d.ts`
 - value `Screen` from `dist/index.d.ts`
@@ -193,7 +198,9 @@ Declaration: `dist/index.d.ts`
 - value `usePluginSurfaceActivity` from `dist/index.d.ts`
 - value `usePluginTheme` from `dist/index.d.ts`
 - value `usePluginTranslation` from `dist/index.d.ts`
+- value `usePluginUiEphemeralSharedScope` from `dist/index.d.ts`
 - value `usePluginUiFocusTarget` from `dist/index.d.ts`
+- value `useReviewCommentProposalsForEntry` from `dist/index.d.ts`
 - value `useSurfaceContext` from `dist/index.d.ts`
 - value `useTabPanelActivity` from `dist/index.d.ts`
 
@@ -452,11 +459,16 @@ Declaration: `dist/hostApi/index.d.ts`
 - type `PluginActionInputFor` from `dist/hostApi/index.d.ts`
 - type `PluginActionReference` from `dist/hostApi/index.d.ts`
 - type `PluginActionResultFor` from `dist/hostApi/index.d.ts`
+- type `PluginUiEphemeralSharedScope` from `dist/hostApi/index.d.ts`
+- type `PluginUiEphemeralSharedValueLease` from `dist/hostApi/index.d.ts`
 - type `PluginUiHostApi` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceError` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceReference` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceResult` from `dist/hostApi/index.d.ts`
 - type `PluginUiResourceSnapshot` from `dist/hostApi/index.d.ts`
+- type `ReviewCommentProposalQueryV1` from `dist/hostApi/index.d.ts`
+- type `ReviewCommentProposalReadV1` from `dist/hostApi/index.d.ts`
+- type `ReviewCommentProposalWithBodyV1` from `dist/hostApi/index.d.ts`
 - value `useComposer` from `dist/hostApi/index.d.ts`
 - value `useComposerView` from `dist/hostApi/index.d.ts`
 - value `useExecutePluginAction` from `dist/hostApi/index.d.ts`
@@ -464,6 +476,8 @@ Declaration: `dist/hostApi/index.d.ts`
 - value `usePluginHostApi` from `dist/hostApi/index.d.ts`
 - value `usePluginResource` from `dist/hostApi/index.d.ts`
 - value `usePluginSurfaceActivity` from `dist/hostApi/index.d.ts`
+- value `usePluginUiEphemeralSharedScope` from `dist/hostApi/index.d.ts`
+- value `useReviewCommentProposalsForEntry` from `dist/hostApi/index.d.ts`
 
 ### `./presentation`
 
@@ -519,6 +533,7 @@ Declaration: `dist/presentation/index.d.ts`
 - value `HappierLabel` from `dist/presentation/index.d.ts`
 - type `HappierLayoutChangeEvent` from `dist/presentation/index.d.ts`
 - type `HappierLayoutGap` from `dist/presentation/index.d.ts`
+- type `HappierLayoutSpacing` from `dist/presentation/index.d.ts`
 - value `HappierLink` from `dist/presentation/index.d.ts`
 - value `HappierList` from `dist/presentation/index.d.ts`
 - value `HappierListItem` from `dist/presentation/index.d.ts`
@@ -627,6 +642,7 @@ Declaration: `dist/presentation/index.d.ts`
 - value `resolveHappierItemBehavior` from `dist/presentation/index.d.ts`
 - value `resolveHappierItemGroupConstraints` from `dist/presentation/index.d.ts`
 - value `resolveHappierItemSemantics` from `dist/presentation/index.d.ts`
+- value `resolveHappierLayoutGap` from `dist/presentation/index.d.ts`
 - value `resolveHappierListMultiSelectionKeyboardIntent` from `dist/presentation/index.d.ts`
 - value `resolveHappierListMultiSelectionPointerAction` from `dist/presentation/index.d.ts`
 - value `resolveHappierListMultiSelectionRange` from `dist/presentation/index.d.ts`

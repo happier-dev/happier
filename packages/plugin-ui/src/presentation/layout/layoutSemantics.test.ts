@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveHappierLayoutGap } from './Layout.js';
+import { resolveHappierLayoutGap } from './layoutSemantics.js';
 
 describe('resolveHappierLayoutGap', () => {
   const spacing = Object.freeze({
@@ -17,5 +17,10 @@ describe('resolveHappierLayoutGap', () => {
     expect(resolveHappierLayoutGap('small', spacing)).toBe(8);
     expect(resolveHappierLayoutGap('medium', spacing)).toBe(12);
     expect(resolveHappierLayoutGap('large', spacing)).toBe(16);
+  });
+
+  it('rejects an unknown gap word instead of inventing a number', () => {
+    const unknownGap = 'huge' as unknown as Parameters<typeof resolveHappierLayoutGap>[0];
+    expect(resolveHappierLayoutGap(unknownGap, spacing)).toBeUndefined();
   });
 });

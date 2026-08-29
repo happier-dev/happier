@@ -356,8 +356,9 @@ type ItemSecondaryActionsProps =
     }>;
 
 /**
- * Curated author row props. Theme, target size, secondary-action state,
- * accessory placement and ItemGroup indexing remain adapter-owned facts.
+ * Curated author row props. Theme, target size, secondary-action state and
+ * ItemGroup indexing remain adapter-owned facts. Authors may place an
+ * independently interactive accessory outside the primary row Pressable.
  */
 export type ItemProps = Readonly<{
   /**

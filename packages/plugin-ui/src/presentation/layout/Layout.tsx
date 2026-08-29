@@ -16,18 +16,13 @@ import type {
 } from '../portableTypes.js';
 import { PluginUiPopoverScrollSourceProvider } from '../../presentationHost/context.js';
 
-export type HappierLayoutGap = 'none' | 'xsmall' | 'small' | 'medium' | 'large' | 'xlarge';
-
-export type HappierLayoutSpacing = Readonly<Record<Exclude<HappierLayoutGap, 'none'>, number>>;
-
-/** One semantic gap vocabulary for public and host declarative adapters. */
-export function resolveHappierLayoutGap(
-  gap: HappierLayoutGap | undefined,
-  spacing: HappierLayoutSpacing,
-): number {
-  const resolvedGap = gap ?? 'medium';
-  return resolvedGap === 'none' ? 0 : spacing[resolvedGap];
-}
+// The semantic gap vocabulary is owned by the RN-free shared module so the
+// public adapter and the host declarative renderer cannot disagree about it.
+export {
+  resolveHappierLayoutGap,
+  type HappierLayoutGap,
+  type HappierLayoutSpacing,
+} from './layoutSemantics.js';
 
 export type HappierStackProps = Readonly<{
   children?: ReactNode;

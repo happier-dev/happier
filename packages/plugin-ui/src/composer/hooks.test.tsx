@@ -1,6 +1,7 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
-import renderer, { act } from 'react-test-renderer';
+import renderer from 'react-test-renderer';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import * as pluginUi from '../hostApi/index.js';

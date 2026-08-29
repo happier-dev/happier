@@ -829,6 +829,20 @@
     },
     {
       "specifier": ".",
+      "exportName": "PluginUiEphemeralSharedScope",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PluginUiEphemeralSharedScope"
+    },
+    {
+      "specifier": ".",
+      "exportName": "PluginUiEphemeralSharedValueLease",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "PluginUiEphemeralSharedValueLease"
+    },
+    {
+      "specifier": ".",
       "exportName": "PluginUiFocusTarget",
       "kind": "type",
       "declarationModule": "dist/index.d.ts",
@@ -903,6 +917,27 @@
       "kind": "type",
       "declarationModule": "dist/index.d.ts",
       "declarationExport": "ProgressProps"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ReviewCommentProposalQueryV1",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ReviewCommentProposalQueryV1"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ReviewCommentProposalReadV1",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ReviewCommentProposalReadV1"
+    },
+    {
+      "specifier": ".",
+      "exportName": "ReviewCommentProposalWithBodyV1",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "ReviewCommentProposalWithBodyV1"
     },
     {
       "specifier": ".",
@@ -1326,10 +1361,24 @@
     },
     {
       "specifier": ".",
+      "exportName": "usePluginUiEphemeralSharedScope",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "usePluginUiEphemeralSharedScope"
+    },
+    {
+      "specifier": ".",
       "exportName": "usePluginUiFocusTarget",
       "kind": "value",
       "declarationModule": "dist/index.d.ts",
       "declarationExport": "usePluginUiFocusTarget"
+    },
+    {
+      "specifier": ".",
+      "exportName": "useReviewCommentProposalsForEntry",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "useReviewCommentProposalsForEntry"
     },
     {
       "specifier": ".",
@@ -2964,6 +3013,20 @@
     },
     {
       "specifier": "./hostApi",
+      "exportName": "PluginUiEphemeralSharedScope",
+      "kind": "type",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "PluginUiEphemeralSharedScope"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "PluginUiEphemeralSharedValueLease",
+      "kind": "type",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "PluginUiEphemeralSharedValueLease"
+    },
+    {
+      "specifier": "./hostApi",
       "exportName": "PluginUiHostApi",
       "kind": "type",
       "declarationModule": "dist/hostApi/index.d.ts",
@@ -2996,6 +3059,27 @@
       "kind": "type",
       "declarationModule": "dist/hostApi/index.d.ts",
       "declarationExport": "PluginUiResourceSnapshot"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "ReviewCommentProposalQueryV1",
+      "kind": "type",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "ReviewCommentProposalQueryV1"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "ReviewCommentProposalReadV1",
+      "kind": "type",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "ReviewCommentProposalReadV1"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "ReviewCommentProposalWithBodyV1",
+      "kind": "type",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "ReviewCommentProposalWithBodyV1"
     },
     {
       "specifier": "./hostApi",
@@ -3045,6 +3129,20 @@
       "kind": "value",
       "declarationModule": "dist/hostApi/index.d.ts",
       "declarationExport": "usePluginSurfaceActivity"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "usePluginUiEphemeralSharedScope",
+      "kind": "value",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "usePluginUiEphemeralSharedScope"
+    },
+    {
+      "specifier": "./hostApi",
+      "exportName": "useReviewCommentProposalsForEntry",
+      "kind": "value",
+      "declarationModule": "dist/hostApi/index.d.ts",
+      "declarationExport": "useReviewCommentProposalsForEntry"
     },
     {
       "specifier": "./presentation",
@@ -3395,6 +3493,13 @@
       "kind": "type",
       "declarationModule": "dist/presentation/index.d.ts",
       "declarationExport": "HappierLayoutGap"
+    },
+    {
+      "specifier": "./presentation",
+      "exportName": "HappierLayoutSpacing",
+      "kind": "type",
+      "declarationModule": "dist/presentation/index.d.ts",
+      "declarationExport": "HappierLayoutSpacing"
     },
     {
       "specifier": "./presentation",
@@ -4151,6 +4256,13 @@
       "kind": "value",
       "declarationModule": "dist/presentation/index.d.ts",
       "declarationExport": "resolveHappierItemSemantics"
+    },
+    {
+      "specifier": "./presentation",
+      "exportName": "resolveHappierLayoutGap",
+      "kind": "value",
+      "declarationModule": "dist/presentation/index.d.ts",
+      "declarationExport": "resolveHappierLayoutGap"
     },
     {
       "specifier": "./presentation",
