@@ -1786,12 +1786,13 @@ export function createClaudeAgentSdkTurnOperations(
         async respondToProviderPermission(requestId, approved) {
             return respondToClaudePermission({ ctx: params.ctx, provider: 'claude', requestId, approved });
         },
-        async cancelProviderTurn() {
+        async cancelProviderTurn(expectedTurnId?: string) {
+            if (expectedTurnId !== undefined && currentTurnId !== expectedTurnId) return false;
             const turnQuery = activeQuery
                 ?? (activeProviderTaskId
                     ? Array.from(backgroundQueries).at(-1) ?? disposeQuery
                     : null);
-            if (!turnQuery) return;
+            if (!turnQuery) return false;
             cancelledQueries.set(turnQuery, 'user_request');
             const providerTaskId = activeProviderTaskId;
             if (providerTaskId) {
@@ -1799,8 +1800,9 @@ export function createClaudeAgentSdkTurnOperations(
                     await turnQuery.stopTask(providerTaskId);
                     if (activeProviderTaskId === providerTaskId) activeProviderTaskId = null;
                     if (activeQuery === turnQuery) activeQuery = null;
+                    if (expectedTurnId === undefined || currentTurnId === expectedTurnId) currentTurnId = null;
                     backgroundQueries.delete(turnQuery);
-                    return;
+                    return true;
                 } catch (error) {
                     params.ctx.logger.debug(
                         '[ClaudeAgentSdk] Targeted provider task cancellation failed; interrupting query',
@@ -1811,6 +1813,8 @@ export function createClaudeAgentSdkTurnOperations(
             await turnQuery.interrupt();
             backgroundQueries.delete(turnQuery);
             settleUserCancelledTurn(turnQuery);
+            if (expectedTurnId === undefined || currentTurnId === expectedTurnId) currentTurnId = null;
+            return true;
         },
         readProviderIdentity() {
             return { sessionId: providerSessionId };

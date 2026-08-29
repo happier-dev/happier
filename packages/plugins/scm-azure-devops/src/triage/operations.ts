@@ -30,7 +30,10 @@ import {
   type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
+import {
+  readTriageSourceAccountListingV1,
+  type TriageSourceAccountListingOutcomeV1,
+} from '@happier-dev/triage-sources/runtime';
 
 import { azureDevopsHostingProviderAdapter } from '../detection/adapter.js';
 import { stripAzureBranchRef } from '../parsing/azureDevopsCoordinates.js';
@@ -76,6 +79,23 @@ import {
   type AzureRepositoryRow,
   type AzureScanFrontier,
 } from './types.js';
+
+function projectAzureAccountListingFailure(
+  outcome: Extract<TriageSourceAccountListingOutcomeV1, Readonly<{ kind: 'failed' }>>,
+  signal: AbortSignal,
+): TriageSourceFailureV1 {
+  if (outcome.reason === 'failed') {
+    return createAzureSourceFailure({
+      class: 'transient',
+      code: 'azure-devops/account-listing-failed',
+      detail: 'The Connected Accounts listing for Azure DevOps could not be read.',
+    });
+  }
+  return projectAzureSourceFailure(classifyAzureDevOpsTransportFailure({
+    error: outcome.error,
+    signal: signal.aborted ? signal : AbortSignal.abort(outcome.error),
+  }));
+}
 
 /** The bounded account slice of the host Connected Accounts service this source consumes. */
 export type AzureTriageAccountService = Readonly<{
@@ -141,11 +161,7 @@ export async function runAzureTriageListInstances(input: Readonly<{
   if (outcome.kind === 'failed') {
     return {
       kind: 'failed',
-      failure: createAzureSourceFailure({
-        class: 'transient',
-        code: 'azure-devops/account-listing-failed',
-        detail: 'The Connected Accounts listing for Azure DevOps could not be read.',
-      }),
+      failure: projectAzureAccountListingFailure(outcome, input.signal),
     };
   }
   // No selected account is an empty set the reader can act on by connecting one,
@@ -1234,17 +1250,7 @@ async function confirmAzureConfiguredBaseIsCurrent(input: Readonly<{
     // preserve — a mount that went away versus a provider still owing an answer — for
     // every detail and scan read in the vertical. It is deferred to the same abort owner
     // every other request already uses rather than decided a second time here.
-    if (input.signal.aborted) {
-      return projectAzureSourceFailure(classifyAzureDevOpsTransportFailure({
-        error: outcome.error,
-        signal: input.signal,
-      }));
-    }
-    return createAzureSourceFailure({
-      class: 'transient',
-      code: 'azure-devops/account-listing-failed',
-      detail: 'The Connected Accounts listing for Azure DevOps could not be read.',
-    });
+    return projectAzureAccountListingFailure(outcome, input.signal);
   }
   const accounts = outcome.kind === 'unbound' ? [] : outcome.listing.accounts;
   const listed = accounts.find((candidate) => (

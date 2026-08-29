@@ -150,7 +150,7 @@ export async function readGithubCapabilities(
   if (!admitted.ok) return unavailable(admitted.failure);
   return Object.freeze({
     kind: 'capabilities' as const,
-    ...projectGithubRepositoryCapabilities(admitted.repository, admitted.kindId),
+    ...projectGithubRepositoryCapabilities(admitted.repository),
   });
 }
 

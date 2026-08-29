@@ -7,11 +7,8 @@
  * this plugin — normalizes it, admits it at HostAccess, and republishes it as
  * the account's `connectedAccountOrigins`.
  *
- * This runtime deliberately admits every usable origin, including a
- * self-managed one. Which deployments a *feature* may read is that feature's
- * admission decision: the Triage source stops a non-`gitlab.com` deployment at
- * its own V1 admission check, before any item call, and refusing the connection
- * here would make that check unreachable and the failure unattributable.
+ * GitLab.com and self-managed GitLab use distinct declaration modes so the host
+ * can keep the public fixed origin out of the private-network-capable grant.
  *
  * Confirmation is one minimal authenticated read of the token's own account. No
  * token, header, response body, or provider payload ever leaves this module;
@@ -25,12 +22,16 @@ import type {
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { normalizeGitlabConfiguredBaseUrl } from '../triage/origin.js';
+import {
+  GITLAB_PUBLIC_ORIGIN,
+  normalizeGitlabConfiguredBaseUrl,
+} from '../triage/origin.js';
 
 /** The one configuration field carrying this account's declared deployment. */
 export const GITLAB_ORIGIN_CONFIGURATION_FIELD = 'baseUrl';
 /** The single manual mode: GitLab issues no other credential for API reads. */
 export const GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID = 'personal-access-token';
+export const GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID = 'self-hosted-personal-access-token';
 export const GITLAB_TOKEN_CREDENTIAL_KEY = 'token';
 
 export const GITLAB_ACCOUNT_FAILURE_CODES = Object.freeze({
@@ -67,12 +68,25 @@ type GitlabConfiguredDeployment = Readonly<{
  * credential reaches a deployment its owner never named.
  */
 function readConfiguredDeployment(
-  configuration: Readonly<{ values: Readonly<Record<string, unknown>> }>,
+  configuration: Readonly<{
+    target: Readonly<{ modeId: string }>;
+    values: Readonly<Record<string, unknown>>;
+  }>,
 ): GitlabConfiguredDeployment | null {
   const configured = configuration.values[GITLAB_ORIGIN_CONFIGURATION_FIELD];
   if (typeof configured !== 'string') return null;
   const normalized = normalizeGitlabConfiguredBaseUrl(configured);
   if (normalized === null) return null;
+  if (configuration.target.modeId === GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID) {
+    if (normalized.normalized !== GITLAB_PUBLIC_ORIGIN) return null;
+  } else if (configuration.target.modeId === GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID) {
+    // The public deployment belongs to the fixed-origin mode. Refusing it here
+    // prevents the private-capable connected-origin grant from also admitting
+    // GitLab.com when its DNS answer is private.
+    if (normalized.normalized === GITLAB_PUBLIC_ORIGIN) return null;
+  } else {
+    return null;
+  }
   return {
     origin: normalized.origin,
     normalized: normalized.normalized,
@@ -273,6 +287,10 @@ const gitlabConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
       [GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID]: {
+        kind: 'manual',
+        complete: completeManualConnection,
+      },
+      [GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID]: {
         kind: 'manual',
         complete: completeManualConnection,
       },

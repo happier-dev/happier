@@ -1,11 +1,10 @@
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from './contribution.js';
 import type { GithubRepositoryReadV1 } from './repositories.js';
-import type { GithubTriageKindIdV1 } from './types.js';
 
 export type GithubCapabilityAvailabilityV1 =
   | Readonly<{ kind: 'available' }>
-  | Readonly<{ kind: 'unavailable'; code: 'api_not_exposed' | 'repository_unsupported' }>
-  | Readonly<{ kind: 'denied'; code: 'repository_archived' | 'forbidden_by_forge' }>;
+  | Readonly<{ kind: 'unavailable'; code: 'repository_unsupported' }>
+  | Readonly<{ kind: 'denied'; code: 'repository_archived' }>;
 
 export type GithubRepositoryCapabilitiesV1 = Readonly<{
   operations: Readonly<Record<keyof typeof GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1, GithubCapabilityAvailabilityV1>>;
@@ -13,39 +12,20 @@ export type GithubRepositoryCapabilitiesV1 = Readonly<{
 }>;
 
 const available = Object.freeze({ kind: 'available' as const });
-const unknown = Object.freeze({ kind: 'unavailable' as const, code: 'api_not_exposed' as const });
 const unsupported = Object.freeze({ kind: 'unavailable' as const, code: 'repository_unsupported' as const });
 const archived = Object.freeze({ kind: 'denied' as const, code: 'repository_archived' as const });
-const forbidden = Object.freeze({ kind: 'denied' as const, code: 'forbidden_by_forge' as const });
-
-function authority(values: readonly (boolean | null)[]): GithubCapabilityAvailabilityV1 {
-  if (values.includes(true)) return available;
-  return values.every((value) => value === false) ? forbidden : unknown;
-}
 
 export function projectGithubRepositoryCapabilities(
   repository: Extract<GithubRepositoryReadV1, { kind: 'readable' }>,
-  kindId: GithubTriageKindIdV1,
 ): GithubRepositoryCapabilitiesV1 {
-  void kindId;
-  const repositoryWrite = authority([
-    repository.viewerPermissions.admin,
-    repository.viewerPermissions.maintain,
-    repository.viewerPermissions.push,
-  ]);
-  const issueWrite = authority([
-    repository.viewerPermissions.admin,
-    repository.viewerPermissions.maintain,
-    repository.viewerPermissions.push,
-    repository.viewerPermissions.triage,
-  ]);
-  const issueAvailability = repository.hasIssues === true
-    ? issueWrite
-    : repository.hasIssues === false ? unsupported : unknown;
   const allArchived = repository.archived === true;
-  const operation = (issue: boolean): GithubCapabilityAvailabilityV1 =>
-    allArchived ? archived : repository.archived === null
-      ? unknown : issue ? issueAvailability : repositoryWrite;
+  // Repository roles are deliberately absent here. They are coarse repository
+  // facts, not authoritative preflights for comment, review, state, reviewer,
+  // branch, or merge operations. When GitHub exposes no decisive negative fact,
+  // the confirmed Action remains the permission owner.
+  const operation = (issue: boolean): GithubCapabilityAvailabilityV1 => allArchived
+    ? archived
+    : issue && repository.hasIssues === false ? unsupported : available;
   const operations = Object.freeze({
     pullRequestMerge: operation(false),
     pullRequestSubmitReview: operation(false),
@@ -68,9 +48,7 @@ export function projectGithubRepositoryCapabilities(
   });
   const mergeMethod = (setting: boolean | null): GithubCapabilityAvailabilityV1 => {
     if (allArchived) return archived;
-    if (repository.archived === null) return unknown;
-    if (repositoryWrite.kind !== 'available') return repositoryWrite;
-    return setting === true ? available : setting === false ? unsupported : unknown;
+    return setting === false ? unsupported : available;
   };
   return Object.freeze({
     operations,

@@ -13,9 +13,13 @@ import { buildCodexAgentRuntimeDescriptorV1 } from '../../../../protocol/runtime
 import {
   type CodexRolloutCandidateEntry,
   type CodexRolloutCandidateGroup,
+  type CodexRolloutCandidateScanBoundary,
+  canSearchCodexRolloutFilename,
   compareCodexRolloutCandidateCodeUnits,
   filterCodexRolloutCandidatesBySearchTerm,
+  normalizeCodexRolloutCandidateSearchTerm,
   resolveCodexRolloutSearchBuildConcurrency,
+  resolveCodexRolloutSearchCandidateLimit,
   scanCodexRolloutCandidateChunk,
   selectCodexRolloutCandidateEntries,
 } from '../../../rollout/discovery/candidates.js';
@@ -26,6 +30,8 @@ import {
   readCodexSessionTitleFromRollout,
 } from '../../../rollout/discovery/rolloutTitle.js';
 import {
+  DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN,
+  advanceCodexExternalSessionRolloutScanState,
   createInitialCodexExternalSessionIndexCursor,
   decodeCodexExternalSessionIndexCursor,
   decodeCodexExternalSessionCandidateCursor,
@@ -34,6 +40,7 @@ import {
   resolveCodexExternalSessionAppServerListBudgetMs,
   type CodexExternalSessionIndexCursor,
   type CodexExternalSessionNativeCandidateCursorState,
+  type CodexExternalSessionRolloutScanState,
 } from './candidates.js';
 import type {
   CodexExternalSessionCandidate,
@@ -429,38 +436,109 @@ function toCodexMergedOrderingCandidateRow(
  * ordering as the prefix deepens, which serves the displaced identity again on
  * the next page and drops the neighbour it shifted past.
  */
+/**
+ * The rollout half of a searched page: one bounded searched window per
+ * request, continued across requests by the v6 cursor's scan state.
+ *
+ * Terms that can match a rollout filename keep the exact filename/metadata
+ * search path, which prunes by filename before it stats or opens anything and
+ * so answers an id lookup in one call; the cursor records that producer
+ * (`filenameSelection`) because its rows are a complete, re-runnable
+ * selection. Every other term consumes one bounded scan chunk
+ * (`scanCodexRolloutCandidateChunk`) sized by the same searched-candidate-limit
+ * budget that always bounded the searched window — the whole-corpus
+ * enumeration this replaces walked and statted every rollout file behind a
+ * single request, which does not fit the per-source head acquisition on a real
+ * corpus and is why the chunk scanner exists. The cursor records the chunk
+ * scan's resume boundary, so a continuation reproduces or advances that exact
+ * chunk instead of restarting the corpus from its head — restarting would
+ * re-serve the first window forever and strand the corpus behind it.
+ * `searchIncomplete` is how the host learns a served window was not the whole
+ * corpus while the cursor still carries the resume point that continues it.
+ */
 async function listRolloutCandidateOrdering(params: Readonly<{
   source: CodexExternalSessionSource;
   activeServerDir?: string;
   env: NodeJS.ProcessEnv;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
+  scan: CodexExternalSessionRolloutScanState;
 }> & CodexExternalSessionInvocationBounds): Promise<Readonly<{
   rows: CodexMergedOrderingRow[];
+  /** The resolved producer of `rows`, stored verbatim in the next cursor. */
+  scan: CodexExternalSessionRolloutScanState;
+  /** The chunk scan's continuation boundary; null when `rows` are complete. */
+  nextBoundary: CodexRolloutCandidateScanBoundary | null;
   searchIncomplete?: boolean;
 }>> {
-  const selection = await selectCodexRolloutCandidateEntries({
+  const searchTerm = normalizeCodexRolloutCandidateSearchTerm(params.searchTerm);
+  if (
+    (params.scan.kind === 'auto' || params.scan.kind === 'filenameSelection')
+    && searchTerm
+    && canSearchCodexRolloutFilename(searchTerm)
+  ) {
+    const selection = await selectCodexRolloutCandidateEntries({
+      source: params.source,
+      activeServerDir: params.activeServerDir,
+      env: params.env,
+      offset: 0,
+      limit: Number.MAX_SAFE_INTEGER,
+      searchTerm: params.searchTerm,
+      searchMode: params.searchMode,
+      filenameOnly: true,
+      signal: params.signal,
+      deadlineAtMs: params.deadlineAtMs,
+    });
+    if (selection.kind === 'direct' && selection.entries.length > 0) {
+      return {
+        rows: selection.entries.map((entry) => ({
+          kind: 'rolloutEntry' as const,
+          remoteSessionId: entry.remoteSessionId,
+          updatedAtMs: Math.trunc(entry.group.updatedAtMs),
+          entry,
+        })),
+        scan: Object.freeze({ kind: 'filenameSelection', boundary: null }),
+        nextBoundary: null,
+        ...(selection.searchIncomplete ? { searchIncomplete: true } : {}),
+      };
+    }
+    if (params.scan.kind === 'filenameSelection') {
+      // The cursor pages rows a filename selection produced; that selection no
+      // longer exists, so the offset has nothing left to index.
+      throw new CodexExternalSessionCandidateSourceChangedError();
+    }
+    if (params.searchMode === 'fast') {
+      return {
+        rows: [],
+        scan: DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN,
+        nextBoundary: null,
+        searchIncomplete: true,
+      };
+    }
+  }
+  if (params.scan.kind === 'done') {
+    return {
+      rows: [],
+      scan: DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN,
+      nextBoundary: null,
+    };
+  }
+
+  const after = params.scan.kind === 'chunkScan' ? params.scan.boundary : null;
+  const chunk = await scanCodexRolloutCandidateChunk({
     source: params.source,
     activeServerDir: params.activeServerDir,
     env: params.env,
-    offset: 0,
-    limit: Number.MAX_SAFE_INTEGER,
-    searchTerm: params.searchTerm,
-    searchMode: params.searchMode,
+    limit: resolveCodexRolloutSearchCandidateLimit({
+      env: params.env,
+      searchMode: params.searchMode,
+    }),
+    after,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
-
-  if (selection.kind === 'direct') {
-    return {
-      rows: selection.entries.map((entry) => ({
-        kind: 'rolloutEntry' as const,
-        remoteSessionId: entry.remoteSessionId,
-        updatedAtMs: Math.trunc(entry.group.updatedAtMs),
-        entry,
-      })),
-      ...(selection.searchIncomplete ? { searchIncomplete: true } : {}),
-    };
+  if (chunk.sourceChanged) {
+    throw new CodexExternalSessionCandidateSourceChangedError();
   }
 
   // Candidate search matches on the title and cwd that only a built candidate
@@ -468,7 +546,7 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   // filter. The bounded searched window is what keeps that affordable, and
   // `searchIncomplete` is how the host learns the window was not the corpus.
   const built = await mapCodexExternalSessionWorkWithConcurrency(
-    selection.entries,
+    chunk.entries,
     resolveCodexRolloutSearchBuildConcurrency(params.env),
     ({ remoteSessionId, group, source }) => buildRolloutCandidate({
       remoteSessionId,
@@ -487,7 +565,9 @@ async function listRolloutCandidateOrdering(params: Readonly<{
   });
   return {
     rows: filtered.map(toCodexMergedOrderingCandidateRow),
-    ...(selection.searchIncomplete ? { searchIncomplete: true } : {}),
+    scan: Object.freeze({ kind: 'chunkScan', boundary: after }),
+    nextBoundary: chunk.nextBoundary,
+    ...(chunk.nextBoundary ? { searchIncomplete: true } : {}),
   };
 }
 
@@ -643,6 +723,10 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
   activePage: CodexAppServerCandidatePage | null;
   archivedPage: CodexAppServerCandidatePage | null;
   limit: number;
+  rolloutScan: Readonly<{
+    current: CodexExternalSessionRolloutScanState;
+    nextBoundary: CodexRolloutCandidateScanBoundary | null;
+  }>;
 }>): Readonly<{
   rows: readonly CodexMergedOrderingRow[];
   cursor: CodexExternalSessionIndexCursor;
@@ -780,13 +864,32 @@ function selectBoundedCodexMergedCandidatePage(params: Readonly<{
     page: params.archivedPage,
     offset: archivedOffset,
   });
-  const hasMore = rolloutOffset < params.rolloutRows.length || !active.done || !archived.done;
+  // The rollout stream continues only when rows remain in the scan the cursor
+  // already reproduces, or when an exhausted chunk scan carries a continuation
+  // boundary for the next chunk. Without the boundary term, a corpus larger
+  // than one searched window would end the search with an incomplete flag but
+  // no cursor — the rows behind the window permanently unreachable.
+  const rolloutScan = advanceCodexExternalSessionRolloutScanState({
+    current: params.rolloutScan.current,
+    rowsLength: params.rolloutRows.length,
+    rolloutOffset,
+    nextBoundary: params.rolloutScan.nextBoundary,
+  });
+  // A scan that advanced past the rows this request reproduced starts its next
+  // chunk at offset zero; only an unexhausted scan keeps its row offset.
+  const nextRolloutOffset = rolloutOffset < params.rolloutRows.length ? rolloutOffset : 0;
+  const hasMore =
+    rolloutOffset < params.rolloutRows.length
+    || rolloutScan.kind === 'chunkScan'
+    || !active.done
+    || !archived.done;
   return Object.freeze({
     rows: Object.freeze(selected),
     cursor: Object.freeze({
       v: 6,
       kind: 'codexMergedCandidatePage',
-      rolloutOffset,
+      rolloutOffset: nextRolloutOffset,
+      rolloutScan,
       suppressedRolloutIds: Object.freeze([...suppressedRolloutIds]),
       active,
       archived,
@@ -816,13 +919,9 @@ export async function listCodexSessionCandidates(params: Readonly<{
   const limit = Math.max(1, Math.trunc(params.limit));
   // Every unsearched browse — the ordinary mounted machine Browse included —
   // builds the host candidate index from bounded scan chunks. An empty query
-  // has nothing to search, so the merged whole-corpus ordering (and its
-  // MAX_SAFE_INTEGER enumeration) is reserved for real searches. Every
-  // invocation has execution authority; capability absence is not a second
-  // candidate-source decision path.
-  // Search — including the index owner's own per-row hydration — keeps the exact
-  // filename/metadata search path, which prunes by filename before it stats or
-  // opens anything and so answers an id lookup in one call.
+  // has nothing to search. Real searches run the merged ordering against one
+  // bounded searched window per request (`listRolloutCandidateOrdering`), so
+  // no request walks the whole corpus.
   if (!searchTerm) {
     return await scanBoundedRolloutCandidateChunk({
       source: params.source,
@@ -844,16 +943,21 @@ export async function listCodexSessionCandidates(params: Readonly<{
     env: params.env,
     searchTerm,
     searchMode: params.searchMode,
+    scan: cursor.rolloutScan,
     signal: params.signal,
     deadlineAtMs: params.deadlineAtMs,
   });
-  const serveRolloutOnlyPage = async (ordering: readonly CodexMergedOrderingRow[]) => {
-    if (cursor.rolloutOffset > ordering.length) {
+  const serveRolloutOnlyPage = async (ordering: Readonly<{
+    rows: CodexMergedOrderingRow[];
+    scan: CodexExternalSessionRolloutScanState;
+    nextBoundary: CodexRolloutCandidateScanBoundary | null;
+  }>) => {
+    if (cursor.rolloutOffset > ordering.rows.length) {
       throw new CodexExternalSessionCandidateSourceChangedError();
     }
-    const pageRows = ordering.slice(cursor.rolloutOffset, cursor.rolloutOffset + limit);
+    const pageRows = ordering.rows.slice(cursor.rolloutOffset, cursor.rolloutOffset + limit);
     const nextOffset = cursor.rolloutOffset + pageRows.length;
-    const hasMore = nextOffset < ordering.length;
+    const hasMore = nextOffset < ordering.rows.length;
     return {
       candidates: await buildCodexMergedOrderingPage(pageRows, params),
       nextCursor: hasMore
@@ -861,6 +965,12 @@ export async function listCodexSessionCandidates(params: Readonly<{
           v: 6 as const,
           kind: 'codexMergedCandidatePage' as const,
           rolloutOffset: nextOffset,
+          rolloutScan: advanceCodexExternalSessionRolloutScanState({
+            current: ordering.scan,
+            rowsLength: ordering.rows.length,
+            rolloutOffset: nextOffset,
+            nextBoundary: ordering.nextBoundary,
+          }),
           suppressedRolloutIds: Object.freeze([]),
           active: terminalNativeCandidateCursorState(),
           archived: terminalNativeCandidateCursorState(),
@@ -872,7 +982,11 @@ export async function listCodexSessionCandidates(params: Readonly<{
     && rolloutOrdering.rows.some((row) => row.remoteSessionId.toLowerCase() === searchTerm)
     && rolloutOrdering.searchIncomplete !== true;
   if (exactRolloutIdMatch) {
-    return await serveRolloutOnlyPage([...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows));
+    return await serveRolloutOnlyPage({
+      rows: [...rolloutOrdering.rows].sort(compareCodexMergedOrderingRows),
+      scan: rolloutOrdering.scan,
+      nextBoundary: rolloutOrdering.nextBoundary,
+    });
   }
 
   const appServerListing = params.searchMode === 'fast'
@@ -906,6 +1020,10 @@ export async function listCodexSessionCandidates(params: Readonly<{
     activePage: appServerListing.active,
     archivedPage: appServerListing.archived,
     limit,
+    rolloutScan: {
+      current: rolloutOrdering.scan,
+      nextBoundary: rolloutOrdering.nextBoundary,
+    },
   });
   const searchIncomplete = rolloutOrdering.searchIncomplete === true
     || appServerListing.incomplete === true

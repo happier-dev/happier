@@ -1,5 +1,5 @@
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   asChannelStateRow,
@@ -280,6 +280,88 @@ describe('Channels ingress conflict Account projections', () => {
         censusId: 'census-conflict',
         revision: 6,
         connectionId: CONNECTION_ID,
+      }],
+    });
+  });
+
+  it('keeps connection-owned Event custody alongside binding attention in one Account page', async () => {
+    const eventObligationId = 'E'.repeat(43);
+    const bindingObligationId = 'B'.repeat(43);
+    const query = vi.fn(async () => ({
+      rows: [{
+        rowId: eventObligationId,
+        revision: 4,
+        value: {
+          id: eventObligationId,
+          'record-kind': 'ingress-obligation',
+          v: 1,
+          'connection-id': CONNECTION_ID,
+          terminal: false,
+          attention: true,
+          'created-at': 10,
+          'updated-at': 20,
+          payload: {
+            occurrenceIds: ['provider:event:1'],
+            censusId: 'C'.repeat(43),
+            target: { kind: 'event' },
+            sourceAuthority: {
+              connectionAuthorityEpoch: 3,
+              bindingRevision: null,
+              bindingAuthorityEpoch: null,
+            },
+            lifecycle: { phase: 'blocked', attemptCount: 5, dueAt: null },
+            disposition: null,
+            nonAdmission: null,
+          },
+        },
+      }, {
+        rowId: bindingObligationId,
+        revision: 7,
+        value: {
+          id: bindingObligationId,
+          'record-kind': 'ingress-obligation',
+          v: 1,
+          'connection-id': CONNECTION_ID,
+          'binding-id': 'binding-1',
+          terminal: true,
+          attention: true,
+          'created-at': 11,
+          'updated-at': 21,
+          payload: {
+            occurrenceIds: ['provider:message:1'],
+            censusId: 'D'.repeat(43),
+            target: null,
+            sourceAuthority: {
+              connectionAuthorityEpoch: 3,
+              bindingRevision: 2,
+              bindingAuthorityEpoch: 4,
+            },
+            lifecycle: { phase: 'terminal', attemptCount: 1, dueAt: null },
+            disposition: 'rejected',
+            nonAdmission: { reason: 'messageTooLarge', senderFeedbackEligible: true },
+          },
+        },
+      }],
+      changeCursor: 1,
+    }));
+
+    await expect(readConversationIngressAttentionPage({
+      collection: { query } as never,
+    })).resolves.toEqual({
+      obligations: [{
+        kind: 'blocked',
+        obligationId: eventObligationId,
+        revision: 4,
+        connectionId: CONNECTION_ID,
+        attemptCount: 5,
+        updatedAt: 20,
+      }, {
+        kind: 'terminal',
+        obligationId: bindingObligationId,
+        revision: 7,
+        connectionId: CONNECTION_ID,
+        bindingId: 'binding-1',
+        updatedAt: 21,
       }],
     });
   });

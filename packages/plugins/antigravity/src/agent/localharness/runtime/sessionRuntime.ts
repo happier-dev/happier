@@ -481,6 +481,7 @@ export function createAntigravityLocalharnessSessionRuntime(
     },
     async cancel(request) {
       if (!activeTurnId) return { status: 'notRunning' };
+      if (activeTurnId !== request.turnId) return { status: 'notRunning' };
       const turnId = activeTurnId;
       try {
         await sendToHarness(buildCancelEvent());

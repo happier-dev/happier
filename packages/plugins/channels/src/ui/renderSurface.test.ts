@@ -34,7 +34,6 @@ import type { PluginUiPresentationHost } from '../../../../plugin-ui/src/present
 import { mountThroughReactNativeWebAsync } from '../../../../plugin-ui/src/rnwMount.testSupport.js';
 import { createHostApiStub } from '../../../../plugin-ui/src/surfaceFixture.testSupport.js';
 import { createUnavailablePluginUiAccountKv } from '../../../../plugin-ui/src/data/accountKv.js';
-import { createUnavailablePluginUiAccountSettings } from '../../../../plugin-ui/src/data/accountSettings.js';
 import {
   CHANNEL_DELIVERIES_INDEX_ID,
   CHANNEL_STATE_COLLECTION,
@@ -518,7 +517,6 @@ const emptyDataClient: PluginUiDataClient = {
   // This surface never reaches Account KV or Settings; the truthful
   // unavailable scope fails loudly if that ever changes.
   accountKv: createUnavailablePluginUiAccountKv(),
-  accountSettings: createUnavailablePluginUiAccountSettings(),
 };
 
 /** Mirrors the host's post-render private Data binding without widening author context. */
@@ -1504,7 +1502,16 @@ describe('Channels mounted provider setup recovery', () => {
           throw new PluginError({
             code: 'timeout',
             message: 'The endpoint ensure response was lost.',
-          });
+            });
+        }
+        if (endpointEnsureCalls === 2) {
+          return {
+            webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
+            revision: 3,
+            publicUrl: 'https://webhooks.example.test/wh_ep_AAECAwQFBgcICQoLDA0ODw',
+            readiness: 'providerConfirmationRequired',
+            oneTimeGeneratedSecret: 'secret-shown-once',
+          };
         }
         return {
           webhookEndpointId: 'wh_ep_AAECAwQFBgcICQoLDA0ODw',
@@ -1549,7 +1556,8 @@ describe('Channels mounted provider setup recovery', () => {
       )).not.toBeNull();
 
       // Retry the exact retained generic ensure input. It rejoins the endpoint,
-      // then the first continuation response is independently lost.
+      // surfaces the provider URL/one-time secret, and persists the connection
+      // identity even while provider confirmation remains setup attention.
       await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
       await vi.waitFor(() => {
         expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
@@ -1560,13 +1568,14 @@ describe('Channels mounted provider setup recovery', () => {
           CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
         ]);
       });
-      expect(document.querySelector(
-        '[data-testid="channels-provider-setup-creation-outcome-unknown"]',
-      )).not.toBeNull();
+      expect(document.querySelector('[data-testid="channels-provider-setup-webhook-required"]')).not.toBeNull();
+      expect(document.body.textContent).toContain('https://webhooks.example.test/wh_ep_AAECAwQFBgcICQoLDA0ODw');
+      expect(document.body.textContent).toContain('secret-shown-once');
+      await expect(fixture.getByRole('button', { name: 'Copy webhook URL' })).resolves.toBeDefined();
+      await expect(fixture.getByRole('button', { name: 'Copy webhook secret' })).resolves.toBeDefined();
 
-      // The retained endpoint continuation is itself safe to retry: the core
-      // reruns currentness/setup/test/correspondence and rejoins the same final
-      // connection identity.
+      // Once the provider has been configured, the same ensure input is
+      // rechecked and the first connection continuation response is lost.
       await fixture.press(await fixture.getByRole('button', { name: 'Create connection' }));
       await vi.waitFor(() => {
         expect(executeAction.mock.calls.map(([request]) => request.action)).toEqual([
@@ -1575,9 +1584,14 @@ describe('Channels mounted provider setup recovery', () => {
           'plugin.webhook.endpoint.ensure',
           'plugin.webhook.endpoint.ensure',
           CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
+          'plugin.webhook.endpoint.ensure',
           CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionCreate,
         ]);
       });
+      // The continuation may surface either the generic unknown or a definite
+      // retryable failure depending on the mounted Action adapter; in both
+      // cases the exact continuation remains available for the next press.
+
       // Only the first outer relay consumes the host retention; the
       // continuation is a plain dispatch of the same management Action.
       const createCalls = executeAction.mock.calls
@@ -1594,7 +1608,7 @@ describe('Channels mounted provider setup recovery', () => {
       const ensureCalls = executeAction.mock.calls
         .map(([request]) => request)
         .filter((request) => request.action === 'plugin.webhook.endpoint.ensure');
-      expect(ensureCalls).toHaveLength(2);
+      expect(ensureCalls).toHaveLength(3);
       expect(ensureCalls[1]?.input).toEqual(ensureCalls[0]?.input);
     } finally {
       await fixture.dispose();
@@ -1942,7 +1956,6 @@ describe('Channels mounted ingress attention recovery', () => {
       // This surface never reaches Account KV or Settings; the truthful
       // unavailable scope fails loudly if that ever changes.
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     };
     const executeAction = vi.fn(async () => {
       throw new Error('An occurrence conflict must not expose a recovery Action.');
@@ -2088,7 +2101,6 @@ describe('Channels mounted ingress attention recovery', () => {
       // This surface never reaches Account KV or Settings; the truthful
       // unavailable scope fails loudly if that ever changes.
       accountKv: createUnavailablePluginUiAccountKv(),
-      accountSettings: createUnavailablePluginUiAccountSettings(),
     };
     const executeAction = vi.fn(async ({ action }: PluginUiTestkitExecuteActionInput) => {
       if (action !== CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry) {

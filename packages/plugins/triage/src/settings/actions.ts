@@ -311,9 +311,9 @@ export const TriageActionsCatalogValueV1Schema = defineProtocolObject({
  *
  *  - **Ask** — read the entry, change nothing, every subject.
  *  - **Fix** — repair it in the project the reader selected, every subject.
- *  - **Review** — an ordinary AGENT action on a pull request: it starts a
- *    Session with the reader's own profile and prompt and asks that agent to
- *    review the change. This is the arm that works today.
+ *  - **Review** — an ordinary Agent action on a pull request, prepared in the
+ *    source's exact review workspace before the reader's profile and prompt
+ *    ask the Agent to review the change.
  *
  * `reviewStart` remains configurable rather than seeded: Ask, Fix and the
  * ordinary agent Review are the shipped defaults, while a reader who wants the
@@ -344,10 +344,7 @@ export const TRIAGE_DEFAULT_ACTIONS_V1: readonly TriageActionV1[] = Object.freez
         enabled: true,
         appliesTo: Object.freeze(['pullRequest'] as const),
         profileId: null,
-        // A pull request an agent reviews still runs in the reader's selected
-        // project: reviewing a change does not require the source-prepared
-        // worktree that `review.start` needs to describe exact commits.
-        workspaceMode: 'repository',
+        workspaceMode: 'pull_request',
         target: Object.freeze({ kind: 'agent', promptInvocationId: null, delivery: 'compose' }),
     }),
 ] as readonly TriageActionV1[]);

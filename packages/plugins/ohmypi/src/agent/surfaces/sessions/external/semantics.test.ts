@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,10 +13,6 @@ import {
 
 const roots = new Set<string>();
 
-function jsonlLine(value: unknown): string {
-  return `${JSON.stringify(value)}\n`;
-}
-
 afterEach(async () => {
   await Promise.all([...roots].map((root) => rm(root, { recursive: true, force: true })));
   roots.clear();
@@ -27,31 +23,6 @@ describe('Oh My Pi external-session auxiliary semantics', () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-takeover-'));
     const canonicalAgentDir = await realpath(agentDir);
     roots.add(agentDir);
-    const sessionRoot = join(agentDir, 'sessions', '-repo');
-    const sessionFilePath = join(
-      sessionRoot,
-      '2026-07-23T10-00-00-000Z_takeover-session.jsonl',
-    );
-    await mkdir(sessionRoot, { recursive: true });
-    await writeFile(
-      sessionFilePath,
-      [
-        jsonlLine({
-          type: 'session',
-          id: 'takeover-session',
-          timestamp: '2026-07-23T10:00:00.000Z',
-          cwd: '/repo/from-transcript',
-        }),
-        jsonlLine({
-          type: 'message',
-          id: 'root',
-          parentId: null,
-          timestamp: '2026-07-23T10:00:01.000Z',
-          message: { role: 'user', content: 'resume' },
-        }),
-      ].join(''),
-      'utf8',
-    );
 
     const contribution: AgentExternalSessionTakeoverContribution =
       ohMyPiExternalSessionTakeoverContribution;
@@ -62,20 +33,23 @@ describe('Oh My Pi external-session auxiliary semantics', () => {
       linkedSessionId: 'linked-session',
       // The resolved identity carries the session file on the source; link data
       // stays empty because the host projects it into strict owner metadata.
-      source: { kind: 'ohMyPiAgentDir', agentDir, sessionFilePath },
+      source: {
+        kind: 'ohMyPiAgentDir',
+        agentDir,
+        sessionFilePath: '/does/not/need/to/exist.jsonl',
+      },
       remoteSessionId: 'takeover-session',
       linkData: {},
       targetDirectory: '/local/selected/workspace',
     })).resolves.toEqual({
       ok: true,
       value: {
-        directory: '/repo/from-transcript',
         environmentVariables: { PI_CODING_AGENT_DIR: canonicalAgentDir },
       },
     });
   });
 
-  it('uses the admitted linked directory without adding backend or host-state hints', async () => {
+  it('carries no launch-cwd authority from the linked directory or transcript header', async () => {
     const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-takeover-'));
     const canonicalAgentDir = await realpath(agentDir);
     roots.add(agentDir);
@@ -93,7 +67,6 @@ describe('Oh My Pi external-session auxiliary semantics', () => {
     })).resolves.toEqual({
       ok: true,
       value: {
-        directory: '/repo/from-linked-session',
         environmentVariables: { PI_CODING_AGENT_DIR: canonicalAgentDir },
       },
     });

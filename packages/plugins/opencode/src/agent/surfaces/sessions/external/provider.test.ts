@@ -31,7 +31,6 @@ describe('retained OpenCode external-session takeover leaf', () => {
     })).resolves.toMatchObject({
       ok: true,
       value: {
-        directory: '/local/selected/workspace',
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'opencode',

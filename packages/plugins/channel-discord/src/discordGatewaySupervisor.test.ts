@@ -1044,8 +1044,8 @@ describe('Discord Gateway supervisor', () => {
     });
 
     const running = supervisor.run(background);
-    // Two completed ticks: an unconditional per-tick catalog read would have
-    // reached a host Action addressed by bare id rather than by contribution.
+    // The supervisor may read the catalog to project its connection health,
+    // but it must never create an Automation admission directly.
     await vi.waitFor(() => expect(actions.execute.mock.calls.filter(
       ([action]) => (action as { localId?: string } | string as { localId?: string })?.localId
         === CONVERSATION_CORE_PROVIDER_ACTION_IDS_V1.connectionsList,
@@ -1053,7 +1053,10 @@ describe('Discord Gateway supervisor', () => {
     generation.abort(new Error('Discord plugin generation retired.'));
     await running;
 
-    expect(actions.execute.mock.calls.filter(([action]) => typeof action === 'string')).toEqual([]);
+    expect(actions.execute.mock.calls
+      .filter(([action]) => typeof action === 'string')
+      .map(([action]) => action))
+      .not.toContain('automation.event.admit');
     await supervisor.dispose();
   });
 

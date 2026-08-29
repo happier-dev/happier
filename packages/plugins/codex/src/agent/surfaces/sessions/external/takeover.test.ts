@@ -6,7 +6,7 @@ import {
 } from './takeover.js';
 
 describe('Codex External Sessions takeover launch derivation', () => {
-  it('returns only the fresh Codex home, native backend mode, and linked directory', () => {
+  it('returns only the fresh Codex home, native backend mode, and launch descriptor', () => {
     const plan = resolveCodexExternalSessionTakeoverPlan({
       remoteSessionId: 'native-session-current',
       source: {
@@ -42,7 +42,6 @@ describe('Codex External Sessions takeover launch derivation', () => {
     });
 
     expect(plan).toMatchObject({
-      directory: '/repo/project',
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'codex',
@@ -57,6 +56,9 @@ describe('Codex External Sessions takeover launch derivation', () => {
         CODEX_HOME: '/srv/happier/codex-home',
       },
     });
+    // The launch plan carries no cwd authority: the host enforces the request
+    // targetDirectory as the spawned process cwd.
+    expect(plan).not.toHaveProperty('directory');
     expect(plan).not.toHaveProperty('existingSessionId');
     expect(plan).not.toHaveProperty('resume');
     expect(plan).not.toHaveProperty('backendTarget');
@@ -138,7 +140,6 @@ describe('Codex External Sessions takeover launch derivation', () => {
     )).resolves.toMatchObject({
       ok: true,
       value: {
-        directory: '/repo/project',
         runtimeDescriptorV1: {
           v: 1,
           agentId: 'codex',

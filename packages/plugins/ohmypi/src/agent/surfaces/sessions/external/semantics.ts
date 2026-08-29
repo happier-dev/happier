@@ -4,31 +4,11 @@ import type {
   AgentExternalSessionTakeoverResolveLaunchResult,
 } from '@happier-dev/plugin-sdk/sessions/external';
 
-import { scanJsonlSessionFile } from '@happier-dev/plugin-sdk/sessions/file-stores';
-
 import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
-import { resolveOhMyPiSessionFile } from './files.js';
 import {
   projectOhMyPiExternalSessionSource,
   resolveOhMyPiAgentDir,
-  type OhMyPiExternalSessionSource,
 } from './source.js';
-
-type SessionLookupParams = Readonly<{
-  source: OhMyPiExternalSessionSource;
-  env?: NodeJS.ProcessEnv;
-  remoteSessionId: string;
-  sessionFilePath?: string | null;
-}>;
-
-async function resolveSessionFile(params: SessionLookupParams) {
-  return await resolveOhMyPiSessionFile({
-    source: params.source,
-    env: params.env,
-    remoteSessionId: params.remoteSessionId,
-    sessionFilePath: params.sessionFilePath,
-  });
-}
 
 function invocationFailure(
   request: AgentExternalSessionTakeoverResolveLaunchRequest,
@@ -48,20 +28,6 @@ function invocationFailure(
     };
   }
   return null;
-}
-
-/**
- * The resolved session file travels on the source, not on link data: the host
- * projects link data minus `source` into top-level session owner metadata, whose
- * strict allow-list rejects a `sessionFilePath` key.
- */
-function readSessionFilePath(
-  source: Readonly<Record<string, unknown>>,
-): string | null {
-  const value = source.sessionFilePath;
-  return typeof value === 'string' && value.trim().length > 0
-    ? value.trim()
-    : null;
 }
 
 async function resolveLaunch(
@@ -85,59 +51,21 @@ async function resolveLaunch(
     };
   }
 
-  try {
-    const linkedDirectory = request.linkedDirectory?.trim() ?? '';
-    let directory = linkedDirectory;
-    if (!directory) {
-      const resolved = await resolveSessionFile({
-        source,
-        remoteSessionId: request.remoteSessionId,
-        sessionFilePath: readSessionFilePath(request.source),
-      });
-      const afterResolve = invocationFailure(request);
-      if (afterResolve) return afterResolve;
-      if (resolved.ok) {
-        // The working directory lives in the session header, which the bounded
-        // JSONL scanner already reads for candidate projection. Folding the whole
-        // transcript to recover one header field re-reads the entire file.
-        const descriptor = await scanJsonlSessionFile(resolved.filePath);
-        directory = descriptor?.cwd?.trim() ?? '';
-      }
-      const afterSnapshot = invocationFailure(request);
-      if (afterSnapshot) return afterSnapshot;
-    }
-    if (!directory) {
-      return {
-        ok: false,
-        code: 'unavailable',
-        message: 'Oh My Pi external-session takeover requires a working directory.',
-      };
-    }
-
-    const agentDir = resolveOhMyPiAgentDir({
-      source,
-    });
-    return {
-      ok: true,
-      value: {
-      directory,
+  // The launch plan carries no cwd authority: the host enforces the request
+  // targetDirectory as the spawned process cwd, and the session file identity
+  // already travels on the source. The agent dir environment carrier is the
+  // one launch fact Oh My Pi contributes.
+  const agentDir = resolveOhMyPiAgentDir({
+    source,
+  });
+  return {
+    ok: true,
+    value: {
       environmentVariables: {
         [OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1.agentDirEnvVar]: agentDir,
       },
-      },
-    };
-  } catch (error) {
-    const after = invocationFailure(request);
-    if (after) return after;
-    return {
-      ok: false,
-      code: 'source_unreachable',
-      message: error instanceof Error
-        ? error.message
-        : 'Oh My Pi external-session source could not be read.',
-      retryable: true,
-    };
-  }
+    },
+  };
 }
 
 export const ohMyPiExternalSessionTakeoverContribution = Object.freeze({

@@ -131,7 +131,7 @@ describe('Oh My Pi external-session source truth', () => {
     expect((result as { value: { items: unknown[] } }).value.items).toEqual([]);
   });
 
-  it('recovers the takeover working directory from the session header alone', async () => {
+  it('resolves the launch from the session-header source alone without a launch directory', async () => {
     const { agentDir, filePath } = await createSource({
       remoteSessionId: 'omp-1',
       records: [
@@ -150,6 +150,12 @@ describe('Oh My Pi external-session source truth', () => {
       source: { kind: 'ohMyPiAgentDir' as const, agentDir, sessionFilePath: filePath },
       remoteSessionId: 'omp-1',
     } as never);
-    expect(result).toMatchObject({ ok: true, value: { directory: '/repo/workspace' } });
+    // The launch plan carries no cwd authority: the host enforces the request
+    // targetDirectory as the spawned cwd.
+    expect(result).toMatchObject({
+      ok: true,
+      value: { environmentVariables: { PI_CODING_AGENT_DIR: agentDir } },
+    });
+    expect(result).not.toMatchObject({ value: { directory: expect.anything() } });
   });
 });

@@ -17,6 +17,10 @@ const appServerProbe = vi.hoisted(() => ({
   failCursor: null as string | null,
 }));
 
+const rolloutFsProbe = vi.hoisted(() => ({
+  statPaths: [] as string[],
+}));
+
 // The Codex native app-server is a spawned provider process reached over JSON-RPC:
 // a genuine system boundary. Everything below it — merge ordering, cursor
 // arithmetic, rollout discovery — stays the real implementation.
@@ -52,6 +56,20 @@ vi.mock('../../../runtime/appServer/client.js', async (importOriginal) => {
   };
 });
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => {
+      const filePath = args[0];
+      if (typeof filePath === 'string' && filePath.endsWith('.jsonl')) {
+        rolloutFsProbe.statPaths.push(filePath);
+      }
+      return actual.stat(...args);
+    },
+  };
+});
+
 import { listCodexSessionCandidates } from './candidateSource.js';
 
 function jsonl(value: unknown): string {
@@ -64,6 +82,7 @@ afterEach(() => {
   appServerProbe.pages.clear();
   appServerProbe.calls = [];
   appServerProbe.failCursor = null;
+  rolloutFsProbe.statPaths = [];
 });
 
 describe('Codex external-session candidate pagination', () => {
@@ -469,6 +488,130 @@ describe('Codex external-session candidate pagination', () => {
       expect(appServerProbe.calls.filter((call) => (
         call.archived === false && call.cursor === 'repeat-native-cursor'
       ))).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('bounds one full-search request to the searched-window budget instead of walking the corpus', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-search-window-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '07', '23');
+      await mkdir(sessionsDir, { recursive: true });
+
+      // Six rollout sessions — more than the searched window this request is
+      // allowed to consume.
+      for (let index = 0; index < 6; index += 1) {
+        const remoteSessionId = `${String(index).repeat(8)}-2222-2222-2222-222222222222`;
+        const filePath = join(sessionsDir, `rollout-2026-07-23T11-0${index}-00-${remoteSessionId}.jsonl`);
+        await writeFile(
+          filePath,
+          jsonl({
+            type: 'session_meta',
+            timestamp: '2026-07-23T11:00:00.000Z',
+            payload: { id: remoteSessionId, timestamp: '2026-07-23T11:00:00.000Z', cwd: '/repo' },
+          }),
+          'utf8',
+        );
+        const mtime = new Date(Date.parse('2026-07-23T12:00:00.000Z') - index * 60_000);
+        await utimes(filePath, mtime, mtime);
+      }
+
+      const result = await listCodexSessionCandidates({
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: {
+          CODEX_HOME: codexHome,
+          HAPPIER_CODEX_EXTERNAL_SESSIONS_FULL_SEARCH_CANDIDATE_LIMIT: '2',
+        } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 2,
+        searchMode: 'full',
+        searchTerm: '/repo',
+      });
+
+      // The page is still a correct merged page...
+      expect(result.candidates).toHaveLength(2);
+      expect(result.searchIncomplete).toBe(true);
+      // ...but one request must consume only its searched-window budget of the
+      // source: a whole-corpus walk stats every rollout file behind one
+      // request, while the bounded chunk touches only the rows it serves
+      // (consumption plus the per-row title read — two distinct files).
+      expect(new Set(rolloutFsProbe.statPaths).size).toBe(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('advances a full search past the searched window without repeating or losing rows', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-codex-search-continuation-'));
+    try {
+      const codexHome = join(root, 'codex-home');
+      const sessionsDir = join(codexHome, 'sessions', '2026', '07', '23');
+      await mkdir(sessionsDir, { recursive: true });
+
+      // Four rollout sessions, newest first by mtime. The searched-window
+      // budget below (2) holds only half of them, so a correct second page can
+      // only exist if continuation resumes the corpus scan past the first
+      // window instead of restarting it from the corpus head.
+      const rolloutIds: string[] = [];
+      for (let index = 0; index < 4; index += 1) {
+        const remoteSessionId = `${String(index).repeat(8)}-3333-3333-3333-333333333333`;
+        rolloutIds.push(remoteSessionId);
+        const filePath = join(sessionsDir, `rollout-2026-07-23T10-0${index}-00-${remoteSessionId}.jsonl`);
+        await writeFile(
+          filePath,
+          jsonl({
+            type: 'session_meta',
+            timestamp: '2026-07-23T10:00:00.000Z',
+            payload: { id: remoteSessionId, timestamp: '2026-07-23T10:00:00.000Z', cwd: '/repo' },
+          }),
+          'utf8',
+        );
+        const mtime = new Date(Date.parse('2026-07-23T12:00:00.000Z') - index * 60_000);
+        await utimes(filePath, mtime, mtime);
+      }
+
+      const request = {
+        source: { kind: 'codexHome', home: 'user' },
+        activeServerDir: join(root, 'active-server'),
+        env: {
+          CODEX_HOME: codexHome,
+          HAPPIER_CODEX_EXTERNAL_SESSIONS_FULL_SEARCH_CANDIDATE_LIMIT: '2',
+        } as NodeJS.ProcessEnv,
+        exec: {
+          systemTools: { resolve: async () => ({ executable: { kind: 'path', path: '/usr/bin/codex' } }) },
+        } as unknown as ExecService,
+        limit: 2,
+        searchMode: 'full',
+        searchTerm: '/repo',
+      } as const;
+
+      const first = await listCodexSessionCandidates(request);
+      expect(first.candidates.map((candidate) => candidate.remoteSessionId).sort())
+        .toEqual([rolloutIds[2], rolloutIds[3]].sort());
+      expect(first.searchIncomplete).toBe(true);
+      // The window was not the corpus, so the search must stay continuable.
+      expect(first.nextCursor).toEqual(expect.any(String));
+
+      const second = await listCodexSessionCandidates({
+        ...request,
+        cursor: first.nextCursor ?? undefined,
+      });
+
+      // Continuation serves the rows past the first window — never page one's
+      // rows again, and none of the corpus behind the window is skipped.
+      expect(second.candidates.map((candidate) => candidate.remoteSessionId).sort())
+        .toEqual([rolloutIds[0], rolloutIds[1]].sort());
+      expect(second.nextCursor).toBeNull();
+      // The corpus is fully covered, so the final page is not incomplete.
+      expect(second.searchIncomplete).toBeUndefined();
+      // Native streams that reached a terminal state on page one are not
+      // re-requested by continuation.
+      expect(appServerProbe.calls).toHaveLength(2);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

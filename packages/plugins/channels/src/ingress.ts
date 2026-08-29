@@ -386,6 +386,14 @@ type IngressCensusCompacted = Readonly<{
   textDigest: string;
   /** Exact terminal-attention members retained until this census horizon. */
   retainedAttentionObligationRowIds: readonly string[];
+  /**
+   * Exact revisions of terminal member tombstones that the compact census
+   * already made redundant. They remain only until this same census reaches
+   * its existing replay horizon, when retention forgets them before the
+   * census itself. This is not another retention store: it is the durable
+   * completion witness for the one ingress unit that logically deleted them.
+   */
+  prunedObligationTombstones: readonly Readonly<{ rowId: string; revision: number }>[];
 }>;
 
 type IngressCensusCommonPayload = Readonly<{
@@ -1052,8 +1060,9 @@ function readIngressCensusCompacted(value: JsonValue | undefined): IngressCensus
   const textDigest = own(value, 'textDigest');
   const shell = ConversationAuthenticatedObservationShellV1Schema.safeParse(own(value, 'shell'));
   const retainedAttentionObligationRowIds = own(value, 'retainedAttentionObligationRowIds');
+  const prunedObligationTombstones = own(value, 'prunedObligationTombstones');
   if (
-    Object.keys(value).length !== 3
+    Object.keys(value).length !== 4
     || typeof textDigest !== 'string'
     || !/^[A-Za-z0-9_-]{43}$/u.test(textDigest)
     || !shell.success
@@ -1062,11 +1071,26 @@ function readIngressCensusCompacted(value: JsonValue | undefined): IngressCensus
       typeof rowId !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(rowId)
     ))
     || new Set(retainedAttentionObligationRowIds).size !== retainedAttentionObligationRowIds.length
+    || !Array.isArray(prunedObligationTombstones)
+    || prunedObligationTombstones.some((entry) => (
+      !isJsonRecord(entry)
+      || Object.keys(entry).length !== 2
+      || typeof entry.rowId !== 'string'
+      || !/^[A-Za-z0-9_-]{43}$/u.test(entry.rowId)
+      || !isPositiveSafeInteger(entry.revision)
+    ))
+    || new Set(prunedObligationTombstones.map((entry) => (
+      isJsonRecord(entry) && typeof entry.rowId === 'string' ? entry.rowId : ''
+    ))).size !== prunedObligationTombstones.length
   ) return undefined;
   return {
     shell: shell.data,
     textDigest,
     retainedAttentionObligationRowIds: retainedAttentionObligationRowIds as readonly string[],
+    prunedObligationTombstones: prunedObligationTombstones as readonly Readonly<{
+      rowId: string;
+      revision: number;
+    }>[],
   };
 }
 
@@ -2373,6 +2397,8 @@ function prepareConversationIngressObligationForDeletion(input: Readonly<{
   now: number;
   disposition: 'connectionDeleted' | 'staleAuthority';
   nonAdmission?: IngressNonAdmission;
+  /** Connection/binding deletion terminalizes blocked custody; other owners retain it. */
+  blockedBehavior?: 'retain' | 'settle';
 }>): ConversationIngressConnectionDeletionSettlement {
   if (!isJsonRecord(input.value)) return { kind: 'invalid' };
   const obligation = asIngressObligation({
@@ -2385,6 +2411,20 @@ function prepareConversationIngressObligationForDeletion(input: Readonly<{
   const bindingId = obligation.value['binding-id'];
   if (obligation.value.payload.lifecycle.phase === 'terminal') {
     return { kind: 'terminal', connectionId, bindingId };
+  }
+  if (obligation.value.payload.lifecycle.phase === 'blocked'
+    && input.blockedBehavior === 'settle') {
+    return {
+      kind: 'readyToSettle',
+      connectionId,
+      bindingId,
+      value: terminalIngressObligationValue({
+        obligation: obligation.value,
+        disposition: input.disposition,
+        ...(input.nonAdmission === undefined ? {} : { nonAdmission: input.nonAdmission }),
+        now: input.now,
+      }),
+    };
   }
   if (!['ready', 'debounceDue', 'retryDue'].includes(obligation.value.payload.lifecycle.phase)) {
     return { kind: 'blocked', connectionId, bindingId };
@@ -2411,13 +2451,15 @@ export function prepareConversationIngressObligationForConnectionDeletion(input:
   return prepareConversationIngressObligationForDeletion({
     ...input,
     disposition: 'connectionDeleted',
+    blockedBehavior: 'settle',
   });
 }
 
 /**
  * A finalizing binding has already revoked its authority. Work that has not
  * begun externally becomes the ordinary stale-authority terminal outcome;
- * attempting and blocked custody remains with its incumbent recovery owner.
+ * an in-flight attempting custody remains with its incumbent recovery owner,
+ * while blocked (no external effect in flight) custody is terminalized here.
  */
 export function prepareConversationIngressObligationForBindingDeletion(input: Readonly<{
   rowId: string;
@@ -2429,6 +2471,7 @@ export function prepareConversationIngressObligationForBindingDeletion(input: Re
     ...input,
     disposition: 'staleAuthority',
     nonAdmission: { reason: 'staleAuthority', senderFeedbackEligible: false },
+    blockedBehavior: 'settle',
   });
 }
 
@@ -4550,7 +4593,7 @@ async function ingestConversationObservationForInvocation(
   )) ?? null);
   // A census is finite replay evidence, not an indefinite anti-resurrection
   // tombstone. Its frozen window governs an existing occurrence; after that
-  // window, do not match, pair, prepare, or admit it. When no census remains,
+  // window, do not match, pair, prepare, or admit a new occurrence. When no census remains,
   // a connection-local expansion floor also keeps a later wider setting from
   // reauthorizing an occurrence that had already aged out. The poll remains
   // safe to checkpoint without recording census coverage.
@@ -4561,20 +4604,33 @@ async function ingestConversationObservationForInvocation(
   // unit, because nothing else can ever finish it — preparation is reachable
   // only from this path. A replay therefore rejoins it however late, which
   // completes work already accepted rather than resurrecting an aged-out
-  // occurrence. An already-`prepared` unit needs nothing from a late replay and
-  // stays behind the window, so retention races cannot change what a late
-  // replay does.
-  if (census?.value.payload.phase !== 'preparing' && (
-    !isObservationFresh(
-      census?.value.payload.maximumObservationAgeMs
-        ?? connectionState.value.payload.maximumObservationAgeMs,
-      shell,
-    ) || (
-      census === undefined
-      && connectionState.value.payload.observationAgeExpansionFloorOccurredAt !== null
-      && shell.occurredAt < connectionState.value.payload.observationAgeExpansionFloorOccurredAt
-    )
-  )) return 'checkpointSafeNoCensus';
+  // occurrence. An already-`prepared` unit is still eligible for the existing
+  // coverage candidate below, so a late replay cannot advance the provider
+  // cursor while bypassing its durable census coverage.
+  const observationIsFresh = isObservationFresh(
+    census?.value.payload.maximumObservationAgeMs
+      ?? connectionState.value.payload.maximumObservationAgeMs,
+    shell,
+  );
+  const belowExpansionFloor = census === undefined
+    && connectionState.value.payload.observationAgeExpansionFloorOccurredAt !== null
+    && shell.occurredAt < connectionState.value.payload.observationAgeExpansionFloorOccurredAt;
+  let censusMatches: boolean | undefined;
+  if (census?.value.payload.phase === 'prepared' && !observationIsFresh) {
+    // A late replay may cover the exact prepared occurrence, but a different
+    // payload must retain the historical expired-replay behavior: advance the
+    // provider cursor without reopening or conflicting with old custody.
+    censusMatches = await matchesIngressCensus({
+      census: census.value.payload,
+      routingIdentityKey: connectionState.value.payload.routingIdentityKey,
+      entry,
+    });
+    if (!censusMatches) return 'checkpointSafeNoCensus';
+  } else if (census?.value.payload.phase !== 'preparing'
+    && census?.value.payload.phase !== 'prepared'
+    && (!observationIsFresh || belowExpansionFloor)) {
+    return 'checkpointSafeNoCensus';
+  }
 
   let pairingReservation:
     | Readonly<{
@@ -4590,11 +4646,11 @@ async function ingestConversationObservationForInvocation(
     );
   }
 
-  if (census !== undefined && !await matchesIngressCensus({
+  if (census !== undefined && !(censusMatches ?? await matchesIngressCensus({
     census: census.value.payload,
     routingIdentityKey: connectionState.value.payload.routingIdentityKey,
     entry,
-  })) {
+  }))) {
     await markIngressCensusOccurrenceConflict({
       context,
       source,
@@ -5169,37 +5225,32 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
   candidate: IngressRetentionCandidate;
 }>): Promise<boolean> {
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
-  // This caller has already proved the replay/checkpoint horizon in
-  // readSettledIngressUnit before deleting any retained identity.
-  // The in-force batch-row limit, not the protocol ceiling: an operator can
-  // lower it, and the ingress preparation packer already plans against the
-  // published value. A retention delete sized to the ceiling would be rejected
-  // outright on such a deployment and retention would silently stop.
-  const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
-  const obligations = input.candidate.obligations;
-  assertNotAborted(input.context.signal);
-  for (let offset = 0; offset < obligations.length; offset += maxBatchRows) {
-    assertNotAborted(input.context.signal);
-    const result = await collection.batch(obligations.slice(
-      offset,
-      offset + maxBatchRows,
-    ).map((obligation) => ({
-      kind: 'delete' as const,
-      rowId: obligation.row.rowId,
-      expectedRevision: obligation.row.revision,
-    })), { signal: input.context.signal });
-    if (result.status === 'conflict') return false;
-    for (const entry of result.results) {
-      if (!entry.deleted) return false;
-      try {
-        await collection.forget(entry.rowId, {
-        expectedRevision: entry.revision,
-        signal: input.context.signal,
-        });
-      } catch {
-        return false;
-      }
-    }
+  const compacted = input.candidate.census.value.payload.compacted;
+  if (compacted === null) {
+    // Bodyless routable refusals have no compacted replay envelope to carry a
+    // staged tombstone list. They reach this branch only after the same frozen
+    // horizon, so their terminal members can use the ordinary exact delete →
+    // forget sequence directly before the census.
+    if (input.candidate.census.value.payload.normalizedIngress.kind === 'fullText') return false;
+    if (!await deleteAndForgetIngressObligationsAtHorizon({
+      context: input.context,
+      obligations: input.candidate.obligations,
+    })) return false;
+  } else {
+    // The horizon owner first stages every terminal member deletion in the
+    // compact census, so it never loses its exact tombstone revision between
+    // logical deletion and physical reclamation. A retained attention member
+    // must take that same path before the census may disappear.
+    if (input.candidate.obligations.length !== 0) return false;
+    if (!await settleStagedIngressObligationTombstones({
+      context: input.context,
+      censusId: input.candidate.census.value.id,
+      tombstones: compacted.prunedObligationTombstones,
+    })) return false;
+    if (!await forgetIngressObligationTombstones({
+      context: input.context,
+      tombstones: compacted.prunedObligationTombstones,
+    })) return false;
   }
   assertNotAborted(input.context.signal);
   const result = await collection.batch([{
@@ -5219,6 +5270,99 @@ async function deleteIngressRetentionCandidate(input: Readonly<{
   } catch {
     return false;
   }
+}
+
+async function deleteAndForgetIngressObligationsAtHorizon(input: Readonly<{
+  context: PluginInvocationContext;
+  obligations: readonly Readonly<{ row: StateRow; value: IngressObligationRecord }>[];
+}>): Promise<boolean> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
+  for (let offset = 0; offset < input.obligations.length; offset += maxBatchRows) {
+    assertNotAborted(input.context.signal);
+    const result = await collection.batch(input.obligations.slice(offset, offset + maxBatchRows).map((obligation) => ({
+      kind: 'delete' as const,
+      rowId: obligation.row.rowId,
+      expectedRevision: obligation.row.revision,
+    })), { signal: input.context.signal });
+    if (result.status !== 'updated') return false;
+    for (const entry of result.results) {
+      if (!entry.deleted) return false;
+      try {
+        await collection.forget(entry.rowId, {
+          expectedRevision: entry.revision,
+          signal: input.context.signal,
+        });
+      } catch {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Compaction records the exact tombstone revision established by the
+ * Collection mutation owner before it removes a member from the live census
+ * fanout. That owner advances every successful delete by one revision, and
+ * this helper checks the returned revision before treating the member as
+ * logically deleted.
+ * Keeping the reference on the already-retained census makes an interrupted
+ * compaction resumable without an Account-wide tombstone scan or new queue.
+ */
+async function settleStagedIngressObligationTombstones(input: Readonly<{
+  context: PluginInvocationContext;
+  censusId: string;
+  tombstones: readonly Readonly<{ rowId: string; revision: number }>[];
+}>): Promise<boolean> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  for (const tombstone of input.tombstones) {
+    assertNotAborted(input.context.signal);
+    const obligation = asIngressObligation(readStateRow(await collection.get(
+      tombstone.rowId,
+      { signal: input.context.signal },
+    )) ?? null);
+    // A logical tombstone and a previously forgotten identity are both absent
+    // from normal Collection reads. The exact-revision forget below remains
+    // idempotent for either state at the horizon.
+    if (obligation === undefined) continue;
+    const expectedLiveRevision = tombstone.revision - 1;
+    if (
+      !isPositiveSafeInteger(expectedLiveRevision)
+      || obligation.row.revision !== expectedLiveRevision
+      || obligation.value.payload.censusId !== input.censusId
+      || !obligation.value.terminal
+      || obligation.value.payload.lifecycle.phase !== 'terminal'
+    ) return false;
+    const result = await collection.batch([{
+      kind: 'delete',
+      rowId: tombstone.rowId,
+      expectedRevision: expectedLiveRevision,
+    }], { signal: input.context.signal });
+    if (result.status !== 'updated') return false;
+    const deleted = result.results[0];
+    if (!deleted?.deleted || deleted.revision !== tombstone.revision) return false;
+  }
+  return true;
+}
+
+async function forgetIngressObligationTombstones(input: Readonly<{
+  context: PluginInvocationContext;
+  tombstones: readonly Readonly<{ rowId: string; revision: number }>[];
+}>): Promise<boolean> {
+  const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
+  for (const tombstone of input.tombstones) {
+    assertNotAborted(input.context.signal);
+    try {
+      await collection.forget(tombstone.rowId, {
+        expectedRevision: tombstone.revision,
+        signal: input.context.signal,
+      });
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -5302,6 +5446,7 @@ async function compactSettledIngressCensus(input: Readonly<{
   // all terminal member rows are redundant and must be removed instead of
   // becoming unreachable orphans.
   const retainedAttentionObligations = census.value.payload.conflict === null
+    && !isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now: input.now })
     ? input.candidate.obligations.filter((obligation) => obligation.value.attention)
     : [];
   const retainedAttentionRowIds = new Set(
@@ -5311,21 +5456,6 @@ async function compactSettledIngressCensus(input: Readonly<{
     (obligation) => !retainedAttentionRowIds.has(obligation.row.rowId),
   );
   const { maxBatchRows } = await collection.limits({ signal: input.context.signal });
-  for (let offset = 0; offset < prunableObligations.length; offset += maxBatchRows) {
-    assertNotAborted(input.context.signal);
-    const result = await collection.batch(prunableObligations.slice(
-      offset,
-      offset + maxBatchRows,
-    ).map((obligation) => ({
-      kind: 'delete' as const,
-      rowId: obligation.row.rowId,
-      expectedRevision: obligation.row.revision,
-    })), { signal: input.context.signal });
-    // A later sweep rereads the member set. Already deleted terminal rows are
-    // a completed prefix, while a concurrent revision keeps the full census
-    // intact until the owner can decide it again.
-    if (result.status === 'conflict') return false;
-  }
   const attentionCompactions = retainedAttentionObligations.filter((obligation) => (
     obligation.value.payload.target !== null
     || obligation.value.payload.approvalTurnId !== null
@@ -5346,12 +5476,27 @@ async function compactSettledIngressCensus(input: Readonly<{
   const nextRetainedAttentionObligationRowIds = retainedAttentionObligations.map(
     (obligation) => obligation.row.rowId,
   );
+  const priorPrunedObligationTombstones = priorCompacted?.prunedObligationTombstones ?? [];
+  const nextPrunedObligationTombstones = [
+    ...priorPrunedObligationTombstones,
+    ...prunableObligations.map((obligation) => ({
+      rowId: obligation.row.rowId,
+      revision: obligation.row.revision + 1,
+    })),
+  ];
+  if (nextPrunedObligationTombstones.some((tombstone) => !isPositiveSafeInteger(tombstone.revision))) {
+    return false;
+  }
   if (
     normalizedIngress === null
     && priorCompacted !== null
     && pluginJsonValuesEqual(
       priorCompacted.retainedAttentionObligationRowIds,
       nextRetainedAttentionObligationRowIds,
+    )
+    && pluginJsonValuesEqual(
+      priorCompacted.prunedObligationTombstones,
+      nextPrunedObligationTombstones,
     )
   ) return false;
   assertNotAborted(input.context.signal);
@@ -5363,6 +5508,7 @@ async function compactSettledIngressCensus(input: Readonly<{
         ? {
           ...priorCompacted as IngressCensusCompacted,
           retainedAttentionObligationRowIds: nextRetainedAttentionObligationRowIds,
+          prunedObligationTombstones: nextPrunedObligationTombstones,
         }
         : {
           shell: ingressShell(normalizedIngress),
@@ -5371,12 +5517,22 @@ async function compactSettledIngressCensus(input: Readonly<{
             text: normalizedIngress.observation.message.text,
           }),
           retainedAttentionObligationRowIds: nextRetainedAttentionObligationRowIds,
+          prunedObligationTombstones: nextPrunedObligationTombstones,
         },
       now: input.now,
     }),
     expectedRevision: census.row.revision,
   }], { signal: input.context.signal });
-  return result.status === 'updated';
+  if (result.status !== 'updated') return false;
+  // The staged revisions make a failed member delete retryable on the next
+  // ordinary retention pass. The census is already compacted, so returning a
+  // successful compaction here never reports physical reclamation early.
+  await settleStagedIngressObligationTombstones({
+    context: input.context,
+    censusId: census.value.id,
+    tombstones: nextPrunedObligationTombstones,
+  });
+  return true;
 }
 
 export type ConversationIngressRetentionRunResult = Readonly<{
@@ -5426,6 +5582,30 @@ export async function runConversationIngressRetentionForInvocation(input: Readon
       census.value.payload.conflict === null
       && isIngressCensusPastFrozenRetentionHorizon({ census: census.value, now })
     ) {
+      if (
+        census.value.payload.compacted === null
+        && census.value.payload.normalizedIngress.kind !== 'fullText'
+      ) {
+        if (await deleteIngressRetentionCandidate({ context, candidate })) deletedCensuses += 1;
+        continue;
+      }
+      // First retain any exact member tombstone revisions on the compact
+      // census. This is normally already done by the pre-horizon compaction,
+      // but a first retention pass may arrive only after the horizon. Re-read
+      // through the same canonical parser before physically forgetting.
+      if (census.value.payload.compacted === null || candidate.obligations.length !== 0) {
+        if (!await compactSettledIngressCensus({ context, candidate, now })) continue;
+        compactedCensuses += 1;
+        const compacted = asIngressCensus(readStateRow(await collection.get(
+          census.row.rowId,
+          { signal: context.signal },
+        )) ?? null);
+        if (compacted === undefined) continue;
+        const compactedCandidate = await readSettledIngressUnit({ context, census: compacted });
+        if (compactedCandidate === undefined || compactedCandidate.obligations.length !== 0) continue;
+        if (await deleteIngressRetentionCandidate({ context, candidate: compactedCandidate })) deletedCensuses += 1;
+        continue;
+      }
       if (await deleteIngressRetentionCandidate({ context, candidate })) deletedCensuses += 1;
       continue;
     }

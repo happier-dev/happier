@@ -30,7 +30,8 @@ describe('bundled GitLab SCM hosting provider plugin', () => {
       id: 'happier.scm.forge.gitlab',
       entrypoints: { daemon: './.happier-plugin/daemon.js' },
       hostAccess: { required: expect.arrayContaining([
-        expect.objectContaining({ id: 'gitlab-api', capability: 'network', scope: expect.objectContaining({ targets: expect.arrayContaining([{ kind: 'scmProviderOrigin', provider: 'gitlab' }]) }) }),
+        expect.objectContaining({ id: 'gitlab-cloud-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'fixedOrigin', origin: 'https://gitlab.com' }] }) }),
+        expect.objectContaining({ id: 'gitlab-account-api', capability: 'network', scope: expect.objectContaining({ targets: [{ kind: 'connectedAccountOrigin', service: 'gitlab-account' }], privateNetwork: true }) }),
         expect.objectContaining({ id: 'gitlab-cli-process', capability: 'process', scope: { executables: [{ kind: 'systemTool', id: 'gitlab-cli' }] } }),
       ]), optional: [] },
       contributes: {

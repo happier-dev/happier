@@ -20,14 +20,12 @@ export function resolveClaudeExternalSessionTakeoverPlan(
     identity: ClaudeExternalSessionTakeoverIdentity,
 ): AgentExternalSessionTakeoverLaunchPlan | null {
     const remoteSessionId = readNonEmptyString(identity.remoteSessionId);
-    const directory = readNonEmptyString(identity.linkedDirectory);
     const configDir = readNonEmptyString(identity.source.configDir);
     const sourceProjectId = readNonEmptyString(identity.source.projectId);
     const linkedProjectId = readNonEmptyString(identity.linkData.projectId);
     if (
         identity.source.kind !== 'claudeConfig'
         || !remoteSessionId
-        || !directory
         || !configDir
         || !sourceProjectId
         || sourceProjectId !== linkedProjectId
@@ -36,7 +34,6 @@ export function resolveClaudeExternalSessionTakeoverPlan(
     }
 
     return Object.freeze({
-        directory,
         environmentVariables: Object.freeze({
             CLAUDE_CONFIG_DIR: configDir,
         }),

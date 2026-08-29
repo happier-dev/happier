@@ -266,7 +266,7 @@ afterEach(async () => {
  * active here.
  */
 describe('the mounted GitHub write controls', () => {
-  it('fails writes closed with a reason and renders only GitHub-enabled merge methods', async () => {
+  it('disables only operations and merge methods GitHub explicitly rules out', async () => {
     nextCapabilities = {
       kind: 'capabilities',
       operations: Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
@@ -274,7 +274,7 @@ describe('the mounted GitHub write controls', () => {
       mergeMethods: {
         merge: { kind: 'available' },
         squash: { kind: 'unavailable', code: 'repository_unsupported' },
-        rebase: { kind: 'unavailable', code: 'api_not_exposed' },
+        rebase: { kind: 'available' },
       },
     };
     const enabled = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
@@ -310,12 +310,56 @@ describe('the mounted GitHub write controls', () => {
       },
     };
     const denied = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
-    await vi.waitFor(async () => {
-      expect((await denied.getByRole('button', { name: 'Changes unavailable' })).state?.disabled)
-        .toBe(true);
-    });
-    expect(await denied.queryByText('This repository is archived.')).toBeDefined();
+    expect((await denied.getByRole('button', { name: 'Merge pull request' })).state?.disabled)
+      .toBe(true);
+    expect((await denied.getByRole('button', { name: 'Close pull request' })).state?.disabled)
+      .toBe(true);
+    expect((await denied.getByRole('button', { name: 'Submit review' })).state?.disabled)
+      .toBe(true);
   });
+
+  it('keeps independently available review controls when closing is denied', async () => {
+    nextCapabilities = {
+      kind: 'capabilities',
+      operations: {
+        ...Object.fromEntries(Object.keys(GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1)
+          .map((key) => [key, { kind: 'available' }])),
+        pullRequestClose: { kind: 'unavailable', code: 'repository_unsupported' },
+      },
+      mergeMethods: {
+        merge: { kind: 'available' },
+        squash: { kind: 'available' },
+        rebase: { kind: 'available' },
+      },
+    };
+
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    await expect(detail.getByRole('button', { name: 'Submit review' }))
+      .resolves.toMatchObject({ role: 'button' });
+    await expect(detail.getByRole('button', { name: 'Close pull request' }))
+      .resolves.toMatchObject({ role: 'button', state: { disabled: true } });
+    expect(await detail.queryByText('This repository does not support this change.'))
+      .toBeDefined();
+  });
+
+  it('lets the confirmed Action report the provider permission failure', async () => {
+    nextResult = {
+      kind: 'failed',
+      failure: { class: 'permission', code: 'github_forbidden' },
+    };
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
+
+    await act(async () => {
+      await detail.press(await detail.getByRole('button', { name: 'Close pull request' }));
+    });
+
+    await expect(detail.getByText('Not carried out'))
+      .resolves.toEqual({ content: 'Not carried out' });
+    await expect(detail.getByText('GitHub could not complete this change. (github_forbidden)'))
+      .resolves.toEqual({ content: 'GitHub could not complete this change. (github_forbidden)' });
+  });
+
   it('keeps the lifecycle glyph static while merge is pending or refused', async () => {
     let settle!: (value: JsonValue) => void;
     const animation = vi.spyOn(Animated, 'timing');

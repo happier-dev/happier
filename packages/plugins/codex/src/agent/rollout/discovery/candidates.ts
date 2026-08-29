@@ -387,6 +387,12 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
   limit?: number;
   searchTerm?: string;
   searchMode?: 'fast' | 'full';
+  /**
+   * Restrict this selection to the filename-pruned branches: the caller owns
+   * the general searched window and must not pay this function's whole-corpus
+   * enumeration for a term that matched no rollout filename.
+   */
+  filenameOnly?: boolean;
 }> & CodexExternalSessionInvocationBounds): Promise<CodexRolloutCandidateSelection> {
   throwIfCodexExternalSessionInvocationStopped(params);
   const searchTerm = normalizeCodexRolloutCandidateSearchTerm(params.searchTerm);
@@ -419,6 +425,16 @@ export async function selectCodexRolloutCandidateEntries(params: Readonly<{
         totalCount: 0,
         buildMode: 'sessionStore',
         searchIncomplete: true,
+      };
+    }
+    if (params.filenameOnly) {
+      // Full mode continues past filename misses in the caller's own bounded
+      // searched window; this selection must not enumerate the corpus here.
+      return {
+        kind: 'direct',
+        entries: [],
+        totalCount: 0,
+        buildMode: 'sessionStore',
       };
     }
   }

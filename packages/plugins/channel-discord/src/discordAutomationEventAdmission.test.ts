@@ -12,7 +12,7 @@ const EVENT_REF = { pluginId: DISCORD_PLUGIN_ID, localId: DISCORD_AUTOMATION_MES
 
 function sourceDefinition(overrides: Readonly<Record<string, unknown>> = {}) {
   return {
-    automationId: 'automation-discord-1',
+    automationId: '11111111-1111-4111-8111-111111111111',
     triggerId: 'trigger-discord-1',
     triggerRevision: 2,
     eventRef: EVENT_REF,
@@ -20,7 +20,14 @@ function sourceDefinition(overrides: Readonly<Record<string, unknown>> = {}) {
     sourceSelectorId: SOURCE_SELECTOR_ID,
     sourceContractVersion: 1,
     sourceConfig: { v: 1, applicationId: '123', channelId: '4242' },
-    observationTransport: { kind: 'socket' },
+    observationTransport: {
+      kind: 'socket',
+      watcherMaterializationRef: {
+        pluginId: DISCORD_PLUGIN_ID,
+        machineId: 'machine-1',
+        materializationId: 'materialization-1',
+      },
+    },
     filter: null,
     maximumObservationAgeMs: null,
     ...overrides,
@@ -137,13 +144,13 @@ describe('Discord Automation Event admission bridge', () => {
       payload: admissionInput().candidate.payload,
       definitions: [
         {
-          automationId: 'automation-discord-1',
+          automationId: '11111111-1111-4111-8111-111111111111',
           triggerId: 'trigger-discord-1',
           triggerRevision: 2,
           sourceSelectorId: SOURCE_SELECTOR_ID,
         },
         {
-          automationId: 'automation-discord-1',
+          automationId: '11111111-1111-4111-8111-111111111111',
           triggerId: 'trigger-discord-2',
           triggerRevision: 3,
           sourceSelectorId: '5a1b6d0e-1c4a-4d2b-9f77-2a0c4e6b8d92',

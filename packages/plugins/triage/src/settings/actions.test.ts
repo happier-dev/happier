@@ -58,7 +58,7 @@ describe('the Triage action record', () => {
     it('answers the five configured questions and states both Review arms explicitly', () => {
         expect(ASK.workspaceMode).toBe('reference_only');
         expect(FIX.workspaceMode).toBe('repository');
-        expect(REVIEW.workspaceMode).toBe('repository');
+        expect(REVIEW.workspaceMode).toBe('pull_request');
 
         // Neither Review is inferred from its label: the arm is a member, and
         // the two arms are two different user actions that ship side by side.

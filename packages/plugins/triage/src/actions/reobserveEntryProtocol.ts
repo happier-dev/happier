@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
   defineProtocolLiteral,
   defineProtocolObject,
@@ -35,7 +34,5 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
 export type TriageReobserveEntryActionResultV1 = ReturnType<
   typeof TriageReobserveEntryResultV1Schema.parse
 >;
-export const TriageReobserveEntryResultV1JsonSchema: PluginJsonSchema =
-  TriageReobserveEntryResultV1Schema.jsonSchema;
 
 export const TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 = 'entries/reobserve-v1';

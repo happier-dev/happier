@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   GITLAB_PLUGIN_ID,
+  GITLAB_CONNECTED_ACCOUNT_PURPOSE,
   GITLAB_TRIAGE_DETAIL_ACTION_IDS,
   GITLAB_TRIAGE_MUTATION_ACTION_IDS,
 } from '../../triage/contribution.js';
@@ -41,7 +42,7 @@ const INPUT = {
       sourceInstanceId: '9d2a6b1e-6c1a-4b7d-9f31-1d4a6c8b2e70',
     },
     binding: {
-      purpose: 'gitlab-api',
+      purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
       account: {
         service: { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab-account' },
         accountId: 'account-1',

@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     defineProtocolLiteral,
     defineProtocolObject,
@@ -64,8 +63,6 @@ export const TriageLinkEntryToSessionInputV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageLinkEntryToSessionInputV1 =
     ReturnType<typeof TriageLinkEntryToSessionInputV1Schema.parse>;
-export const TriageLinkEntryToSessionInputV1JsonSchema: PluginJsonSchema =
-    TriageLinkEntryToSessionInputV1Schema.jsonSchema;
 
 export const TriageLinkEntryToSessionActionResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -82,8 +79,6 @@ export const TriageLinkEntryToSessionActionResultV1Schema = defineProtocolObject
 }, { policy: 'closed' });
 export type TriageLinkEntryToSessionActionResultV1 =
     ReturnType<typeof TriageLinkEntryToSessionActionResultV1Schema.parse>;
-export const TriageLinkEntryToSessionActionResultV1JsonSchema: PluginJsonSchema =
-    TriageLinkEntryToSessionActionResultV1Schema.jsonSchema;
 
 /** The durable link write. One Action, one canonical writer beneath it. */
 export const TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 = 'sessions/link-entry-v1';

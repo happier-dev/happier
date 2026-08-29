@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { ProtocolComposerReferenceResolutionV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import queryIssueEventsPage from '../api/__fixtures__/queryIssueEventsPage.json' with { type: 'json' };
@@ -245,6 +246,50 @@ describe('the PostHog selected-evidence Composer reference', () => {
         const resolved = await resolvePosthogEvidenceReference(candidate.candidate.id, host.value);
 
         expect(resolved.context).toContain('projectedFrame9');
+    });
+
+    it('fits whole selected-event evidence against the canonical Composer resolution contract', async () => {
+        const candidate = disclosedCandidate();
+        const padding = '\\\"'.repeat(192);
+        const frames = Array.from({ length: 80 }, (_, index) => ({
+            function: `projectedFrame${String(index + 1)}-${padding}`,
+            source: `app/frame-${String(index + 1)}-${padding}.ts`,
+            line: index + 1,
+            column: 1,
+            in_app: true,
+        }));
+        const host = sourceContext({
+            ...queryIssueEventsPage,
+            results: [{
+                ...queryIssueEventsPage.results[0],
+                properties: {
+                    ...queryIssueEventsPage.results[0]?.properties,
+                    $exception_list: [{
+                        type: 'TypeError',
+                        value: 'large selected occurrence',
+                        stacktrace: { type: 'resolved', frames },
+                    }],
+                },
+            }],
+            hasMore: false,
+            limit: 1,
+            offset: 0,
+        });
+
+        const resolved = await resolvePosthogEvidenceReference(candidate.candidate.id, host.value);
+
+        expect(ProtocolComposerReferenceResolutionV1Schema.safeParse(resolved).success).toBe(true);
+        expect(resolved.context).toContain('projectedFrame1');
+        expect(resolved.context).not.toContain('projectedFrame80');
+        expect(resolved.context).toMatch(/Agent evidence omitted to fit Composer context: \d+ frames?\./);
+        // The fitted boundary drops whole rendered frames rather than slicing
+        // provider-controlled strings at an arbitrary character boundary.
+        const expectedFrameLines = new Set(frames.map((frame) => (
+            `  at ${frame.function} (${frame.source}:${String(frame.line)}:${String(frame.column)})`
+        )));
+        const admittedFrameLines = resolved.context.split('\n').filter((line) => line.startsWith('  at '));
+        expect(admittedFrameLines.length).toBeGreaterThan(0);
+        expect(admittedFrameLines.every((line) => expectedFrameLines.has(line))).toBe(true);
     });
 
     it('refuses a changed or multiply returned occurrence instead of publishing selection bytes', async () => {

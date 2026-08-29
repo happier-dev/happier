@@ -6,9 +6,7 @@ import {
   type ComposerReferenceResolutionV1,
   type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
-import {
-  ProtocolComposerReferenceResolutionV1Schema,
-} from '@happier-dev/plugin-sdk/protocol';
+import { fitComposerReferenceResolutionPrefixV1 } from '@happier-dev/triage-sources/runtime';
 import {
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
   TriageReadConfiguredSourceInstancesResultV1Schema,
@@ -207,26 +205,17 @@ function selectedEvidenceResolution(
   projection: SentryEventProjectionV1,
 ): ComposerReferenceResolutionV1 {
   const all = evidenceChunks(projection);
-  const admit = (includedCount: number): ReturnType<typeof ProtocolComposerReferenceResolutionV1Schema.safeParse> => (
-    ProtocolComposerReferenceResolutionV1Schema.safeParse({
-      id: candidateId,
-      label,
-      context: selectedEvidenceContext(projection, all.slice(0, includedCount), all),
-    })
-  );
-
-  const complete = admit(all.length);
-  if (complete.success) return complete.data;
-  let low = 0;
-  let high = all.length;
-  while (low < high) {
-    const candidateCount = Math.ceil((low + high) / 2);
-    if (admit(candidateCount).success) low = candidateCount;
-    else high = candidateCount - 1;
-  }
-  const fitted = admit(low);
-  if (!fitted.success) throw unavailableEvidence('evidence-contract-exceeded');
-  return fitted.data;
+  const fitted = fitComposerReferenceResolutionPrefixV1({
+    identity: { id: candidateId, label },
+    itemCount: all.length,
+    contextForPrefix: (includedCount) => selectedEvidenceContext(
+      projection,
+      all.slice(0, includedCount),
+      all,
+    ),
+  });
+  if (fitted === null) throw unavailableEvidence('evidence-contract-exceeded');
+  return fitted;
 }
 
 /** This provider is direct-disclosure-only; generic Composer search returns no rows. */

@@ -12,7 +12,7 @@ import {
 
 type PiExternalSessionTakeoverIdentity = Pick<
   AgentExternalSessionTakeoverResolveLaunchRequest,
-  'source' | 'remoteSessionId' | 'linkData' | 'linkedDirectory'
+  'source' | 'remoteSessionId' | 'linkData'
 >;
 
 function readNonEmptyString(value: unknown): string | null {
@@ -25,16 +25,18 @@ export function resolvePiExternalSessionTakeoverPlan(
   identity: PiExternalSessionTakeoverIdentity,
 ): AgentExternalSessionTakeoverLaunchPlan | null {
   const remoteSessionId = readNonEmptyString(identity.remoteSessionId);
-  const directory = readNonEmptyString(identity.linkedDirectory);
   const agentDir = readNonEmptyString(identity.source.agentDir);
   const sessionFile = readNonEmptyString(identity.source.sessionFile);
   const descriptor = readStrictCanonicalPiAgentRuntimeDescriptorV1(
     identity.linkData.runtimeDescriptorV1,
   );
+  // Exact Pi resume identity is the validated absolute sessionFile in the
+  // canonical descriptor plus the agent dir. The request's optional
+  // linkedDirectory is historical context and must never gate the launch;
+  // the host alone enforces the request targetDirectory as the spawned cwd.
   if (
     identity.source.kind !== 'piAgentDir'
     || !remoteSessionId
-    || !directory
     || !agentDir
     || !sessionFile
     || descriptor?.resumeStrategy !== 'sessionFileAbsolutePreferred'
@@ -47,7 +49,6 @@ export function resolvePiExternalSessionTakeoverPlan(
   }
 
   return Object.freeze({
-    directory,
     runtimeDescriptorV1: buildPiAgentRuntimeDescriptorV1({
       resumeStrategy: descriptor.resumeStrategy,
       providerSessionId: descriptor.providerSessionId,

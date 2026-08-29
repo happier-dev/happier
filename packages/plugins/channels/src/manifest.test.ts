@@ -1474,6 +1474,7 @@ describe('Channels core manifest', () => {
         },
         textDigest: 'E'.repeat(43),
         retainedAttentionObligationRowIds: [],
+        prunedObligationTombstones: [],
       },
     };
     expect(isValidPluginJsonSchemaValue(validate, {
@@ -1485,6 +1486,16 @@ describe('Channels core manifest', () => {
       payload: {
         ...compactedCensusPayload,
         compacted: { ...compactedCensusPayload.compacted, textDigest: 'not-a-digest' },
+      },
+    })).toBe(false);
+    expect(isValidPluginJsonSchemaValue(validate, {
+      ...ingressCensus,
+      payload: {
+        ...compactedCensusPayload,
+        compacted: {
+          ...compactedCensusPayload.compacted,
+          prunedObligationTombstones: [{ rowId: 'not-a-row-id', revision: 1 }],
+        },
       },
     })).toBe(false);
     expect(isValidPluginJsonSchemaValue(validate, {

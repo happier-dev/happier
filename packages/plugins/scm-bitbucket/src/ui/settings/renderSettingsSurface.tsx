@@ -18,10 +18,11 @@ import { createTriageSourceSettingsSurface } from '@happier-dev/triage-sources';
 
 import { BITBUCKET_PLUGIN_ID } from '../../bitbucketContracts.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS } from '../../triage/source/actions.js';
-import { BITBUCKET_TRIAGE_DESCRIPTOR } from '../../triage/source/descriptor.js';
+import { BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID, BITBUCKET_TRIAGE_DESCRIPTOR } from '../../triage/source/descriptor.js';
 
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: BITBUCKET_PLUGIN_ID,
   listInstancesLocalActionId: BITBUCKET_TRIAGE_ACTION_IDS.listInstances,
+  connectedAccountServiceLocalId: BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID,
   sourceDisplayName: BITBUCKET_TRIAGE_DESCRIPTOR.displayName,
 });

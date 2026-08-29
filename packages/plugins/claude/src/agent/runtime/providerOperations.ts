@@ -110,7 +110,7 @@ export type ClaudeRuntimeTurnOperations = Readonly<{
     requestId: string,
     approved: boolean,
   ): Promise<ClaudeProviderPermissionResponseOutcome>;
-  cancelProviderTurn(): Promise<void>;
+  cancelProviderTurn(expectedTurnId?: string): Promise<void | boolean>;
   readProviderIdentity(): Readonly<{ sessionId: string | null }>;
   updateProviderConfiguration(
     update: ClaudeProviderConfigurationUpdate,

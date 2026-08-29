@@ -191,78 +191,94 @@ describe('Antigravity external-session pure leaf', () => {
     });
   });
 
-  it('orders full searched pages globally when the newer match is in a later filesystem chunk', async () => {
-    const home = await mkdir(join(tmpdir(), `antigravity-external-search-traversal-${Date.now()}-`), { recursive: true });
+  // A full search reads one bounded directory chunk per public call. The first
+  // call must not drain later chunks to answer with a globally ordered page: it
+  // serves its own chunk's matches as deterministic partial state, and the
+  // query-bound continuation resumes the walk without repeating or skipping a
+  // match.
+  it('serves one bounded full-search chunk per call and resumes without duplicates or skips', async () => {
+    const home = await mkdir(join(tmpdir(), `antigravity-external-search-chunked-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
-    const firstPath = await createConversation(brainDir, 'conversation-search-traversal-first', [
-      '{"id":"first","type":"USER_INPUT","text":"ordered search first traversal candidate"}',
-    ]);
-    const laterPath = await createConversation(brainDir, 'conversation-search-traversal-later', [
-      '{"id":"later","type":"USER_INPUT","text":"ordered search later traversal candidate"}',
-    ]);
+    const paths: Record<string, string> = {};
+    for (const [index, id] of ['alpha', 'bravo', 'charlie'].entries()) {
+      paths[id] = await createConversation(brainDir, `conversation-chunked-${id}`, [
+        `{"id":"${id}","type":"USER_INPUT","text":"chunk probe candidate ${index}"}`,
+      ]);
+    }
     const directory = await opendir(brainDir);
-    const traversal = [] as string[];
+    const traversal: string[] = [];
     for await (const entry of directory) {
       if (entry.isDirectory()) traversal.push(entry.name);
     }
-    const newestId = traversal.at(-1) === 'conversation-search-traversal-first'
-      ? 'conversation-search-traversal-first'
-      : 'conversation-search-traversal-later';
-    const olderId = newestId === 'conversation-search-traversal-first'
-      ? 'conversation-search-traversal-later'
-      : 'conversation-search-traversal-first';
-    const newestPath = newestId === 'conversation-search-traversal-first' ? firstPath : laterPath;
-    const newestTimestamp = new Date('2026-07-22T10:00:00.000Z');
-    const olderTimestamp = new Date('2026-07-20T10:00:00.000Z');
-    await Promise.all([
-      utimes(firstPath, olderTimestamp, firstPath === newestPath ? newestTimestamp : olderTimestamp),
-      utimes(laterPath, olderTimestamp, laterPath === newestPath ? newestTimestamp : olderTimestamp),
-    ]);
+    expect(traversal).toHaveLength(3);
+    // Recency ascends along the traversal, so the newest match lives in the
+    // last chunk and a draining first call would answer with a different page.
+    const modifiedAt = (index: number) => new Date(Date.parse('2026-07-20T10:00:00.000Z') + index * 86_400_000);
+    await Promise.all(traversal.map((entry, index) => {
+      const path = paths[entry.replace('conversation-chunked-', '')]!;
+      return utimes(path, modifiedAt(index), modifiedAt(index));
+    }));
 
     const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
     const source = { kind: 'antigravityCliPrint' as const };
+    const search = { searchTerm: 'chunk probe', searchMode: 'full' as const };
+    const served: string[] = [];
+
     const first = await contribution.listCandidates({
       ...invocation(),
       source,
-      searchTerm: 'ordered search',
-      searchMode: 'full',
+      ...search,
       maxItems: 1,
     });
-    expect(first).toMatchObject({
-      ok: true,
-      value: {
-        candidates: [expect.objectContaining({
-          remoteSessionId: newestId,
-          updatedAtMs: newestTimestamp.getTime(),
-        })],
-        nextCursor: expect.any(String),
-      },
-    });
-    if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
-    expect(first.value).not.toHaveProperty('searchIncomplete');
+    if (!first.ok) throw new Error('first full-search chunk unexpectedly failed');
+    expect(first.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([traversal[0]]);
+    expect(first.value.searchIncomplete).toBe(true);
+    expect(first.value.nextCursor).toEqual(expect.any(String));
+    served.push(...first.value.candidates.map((candidate) => candidate.remoteSessionId));
 
-    const second = await contribution.listCandidates({
+    let cursor = first.value.nextCursor;
+    for (const entry of traversal.slice(1)) {
+      if (!cursor) throw new Error('full-search continuation unexpectedly missing');
+      const page = await contribution.listCandidates({
+        ...invocation(),
+        source,
+        ...search,
+        cursor,
+        maxItems: 1,
+      });
+      if (!page.ok) throw new Error('full-search continuation unexpectedly failed');
+      expect(page.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([entry]);
+      served.push(...page.value.candidates.map((candidate) => candidate.remoteSessionId));
+      expect(page.value.searchIncomplete).toBe(true);
+      expect(page.value.nextCursor).toEqual(expect.any(String));
+      cursor = page.value.nextCursor;
+    }
+
+    // The chunk boundary past the last entry is not known to be the end until
+    // the next bounded scan comes back empty and completes the search.
+    if (!cursor) throw new Error('terminal continuation unexpectedly missing');
+    const terminal = await contribution.listCandidates({
       ...invocation(),
       source,
-      cursor: first.value.nextCursor,
-      searchTerm: 'ordered search',
-      searchMode: 'full',
+      ...search,
+      cursor,
       maxItems: 1,
     });
-    expect(second).toMatchObject({
+    expect(terminal).toMatchObject({
       ok: true,
-      value: {
-        candidates: [expect.objectContaining({ remoteSessionId: olderId })],
-        nextCursor: null,
-      },
+      value: { candidates: [], nextCursor: null },
     });
-    if (second.ok) expect(second.value).not.toHaveProperty('searchIncomplete');
+    if (terminal.ok) expect(terminal.value).not.toHaveProperty('searchIncomplete');
+
+    expect(served).toEqual(traversal);
   });
 
   // A full-search cursor is an ordering ANCHOR over a mutable recency key: a
-  // conversation the user is still driving keeps touching its transcript. If an
-  // unserved match overtakes the anchor between pages, `compare(candidate,
-  // anchor) <= 0` reads it as already served and the browse silently loses it.
+  // conversation the user is still driving keeps touching its transcript. Every
+  // never-served match a later chunk holds must order after the served anchor —
+  // one that does not means the prefix the walk already served is no longer a
+  // prefix of the current ordering, and answering the chunk would skip or
+  // repeat a match.
   it('rejects a full-search continuation whose unserved match overtook the anchor', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-search-reorder-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
@@ -272,12 +288,20 @@ describe('Antigravity external-session pure leaf', () => {
         `{"id":"${id}","type":"USER_INPUT","text":"reorder probe candidate ${index}"}`,
       ]);
     }
+    const directory = await opendir(brainDir);
+    const traversal: string[] = [];
+    for await (const entry of directory) {
+      if (entry.isDirectory()) traversal.push(entry.name);
+    }
+    const shortId = (entry: string) => entry.replace('conversation-reorder-', '');
+    expect(traversal).toHaveLength(3);
     const at = (iso: string) => new Date(iso);
-    await Promise.all([
-      utimes(paths.alpha!, at('2026-07-20T10:00:00.000Z'), at('2026-07-22T10:00:00.000Z')),
-      utimes(paths.bravo!, at('2026-07-20T10:00:00.000Z'), at('2026-07-21T10:00:00.000Z')),
-      utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-20T10:00:00.000Z')),
-    ]);
+    // The first chunk holds the newest match and becomes the anchor; the
+    // trailing chunk holds only never-served older matches.
+    await Promise.all(traversal.map((entry, index) => {
+      const modified = index === 0 ? '2026-07-22T10:00:00.000Z' : '2026-07-21T10:00:00.000Z';
+      return utimes(paths[shortId(entry)]!, at('2026-07-20T10:00:00.000Z'), at(modified));
+    }));
 
     const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
     const source = { kind: 'antigravityCliPrint' as const };
@@ -290,11 +314,11 @@ describe('Antigravity external-session pure leaf', () => {
       maxItems: 1,
     });
     if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
-    expect(first.value.candidates[0]?.remoteSessionId).toBe('conversation-reorder-alpha');
+    expect(first.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([traversal[0]]);
 
-    // `charlie` was never served and is now the newest match: it overtakes the
-    // `alpha` anchor the cursor was cut at.
-    await utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-23T10:00:00.000Z'));
+    // The last conversation was never served and now outranks the anchor the
+    // cursor was cut at; the middle one was never served and still trails it.
+    await utimes(paths[shortId(traversal.at(-1)!)], at('2026-07-20T10:00:00.000Z'), at('2026-07-23T10:00:00.000Z'));
 
     const second = await contribution.listCandidates({
       ...invocation(),
@@ -308,17 +332,18 @@ describe('Antigravity external-session pure leaf', () => {
     // remaining matches" with the overtaking match dropped.
     if (second.ok) {
       expect(second.value.candidates.map((candidate) => candidate.remoteSessionId)).toContain(
-        'conversation-reorder-charlie',
+        traversal.at(-1),
       );
     } else {
       expect(second).toMatchObject({ ok: false, code: 'source_invalid', retryable: true });
     }
   });
 
-  // Counting the matches at or before the anchor ALIASES: two compensating
-  // changes leave the count intact while the served prefix is no longer a
-  // prefix of the current ordering. Neither change touches a brain-dir entry,
-  // so the source generation cannot see them either.
+  // Two compensating changes — a never-served match overtaking the anchor while
+  // an already-served one vanishes — leave the conversation directory set
+  // intact, so the brain-dir generation cannot see them either. The
+  // continuation must not answer "these are the remaining matches" over a
+  // served prefix that is no longer a prefix of the current ordering.
   it('rejects a full-search continuation whose anchor prefix changed without changing its size', async () => {
     const home = await mkdir(join(tmpdir(), `antigravity-external-search-alias-${Date.now()}-`), { recursive: true });
     const brainDir = join(home, '.gemini', 'antigravity-cli', 'brain');
@@ -328,13 +353,25 @@ describe('Antigravity external-session pure leaf', () => {
         `{"id":"${id}","type":"USER_INPUT","text":"alias probe candidate ${index}"}`,
       ]);
     }
+    const directory = await opendir(brainDir);
+    const traversal: string[] = [];
+    for await (const entry of directory) {
+      if (entry.isDirectory()) traversal.push(entry.name);
+    }
+    const shortId = (entry: string) => entry.replace('conversation-alias-', '');
+    expect(traversal).toHaveLength(4);
     const at = (iso: string) => new Date(iso);
-    await Promise.all([
-      utimes(paths.alpha!, at('2026-07-20T10:00:00.000Z'), at('2026-07-24T10:00:00.000Z')),
-      utimes(paths.bravo!, at('2026-07-20T10:00:00.000Z'), at('2026-07-23T10:00:00.000Z')),
-      utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-22T10:00:00.000Z')),
-      utimes(paths.delta!, at('2026-07-20T10:00:00.000Z'), at('2026-07-21T10:00:00.000Z')),
-    ]);
+    // The first chunk holds the two newest matches and serves both; the
+    // trailing chunk holds only never-served older matches.
+    const modifiedTimes = [
+      '2026-07-24T10:00:00.000Z',
+      '2026-07-23T10:00:00.000Z',
+      '2026-07-22T10:00:00.000Z',
+      '2026-07-21T10:00:00.000Z',
+    ];
+    await Promise.all(traversal.map((entry, index) => {
+      return utimes(paths[shortId(entry)]!, at('2026-07-20T10:00:00.000Z'), at(modifiedTimes[index]!));
+    }));
 
     const contribution = createAntigravityExternalSessionsContribution({ env: { HOME: home } });
     const source = { kind: 'antigravityCliPrint' as const };
@@ -348,16 +385,15 @@ describe('Antigravity external-session pure leaf', () => {
     });
     if (!first.ok || !first.value.nextCursor) throw new Error('expected full-search continuation');
     expect(first.value.candidates.map((candidate) => candidate.remoteSessionId)).toEqual([
-      'conversation-alias-alpha',
-      'conversation-alias-bravo',
+      traversal[0],
+      traversal[1],
     ]);
 
-    // `charlie` was never served and overtakes the `bravo` anchor (+1 preceding
-    // match), while `alpha` — already served, and ordered before the anchor —
-    // loses its transcript file (-1). The conversation directory survives, so
-    // the brain-dir generation is unchanged and the counts cancel out.
-    await utimes(paths.charlie!, at('2026-07-20T10:00:00.000Z'), at('2026-07-25T10:00:00.000Z'));
-    await rm(paths.alpha!);
+    // `traversal[2]` was never served and overtakes the `traversal[1]` anchor,
+    // while `traversal[0]` — already served — loses its transcript file. The
+    // conversation directory survives, so the brain-dir generation is unchanged.
+    await utimes(paths[shortId(traversal[2]!)], at('2026-07-20T10:00:00.000Z'), at('2026-07-25T10:00:00.000Z'));
+    await rm(paths[shortId(traversal[0]!)]!);
 
     const second = await contribution.listCandidates({
       ...invocation(),
@@ -367,12 +403,12 @@ describe('Antigravity external-session pure leaf', () => {
       maxItems: 5,
     });
 
-    // Never answer "these are the remaining matches" with `charlie` silently
-    // dropped: the served prefix changed, so the cursor is stale.
+    // Never answer "these are the remaining matches" with the overtaking match
+    // silently dropped: the served prefix changed, so the cursor is stale.
     expect(second).toMatchObject({ ok: false, code: 'source_invalid', retryable: true });
     if (second.ok) {
       expect(second.value.candidates.map((candidate) => candidate.remoteSessionId)).toContain(
-        'conversation-alias-charlie',
+        traversal[2],
       );
     }
   });
@@ -403,15 +439,29 @@ describe('Antigravity external-session pure leaf', () => {
       searchMode: 'full',
       maxItems: 1,
     });
+    if (!result.ok) throw new Error('full-search chunk unexpectedly failed');
+    expect(result.value.candidates).toEqual([
+      expect.objectContaining({ remoteSessionId: 'conversation-terminal-full' }),
+    ]);
+    expect(result.value.searchIncomplete).toBe(true);
+    if (!result.value.nextCursor) throw new Error('expected full-search continuation');
 
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        candidates: [expect.objectContaining({ remoteSessionId: 'conversation-terminal-full' })],
-        nextCursor: null,
-      },
+    // The chunk boundary past the only conversation is not the end of the
+    // source; the next bounded scan comes back empty and completes the search
+    // without retaining the fast-preview state.
+    const terminal = await contribution.listCandidates({
+      ...invocation(),
+      source: { kind: 'antigravityCliPrint' },
+      cursor: result.value.nextCursor,
+      searchTerm: 'complete full search',
+      searchMode: 'full',
+      maxItems: 1,
     });
-    if (result.ok) expect(result.value).not.toHaveProperty('searchIncomplete');
+    expect(terminal).toMatchObject({
+      ok: true,
+      value: { candidates: [], nextCursor: null },
+    });
+    if (terminal.ok) expect(terminal.value).not.toHaveProperty('searchIncomplete');
   });
 
   it('pages bounded candidates with source-qualified identities and detects replacement', async () => {

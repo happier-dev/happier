@@ -799,6 +799,20 @@ describe('Codex app-server temporary recoverable turn failures', () => {
       });
   });
 
+  it('resumes the Codex thread in the runtime-selected working directory', async () => {
+    const runtime = createRuntime();
+
+    await startCodexAppServerRuntime(runtime, {
+      resumeId: 'thread-existing',
+      preserveRequestedThreadId: true,
+    });
+
+    expect(clientState.requests.find((request) => request.method === 'thread/resume'))
+      .toMatchObject({
+        params: expect.objectContaining({ cwd: '/workspace' }),
+      });
+  });
+
   it('keeps thread/resume unbounded while bounding oversized-response recovery reads', async () => {
     const runtime = createRuntime();
     const oversizedResumeFailure = new Error('oversized resume response');

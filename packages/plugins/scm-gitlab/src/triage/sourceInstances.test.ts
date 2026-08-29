@@ -23,6 +23,7 @@ function account(accountId: string, origins: readonly string[], overrides: Reado
     displayName: overrides.displayName ?? `@user-${accountId}`,
     state: overrides.state ?? ('connected' as const),
     connectedAccountOrigins: origins,
+    connectedAccountBases: origins,
   };
 }
 
@@ -147,7 +148,7 @@ describe('GitLab listInstances', () => {
     });
   });
 
-  it('rejects every non-GitLab.com origin as self-managed-floor-unset before an item call', async () => {
+  it('projects the exact self-managed HTTPS base without probing or materializing during discovery', async () => {
     const { result, seam } = await list({
       status: 'complete',
       accounts: [
@@ -157,23 +158,36 @@ describe('GitLab listInstances', () => {
     });
 
     if (result.kind !== 'complete') throw new Error(`expected complete, got ${result.kind}`);
-    expect(result.candidates.map((candidate) => candidate.binding.account.accountId))
-      .toEqual(['account-2']);
-    expect(result.failures).toEqual([{
-      binding: {
-        purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
-        account: { service: SERVICE, accountId: 'account-1' },
-      },
-      localInstanceKey: 'https://gitlab.example.test',
-      failure: {
-        class: 'unsupportedContract',
-        code: 'self-managed-floor-unset',
-        detail: expect.any(String),
-      },
-    }]);
-    // No provider read of any kind runs for a rejected deployment: not a
-    // version probe, not an edition inference, not one item call.
+    expect(result.candidates.map((candidate) => ({
+      accountId: candidate.binding.account.accountId,
+      base: candidate.localInstanceKey,
+    }))).toEqual([
+      { accountId: 'account-1', base: 'https://gitlab.example.test' },
+      { accountId: 'account-2', base: 'https://gitlab.com' },
+    ]);
+    expect(result.failures).toEqual([]);
+    // Discovery remains metadata-only: no version probe, edition inference or
+    // item read is introduced to characterize a self-managed deployment.
     expect(seam.materializeListedAccount).not.toHaveBeenCalled();
+  });
+
+  it('preserves a configured base path instead of collapsing it to the origin', async () => {
+    const seam = connectedAccounts({
+      status: 'complete',
+      accounts: [{
+        ...account('account-1', ['https://gitlab.example.test']),
+        connectedAccountBases: ['https://gitlab.example.test/Corp/GitLab'],
+      }],
+    });
+    const result = await listGitlabTriageInstances({
+      connectedAccounts: seam.connectedAccounts,
+      signal: new AbortController().signal,
+    });
+    if (result.kind !== 'complete') throw new Error(`expected complete, got ${result.kind}`);
+    expect(result.candidates[0]?.localInstanceKey)
+      .toBe('https://gitlab.example.test/Corp/GitLab');
+    expect(result.candidates[0]?.locator.webUrl)
+      .toBe('https://gitlab.example.test/Corp/GitLab');
   });
 
   it('attributes an unusable account and an origin-less account without inventing a deployment', async () => {
@@ -242,5 +256,28 @@ describe('GitLab listInstances with no connected account', () => {
     expect(result.kind).toBe('failed');
     if (result.kind !== 'failed') throw new Error('unreachable');
     expect(result.failure.code).toBe('account-listing-failed');
+  });
+
+  it('preserves a Connected Accounts deadline instead of reporting a generic listing failure', async () => {
+    const timeout = new DOMException('deadline elapsed', 'TimeoutError');
+    const listAccounts = vi.fn(async () => { throw timeout; });
+    const getBinding = vi.fn(async () => {
+      throw new Error('a deadline must not be re-asked as binding absence');
+    });
+
+    const result = await listGitlabTriageInstances({
+      connectedAccounts: { listAccounts, getBinding } as unknown as GitlabConnectedAccounts,
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({
+      kind: 'failed',
+      failure: {
+        class: 'transient',
+        code: 'deadline-exceeded',
+        detail: 'The authorized GitLab accounts could not be listed.',
+      },
+    });
+    expect(getBinding).not.toHaveBeenCalled();
   });
 });

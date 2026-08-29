@@ -1,7 +1,6 @@
 import { MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/plugin-sdk/ui';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/plugin-sdk/contributions';
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     defineProtocolArray,
     defineProtocolJsonValue,
@@ -426,8 +425,6 @@ export const TriageStartEntrySessionInputV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageStartEntrySessionInputV1 =
     ReturnType<typeof TriageStartEntrySessionInputV1Schema.parse>;
-export const TriageStartEntrySessionInputV1JsonSchema: PluginJsonSchema =
-    TriageStartEntrySessionInputV1Schema.jsonSchema;
 
 /**
  * The bounded live review continuation a newly opened selected-PR Session can
@@ -461,8 +458,6 @@ export const TriageStartPullRequestReviewInputV1Schema = defineProtocolObject({
 export type TriageStartPullRequestReviewInputV1 = ReturnType<
     typeof TriageStartPullRequestReviewInputV1Schema.parse
 >;
-export const TriageStartPullRequestReviewInputV1JsonSchema: PluginJsonSchema =
-    TriageStartPullRequestReviewInputV1Schema.jsonSchema;
 
 export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -485,8 +480,6 @@ export const TriageStartPullRequestReviewResultV1Schema = defineProtocolUnion([
 export type TriageStartPullRequestReviewResultV1 = ReturnType<
     typeof TriageStartPullRequestReviewResultV1Schema.parse
 >;
-export const TriageStartPullRequestReviewResultV1JsonSchema: PluginJsonSchema =
-    TriageStartPullRequestReviewResultV1Schema.jsonSchema;
 
 /**
  * The orchestrator's own phase-local verdict, carried out unchanged.
@@ -590,8 +583,6 @@ export const TriageStartEntrySessionResultV1Schema = defineProtocolUnion([
 ]);
 export type TriageStartEntrySessionResultV1 =
     ReturnType<typeof TriageStartEntrySessionResultV1Schema.parse>;
-export const TriageStartEntrySessionResultV1JsonSchema: PluginJsonSchema =
-    TriageStartEntrySessionResultV1Schema.jsonSchema;
 
 /**
  * The explicit undo.
@@ -609,8 +600,6 @@ export const TriageUnlinkEntryFromSessionActionInputV1Schema = defineProtocolObj
 }, { policy: 'closed' });
 export type TriageUnlinkEntryFromSessionActionInputV1 =
     ReturnType<typeof TriageUnlinkEntryFromSessionActionInputV1Schema.parse>;
-export const TriageUnlinkEntryFromSessionActionInputV1JsonSchema: PluginJsonSchema =
-    TriageUnlinkEntryFromSessionActionInputV1Schema.jsonSchema;
 
 export const TriageUnlinkEntryFromSessionActionResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -629,8 +618,6 @@ export const TriageUnlinkEntryFromSessionActionResultV1Schema = defineProtocolOb
 }, { policy: 'closed' });
 export type TriageUnlinkEntryFromSessionActionResultV1 =
     ReturnType<typeof TriageUnlinkEntryFromSessionActionResultV1Schema.parse>;
-export const TriageUnlinkEntryFromSessionActionResultV1JsonSchema: PluginJsonSchema =
-    TriageUnlinkEntryFromSessionActionResultV1Schema.jsonSchema;
 
 /** The composed Session start: gate, materialize, create, link, open. */
 export const TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1 = 'sessions/start-entry-v1';

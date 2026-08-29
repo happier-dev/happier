@@ -14,6 +14,7 @@
  */
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import { BITBUCKET_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
 import { BITBUCKET_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 import {
@@ -176,7 +177,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       artifact: BITBUCKET_TRIAGE_SETTINGS_ARTIFACT_ID,
       // The page's whole purpose is two Action invocations — this source's own
       // discovery read and the target-owned administration write.
-      requiredHostMethods: ['executeAction'],
+      requiredHostMethods: ['executeAction', 'openConnectedAccounts'],
     }],
     settingsGroups: [{
       id: BITBUCKET_TRIAGE_SETTINGS_GROUP_ID,
@@ -197,7 +198,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: BITBUCKET_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [
+    translations: withTriageSourceSettingsTranslationsV1([
       { locale: 'en', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["en"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PRs & Issues', 'plugins.bitbucket.settings.sources.subtitle': 'Choose which Bitbucket Cloud accounts and workspaces appear in PRs & Issues.' } },
       { locale: 'ru', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ru"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR и задачи', 'plugins.bitbucket.settings.sources.subtitle': 'Выберите учетные записи и рабочие пространства Bitbucket Cloud, которые будут отображаться в разделе PR и задач.' } },
       { locale: 'pl', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["pl"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR-y i zgłoszenia', 'plugins.bitbucket.settings.sources.subtitle': 'Wybierz konta i obszary robocze Bitbucket Cloud wyświetlane w sekcji PR-ów i zgłoszeń.' } },
@@ -210,7 +211,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
       { locale: 'zh-Hans', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hans"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 和问题', 'plugins.bitbucket.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Bitbucket Cloud 帐户和工作区。' } },
       { locale: 'zh-Hant', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["zh-Hant"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR 與問題', 'plugins.bitbucket.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Bitbucket Cloud 帳戶和工作區。' } },
       { locale: 'ja', messages: { ...BITBUCKET_RENDER_UI_TRANSLATIONS["ja"], ...BITBUCKET_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.bitbucket.settings.group': 'Bitbucket Cloud', 'plugins.bitbucket.settings.sources': 'PR と課題', 'plugins.bitbucket.settings.sources.subtitle': 'PR と課題に表示する Bitbucket Cloud アカウントとワークスペースを選択します。' } },
-    ],
+    ]),
   },
   actions: {
     [BITBUCKET_TRIAGE_ACTION_IDS.listInstances]: {

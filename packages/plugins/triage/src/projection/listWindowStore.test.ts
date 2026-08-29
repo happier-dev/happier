@@ -758,8 +758,8 @@ describe('the mounted PRs & Issues window store', () => {
         expect(firstPass.length).toBeGreaterThan(0);
 
         // The next pass is HEALTHY and answers with entirely different entries,
-        // and it is cut short exactly as the first was — the Action bounds the
-        // over-delivered page, so `retainedLane` reports the lane unexhausted.
+        // and it is cut short exactly as the first was. The scan-pass owner
+        // leaves the walk unexhausted because another native page cannot fit.
         //
         // `PLAN.md` INV-02: no scan establishes absence and the aggregate never
         // derives it by set complement. A pass that never reached the earlier
@@ -1035,6 +1035,34 @@ describe('the mounted PRs & Issues window store', () => {
             (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
         ).at(-1);
         expect(lastProviderInput?.resume).toHaveLength(1);
+        store.dispose();
+    });
+
+    it('does not load an old continuation while a lens replacement is paced away', async () => {
+        const harness = createHarness({ configureSourceB: false });
+        harness.state.sourceANeverFinishes = true;
+        const store = createTriageListWindowStore({
+            readEntries: harness.readEntries,
+            nowMs: () => harness.clock.nowMs,
+        });
+
+        await store.refresh('view');
+        await store.loadMore();
+        const readsBeforeLensChange = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        ).length;
+
+        // The lens invalidates the old frontier synchronously, while the
+        // coordinator is still inside its minimum interval. Load More must
+        // wait for the replacement generation rather than reuse that cursor.
+        store.setLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'older' });
+        await store.loadMore();
+
+        const readsAfterAttempt = harness.actionInputs.filter(
+            (input) => input.sources.kind === 'selected' && input.sources.sourceInstanceIds.length > 0,
+        );
+        expect(readsAfterAttempt).toHaveLength(readsBeforeLensChange);
+        expect(store.getSnapshot().pending).not.toBe('append');
         store.dispose();
     });
 

@@ -16,10 +16,14 @@ function createPreflightContext(params: Readonly<{
   const controller = new AbortController();
   const commands: Array<Readonly<{ toolId: string; args: readonly string[] }>> = [];
   const requests: Array<Readonly<{ method: string; params: JsonValue | undefined }>> = [];
+  const notifications: Array<Readonly<{ method: string; params: JsonValue | undefined }>> = [];
   const client: AgentPreflightJsonRpcRequestClientV1 = Object.freeze({
     request: async (method, requestParams) => {
       requests.push({ method, params: requestParams });
       return await params.request(method, requestParams);
+    },
+    notify: async (method, notificationParams) => {
+      notifications.push({ method, params: notificationParams });
     },
   });
   const context: AgentPreflightSessionControlsProbeContextV1 = {
@@ -37,20 +41,31 @@ function createPreflightContext(params: Readonly<{
       return await inspect(client, controller.signal);
     },
   };
-  return { context, commands, requests };
+  return { context, commands, requests, notifications };
 }
 
 describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
-  it('declares a request-only app-server probe with host-owned diagnostics and cache policy', () => {
-    expect(CODEX_PREFLIGHT_SESSION_CONTROLS.jsonRpcCommand).toEqual({
-      toolId: 'codex-cli',
-      args: ['app-server', '--listen', 'stdio://'],
-      environmentExcludeKeys: [
-        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
-        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
-        'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
-      ],
-    });
+  it('declares exact app-server probes with host-owned diagnostics and cache policy', () => {
+    expect(CODEX_PREFLIGHT_SESSION_CONTROLS.jsonRpcCommands).toEqual([
+      {
+        toolId: 'codex-cli',
+        args: ['app-server', '--listen', 'stdio://'],
+        environmentExcludeKeys: [
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
+        ],
+      },
+      {
+        toolId: 'codex-cli',
+        args: ['app-server', '--listen', 'stdio://', '--enable', 'realtime_conversation'],
+        environmentExcludeKeys: [
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_PATH',
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_MAX_BYTES',
+          'HAPPIER_CODEX_APP_SERVER_RPC_LOG_ROTATE_COUNT',
+        ],
+      },
+    ]);
     expect(CODEX_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('failureCacheStrategy');
     expect(CODEX_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('connectedServiceAuth');
     expect(CODEX_PREFLIGHT_SESSION_CONTROLS).not.toHaveProperty('needsAccountSettings');
@@ -60,6 +75,7 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
     const fixture = createPreflightContext({
       environment: Object.freeze({ OPENAI_API_KEY: true }),
       request: async (method) => {
+        if (method === 'initialize') return {};
         if (method === 'collaborationMode/list') {
           return { data: [{ id: 'default', name: 'Default', mode: 'default' }] };
         }
@@ -90,12 +106,14 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
       ],
     }]);
     expect(fixture.requests.map(({ method }) => method).sort())
-      .toEqual(['collaborationMode/list', 'model/list']);
+      .toEqual(['collaborationMode/list', 'initialize', 'model/list']);
+    expect(fixture.notifications).toEqual([{ method: 'initialized', params: undefined }]);
   });
 
   it('checks passive realtime eligibility in the same bounded app-server scope', async () => {
     const fixture = createPreflightContext({
       request: async (method) => {
+        if (method === 'initialize') return {};
         if (method === 'account/read') {
           return {
             requiresOpenaiAuth: true,
@@ -115,7 +133,11 @@ describe('CODEX_PREFLIGHT_SESSION_CONTROLS', () => {
     await expect(CODEX_PREFLIGHT_SESSION_CONTROLS.probePassiveRealtimeSetup(fixture.context))
       .resolves.toEqual({ v: 1, status: 'ready' });
     expect(fixture.requests.map(({ method }) => method))
-      .toEqual(['account/read', 'experimentalFeature/list']);
+      .toEqual(['initialize', 'account/read', 'experimentalFeature/list']);
+    expect(fixture.commands).toEqual([expect.objectContaining({
+      args: ['app-server', '--listen', 'stdio://', '--enable', 'realtime_conversation'],
+    })]);
+    expect(fixture.notifications).toEqual([{ method: 'initialized', params: undefined }]);
   });
 
   it('fails closed without opening an app-server scope when settings select ACP', async () => {

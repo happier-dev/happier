@@ -237,6 +237,7 @@ export function createAntigravityCliPrintSessionRuntime(
     },
     async cancel(request) {
       if (!activeAbortController) return { status: 'notRunning' };
+      if (activeTurnId !== request.turnId) return { status: 'notRunning' };
       activeAbortController.abort();
       publish({
         kind: 'turn-cancelled',

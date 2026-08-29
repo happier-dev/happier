@@ -12,6 +12,7 @@ import {
     type ComposerReferenceResolutionV1,
     type PluginInvocationContext,
 } from '@happier-dev/plugin-sdk';
+import { fitComposerReferenceResolutionPrefixV1 } from '@happier-dev/triage-sources/runtime';
 
 import { createPosthogInvocationClient } from '../api/invocationClient.js';
 import { normalizePosthogApiOrigin } from '../connect/origin.js';
@@ -51,32 +52,85 @@ function frameLocation(
         : `${frame.source}:${String(frame.line)}:${String(frame.column)}`;
 }
 
-function selectedEvidenceContext(event: PosthogProjectedIssueEvent): string {
-    const lines = [posthogEvidenceCandidateLabel(event.uuid)];
+type EvidenceChunkKind = 'field' | 'exception' | 'frame';
+
+type EvidenceChunk = Readonly<{
+    kind: EvidenceChunkKind;
+    text: string;
+}>;
+
+function evidenceChunks(event: PosthogProjectedIssueEvent): readonly EvidenceChunk[] {
+    const chunks: EvidenceChunk[] = [];
     if (event.timestampMs !== undefined) {
         const occurredAt = new Date(event.timestampMs);
-        if (!Number.isNaN(occurredAt.getTime())) lines.push(`Occurred: ${occurredAt.toISOString()}`);
+        if (!Number.isNaN(occurredAt.getTime())) {
+            chunks.push({ kind: 'field', text: `Occurred: ${occurredAt.toISOString()}` });
+        }
     }
-    if (event.url !== undefined) lines.push(`URL: ${event.url}`);
+    if (event.url !== undefined) chunks.push({ kind: 'field', text: `URL: ${event.url}` });
     for (const exception of event.exceptions) {
         const identity = exception.type === undefined
             ? 'Exception'
             : `Exception ${exception.type}`;
-        lines.push(exception.value === undefined ? identity : `${identity}: ${exception.value}`);
-        // The event projector already owns the provider-to-product bound. Cutting
-        // the selected event again here would make this resolver a second,
-        // undocumented projection owner and silently change what the person chose.
-        // The host's public reference-result schema remains the atomic admission
-        // boundary for the complete rendered selection.
+        chunks.push({
+            kind: 'exception',
+            text: exception.value === undefined ? identity : `${identity}: ${exception.value}`,
+        });
         for (const frame of exception.frames) {
             const location = frameLocation(frame);
             const label = frame.function ?? location ?? 'Unnamed frame';
-            lines.push(location === null || location === label
-                ? `  at ${label}`
-                : `  at ${label} (${location})`);
+            chunks.push({
+                kind: 'frame',
+                text: location === null || location === label
+                    ? `  at ${label}`
+                    : `  at ${label} (${location})`,
+            });
         }
     }
+    return chunks;
+}
+
+function selectedEvidenceContext(
+    event: PosthogProjectedIssueEvent,
+    selected: readonly EvidenceChunk[],
+    all: readonly EvidenceChunk[],
+): string {
+    const lines = [posthogEvidenceCandidateLabel(event.uuid), ...selected.map((chunk) => chunk.text)];
+    const selectedSet = new Set(selected);
+    const omitted = (kind: EvidenceChunkKind): number => all.filter(
+        (chunk) => chunk.kind === kind && !selectedSet.has(chunk),
+    ).length;
+    const counted = (count: number, noun: string): string => (
+        `${String(count)} ${noun}${count === 1 ? '' : 's'}`
+    );
+    const omissions = [
+        omitted('field') === 0 ? null : counted(omitted('field'), 'field'),
+        omitted('exception') === 0 ? null : counted(omitted('exception'), 'exception'),
+        omitted('frame') === 0 ? null : counted(omitted('frame'), 'frame'),
+    ].filter((value): value is string => value !== null);
+    if (omissions.length > 0) {
+        lines.push(`Agent evidence omitted to fit Composer context: ${omissions.join(', ')}.`);
+    }
     return lines.join('\n');
+}
+
+function selectedEvidenceResolution(
+    candidateId: string,
+    label: string,
+    event: PosthogProjectedIssueEvent,
+): ComposerReferenceResolutionV1 {
+    const all = evidenceChunks(event);
+    const fitted = fitComposerReferenceResolutionPrefixV1({
+        identity: { id: candidateId, label },
+        itemCount: all.length,
+        contextForPrefix: (includedCount) => selectedEvidenceContext(
+            event,
+            all.slice(0, includedCount),
+            all,
+        ),
+    });
+    if (fitted === null) throw unavailableEvidence('evidence-contract-exceeded');
+    return fitted;
 }
 
 /** This provider is direct-disclosure-only; generic Composer search returns no rows. */
@@ -124,9 +178,9 @@ export async function resolvePosthogEvidenceReference(
     if (event === undefined || event.uuid !== candidate.selectedUuid) {
         throw unavailableEvidence('event-changed');
     }
-    return Object.freeze({
-        id: candidateId,
-        label: posthogEvidenceCandidateLabel(candidate.selectedUuid),
-        context: selectedEvidenceContext(event),
-    });
+    return selectedEvidenceResolution(
+        candidateId,
+        posthogEvidenceCandidateLabel(candidate.selectedUuid),
+        event,
+    );
 }

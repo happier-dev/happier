@@ -9,6 +9,8 @@
  * error text crosses this boundary.
  */
 
+import { parseRetryAfterNotBeforeMsV1 } from '@happier-dev/triage-sources/runtime';
+
 export type PosthogFailure =
     | Readonly<{ kind: 'unauthorized'; status: number }>
     | Readonly<{ kind: 'forbidden'; status: number }>
@@ -42,26 +44,7 @@ export type PosthogFailure =
  * never gave.
  */
 export function parseRetryAfterMs(responseHeaders: Headers, nowMs: number): number | null {
-    const raw = responseHeaders.get('retry-after');
-    if (raw === null) {
-        return null;
-    }
-    const value = raw.trim();
-    if (value.length === 0) {
-        return null;
-    }
-    if (/^\d+$/u.test(value)) {
-        const seconds = Number.parseInt(value, 10);
-        if (!Number.isSafeInteger(seconds)) {
-            return null;
-        }
-        return nowMs + (seconds * 1_000);
-    }
-    const at = Date.parse(value);
-    if (Number.isNaN(at) || at < nowMs) {
-        return null;
-    }
-    return at;
+    return parseRetryAfterNotBeforeMsV1(responseHeaders.get('retry-after'), nowMs);
 }
 
 function rateLimited(status: number, retryNotBeforeMs: number | null): PosthogFailure {

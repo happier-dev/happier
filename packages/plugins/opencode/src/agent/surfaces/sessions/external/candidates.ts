@@ -219,6 +219,13 @@ function sortCandidates(
   return [...candidates].sort(compareExternalSessionCandidatePrecedence);
 }
 
+/**
+ * One bounded source chunk per public call: each invocation reads at most one
+ * `sessionList` page. A full search whose chunk holds fewer matches than the
+ * page while the source continues returns a deterministic partial page marked
+ * `searchIncomplete` with a query-bound continuation; later calls resume the
+ * walk without draining the remaining chunks in the first call.
+ */
 export async function listOpenCodeSessionCandidates(params: Readonly<{
   source: OpenCodeExternalSessionSource;
   cursor?: string;
@@ -269,97 +276,100 @@ export async function listOpenCodeSessionCandidates(params: Readonly<{
     const serverSearch = searchTerm && searchMode === 'fast' ? searchTerm : undefined;
     const fullSearch = searchTerm.length > 0 && searchMode === 'full';
     const normalizedSearchTerm = searchTerm.toLowerCase();
-    let cursor = initialCursor;
+    const cursor = initialCursor;
     let scanned = cursor?.scanned ?? 0;
     const selected: OpenCodeExternalSessionCandidate[] = [];
 
-    while (true) {
-      const requestedLimit = limit + 1 + (cursor?.anchor.offsetWithinTimestamp ?? 0);
-      if (!Number.isSafeInteger(requestedLimit)) {
-        throw new Error('OpenCode candidate continuation exceeds the supported source page range.');
-      }
-      const rawSessions = await client.sessionList({
-        limit: requestedLimit,
-        ...(serverSearch ? { search: serverSearch } : {}),
-        ...(cursor ? { cursor: cursor.anchor.updatedAtMs + 1 } : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-      });
-      const sourceCandidates: OpenCodeExternalSessionCandidate[] = [];
-      for (const raw of rawSessions) {
-        const candidate = buildOpenCodeCandidate(raw, serverBaseUrl);
-        if (candidate) sourceCandidates.push(candidate);
-      }
-      validateOpenCodeCandidateSourceOrder(sourceCandidates);
+    const requestedLimit = limit + 1 + (cursor?.anchor.offsetWithinTimestamp ?? 0);
+    if (!Number.isSafeInteger(requestedLimit)) {
+      throw new Error('OpenCode candidate continuation exceeds the supported source page range.');
+    }
+    const rawSessions = await client.sessionList({
+      limit: requestedLimit,
+      ...(serverSearch ? { search: serverSearch } : {}),
+      ...(cursor ? { cursor: cursor.anchor.updatedAtMs + 1 } : {}),
+      ...(params.signal ? { signal: params.signal } : {}),
+    });
+    const sourceCandidates: OpenCodeExternalSessionCandidate[] = [];
+    for (const raw of rawSessions) {
+      const candidate = buildOpenCodeCandidate(raw, serverBaseUrl);
+      if (candidate) sourceCandidates.push(candidate);
+    }
+    validateOpenCodeCandidateSourceOrder(sourceCandidates);
 
-      const anchor = cursor?.anchor;
-      const remainingStart = anchor?.offsetWithinTimestamp ?? 0;
-      if (anchor) {
-        const anchored = sourceCandidates[remainingStart - 1];
-        if (
-          !anchored
-          || anchored.remoteSessionId !== anchor.remoteSessionId
-          || anchored.updatedAtMs !== anchor.updatedAtMs
-          || sourceCandidates.slice(0, remainingStart).some(
-            (candidate) => candidate.updatedAtMs !== anchor.updatedAtMs,
-          )
-        ) {
-          throw new Error('OpenCode candidate source changed while its continuation was in progress.');
-        }
+    const anchor = cursor?.anchor;
+    const remainingStart = anchor?.offsetWithinTimestamp ?? 0;
+    if (anchor) {
+      const anchored = sourceCandidates[remainingStart - 1];
+      if (
+        !anchored
+        || anchored.remoteSessionId !== anchor.remoteSessionId
+        || anchored.updatedAtMs !== anchor.updatedAtMs
+        || sourceCandidates.slice(0, remainingStart).some(
+          (candidate) => candidate.updatedAtMs !== anchor.updatedAtMs,
+        )
+      ) {
+        throw new Error('OpenCode candidate source changed while its continuation was in progress.');
       }
-      const remaining = sourceCandidates.slice(remainingStart);
-      const processCount = Math.min(limit, remaining.length);
-      if (processCount === 0) {
-        return {
-          candidates: sortCandidates(selected),
-          nextCursor: null,
+    }
+    const remaining = sourceCandidates.slice(remainingStart);
+    const processCount = Math.min(limit, remaining.length);
+    if (processCount === 0) {
+      return {
+        candidates: sortCandidates(selected),
+        nextCursor: null,
+        scanned,
+        ...(searchTerm && searchMode === 'fast' ? { searchIncomplete: true } : {}),
+      };
+    }
+
+    let processedCount = 0;
+    for (; processedCount < processCount; processedCount += 1) {
+      const candidate = remaining[processedCount];
+      if (!candidate) break;
+      scanned += 1;
+      if (
+        !fullSearch
+        || candidate.remoteSessionId.toLowerCase().includes(normalizedSearchTerm)
+        || candidate.title?.toLowerCase().includes(normalizedSearchTerm)
+      ) {
+        selected.push(candidate);
+      }
+      if (fullSearch && selected.length === limit) {
+        processedCount += 1;
+        break;
+      }
+    }
+
+    const lastProcessedIndex = remainingStart + processedCount - 1;
+    const hasMore = lastProcessedIndex < sourceCandidates.length - 1;
+    if (!fullSearch || selected.length === limit || !hasMore) {
+      const nextCursor = hasMore && !serverSearch
+        ? encodeOpenCodeCandidateCursor(createCursorAfterCandidate({
+          query,
+          candidates: sourceCandidates,
+          candidateIndex: lastProcessedIndex,
           scanned,
-          ...(searchTerm && searchMode === 'fast' ? { searchIncomplete: true } : {}),
-        };
-      }
-
-      let processedCount = 0;
-      for (; processedCount < processCount; processedCount += 1) {
-        const candidate = remaining[processedCount];
-        if (!candidate) break;
-        scanned += 1;
-        if (
-          !fullSearch
-          || candidate.remoteSessionId.toLowerCase().includes(normalizedSearchTerm)
-          || candidate.title?.toLowerCase().includes(normalizedSearchTerm)
-        ) {
-          selected.push(candidate);
-        }
-        if (fullSearch && selected.length === limit) {
-          processedCount += 1;
-          break;
-        }
-      }
-
-      const lastProcessedIndex = remainingStart + processedCount - 1;
-      const hasMore = lastProcessedIndex < sourceCandidates.length - 1;
-      if (!fullSearch || selected.length === limit || !hasMore) {
-        const nextCursor = hasMore && !serverSearch
-          ? encodeOpenCodeCandidateCursor(createCursorAfterCandidate({
-            query,
-            candidates: sourceCandidates,
-            candidateIndex: lastProcessedIndex,
-            scanned,
-          }))
-          : null;
-        return {
-          candidates: sortCandidates(selected),
-          nextCursor,
-          scanned,
-          ...(searchTerm && searchMode === 'fast' ? { searchIncomplete: true } : {}),
-        };
-      }
-      cursor = createCursorAfterCandidate({
+        }))
+        : null;
+      return {
+        candidates: sortCandidates(selected),
+        nextCursor,
+        scanned,
+        ...(searchTerm && searchMode === 'fast' ? { searchIncomplete: true } : {}),
+      };
+    }
+    return {
+      candidates: sortCandidates(selected),
+      nextCursor: encodeOpenCodeCandidateCursor(createCursorAfterCandidate({
         query,
         candidates: sourceCandidates,
         candidateIndex: lastProcessedIndex,
         scanned,
-      });
-    }
+      })),
+      scanned,
+      searchIncomplete: true,
+    };
   } finally {
     await client.dispose().catch(() => {});
   }

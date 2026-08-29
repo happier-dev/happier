@@ -20,6 +20,7 @@ import {
   PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
 } from '@happier-dev/plugin-sdk/events';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import { GITHUB_RENDER_UI_TRANSLATIONS } from './ui/renderTranslations.js';
 import { GITHUB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.js';
 import {
@@ -474,7 +475,7 @@ function createGithubPlugin() {
       // The page's entire purpose is two Action invocations — this source's own
       // discovery read and the target-owned administration write. A mount that
       // cannot execute Actions could only render an inert list.
-      requiredHostMethods: ['executeAction'],
+      requiredHostMethods: ['executeAction', 'openConnectedAccounts'],
     }],
     settingsGroups: [{
       id: GITHUB_TRIAGE_SETTINGS_GROUP_ID_V1,
@@ -495,7 +496,7 @@ function createGithubPlugin() {
       defaultRank: 10,
       renderer: GITHUB_TRIAGE_SETTINGS_RENDERER_ID_V1,
     }],
-    translations: [
+    translations: withTriageSourceSettingsTranslationsV1([
       { locale: 'en', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["en"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs & Issues', 'plugins.github.settings.sources.subtitle': 'Choose which GitHub accounts and repositories appear in PRs & Issues.', 'github.automation.historyGapReset.confirmation.title': 'Start a new baseline', 'github.automation.historyGapReset.confirmation.body': 'Events in the history gap are not replayed.' } },
       { locale: 'ru', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ru"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR и задачи', 'plugins.github.settings.sources.subtitle': 'Выберите учетные записи и репозитории GitHub, которые будут отображаться в разделе PR и задач.', 'github.automation.historyGapReset.confirmation.title': 'Начать с новой базовой точки', 'github.automation.historyGapReset.confirmation.body': 'События из пропуска в истории не воспроизводятся.' } },
       { locale: 'pl', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["pl"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR-y i zgłoszenia', 'plugins.github.settings.sources.subtitle': 'Wybierz konta i repozytoria GitHub wyświetlane w sekcji PR-ów i zgłoszeń.', 'github.automation.historyGapReset.confirmation.title': 'Rozpocznij od nowej linii bazowej', 'github.automation.historyGapReset.confirmation.body': 'Zdarzenia z luki w historii nie zostaną odtworzone.' } },
@@ -508,7 +509,7 @@ function createGithubPlugin() {
       { locale: 'zh-Hant', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR 與問題', 'plugins.github.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitHub 帳戶和儲存庫。', 'github.automation.historyGapReset.confirmation.title': '開始新的基準', 'github.automation.historyGapReset.confirmation.body': '不會重播歷史缺口中的事件。' } },
       { locale: 'ja', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["ja"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PR と課題', 'plugins.github.settings.sources.subtitle': 'PR と課題に表示する GitHub アカウントとリポジトリを選択します。', 'github.automation.historyGapReset.confirmation.title': '新しい基準点を開始', 'github.automation.historyGapReset.confirmation.body': '履歴の欠落区間にあるイベントは再実行されません。' } },
       { locale: 'de', messages: { ...GITHUB_RENDER_UI_TRANSLATIONS["de"], ...GITHUB_ADDITIONAL_UI_TRANSLATIONS["de"], 'plugins.github.settings.group': 'GitHub', 'plugins.github.settings.sources': 'PRs und Issues', 'plugins.github.settings.sources.subtitle': 'Wählen Sie aus, welche GitHub-Konten und -Repositorys unter PRs und Issues angezeigt werden.', 'github.automation.historyGapReset.confirmation.title': 'Neue Ausgangsbasis erstellen', 'github.automation.historyGapReset.confirmation.body': 'Ereignisse aus der Verlaufslücke werden nicht erneut abgespielt.' } },
-    ],
+    ]),
   },
   actions: {
     [GITHUB_TRIAGE_ACTION_IDS_V1.listInstances]: {

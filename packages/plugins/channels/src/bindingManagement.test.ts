@@ -1528,6 +1528,54 @@ describe('Channels target-persisting binding management', () => {
     }, undefined);
   });
 
+  it('projects connection-owned blocked Event obligations without requiring a binding id', async () => {
+    const read = Reflect.get(management, 'readConversationIngressAttentionPage');
+    expect(read).toEqual(expect.any(Function));
+    if (typeof read !== 'function') return;
+
+    const query = vi.fn(async () => ({
+      rows: [{
+        rowId: 'E'.repeat(43),
+        revision: 4,
+        value: {
+          id: 'E'.repeat(43),
+          'record-kind': 'ingress-obligation',
+          v: 1,
+          'connection-id': 'connection-1',
+          terminal: false,
+          attention: true,
+          'created-at': 10,
+          'updated-at': 30,
+          payload: {
+            occurrenceIds: ['occurrence-1'],
+            censusId: 'C'.repeat(43),
+            target: { kind: 'event', candidate: {} },
+            sourceAuthority: {
+              connectionAuthorityEpoch: 1,
+              bindingRevision: null,
+              bindingAuthorityEpoch: null,
+            },
+            lifecycle: { phase: 'blocked', attemptCount: 3, dueAt: null },
+            disposition: null,
+            nonAdmission: null,
+          },
+        },
+      }],
+      changeCursor: 1,
+    }));
+
+    await expect(read({ collection: { query } })).resolves.toEqual({
+      obligations: [{
+        kind: 'blocked',
+        obligationId: 'E'.repeat(43),
+        revision: 4,
+        connectionId: 'connection-1',
+        attemptCount: 3,
+        updatedAt: 30,
+      }],
+    });
+  });
+
   it('pages terminal ingress attention without turning a recorded refusal into a retry candidate', async () => {
     const read = Reflect.get(management, 'readConversationIngressAttentionPage');
     expect(read).toEqual(expect.any(Function));

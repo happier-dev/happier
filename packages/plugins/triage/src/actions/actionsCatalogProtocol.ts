@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -41,8 +40,6 @@ export const TriageReadActionsInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
 }, { policy: 'closed' });
 export type TriageReadActionsInputV1 = ReturnType<typeof TriageReadActionsInputV1Schema.parse>;
-export const TriageReadActionsInputV1JsonSchema: PluginJsonSchema =
-    TriageReadActionsInputV1Schema.jsonSchema;
 
 /**
  * `availability` is reported rather than flattened.
@@ -76,8 +73,6 @@ export const TriageReadActionsResultV1Schema = defineProtocolObject({
     revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadActionsResultV1 = ReturnType<typeof TriageReadActionsResultV1Schema.parse>;
-export const TriageReadActionsResultV1JsonSchema: PluginJsonSchema =
-    TriageReadActionsResultV1Schema.jsonSchema;
 
 const TriageActionDraftV1WireSchema = TRIAGE_ACTION_DRAFT_MEMBERS_V1;
 
@@ -124,8 +119,6 @@ export const TriageAdministerActionInputV1Schema = defineProtocolUnion([
 ]);
 export type TriageAdministerActionInputV1 =
     ReturnType<typeof TriageAdministerActionInputV1Schema.parse>;
-export const TriageAdministerActionInputV1JsonSchema: PluginJsonSchema =
-    TriageAdministerActionInputV1Schema.jsonSchema;
 
 export const TriageAdministerActionResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -167,8 +160,6 @@ export const TriageAdministerActionResultV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageAdministerActionResultV1 =
     ReturnType<typeof TriageAdministerActionResultV1Schema.parse>;
-export const TriageAdministerActionResultV1JsonSchema: PluginJsonSchema =
-    TriageAdministerActionResultV1Schema.jsonSchema;
 
 /** The authoritative configured-action read. */
 export const TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1 = 'actions/read-v1';

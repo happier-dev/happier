@@ -6,6 +6,10 @@ import type {
 
 import { classifyCodexConnectedServiceAuthFailure } from '../../auth/services/runtime/auth/failure.js';
 import {
+  buildCodexAppServerBaseArgs,
+  initializeCodexAppServerClient,
+} from '../../runtime/appServer/connection.js';
+import {
   CODEX_OPERATION_ABORTED,
   inspectCodexRealtimeFeature,
   waitForCodexOperationOrAbort,
@@ -24,8 +28,12 @@ export const CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS = Object.freeze([
 
 const CODEX_PREFLIGHT_JSON_RPC_COMMAND = Object.freeze({
   toolId: 'codex-cli',
-  args: Object.freeze(['app-server', '--listen', 'stdio://']),
+  args: buildCodexAppServerBaseArgs(false),
   environmentExcludeKeys: CODEX_PREFLIGHT_RUNTIME_DIAGNOSTIC_ENV_KEYS,
+});
+const CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND = Object.freeze({
+  ...CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+  args: buildCodexAppServerBaseArgs(true),
 });
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -87,10 +95,17 @@ async function readCodexPreflightSessionControls(
   if (!usesCodexAppServer(context)) return null;
   return await context.withDeclaredJsonRpcClient(
     CODEX_PREFLIGHT_JSON_RPC_COMMAND,
-    async (client) => await readCodexAppServerSessionControls({
-      client,
-      authMethod: readCodexPreflightAuthMethod(context),
-    }),
+    async (client, signal) => {
+      const initialized = await waitForCodexOperationOrAbort(
+        initializeCodexAppServerClient(client),
+        signal,
+      );
+      if (initialized === CODEX_OPERATION_ABORTED) return null;
+      return await readCodexAppServerSessionControls({
+        client,
+        authMethod: readCodexPreflightAuthMethod(context),
+      });
+    },
   );
 }
 
@@ -100,8 +115,13 @@ async function probeCodexPassiveRealtimeSetup(
   if (!usesCodexAppServer(context)) return passiveRealtimeResult('unavailable');
   try {
     return await context.withDeclaredJsonRpcClient(
-      CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+      CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND,
       async (client, signal) => {
+        const initialized = await waitForCodexOperationOrAbort(
+          initializeCodexAppServerClient(client),
+          signal,
+        );
+        if (initialized === CODEX_OPERATION_ABORTED) return passiveRealtimeResult('unavailable');
         const accountOutcome = await waitForCodexOperationOrAbort(
           client.request('account/read', { refreshToken: false }),
           signal,
@@ -146,7 +166,10 @@ async function probeCodexPassiveRealtimeSetup(
 }
 
 export const CODEX_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
-  jsonRpcCommand: CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+  jsonRpcCommands: Object.freeze([
+    CODEX_PREFLIGHT_JSON_RPC_COMMAND,
+    CODEX_REALTIME_PREFLIGHT_JSON_RPC_COMMAND,
+  ]),
   resolveProbeVariant: ({ accountSettings }) => {
     const backendMode = resolveCodexSessionBackendMode({ accountSettings }) ?? 'appServer';
     return `codex:${backendMode}`;

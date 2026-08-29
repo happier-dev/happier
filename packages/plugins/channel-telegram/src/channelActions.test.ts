@@ -1419,20 +1419,26 @@ describe('Telegram Channel provider actions', () => {
       checkpoint: null,
       limit: 10,
       waitMs: 0,
-    }, coreContext(http, { executeAction }))).resolves.toMatchObject({ kind: 'checkpointOnly' });
+    }, coreContext(http, {
+      executeAction: executeAction as unknown as PluginInvocationContext['services']['actions']['execute'],
+    }))).resolves.toMatchObject({ kind: 'checkpointOnly' });
     await expect(pollTelegramObservations({
       ...connection,
       checkpoint: { v: 1, offset: '42', caughtUpAtMs: 0 },
       limit: 10,
       waitMs: 0,
-    }, coreContext({ request: vi.fn() }, { executeAction }))).resolves.toMatchObject({ kind: 'historyGap' });
+    }, coreContext({ request: vi.fn() }, {
+      executeAction: executeAction as unknown as PluginInvocationContext['services']['actions']['execute'],
+    }))).resolves.toMatchObject({ kind: 'historyGap' });
     await expect(pollTelegramObservations({
       ...connection,
-      providerConfigVersion: 2,
+      providerConfig: { botUsername: '', canReadAllGroupMessages: false },
       checkpoint: null,
       limit: 10,
       waitMs: 0,
-    }, coreContext({ request: vi.fn() }, { executeAction }))).resolves.toMatchObject({ kind: 'notReady' });
+    }, coreContext({ request: vi.fn() }, {
+      executeAction: executeAction as unknown as PluginInvocationContext['services']['actions']['execute'],
+    }))).resolves.toMatchObject({ kind: 'notReady' });
 
     expect(reports).toEqual([
       expect.objectContaining({ kind: 'catalogReconciliation', scope: { kind: 'checkpointedPull' }, observedRevision: '17' }),

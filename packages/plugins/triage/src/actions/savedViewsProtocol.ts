@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     defineProtocolArray,
     defineProtocolLiteral,
@@ -60,8 +59,6 @@ export const TriageReadSavedViewsInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
 }, { policy: 'closed' });
 export type TriageReadSavedViewsInputV1 = ReturnType<typeof TriageReadSavedViewsInputV1Schema.parse>;
-export const TriageReadSavedViewsInputV1JsonSchema: PluginJsonSchema =
-    TriageReadSavedViewsInputV1Schema.jsonSchema;
 
 /**
  * `availability` is reported rather than flattened. `unavailable` means the
@@ -83,8 +80,6 @@ export const TriageReadSavedViewsResultV1Schema = defineProtocolObject({
     revision: TriageAccountKvRevisionV1Schema,
 }, { policy: 'closed' });
 export type TriageReadSavedViewsResultV1 = ReturnType<typeof TriageReadSavedViewsResultV1Schema.parse>;
-export const TriageReadSavedViewsResultV1JsonSchema: PluginJsonSchema =
-    TriageReadSavedViewsResultV1Schema.jsonSchema;
 
 const TriageSavedViewDraftV1Schema = {
     label: triageViewLabel,
@@ -131,8 +126,6 @@ export const TriageAdministerSavedViewInputV1Schema = defineProtocolUnion([
 ]);
 export type TriageAdministerSavedViewInputV1 =
     ReturnType<typeof TriageAdministerSavedViewInputV1Schema.parse>;
-export const TriageAdministerSavedViewInputV1JsonSchema: PluginJsonSchema =
-    TriageAdministerSavedViewInputV1Schema.jsonSchema;
 
 export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -164,8 +157,6 @@ export const TriageAdministerSavedViewResultV1Schema = defineProtocolObject({
 }, { policy: 'closed' });
 export type TriageAdministerSavedViewResultV1 =
     ReturnType<typeof TriageAdministerSavedViewResultV1Schema.parse>;
-export const TriageAdministerSavedViewResultV1JsonSchema: PluginJsonSchema =
-    TriageAdministerSavedViewResultV1Schema.jsonSchema;
 
 /** The authoritative saved-view read. */
 export const TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1 = 'views/read-v1';

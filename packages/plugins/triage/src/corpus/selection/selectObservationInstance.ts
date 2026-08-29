@@ -13,6 +13,7 @@ export type CorpusSelectedInstanceV1 =
     | Readonly<{
         kind: 'selected';
         sourceInstanceId: string;
+        /** `override` is applied by the mounted shell, not this lower fallback selector. */
         reason: 'override' | 'attention' | 'onlyPresent' | 'deterministicTieBreak';
     }>
     | Readonly<{ kind: 'none'; reason: 'noPresentObservation' | 'allInstancesRetired' }>;
@@ -21,7 +22,6 @@ export function selectObservationInstance(
     observations: CorpusEntryObservationsV1,
     activeSourceInstanceIds: Iterable<string>,
     attention: CorpusDisplayedAttentionV1 | null,
-    overrideSourceInstanceId: string | null,
 ): CorpusSelectedInstanceV1 {
     const active = new Set(activeSourceInstanceIds);
     const anyPresent: string[] = [];
@@ -38,11 +38,6 @@ export function selectObservationInstance(
             kind: 'none',
             reason: anyPresent.length > 0 ? 'allInstancesRetired' : 'noPresentObservation',
         };
-    }
-
-    // The user's explicit switch is never second-guessed.
-    if (overrideSourceInstanceId && eligible.includes(overrideSourceInstanceId)) {
-        return { kind: 'selected', sourceInstanceId: overrideSourceInstanceId, reason: 'override' };
     }
 
     // The connection the row's own reason names, so the detail opens under the

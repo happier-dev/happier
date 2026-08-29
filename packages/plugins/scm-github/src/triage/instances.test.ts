@@ -183,6 +183,22 @@ describe('GitHub Triage discovery', () => {
     expect(bound.bindingReads).toEqual([GITHUB_CONNECTED_ACCOUNT_PURPOSE]);
   });
 
+  it('preserves an account-listing deadline without re-asking it as binding absence', async () => {
+    const timedOut = transport({
+      listing: () => {
+        throw new DOMException('deadline elapsed', 'TimeoutError');
+      },
+    });
+
+    const result = await listGithubTriageInstances(timedOut.context, { now: fixedClock(1_000) });
+
+    expect(result).toEqual({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'github_request_timed_out' },
+    });
+    expect(timedOut.bindingReads).toEqual([]);
+  });
+
   it('reports one unauthorized account as an exact-binding failure without dropping the account', async () => {
     const stub = transport({ listing: listing('complete', [FIRST_ACCOUNT]), userStatus: 401 });
 

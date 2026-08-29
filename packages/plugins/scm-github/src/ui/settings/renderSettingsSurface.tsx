@@ -16,7 +16,7 @@
 
 import { createTriageSourceSettingsSurface } from '@happier-dev/triage-sources';
 
-import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
+import { GITHUB_CONNECTED_ACCOUNT_ID, GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import {
   GITHUB_TRIAGE_ACTION_IDS_V1,
   GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1,
@@ -25,5 +25,6 @@ import {
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: GITHUB_PLUGIN_ID,
   listInstancesLocalActionId: GITHUB_TRIAGE_ACTION_IDS_V1.listInstances,
+  connectedAccountServiceLocalId: GITHUB_CONNECTED_ACCOUNT_ID,
   sourceDisplayName: GITHUB_TRIAGE_SOURCE_DESCRIPTOR_V1.displayName,
 });

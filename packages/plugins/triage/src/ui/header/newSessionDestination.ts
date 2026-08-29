@@ -171,9 +171,8 @@ export function triageNewSessionDraftSeedV1(
 
 export type TriageNewSessionDestinationRefusalV1 =
     /**
-     * The action declares `pull_request`. The reachable wire cannot request the
-     * prepared review workspace that mode names
-     * (`actions/entrySessionProtocol.ts`), so nothing is opened for it.
+     * The action declares `pull_request`, but the mounted source did not supply
+     * the exact review-workspace preparation required by that mode.
      */
     | 'preparedWorkspaceUnsupported'
     /** The host settled something this start cannot be built from. */
@@ -204,10 +203,10 @@ export type TriageReviewWorkspacePreparationV1 = Omit<
  * The pairing itself is NOT restated here: it is read from the single table the
  * gate validates against
  * (`sessions/entrySessionWorkspace.ts#TRIAGE_WORKSPACE_MODE_MATERIALIZATION_V1`).
- * What this function adds is the one fact the table cannot know — that the
- * reachable Action wire admits only the two directory materializations, because
- * preparing the third needs a source-declared operation no shipped source binds
- * (`actions/entrySessionProtocol.ts`).
+ * The reachable Action wire admits all three materializations. The
+ * `pull_request` arm additionally requires the exact source-declared
+ * preparation selected by the mounted surface; it never fabricates one from a
+ * repository directory.
  *
  * It is exported because the press consults it BEFORE opening the host's New
  * Session surface — spending a reader's Agent and directory choice on a start

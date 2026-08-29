@@ -207,7 +207,6 @@ function mapReadAfterPage(
 ): AgentExternalSessionsResult<AgentExternalSessionsReadAfterTranscriptResult> {
   const mapped = mapTranscriptPage(page);
   if (!mapped.ok) return mapped;
-  if (mapped.value.truncated) return ok({ outcome: 'gap_or_cursor_expired' });
   const positionsByCode = new Map<string, number[]>();
   for (const skipped of page.skippedRecords ?? []) {
     const positions = positionsByCode.get(skipped.code) ?? [];
@@ -223,6 +222,12 @@ function mapReadAfterPage(
       positions: positions.slice(0, 200),
     })),
   ];
+  // A bounded JSONL stop is ordinary pagination, not a discontinuity: every
+  // real discontinuity (source replacement, branch change, in-place rewrite)
+  // is already a typed error the source throws before a page exists, and this
+  // page always carries the exact continuation cursor for what it served.
+  // Reporting a bounded stop as a gap would make the host follow owner discard
+  // a cursor the source just advanced and re-read the suffix as a fresh gap.
   if (mapped.value.items.length === 0 && diagnostics.length > 0) {
     if (!mapped.value.nextCursor) return ok({ outcome: 'read_failed' });
     return ok({
@@ -245,7 +250,7 @@ function mapReadAfterPage(
     items: mapped.value.items,
     nextCursor: mapped.value.nextCursor,
     boundary: mapped.value.items.at(-1)!.id,
-    hasMore: false,
+    hasMore: mapped.value.truncated === true,
     ...(diagnostics.length > 0 ? { diagnostics } : {}),
   });
 }

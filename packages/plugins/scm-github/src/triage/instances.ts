@@ -153,7 +153,11 @@ export async function listGithubTriageInstances(
     // same as learning that there are none.
     return Object.freeze({
       kind: 'failed' as const,
-      failure: toTriageFailure(classifyGithubTransportFailure(listing.error)),
+      failure: toTriageFailure(listing.reason === 'deadline'
+        ? Object.freeze({ class: 'transient' as const, code: 'github_request_timed_out' })
+        : listing.reason === 'cancelled'
+          ? Object.freeze({ class: 'transient' as const, code: 'github_request_cancelled' })
+          : classifyGithubTransportFailure(listing.error)),
     });
   }
   const listed = listing.kind === 'unbound'

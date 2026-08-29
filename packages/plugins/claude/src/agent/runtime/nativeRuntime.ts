@@ -733,8 +733,8 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     },
     async cancel(cancelRequest) {
       try {
-        await operations.cancelProviderTurn();
-        return { status: 'requested', turnId: cancelRequest.turnId };
+        const cancelled = await operations.cancelProviderTurn(cancelRequest.turnId);
+        return cancelled !== false ? { status: 'requested', turnId: cancelRequest.turnId } : { status: 'notRunning' };
       } catch (error) {
         return {
           status: 'unavailable',

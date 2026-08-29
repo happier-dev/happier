@@ -317,7 +317,9 @@ function compareClaudeJsonlSessionPrecedence(
 /**
  * Canonicalizes the admitted Claude config root before resolving its `projects`
  * child. This preserves an intentionally symlinked configured root while
- * rejecting a symlink planted below it that redirects `projects` elsewhere.
+ * rejecting a symlink planted below it that redirects `projects` elsewhere —
+ * including a retarget that stays inside the config root, which the physical
+ * containment check alone would admit.
  */
 async function resolveAuthorizedClaudeProjectsRoot(params: Readonly<{
     configDir: string;
@@ -326,6 +328,14 @@ async function resolveAuthorizedClaudeProjectsRoot(params: Readonly<{
     const configRoot = await realpath(params.configDir).catch(() => null);
     throwIfAborted(params.signal);
     if (!configRoot) return null;
+
+    // The config root itself may be a deliberate symlink (resolved above); the
+    // `projects` child may not be one. A symlinked child is a retarget no
+    // matter where it points, so it is rejected before `realpath` can launder
+    // it into an in-root physical path.
+    const projectsLink = await lstat(join(configRoot, 'projects')).catch(() => null);
+    throwIfAborted(params.signal);
+    if (!projectsLink || projectsLink.isSymbolicLink()) return null;
 
     const projectsRoot = await realpath(join(configRoot, 'projects')).catch(() => null);
     throwIfAborted(params.signal);

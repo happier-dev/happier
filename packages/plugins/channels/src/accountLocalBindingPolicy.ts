@@ -179,7 +179,8 @@ export type ConversationIngressBlockedAttentionRow = Readonly<{
   obligationId: string;
   revision: number;
   connectionId: string;
-  bindingId: string;
+  /** Omitted for connection-owned provider Event obligations. */
+  bindingId?: string;
   attemptCount: number;
   updatedAt: number;
 }>;
@@ -189,7 +190,8 @@ export type ConversationIngressTerminalAttentionRow = Readonly<{
   obligationId: string;
   revision: number;
   connectionId: string;
-  bindingId: string;
+  /** Omitted for connection-owned provider Event obligations. */
+  bindingId?: string;
   updatedAt: number;
   /** Closed presentation category projected from the frozen nonAdmission fact. */
   category: 'informational' | 'recoverable';
@@ -1175,6 +1177,24 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
     const isTerminal = terminal === true
       && dueAt === undefined
       && phase === 'terminal';
+    const target = isChannelStateJsonRecord(payload) ? ownChannelStateValue(payload, 'target') : undefined;
+    const sourceAuthority = isChannelStateJsonRecord(payload)
+      ? ownChannelStateValue(payload, 'sourceAuthority')
+      : undefined;
+    const sourceBindingRevision = isChannelStateJsonRecord(sourceAuthority)
+      ? ownChannelStateValue(sourceAuthority, 'bindingRevision')
+      : undefined;
+    const sourceBindingAuthorityEpoch = isChannelStateJsonRecord(sourceAuthority)
+      ? ownChannelStateValue(sourceAuthority, 'bindingAuthorityEpoch')
+      : undefined;
+    // Provider Event obligations and stale Event outcomes are owned by the
+    // connection and intentionally carry no binding identity. Keep that
+    // shape in the same attention union; a second Resource would create a
+    // competing projection owner.
+    const connectionOwned = bindingId === undefined
+      && sourceBindingRevision === null
+      && sourceBindingAuthorityEpoch === null
+      && (target === null || (isChannelStateJsonRecord(target) && ownChannelStateValue(target, 'kind') === 'event'));
     const readTerminalAttentionCategory = (): 'informational' | 'recoverable' => {
       // terminalIngressObligationValue pairs attention with a frozen
       // nonAdmission fact, so an attention row without one is informational
@@ -1214,7 +1234,8 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
       || id !== row.rowId
       || recordKind !== CHANNEL_STATE_RECORD_KIND.ingressObligation
       || typeof connectionId !== 'string'
-      || typeof bindingId !== 'string'
+      || (bindingId !== undefined && typeof bindingId !== 'string')
+      || (bindingId === undefined && !connectionOwned)
       || attention !== true
       || (!isBlocked && !isTerminal)
       || !Number.isSafeInteger(updatedAt)
@@ -1231,7 +1252,7 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
         obligationId: id,
         revision: row.revision,
         connectionId,
-        bindingId,
+        ...(bindingId === undefined ? {} : { bindingId }),
         updatedAt,
         category: readTerminalAttentionCategory(),
       };
@@ -1241,7 +1262,7 @@ export async function readConversationIngressAttentionPage(input: Readonly<{
       obligationId: id,
       revision: row.revision,
       connectionId,
-      bindingId,
+      ...(bindingId === undefined ? {} : { bindingId }),
       attemptCount: attemptCount as number,
       updatedAt,
     };

@@ -126,11 +126,13 @@ describe('listOpenCodeSessionCandidates', () => {
     }));
   });
 
-  it('performs full search across later source chunks and session ids without server title search', async () => {
+  it('serves one bounded full-search chunk per call and resumes without duplicates or skips', async () => {
     const sessions = [
-      { id: 'other-session-3', title: 'A title without the query', time: { updated: 3 } },
-      { id: 'other-session-2', title: 'A title without the query', time: { updated: 2 } },
-      { id: 'needle-session-id', title: 'A title without the query', time: { updated: 1 } },
+      { id: 'noise-session-a', title: 'A title without the query', time: { updated: 5 } },
+      { id: 'needle-session-1', title: 'A title without the query', time: { updated: 4 } },
+      { id: 'noise-session-b', title: 'A title without the query', time: { updated: 3 } },
+      { id: 'needle-session-2', title: 'A title without the query', time: { updated: 2 } },
+      { id: 'noise-session-c', title: 'A title without the query', time: { updated: 1 } },
     ];
     openCodeClientMock.sessionList.mockImplementation(async (options: Readonly<{
       limit: number;
@@ -144,28 +146,38 @@ describe('listOpenCodeSessionCandidates', () => {
       return visible.slice(0, options.limit);
     });
     openCodeClientMock.dispose.mockResolvedValue(undefined);
-
-    const result = await listOpenCodeSessionCandidates({
-      source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:49196/' },
+    const request = {
+      source: { kind: 'opencodeServer' as const, baseUrl: 'http://127.0.0.1:49196/' },
       maxBytes: 64 * 1024,
-      limit: 1,
-      searchTerm: 'needle-session-id',
-      searchMode: 'full',
-    });
+      limit: 2,
+      searchTerm: 'needle-session',
+      searchMode: 'full' as const,
+    };
 
-    expect(result).toMatchObject({
-      candidates: [expect.objectContaining({ remoteSessionId: 'needle-session-id' })],
-      nextCursor: null,
-    });
-    expect(openCodeClientMock.sessionList).toHaveBeenCalledWith({ limit: 2 });
-    expect(openCodeClientMock.sessionList).toHaveBeenCalledWith(expect.objectContaining({
-      cursor: 4,
-      limit: 3,
-    }));
-    expect(openCodeClientMock.sessionList).toHaveBeenCalledWith(expect.objectContaining({
-      cursor: 3,
-      limit: 3,
-    }));
+    // The matches trail non-matching rows, so a draining first call would have
+    // fetched later source chunks to fill its page; it must read exactly one.
+    const first = await listOpenCodeSessionCandidates(request);
+    expect(openCodeClientMock.sessionList).toHaveBeenCalledTimes(1);
+    expect(first.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['needle-session-1']);
+    expect(first.searchIncomplete).toBe(true);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    if (!first.nextCursor) throw new Error('expected candidate continuation');
+
+    const second = await listOpenCodeSessionCandidates({ ...request, cursor: first.nextCursor });
+    expect(openCodeClientMock.sessionList).toHaveBeenCalledTimes(2);
+    expect(second.candidates.map((candidate) => candidate.remoteSessionId)).toEqual(['needle-session-2']);
+    expect(second.searchIncomplete).toBe(true);
+    if (!second.nextCursor) throw new Error('expected terminal continuation');
+
+    const third = await listOpenCodeSessionCandidates({ ...request, cursor: second.nextCursor });
+    expect(openCodeClientMock.sessionList).toHaveBeenCalledTimes(3);
+    expect(third.candidates).toEqual([]);
+    expect(third.nextCursor).toBeNull();
+    expect(third.searchIncomplete).toBeUndefined();
+    // Full search scans session ids client-side; the server title search stays unused.
+    for (const call of openCodeClientMock.sessionList.mock.calls) {
+      expect(call[0]).not.toHaveProperty('search');
+    }
   });
 
   it('replaces the private V1 candidate carrier with the bounded OpenCode runtime descriptor model', async () => {

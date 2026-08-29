@@ -58,13 +58,12 @@ export function resolveCodexExternalSessionTakeoverPlan(
   identity: CodexExternalSessionTakeoverIdentity,
 ): AgentExternalSessionTakeoverLaunchPlan | null {
   const remoteSessionId = readNonEmptyString(identity.remoteSessionId);
-  const directory = readNonEmptyString(identity.linkedDirectory);
   const source = readCodexSource(identity.source);
   const linkedSourceValue = identity.linkData.source;
   const linkedSource = linkedSourceValue && typeof linkedSourceValue === 'object' && !Array.isArray(linkedSourceValue)
     ? readCodexSource(linkedSourceValue as AgentExternalSessionSource)
     : null;
-  if (!remoteSessionId || !directory || !source || !linkedSource || !sourcesMatch(source, linkedSource)) {
+  if (!remoteSessionId || !source || !linkedSource || !sourcesMatch(source, linkedSource)) {
     return null;
   }
 
@@ -110,7 +109,6 @@ export function resolveCodexExternalSessionTakeoverPlan(
   const backendMode = runtimeDescriptor?.backendMode ?? linkMode;
 
   return Object.freeze({
-    directory,
     ...(backendMode ? { backendModeHint: backendMode } : {}),
     ...(backendMode
       ? {

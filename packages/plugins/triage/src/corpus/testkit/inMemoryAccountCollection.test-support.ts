@@ -185,6 +185,15 @@ export function createInMemoryAccountCollection<TDefinition extends PluginAccoun
             changeCursor += 1;
             return Object.freeze({ rowId: applied.rowId, revision: applied.revision, deleted: true as const });
         },
+        async forget(rowId: string, forgetOptions: Readonly<{ expectedRevision: number }>) {
+            const stored = rows.get(rowId);
+            if (!stored || !stored.deleted || stored.revision !== forgetOptions.expectedRevision) {
+                throw conflictError();
+            }
+            rows.delete(rowId);
+            changeCursor += 1;
+            return Object.freeze({ rowId, forgotten: true as const });
+        },
         async query(request: Readonly<{
             index: string;
             prefix?: readonly ScalarValue[];

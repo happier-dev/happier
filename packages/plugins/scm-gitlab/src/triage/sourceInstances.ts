@@ -49,12 +49,6 @@ export type GitlabListInstancesInput = Readonly<{
   signal: AbortSignal;
 }>;
 
-function isAbortError(error: unknown): boolean {
-  return typeof error === 'object'
-    && error !== null
-    && (error as { name?: unknown }).name === 'AbortError';
-}
-
 export async function listGitlabTriageInstances(
   input: GitlabListInstancesInput,
 ): Promise<TriageListInstancesResultV1> {
@@ -68,8 +62,12 @@ export async function listGitlabTriageInstances(
     return {
       kind: 'failed',
       failure: {
-        class: isAbortError(outcome.error) ? 'transient' : 'unknown',
-        code: isAbortError(outcome.error) ? 'cancelled' : 'account-listing-failed',
+        class: outcome.reason === 'failed' ? 'unknown' : 'transient',
+        code: outcome.reason === 'deadline'
+          ? 'deadline-exceeded'
+          : outcome.reason === 'cancelled'
+            ? 'cancelled'
+            : 'account-listing-failed',
         detail: 'The authorized GitLab accounts could not be listed.',
       },
     };
@@ -102,7 +100,7 @@ export async function listGitlabTriageInstances(
       continue;
     }
 
-    if (listed.connectedAccountOrigins.length === 0) {
+    if (listed.connectedAccountBases.length === 0) {
       failures.push({
         binding,
         failure: {
@@ -114,12 +112,12 @@ export async function listGitlabTriageInstances(
       continue;
     }
 
-    for (const configuredOrigin of listed.connectedAccountOrigins) {
-      const normalized = normalizeGitlabConfiguredBaseUrl(configuredOrigin);
-      const admission = admitGitlabV1Deployment(configuredOrigin);
+    for (const configuredBase of listed.connectedAccountBases) {
+      const normalized = normalizeGitlabConfiguredBaseUrl(configuredBase);
+      const admission = admitGitlabV1Deployment(configuredBase);
       if (admission.kind === 'rejected') {
-        // V1 stops here, before any item call: no version read, no edition
-        // inference, no per-endpoint fallback.
+        // Discovery stops here without a provider read. It never probes a
+        // version or edition to manufacture a source-local compatibility floor.
         failures.push({
           binding,
           ...(normalized === null ? {} : { localInstanceKey: normalized.normalized }),

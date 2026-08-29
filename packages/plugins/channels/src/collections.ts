@@ -1041,8 +1041,24 @@ const INGRESS_CENSUS_COMPACTED_SCHEMA = {
       type: 'array',
       items: OPAQUE_ROUTING_ROW_ID_SCHEMA,
     },
+    // Compaction can logically delete terminal non-attention members before
+    // the whole occurrence reaches its replay horizon. Keep only their exact
+    // tombstone revisions here so that same horizon can physically forget
+    // them before removing this census; no Account-wide tombstone scan exists.
+    prunedObligationTombstones: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          rowId: OPAQUE_ROUTING_ROW_ID_SCHEMA,
+          revision: { type: 'integer', minimum: 1 },
+        },
+        required: ['rowId', 'revision'],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ['shell', 'textDigest', 'retainedAttentionObligationRowIds'],
+  required: ['shell', 'textDigest', 'retainedAttentionObligationRowIds', 'prunedObligationTombstones'],
   additionalProperties: false,
 } satisfies PluginJsonSchema;
 

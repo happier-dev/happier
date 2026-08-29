@@ -3896,6 +3896,29 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "prunedObligationTombstones": {
+                                  "items": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "revision": {
+                                        "minimum": 1,
+                                        "type": "integer"
+                                      },
+                                      "rowId": {
+                                        "maxLength": 43,
+                                        "minLength": 43,
+                                        "pattern": "^[A-Za-z0-9_-]{43}$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "rowId",
+                                      "revision"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "type": "array"
+                                },
                                 "retainedAttentionObligationRowIds": {
                                   "items": {
                                     "maxLength": 43,
@@ -4330,7 +4353,8 @@
                               "required": [
                                 "shell",
                                 "textDigest",
-                                "retainedAttentionObligationRowIds"
+                                "retainedAttentionObligationRowIds",
+                                "prunedObligationTombstones"
                               ],
                               "type": "object"
                             },
@@ -10295,6 +10319,28 @@
                 }
               ]
             },
+            "endpointContinuation": {
+              "additionalProperties": false,
+              "properties": {
+                "connectionId": {
+                  "maxLength": 96,
+                  "minLength": 1,
+                  "pattern": "^[\\x21-\\x7E]+$",
+                  "type": "string"
+                },
+                "webhookEndpointId": {
+                  "maxLength": 28,
+                  "minLength": 28,
+                  "pattern": "^wh_ep_[A-Za-z0-9_-]{21}[AQgw]$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "connectionId",
+                "webhookEndpointId"
+              ],
+              "type": "object"
+            },
             "maximumObservationAgeMs": {
               "maximum": 2592000000,
               "minimum": 60000,
@@ -10407,6 +10453,9 @@
                 },
                 {
                   "const": "socket"
+                },
+                {
+                  "const": "durablePush"
                 }
               ]
             }
@@ -10461,6 +10510,148 @@
               "required": [
                 "kind",
                 "connectionId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "connectionId": {
+                  "maxLength": 96,
+                  "minLength": 1,
+                  "pattern": "^[\\x21-\\x7E]+$",
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "endpointRequired"
+                },
+                "sourceInstanceId": {
+                  "maxLength": 116,
+                  "minLength": 21,
+                  "pattern": "^channels\\.connection\\.[A-Za-z0-9._:-]{1,96}$",
+                  "type": "string"
+                },
+                "targetMaterialization": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "machineId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "materializationId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "machineId",
+                    "materializationId"
+                  ],
+                  "type": "object"
+                },
+                "webhookContribution": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "localId": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$",
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "maxLength": 256,
+                      "minLength": 3,
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "type": "object"
+                },
+                "webhookEndpointIdempotencyKey": {
+                  "maxLength": 128,
+                  "minLength": 16,
+                  "pattern": "^[A-Za-z0-9._:-]+$",
+                  "type": "string"
+                },
+                "webhookEndpointSetup": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "credential": {
+                      "const": "serverGenerated"
+                    },
+                    "kind": {
+                      "const": "accountEndpointV1"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "credential"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "kind",
+                "connectionId",
+                "webhookContribution",
+                "targetMaterialization",
+                "sourceInstanceId",
+                "webhookEndpointSetup",
+                "webhookEndpointIdempotencyKey"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "webhookEndpointSetupRequired"
+                },
+                "oneTimeGeneratedSecret": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "publicUrl": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "readiness": {
+                  "anyOf": [
+                    {
+                      "const": "providerConfirmationRequired"
+                    },
+                    {
+                      "const": "credentialDisclosureLost"
+                    }
+                  ]
+                },
+                "webhookEndpointId": {
+                  "maxLength": 28,
+                  "minLength": 28,
+                  "pattern": "^wh_ep_[A-Za-z0-9_-]{21}[AQgw]$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "webhookEndpointId",
+                "publicUrl",
+                "readiness"
               ],
               "type": "object"
             },
@@ -10769,6 +10960,47 @@
             {
               "additionalProperties": false,
               "properties": {
+                "kind": {
+                  "const": "webhookEndpointSetupRequired"
+                },
+                "oneTimeGeneratedSecret": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "publicUrl": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "readiness": {
+                  "anyOf": [
+                    {
+                      "const": "providerConfirmationRequired"
+                    },
+                    {
+                      "const": "credentialDisclosureLost"
+                    }
+                  ]
+                },
+                "webhookEndpointId": {
+                  "maxLength": 28,
+                  "minLength": 28,
+                  "pattern": "^wh_ep_[A-Za-z0-9_-]{21}[AQgw]$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "webhookEndpointId",
+                "publicUrl",
+                "readiness"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
                 "diagnostic": {
                   "minLength": 1,
                   "type": "string",
@@ -11054,6 +11286,9 @@
                     },
                     {
                       "const": "socket"
+                    },
+                    {
+                      "const": "durablePush"
                     }
                   ]
                 },
@@ -11118,10 +11353,13 @@
                       },
                       {
                         "const": "socket"
+                      },
+                      {
+                        "const": "durablePush"
                       }
                     ]
                   },
-                  "maxItems": 2,
+                  "maxItems": 3,
                   "minItems": 1,
                   "type": "array",
                   "uniqueItems": true
@@ -24747,12 +24985,17 @@
             "plugins.channels.surface.providerCreating": "Creating connection…",
             "plugins.channels.surface.providerCreationFailedDescription": "The connection was not saved. Review the setup and try again.",
             "plugins.channels.surface.providerCreationFailedTitle": "Could not create the connection",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "The connection may already be saved. Retry Create connection to rejoin this exact setup attempt.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "This provider setup cannot create a connection on this server. Refresh the page before trying again.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "No supported connection transport is available",
             "plugins.channels.surface.providerCreationUnknownDescription": "A connection may already be saved. Refresh connection details before trying again.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Could not confirm connection creation",
             "plugins.channels.surface.providerCredentialInvalid": "Connected Account credential needs attention",
             "plugins.channels.surface.providerCredentialInvalidDescription": "The provider rejected the Connected Account credential this connection uses. Replace or resynchronize it to restore the connection.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "Durable push needs a webhook endpoint before the connection can be saved. Try creating the connection again.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Could not prepare the webhook endpoint",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "The endpoint may already exist. Retry Create connection to rejoin this exact setup attempt.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Could not confirm the webhook endpoint",
             "plugins.channels.surface.providerFailureCredentialInvalid": "The provider rejected the saved credential for this connection.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "The provider reports that its remote configuration is not valid for this connection.",
             "plugins.channels.surface.providerFailureNetwork": "The provider could not be reached for this connection.",
@@ -25260,12 +25503,17 @@
             "plugins.channels.surface.providerCreating": "Verbindung wird erstellt…",
             "plugins.channels.surface.providerCreationFailedDescription": "Die Verbindung wurde nicht gespeichert. Überprüfe die Einrichtung und versuche es erneut.",
             "plugins.channels.surface.providerCreationFailedTitle": "Die Verbindung konnte nicht erstellt werden",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "Die Verbindung wurde möglicherweise bereits gespeichert. Versuche erneut, die Verbindung zu erstellen, um genau diesen Einrichtungsversuch wieder aufzunehmen.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Mit dieser Anbietereinrichtung kann auf diesem Server keine Verbindung erstellt werden. Aktualisiere die Seite, bevor du es erneut versuchst.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Kein unterstützter Verbindungstransport verfügbar",
             "plugins.channels.surface.providerCreationUnknownDescription": "Möglicherweise wurde bereits eine Verbindung gespeichert. Aktualisiere die Verbindungsdetails, bevor du es erneut versuchst.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Die Erstellung der Verbindung konnte nicht bestätigt werden",
             "plugins.channels.surface.providerCredentialInvalid": "Zugangsdaten des verbundenen Accounts erfordern Aufmerksamkeit",
             "plugins.channels.surface.providerCredentialInvalidDescription": "Der Anbieter hat die von dieser Verbindung verwendeten Zugangsdaten des verbundenen Accounts abgelehnt. Ersetze oder synchronisiere sie erneut, um die Verbindung wiederherzustellen.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "Dauerhafter Push benötigt einen Webhook-Endpunkt, bevor die Verbindung gespeichert werden kann. Versuche, die Verbindung erneut zu erstellen.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Der Webhook-Endpunkt konnte nicht vorbereitet werden",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "Der Endpunkt ist möglicherweise bereits vorhanden. Versuche erneut, die Verbindung zu erstellen, um genau diesen Einrichtungsversuch wieder aufzunehmen.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Der Webhook-Endpunkt konnte nicht bestätigt werden",
             "plugins.channels.surface.providerFailureCredentialInvalid": "Der Anbieter hat die für diese Verbindung gespeicherten Zugangsdaten abgelehnt.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "Der Anbieter meldet, dass seine externe Konfiguration für diese Verbindung ungültig ist.",
             "plugins.channels.surface.providerFailureNetwork": "Der Anbieter war für diese Verbindung nicht erreichbar.",
@@ -25773,12 +26021,17 @@
             "plugins.channels.surface.providerCreating": "Создание соединения…",
             "plugins.channels.surface.providerCreationFailedDescription": "Соединение не сохранилось. Проверьте настройки и повторите попытку.",
             "plugins.channels.surface.providerCreationFailedTitle": "Не удалось создать соединение",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "Соединение, возможно, уже сохранено. Повторите создание соединения, чтобы вернуться к этой же попытке настройки.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Эта настройка провайдера не может создать соединение на этом сервере. Обновите страницу, прежде чем повторить попытку.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Поддерживаемый транспорт соединения не доступен.",
             "plugins.channels.surface.providerCreationUnknownDescription": "Возможно, соединение уже сохранено. Обновите сведения о соединении, прежде чем повторить попытку.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Не удалось подтвердить создание соединения",
             "plugins.channels.surface.providerCredentialInvalid": "Требуется внимание к учётным данным подключённого аккаунта",
             "plugins.channels.surface.providerCredentialInvalidDescription": "Провайдер отклонил учётные данные подключённого аккаунта, которые использует это подключение. Замените или синхронизируйте их заново, чтобы восстановить подключение.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "Для сохранения соединения durable push требует вебхук-эндпоинт. Попробуйте создать соединение ещё раз.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Не удалось подготовить вебхук-эндпоинт",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "Эндпоинт, возможно, уже существует. Повторите создание соединения, чтобы вернуться к этой же попытке настройки.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Не удалось подтвердить вебхук-эндпоинт",
             "plugins.channels.surface.providerFailureCredentialInvalid": "Провайдер отклонил сохранённые учётные данные для этого подключения.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "Провайдер сообщает, что его удалённая конфигурация недействительна для этого подключения.",
             "plugins.channels.surface.providerFailureNetwork": "Не удалось связаться с провайдером для этого подключения.",
@@ -26286,12 +26539,17 @@
             "plugins.channels.surface.providerCreating": "Tworzę połączenie…",
             "plugins.channels.surface.providerCreationFailedDescription": "Połączenie nie zostało zapisane. Przejrzyj konfigurację i spróbuj ponownie.",
             "plugins.channels.surface.providerCreationFailedTitle": "Nie można utworzyć połączenia",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "Połączenie mogło być już zapisane. Ponów tworzenie połączenia, aby wrócić do tej samej próby konfiguracji.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Ta konfiguracja dostawcy nie może utworzyć połączenia na tym serwerze. Odśwież stronę przed ponowną próbą.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Brak obsługiwanego transportu połączenia",
             "plugins.channels.surface.providerCreationUnknownDescription": "Połączenie mogło być już zapisane. Odśwież szczegóły połączenia przed ponowną próbą.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Nie można potwierdzić utworzenia połączenia",
             "plugins.channels.surface.providerCredentialInvalid": "Poświadczenie połączonego konta wymaga uwagi",
             "plugins.channels.surface.providerCredentialInvalidDescription": "Dostawca odrzucił poświadczenie połączonego konta używane przez to połączenie. Wymień je lub zsynchronizuj ponownie, aby przywrócić połączenie.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "Trwałe pchnięcie wymaga punktu końcowego webhooka przed zapisaniem połączenia. Spróbuj ponownie utworzyć połączenie.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Nie można przygotować punktu końcowego webhooka",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "Punkt końcowy może już istnieć. Ponów tworzenie połączenia, aby wrócić do tej samej próby konfiguracji.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Nie udało się potwierdzić punktu końcowego webhooka",
             "plugins.channels.surface.providerFailureCredentialInvalid": "Dostawca odrzucił zapisane poświadczenie dla tego połączenia.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "Dostawca raportuje, że jego konfiguracja zdalna nie jest ważna dla tego połączenia.",
             "plugins.channels.surface.providerFailureNetwork": "Nie można było skontaktować się z dostawcą dla tego połączenia.",
@@ -26799,12 +27057,17 @@
             "plugins.channels.surface.providerCreating": "Creando conexión…",
             "plugins.channels.surface.providerCreationFailedDescription": "La conexión no se guardó. Revise la configuración y vuelva a intentarlo.",
             "plugins.channels.surface.providerCreationFailedTitle": "No se pudo crear la conexión",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "Es posible que la conexión ya esté guardada. Vuelve a crear la conexión para retomar este mismo intento de configuración.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Esta configuración de proveedor no puede crear una conexión en este servidor. Actualiza la página antes de volver a intentarlo.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "No hay transporte de conexión compatible disponible",
             "plugins.channels.surface.providerCreationUnknownDescription": "Es posible que ya se haya guardado una conexión. Actualice los detalles de la conexión antes de volver a intentarlo.",
             "plugins.channels.surface.providerCreationUnknownTitle": "No se pudo confirmar la creación de la conexión",
             "plugins.channels.surface.providerCredentialInvalid": "La credencial de la cuenta conectada necesita atención",
             "plugins.channels.surface.providerCredentialInvalidDescription": "El proveedor rechazó la credencial de la cuenta conectada que usa esta conexión. Reemplázala o vuelve a sincronizarla para restaurar la conexión.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "El empuje duradero necesita un punto de conexión de webhook antes de guardar la conexión. Intenta crear la conexión de nuevo.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "No se pudo preparar el punto de conexión del webhook",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "Es posible que el endpoint ya exista. Vuelve a crear la conexión para retomar este mismo intento de configuración.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "No se pudo confirmar el endpoint del webhook",
             "plugins.channels.surface.providerFailureCredentialInvalid": "El proveedor rechazó la credencial guardada para esta conexión.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "El proveedor informa que su configuración remota no es válida para esta conexión.",
             "plugins.channels.surface.providerFailureNetwork": "No se pudo contactar con el proveedor para esta conexión.",
@@ -27312,12 +27575,17 @@
             "plugins.channels.surface.providerCreating": "Créer du lien…",
             "plugins.channels.surface.providerCreationFailedDescription": "La connexion n'a pas été enregistrée. Vérifiez la configuration et réessayez.",
             "plugins.channels.surface.providerCreationFailedTitle": "Impossible de créer la connexion",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "La connexion est peut-être déjà enregistrée. Relancez la création pour reprendre exactement cette tentative de configuration.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Cette configuration de fournisseur ne peut pas créer de connexion sur ce serveur. Actualisez la page avant de réessayer.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Aucun transport de connexion pris en charge n'est disponible",
             "plugins.channels.surface.providerCreationUnknownDescription": "Une connexion est peut-être déjà enregistrée. Actualisez les détails de la connexion avant de réessayer.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Impossible de confirmer la création de la connexion",
             "plugins.channels.surface.providerCredentialInvalid": "Les identifiants du compte connecté nécessitent une attention",
             "plugins.channels.surface.providerCredentialInvalidDescription": "Le fournisseur a rejeté les identifiants du compte connecté utilisés par cette connexion. Remplacez-les ou resynchronisez-les pour rétablir la connexion.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "La poussée durable a besoin d'un point de terminaison de webhook avant d'enregistrer la connexion. Essayez de recréer la connexion.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Impossible de préparer le point de terminaison du webhook",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "Le point de terminaison existe peut-être déjà. Relancez la création de la connexion pour reprendre exactement cette tentative de configuration.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Impossible de confirmer le point de terminaison du webhook",
             "plugins.channels.surface.providerFailureCredentialInvalid": "Le fournisseur a rejeté les identifiants enregistrés pour cette connexion.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "Le fournisseur signale que sa configuration à distance n’est pas valide pour cette connexion.",
             "plugins.channels.surface.providerFailureNetwork": "Le fournisseur n’a pas pu être joint pour cette connexion.",
@@ -27825,12 +28093,17 @@
             "plugins.channels.surface.providerCreating": "Creazione della connessione…",
             "plugins.channels.surface.providerCreationFailedDescription": "La connessione non è stata salvata. Rivedi la configurazione e riprova.",
             "plugins.channels.surface.providerCreationFailedTitle": "Impossibile creare la connessione",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "La connessione potrebbe essere già salvata. Riprova a crearla per riprendere esattamente questo tentativo di configurazione.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "La configurazione di questo provider non può creare una connessione su questo server. Aggiorna la pagina prima di riprovare.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Non è disponibile alcun trasporto di connessione supportato",
             "plugins.channels.surface.providerCreationUnknownDescription": "Una connessione potrebbe essere già salvata. Aggiorna i dettagli della connessione prima di riprovare.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Impossibile confermare la creazione della connessione",
             "plugins.channels.surface.providerCredentialInvalid": "Le credenziali dell’account collegato richiedono attenzione",
             "plugins.channels.surface.providerCredentialInvalidDescription": "Il fornitore ha rifiutato le credenziali dell’account collegato usate da questa connessione. Sostituiscile o risincronizzale per ripristinare la connessione.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "La spinta durevole richiede un endpoint webhook prima di salvare la connessione. Prova a creare di nuovo la connessione.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Impossibile preparare l'endpoint del webhook",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "L'endpoint potrebbe già esistere. Riprova a creare la connessione per riprendere esattamente questo tentativo di configurazione.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Impossibile confermare l'endpoint webhook",
             "plugins.channels.surface.providerFailureCredentialInvalid": "Il fornitore ha rifiutato le credenziali salvate per questa connessione.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "Il fornitore segnala che la sua configurazione remota non è valida per questa connessione.",
             "plugins.channels.surface.providerFailureNetwork": "Non è stato possibile contattare il fornitore per questa connessione.",
@@ -28338,12 +28611,17 @@
             "plugins.channels.surface.providerCreating": "Criando conexão…",
             "plugins.channels.surface.providerCreationFailedDescription": "A conexão não foi salva. Revise a configuração e tente novamente.",
             "plugins.channels.surface.providerCreationFailedTitle": "Não foi possível criar a conexão",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "A conexão pode já estar salva. Tente criar a conexão novamente para retomar esta mesma tentativa de configuração.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Esta configuração de provedor não pode criar uma conexão neste servidor. Atualize a página antes de tentar novamente.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "Nenhum transporte de conexão compatível está disponível",
             "plugins.channels.surface.providerCreationUnknownDescription": "Uma conexão já pode estar salva. Atualize os detalhes da conexão antes de tentar novamente.",
             "plugins.channels.surface.providerCreationUnknownTitle": "Não foi possível confirmar a criação da conexão",
             "plugins.channels.surface.providerCredentialInvalid": "A credencial da conta conectada precisa de atenção",
             "plugins.channels.surface.providerCredentialInvalidDescription": "O provedor rejeitou a credencial da conta conectada que esta conexão usa. Substitua-a ou ressincronize-a para restaurar a conexão.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "O impulso durável precisa de um ponto de extremidade de webhook antes de salvar a conexão. Tente criar a conexão novamente.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Não foi possível preparar o ponto de extremidade do webhook",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "O endpoint pode já existir. Tente criar a conexão novamente para retomar esta mesma tentativa de configuração.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Não foi possível confirmar o endpoint do webhook",
             "plugins.channels.surface.providerFailureCredentialInvalid": "O provedor rejeitou a credencial salva para esta conexão.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "O provedor relata que sua configuração remota não é válida para esta conexão.",
             "plugins.channels.surface.providerFailureNetwork": "Não foi possível contatar o provedor para esta conexão.",
@@ -28851,12 +29129,17 @@
             "plugins.channels.surface.providerCreating": "S'està creant la connexió...",
             "plugins.channels.surface.providerCreationFailedDescription": "La connexió no s'ha desat. Revisa la configuració i torna-ho a provar.",
             "plugins.channels.surface.providerCreationFailedTitle": "No s'ha pogut crear la connexió",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "És possible que la connexió ja s'hagi desat. Torna a crear-la per reprendre exactament aquest intent de configuració.",
             "plugins.channels.surface.providerCreationUnavailableDescription": "Aquesta configuració del proveïdor no pot crear una connexió en aquest servidor. Actualitzeu la pàgina abans de tornar-ho a provar.",
             "plugins.channels.surface.providerCreationUnavailableTitle": "No hi ha cap transport de connexió compatible disponible",
             "plugins.channels.surface.providerCreationUnknownDescription": "És possible que ja s'hagi desat una connexió. Actualitza els detalls de la connexió abans de tornar-ho a provar.",
             "plugins.channels.surface.providerCreationUnknownTitle": "No s'ha pogut confirmar la creació de la connexió",
             "plugins.channels.surface.providerCredentialInvalid": "La credencial del compte connectat necessita atenció",
             "plugins.channels.surface.providerCredentialInvalidDescription": "El proveïdor ha rebutjat la credencial del compte connectat que fa servir aquesta connexió. Substituïu-la o torneu-la a sincronitzar per restaurar la connexió.",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "L'empenta duradora necessita un punt de connexió de webhook abans de desar la connexió. Torna-ho a provar per crear la connexió.",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "No s'ha pogut preparar el punt de connexió del webhook",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "El punt de connexió potser ja existeix. Torna a crear la connexió per reprendre exactament aquest intent de configuració.",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "No s'ha pogut confirmar el punt de connexió del webhook",
             "plugins.channels.surface.providerFailureCredentialInvalid": "El proveïdor ha rebutjat la credencial desada per a aquesta connexió.",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "El proveïdor informa que la seva configuració remota no és vàlida per aquesta connexió.",
             "plugins.channels.surface.providerFailureNetwork": "No s’ha pogut contactar amb el proveïdor per a aquesta connexió.",
@@ -29364,12 +29647,17 @@
             "plugins.channels.surface.providerCreating": "正在创建连接...",
             "plugins.channels.surface.providerCreationFailedDescription": "连接未保存。检查设置并重试。",
             "plugins.channels.surface.providerCreationFailedTitle": "无法创建连接",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "连接可能已保存。重试“创建连接”以重新加入此次设置尝试。",
             "plugins.channels.surface.providerCreationUnavailableDescription": "此提供程序设置无法在此服务器上创建连接。请刷新页面，然后重试。",
             "plugins.channels.surface.providerCreationUnavailableTitle": "没有可用的受支持的连接传输",
             "plugins.channels.surface.providerCreationUnknownDescription": "连接可能已保存。重试之前刷新连接详细信息。",
             "plugins.channels.surface.providerCreationUnknownTitle": "无法确认连接创建",
             "plugins.channels.surface.providerCredentialInvalid": "需要关注已连接账户的凭据",
             "plugins.channels.surface.providerCredentialInvalidDescription": "提供商拒绝了此连接使用的已连接账户凭据。请替换或重新同步该凭据以恢复连接。",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "持久推力在保存连接之前需要一个 webhook 端点。请尝试重新创建连接。",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "无法准备 webhook 端点",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "该端点可能已存在。重试“创建连接”以重新加入此次设置尝试。",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "无法确认 webhook 端点",
             "plugins.channels.surface.providerFailureCredentialInvalid": "提供商拒绝了为此连接保存的凭据。",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "提供商报告其远程配置对此连接无效。",
             "plugins.channels.surface.providerFailureNetwork": "无法为此连接联系到提供商。",
@@ -29877,12 +30165,17 @@
             "plugins.channels.surface.providerCreating": "正在建立連接...",
             "plugins.channels.surface.providerCreationFailedDescription": "連接未儲存。檢查設定並重試。",
             "plugins.channels.surface.providerCreationFailedTitle": "無法建立連接",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "連線可能已儲存。重試「建立連線」以重新加入這次設定嘗試。",
             "plugins.channels.surface.providerCreationUnavailableDescription": "此提供者設定無法在此伺服器上建立連線。請重新整理頁面，然後重試。",
             "plugins.channels.surface.providerCreationUnavailableTitle": "沒有可用的受支援的連線傳輸",
             "plugins.channels.surface.providerCreationUnknownDescription": "連線可能已儲存。重試之前刷新連線詳細資訊。",
             "plugins.channels.surface.providerCreationUnknownTitle": "無法確認連線建立",
             "plugins.channels.surface.providerCredentialInvalid": "需要關注已連接帳戶的憑證",
             "plugins.channels.surface.providerCredentialInvalidDescription": "提供商拒絕了此連接使用的已連接帳戶憑證。請替換或重新同步該憑證以恢復連接。",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "持久推力在儲存連線之前需要一個 webhook 端點。請嘗試重新建立連線。",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "無法準備 webhook 端點",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "該端點可能已存在。重試「建立連線」以重新加入這次設定嘗試。",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "無法確認 webhook 端點",
             "plugins.channels.surface.providerFailureCredentialInvalid": "提供商拒絕了為此連接儲存的憑證。",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "提供商報告其遠端設定不適用於此連接。",
             "plugins.channels.surface.providerFailureNetwork": "無法為此連接聯繫到提供商。",
@@ -30390,12 +30683,17 @@
             "plugins.channels.surface.providerCreating": "接続を作成中…",
             "plugins.channels.surface.providerCreationFailedDescription": "接続は保存されませんでした。設定を見直して再試行してください。",
             "plugins.channels.surface.providerCreationFailedTitle": "接続を作成できませんでした",
+            "plugins.channels.surface.providerCreationRetryUnknownDescription": "接続はすでに保存されている可能性があります。「接続を作成」を再試行して、この設定試行に再接続してください。",
             "plugins.channels.surface.providerCreationUnavailableDescription": "このプロバイダー設定では、このサーバー上に接続を作成できません。再試行する前にページを更新してください。",
             "plugins.channels.surface.providerCreationUnavailableTitle": "サポートされている接続トランスポートは使用できません",
             "plugins.channels.surface.providerCreationUnknownDescription": "接続がすでに保存されている可能性があります。再試行する前に、接続の詳細を更新してください。",
             "plugins.channels.surface.providerCreationUnknownTitle": "接続の作成を確認できませんでした",
             "plugins.channels.surface.providerCredentialInvalid": "接続済みアカウントの認証情報に注意が必要です",
             "plugins.channels.surface.providerCredentialInvalidDescription": "プロバイダーは、この接続が使用する接続済みアカウントの認証情報を拒否しました。認証情報を置き換えるか再同期すると接続が復旧します。",
+            "plugins.channels.surface.providerEndpointEnsureFailedDescription": "接続を保存する前に、耐久性のあるプッシュにはWebhookエンドポイントが必要です。接続の作成を再試行してください。",
+            "plugins.channels.surface.providerEndpointEnsureFailedTitle": "Webhookエンドポイントを準備できませんでした",
+            "plugins.channels.surface.providerEndpointEnsureUnknownDescription": "エンドポイントはすでに存在する可能性があります。「接続を作成」を再試行して、この設定試行に再接続してください。",
+            "plugins.channels.surface.providerEndpointEnsureUnknownTitle": "Webhookエンドポイントを確認できませんでした",
             "plugins.channels.surface.providerFailureCredentialInvalid": "プロバイダーは、この接続用に保存された認証情報を拒否しました。",
             "plugins.channels.surface.providerFailureInvalidConfiguration": "プロバイダーは、この接続に対するリモート構成が無効だと報告しました。",
             "plugins.channels.surface.providerFailureNetwork": "この接続についてプロバイダーに接続できませんでした。",

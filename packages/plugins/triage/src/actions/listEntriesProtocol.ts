@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
@@ -247,8 +246,6 @@ export const TriageListEntriesInputV1Schema = defineProtocolObject({
     filters: TriageListFilterSelectionV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListEntriesInputV1 = ReturnType<typeof TriageListEntriesInputV1Schema.parse>;
-export const TriageListEntriesInputV1JsonSchema: PluginJsonSchema =
-    TriageListEntriesInputV1Schema.jsonSchema;
 
 /**
  * One connection's complete answer for one entry.
@@ -461,8 +458,6 @@ export const TriageListEntriesResultV1Schema = defineProtocolObject({
     }, { policy: 'closed' }),
 }, { policy: 'closed' });
 export type TriageListEntriesResultV1 = ReturnType<typeof TriageListEntriesResultV1Schema.parse>;
-export const TriageListEntriesResultV1JsonSchema: PluginJsonSchema =
-    TriageListEntriesResultV1Schema.jsonSchema;
 
 /** The one aggregate list Action's plugin-local contribution id. */
 export const TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 = 'entries/list-v1';

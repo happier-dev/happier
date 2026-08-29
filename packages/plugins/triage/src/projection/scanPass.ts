@@ -43,14 +43,14 @@ import type { TriageListLaneHealthV1, TriageListLaneV1 } from './listWindow.js';
  * adopted — so the consumer keeps its last-known-good rather than a silently
  * partial view of a broken source.
  *
- * A page that neither answers nor fails is the third outcome, and it is not a
- * contract violation: it is bounded by this owner's private per-lane deadline
- * (`CONTRACT.md` §5.2, `PLAN.md` `REQ-13`). Reaching it settles the lane as a
- * classified `transient` failure and leaves the rotation, and it stops the
- * provider work we stopped waiting for — but it keeps every page that lane
- * already gave, because an unanswered page says nothing about the ones that
- * answered. The pass schedules no wake and retries nothing: a later view or
- * manual trigger asks again, after the shared pacing policy's bounded backoff.
+ * A page that does not answer before an explicitly supplied whole-lane
+ * deadline is not a contract violation. Reaching that real caller-owned bound
+ * settles the lane as a classified `transient` failure and stops waiting for
+ * the provider work. Without such a duration, the pass follows only the
+ * canonical caller signal. It keeps every page the lane already gave, because
+ * an unanswered page says nothing about the ones that answered. The pass
+ * schedules no wake and retries nothing: a later view or manual trigger asks
+ * again after the shared pacing backoff.
  */
 
 /** One configured source instance, bound to the exact admitted `scan` it is read through. */

@@ -415,6 +415,7 @@ export function createCodexNativeAppServerSessionRuntime(
   const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
   let sequence = 0;
   let disposed = false;
+  let activeTurnId: string | null = null;
   let bufferedEvents: AgentSessionPreAdmissionBuffer<Readonly<{
     event: NativeSessionEventInput;
     emittedAtMs: number;
@@ -434,6 +435,8 @@ export function createCodexNativeAppServerSessionRuntime(
       emittedAtMs,
     }) as AgentSessionRuntimeEvent;
     for (const listener of listeners) listener(published);
+    if ((event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled')
+      && activeTurnId === event.turnId) activeTurnId = null;
   };
 
   const subscription = appServer.events.subscribe((event) => {
@@ -549,6 +552,7 @@ export function createCodexNativeAppServerSessionRuntime(
       bufferedEvents?.dispose();
       bufferedEvents = null;
       if (result.status === 'accepted') {
+        activeTurnId = request.delivery.turnId;
         emit({
           kind: 'input-accepted',
           inputIds: request.inputIds,
@@ -571,7 +575,8 @@ export function createCodexNativeAppServerSessionRuntime(
     },
     async cancel(request) {
       if (!appServer.cancel) return { status: 'unsupported' };
-      const result = await appServer.cancel();
+      if (activeTurnId !== request.turnId) return { status: 'notRunning' };
+      const result = await appServer.cancel(request.turnId);
       if (result.status === 'cancelled') return { status: 'requested', turnId: request.turnId };
       if (result.status === 'not_running') return { status: 'notRunning' };
       return {

@@ -6,7 +6,7 @@ import {
 } from './takeover.js';
 
 describe('Claude External Sessions takeover launch derivation', () => {
-    it('returns only the linked directory and canonical Claude config environment', () => {
+    it('returns only the canonical Claude config environment', () => {
         const plan = resolveClaudeExternalSessionTakeoverPlan({
             remoteSessionId: 'claude-session-current',
             source: {
@@ -18,12 +18,14 @@ describe('Claude External Sessions takeover launch derivation', () => {
             linkedDirectory: ' /repo/project ',
         });
 
+        // The launch plan carries no cwd authority: the host enforces the
+        // request targetDirectory as the spawned process cwd.
         expect(plan).toEqual({
-            directory: '/repo/project',
             environmentVariables: {
                 CLAUDE_CONFIG_DIR: '/home/user/.claude-current',
             },
         });
+        expect(plan).not.toHaveProperty('directory');
         expect(plan).not.toHaveProperty('backendModeHint');
         expect(plan).not.toHaveProperty('existingSessionId');
         expect(plan).not.toHaveProperty('resume');

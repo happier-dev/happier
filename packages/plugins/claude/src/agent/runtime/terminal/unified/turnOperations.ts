@@ -3593,7 +3593,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
         approved,
       });
     },
-    async cancelProviderTurn() {
+    async cancelProviderTurn(expectedTurnId?: string) {
+      if (expectedTurnId !== undefined && state.activeTurnId !== expectedTurnId) return false;
       nativeResumeTurnBarrier?.observeTerminal();
       pendingTaskNotificationReaction = null;
       stopReadinessWake();
@@ -3614,6 +3615,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       state.terminalOriginTurnInFlight = false;
       lastTurnProgressPublishedAtMs = null;
       rejectTurnCompletionWaiters(new Error('Claude unified terminal turn was cancelled'));
+      return true;
     },
     readProviderIdentity() {
       return { sessionId: state.providerSessionId };

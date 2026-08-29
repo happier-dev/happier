@@ -4,6 +4,63 @@ import type {
 
 const DEFAULT_APP_SERVER_LIST_BUDGET_MS = 3_000;
 
+/**
+ * Which rollout scan produced the rows a searched page served, and how the
+ * next request reproduces or advances that exact scan instead of restarting
+ * the corpus from its head:
+ *
+ * - `auto` — the initial state; the request resolves the producer itself
+ *   (filename selection first, bounded chunk scan otherwise) exactly like a
+ *   cursor-less request.
+ * - `filenameSelection` — the rows are a complete filename-matched selection;
+ *   they are reproduced by re-running that selection, never by a corpus scan.
+ * - `chunkScan` — the rows are one bounded corpus chunk; `boundary` is the
+ *   resume point that reproduces them (null for the corpus head).
+ * - `done` — the rollout corpus is fully consumed; no scan runs again.
+ *
+ * `rolloutOffset` in the enclosing cursor indexes the rows this scan produced,
+ * so an unexhausted scan must never change: reproduction is what keeps the
+ * offset meaningful across requests.
+ */
+export type CodexExternalSessionRolloutScanState = Readonly<{
+  kind: 'auto' | 'filenameSelection' | 'chunkScan' | 'done';
+  boundary: CodexRolloutCandidateScanBoundary | null;
+}>;
+
+const INITIAL_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN: CodexExternalSessionRolloutScanState = Object.freeze({
+  kind: 'auto',
+  boundary: null,
+});
+
+/**
+ * Terminal rollout scan state: the corpus is fully consumed, so no further
+ * scanned request may run. Exported for the searched-page owner, which returns
+ * it verbatim when a request has no rollout rows to serve.
+ */
+export const DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN: CodexExternalSessionRolloutScanState =
+  Object.freeze({ kind: 'done', boundary: null });
+
+/**
+ * Rolls the rollout half of a v6 cursor forward after one searched page. Rows
+ * the page did not reach keep the exact scan that produced them, so the next
+ * request reproduces those rows and its `rolloutOffset` stays meaningful; an
+ * exhausted chunk scan advances to the scan chunk's own continuation boundary
+ * (offset restarts at zero inside rows that do not exist yet), and any other
+ * exhausted producer is terminal.
+ */
+export function advanceCodexExternalSessionRolloutScanState(params: Readonly<{
+  current: CodexExternalSessionRolloutScanState;
+  rowsLength: number;
+  rolloutOffset: number;
+  nextBoundary: CodexRolloutCandidateScanBoundary | null;
+}>): CodexExternalSessionRolloutScanState {
+  if (params.rolloutOffset < params.rowsLength) return params.current;
+  if (params.current.kind === 'chunkScan' && params.nextBoundary) {
+    return Object.freeze({ kind: 'chunkScan', boundary: params.nextBoundary });
+  }
+  return DONE_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN;
+}
+
 export type CodexExternalSessionNativeCandidateCursorState = Readonly<{
   /** Cursor the next bounded app-server request will use; null is page one. */
   cursor: string | null;
@@ -19,6 +76,8 @@ export type CodexExternalSessionIndexCursor = Readonly<{
   v: 6;
   kind: 'codexMergedCandidatePage';
   rolloutOffset: number;
+  /** The rollout scan that produced the rows `rolloutOffset` indexes. */
+  rolloutScan: CodexExternalSessionRolloutScanState;
   suppressedRolloutIds: readonly string[];
   active: CodexExternalSessionNativeCandidateCursorState;
   archived: CodexExternalSessionNativeCandidateCursorState;
@@ -36,6 +95,7 @@ export function createInitialCodexExternalSessionIndexCursor(): CodexExternalSes
     v: 6,
     kind: 'codexMergedCandidatePage',
     rolloutOffset: 0,
+    rolloutScan: INITIAL_CODEX_EXTERNAL_SESSION_ROLLOUT_SCAN,
     suppressedRolloutIds: Object.freeze([]),
     active: INITIAL_NATIVE_CANDIDATE_CURSOR_STATE,
     archived: INITIAL_NATIVE_CANDIDATE_CURSOR_STATE,
@@ -55,6 +115,46 @@ function isCursorToken(value: unknown): value is string | null {
 function hasOnlyKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const keys = Object.keys(value);
   return keys.length === expected.length && keys.every((key) => expected.includes(key));
+}
+
+function decodeRolloutCandidateScanBoundary(value: unknown): CodexRolloutCandidateScanBoundary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sourceGeneration =
+    typeof record.sourceGeneration === 'string'
+      ? record.sourceGeneration.trim()
+      : '';
+  const containerKey = typeof record.containerKey === 'string' ? record.containerKey : '';
+  const fileName = typeof record.fileName === 'string' ? record.fileName : '';
+  const scanned =
+    typeof record.scanned === 'number'
+      && Number.isSafeInteger(record.scanned)
+      && record.scanned >= 0
+      ? record.scanned
+      : null;
+  return sourceGeneration && containerKey && fileName && scanned !== null
+    ? { sourceGeneration, containerKey, fileName, scanned }
+    : null;
+}
+
+function decodeRolloutScanState(value: unknown): CodexExternalSessionRolloutScanState | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!hasOnlyKeys(record, ['kind', 'boundary'])) return null;
+  if (record.kind === 'chunkScan') {
+    const boundary = record.boundary === null
+      ? null
+      : decodeRolloutCandidateScanBoundary(record.boundary);
+    if (record.boundary !== null && !boundary) return null;
+    return Object.freeze({ kind: 'chunkScan', boundary });
+  }
+  if (
+    (record.kind === 'auto' || record.kind === 'filenameSelection' || record.kind === 'done')
+    && record.boundary === null
+  ) {
+    return Object.freeze({ kind: record.kind, boundary: null });
+  }
+  return null;
 }
 
 function decodeNativeCandidateCursorState(
@@ -83,10 +183,11 @@ function decodeNativeCandidateCursorState(
 
 /**
  * Full/search candidate browsing has its own strict v6 cursor because one
- * page now owns three independent continuations: the rollout ordering and the
- * active/archived native app-server lists. It also carries unresolved rollout
- * twins already emitted from a newer native page. Older cursors are rejected
- * so a prior owner cannot silently skip or repeat a row.
+ * page now owns three independent continuations: the rollout scan (which scan
+ * produced the served rows and where it resumes), and the active/archived
+ * native app-server lists. It also carries unresolved rollout twins already
+ * emitted from a newer native page. Older cursors are rejected so a prior
+ * owner cannot silently skip or repeat a row.
  */
 export function decodeCodexExternalSessionIndexCursor(
   raw: string | undefined,
@@ -96,7 +197,7 @@ export function decodeCodexExternalSessionIndexCursor(
     const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const record = parsed as Record<string, unknown>;
-    if (!hasOnlyKeys(record, ['v', 'kind', 'rolloutOffset', 'suppressedRolloutIds', 'active', 'archived'])) return null;
+    if (!hasOnlyKeys(record, ['v', 'kind', 'rolloutOffset', 'rolloutScan', 'suppressedRolloutIds', 'active', 'archived'])) return null;
     if (
       record.v !== 6
       || record.kind !== 'codexMergedCandidatePage'
@@ -106,6 +207,7 @@ export function decodeCodexExternalSessionIndexCursor(
     ) {
       return null;
     }
+    const rolloutScan = decodeRolloutScanState(record.rolloutScan);
     if (
       !Array.isArray(record.suppressedRolloutIds)
       || record.suppressedRolloutIds.some((id) => typeof id !== 'string' || id.trim().length === 0)
@@ -115,11 +217,12 @@ export function decodeCodexExternalSessionIndexCursor(
     }
     const active = decodeNativeCandidateCursorState(record.active);
     const archived = decodeNativeCandidateCursorState(record.archived);
-    return active && archived
+    return active && archived && rolloutScan
       ? Object.freeze({
         v: 6,
         kind: 'codexMergedCandidatePage',
         rolloutOffset: record.rolloutOffset,
+        rolloutScan,
         suppressedRolloutIds: Object.freeze([...record.suppressedRolloutIds]),
         active,
         archived,
@@ -173,25 +276,8 @@ export function decodeCodexExternalSessionCandidateCursor(
       return null;
     }
     const record = parsed as Record<string, unknown>;
-    const sourceGeneration =
-      typeof record.sourceGeneration === 'string'
-        ? record.sourceGeneration.trim()
-        : '';
-    const containerKey = typeof record.containerKey === 'string' ? record.containerKey : '';
-    const fileName = typeof record.fileName === 'string' ? record.fileName : '';
-    const scanned =
-      typeof record.scanned === 'number'
-        && Number.isSafeInteger(record.scanned)
-        && record.scanned >= 0
-        ? record.scanned
-        : null;
-    return record.v === 4
-      && record.kind === 'codexRolloutCandidateScan'
-      && sourceGeneration
-      && containerKey
-      && fileName
-      && scanned !== null
-      ? { sourceGeneration, containerKey, fileName, scanned }
+    return record.v === 4 && record.kind === 'codexRolloutCandidateScan'
+      ? decodeRolloutCandidateScanBoundary(record)
       : null;
   } catch {
     return null;

@@ -168,7 +168,7 @@ export type CodexAppServerSession = Readonly<{
     input: CodexAppServerInput,
     options?: CodexAppServerSendOptions,
   ): Promise<CodexAppServerSendResult>;
-  cancel?(): Promise<CodexAppServerCancelResult>;
+  cancel?(expectedTurnId?: string): Promise<CodexAppServerCancelResult>;
   permissions?: Readonly<{ capability: 'inline' }>;
   updateConfig?(update: Readonly<{
     modelId?: string;

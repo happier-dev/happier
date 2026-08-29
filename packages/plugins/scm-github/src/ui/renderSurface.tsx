@@ -717,9 +717,14 @@ function MergeWrite({
   input: TriageDetailSurfaceInputV1;
   terminal: boolean;
   onObserved: GithubObservedEntryHandlerV1;
-  capabilities: GithubRepositoryCapabilitiesV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const capabilityReason = githubOperationCapabilityReason(
+    text,
+    capabilities,
+    'pullRequestMerge',
+  );
   const [mergeMethod, setMergeMethod] = React.useState<GithubMergeMethodV1 | null>(null);
   const write = useGithubWrite(
     GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge,
@@ -739,8 +744,22 @@ function MergeWrite({
     [input, mergeMethod],
   );
   const head = input.observation.nativeRevision;
-  const allowedMethods = GITHUB_MERGE_METHODS_V1.filter((method) =>
-    capabilities.mergeMethods[method].kind === 'available');
+  const allowedMethods = GITHUB_MERGE_METHODS_V1.filter((method) => {
+    if (capabilities.kind !== 'ready') return true;
+    const availability = capabilities.value.mergeMethods[method];
+    return availability.kind === 'available';
+  });
+
+  if (capabilityReason !== null) {
+    return (
+      <UnavailableOperationWrite
+        title="Merge pull request"
+        titleKey="plugins.github.ui.mutations.merge"
+        reason={capabilityReason}
+        variant="primary"
+      />
+    );
+  }
 
   if (!addressable) {
     // A merge is pinned to the head the user saw. Without one there is nothing
@@ -757,12 +776,12 @@ function MergeWrite({
   }
 
   if (allowedMethods.length === 0) {
-    const exposed = GITHUB_MERGE_METHODS_V1.map((method) => capabilities.mergeMethods[method]);
+    const exposed = capabilities.kind === 'ready'
+      ? GITHUB_MERGE_METHODS_V1.map((method) => capabilities.value.mergeMethods[method])
+      : [];
     const reason = exposed.some((value) => value.kind === 'denied' && value.code === 'repository_archived')
       ? text('plugins.github.ui.capabilities.archived', 'This repository is archived.')
-      : exposed.every((value) => value.kind === 'unavailable' && value.code === 'repository_unsupported')
-        ? text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.')
-        : text('plugins.github.ui.capabilities.unknown', 'GitHub did not expose enough permission information to enable this change.');
+      : text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.');
     return (
       <Stack gap="small">
         <Button
@@ -831,14 +850,23 @@ function StateWrite({
   title,
   titleKey,
   onObserved,
+  capabilities,
+  operation,
 }: Readonly<{
   localId: string;
   payload: GithubWritePayloadV1;
   title: string;
   titleKey: string;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  operation: keyof GithubRepositoryCapabilitiesV1['operations'];
 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const capabilityReason = githubOperationCapabilityReason(text, capabilities, operation);
   const write = useGithubWrite(localId, parseStateResult, onObserved);
+  if (capabilityReason !== null) {
+    return <UnavailableOperationWrite title={title} titleKey={titleKey} reason={capabilityReason} />;
+  }
   return (
     <Stack gap="small">
       <Button
@@ -861,6 +889,8 @@ function ExactWrite({
   titleKey,
   parseResult,
   onObserved,
+  capabilities,
+  operation,
 }: Readonly<{
   localId: string;
   payload: GithubWritePayloadV1 | null;
@@ -868,8 +898,15 @@ function ExactWrite({
   titleKey: string;
   parseResult: (value: unknown) => GithubMutationResultV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
+  operation: keyof GithubRepositoryCapabilitiesV1['operations'];
 }>): React.ReactElement {
+  const text = usePluginTranslation();
+  const capabilityReason = githubOperationCapabilityReason(text, capabilities, operation);
   const write = useGithubWrite(localId, parseResult, onObserved);
+  if (capabilityReason !== null) {
+    return <UnavailableOperationWrite title={title} titleKey={titleKey} reason={capabilityReason} />;
+  }
   return (
     <Stack gap="small">
       <Button
@@ -890,9 +927,11 @@ function ExactWrite({
 function PullRequestHeadWrites({
   input,
   onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const markReady = React.useMemo(() => buildGithubPullRequestMarkReadyInputV1(input), [input]);
   const updateBranch = React.useMemo(
@@ -910,6 +949,8 @@ function PullRequestHeadWrites({
             titleKey="plugins.github.mutations.markReady.confirmation.confirmLabel"
             parseResult={parseMarkReadyResult}
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="pullRequestMarkReady"
           />
         )
         : null}
@@ -920,6 +961,8 @@ function PullRequestHeadWrites({
         titleKey="plugins.github.mutations.updateBranch.confirmation.confirmLabel"
         parseResult={parseUpdateBranchResult}
         onObserved={onObserved}
+        capabilities={capabilities}
+        operation="pullRequestUpdateBranch"
       />
     </Stack>
   );
@@ -928,9 +971,11 @@ function PullRequestHeadWrites({
 function PullRequestReviewerWrites({
   input,
   onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [userValue, setUserValue] = React.useState('');
@@ -967,6 +1012,8 @@ function PullRequestReviewerWrites({
           titleKey="plugins.github.mutations.addReviewers.confirmation.confirmLabel"
           parseResult={parseReviewersResult}
           onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestAddReviewers"
         />
         <ExactWrite
           localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestRemoveReviewers}
@@ -975,6 +1022,8 @@ function PullRequestReviewerWrites({
           titleKey="plugins.github.mutations.removeReviewers.confirmation.confirmLabel"
           parseResult={parseReviewersResult}
           onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestRemoveReviewers"
         />
       </Row>
     </Stack>
@@ -999,6 +1048,7 @@ function SingleProposalPublicationWrite({
   kind,
   threadId,
   onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   proposals: readonly ReviewCommentV1[];
@@ -1006,6 +1056,7 @@ function SingleProposalPublicationWrite({
   kind: 'issue-comment' | 'thread-reply';
   threadId?: string;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
@@ -1100,6 +1151,8 @@ function SingleProposalPublicationWrite({
         titleKey={titleKey}
         parseResult={parseReviewPublicationResult}
         onObserved={onObserved}
+        capabilities={capabilities}
+        operation={kind === 'thread-reply' ? 'pullRequestThreadReply' : 'issueComment'}
       />
     </Stack>
   );
@@ -1109,10 +1162,12 @@ function PullRequestReviewPublicationWrite({
   input,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [verdict, setVerdict] = React.useState<GithubPullRequestReviewVerdictV1>('comment');
@@ -1272,6 +1327,8 @@ function PullRequestReviewPublicationWrite({
         titleKey="plugins.github.ui.mutations.review.submit"
         parseResult={parseReviewPublicationResult}
         onObserved={onObserved}
+        capabilities={capabilities}
+        operation="pullRequestSubmitReview"
       />
       <ExactWrite
         localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate}
@@ -1280,6 +1337,8 @@ function PullRequestReviewPublicationWrite({
         titleKey="plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel"
         parseResult={parseReviewPublicationResult}
         onObserved={onObserved}
+        capabilities={capabilities}
+        operation="pullRequestReviewCommentCreate"
       />
     </Stack>
   );
@@ -1289,10 +1348,12 @@ function IssueMemberWrites({
   input,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [assigneeValue, setAssigneeValue] = React.useState('');
@@ -1316,6 +1377,8 @@ function IssueMemberWrites({
             titleKey="plugins.github.mutations.issueAssigneeAdd.confirmation.confirmLabel"
             parseResult={parseIssueDeltaResult}
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="issueAssigneeAdd"
           />
           <ExactWrite
             localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueAssigneeRemove}
@@ -1324,6 +1387,8 @@ function IssueMemberWrites({
             titleKey="plugins.github.mutations.issueAssigneeRemove.confirmation.confirmLabel"
             parseResult={parseIssueDeltaResult}
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="issueAssigneeRemove"
           />
         </Row>
       </Stack>
@@ -1343,6 +1408,8 @@ function IssueMemberWrites({
             titleKey="plugins.github.mutations.issueLabelAdd.confirmation.confirmLabel"
             parseResult={parseIssueDeltaResult}
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="issueLabelAdd"
           />
           <ExactWrite
             localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueLabelRemove}
@@ -1351,6 +1418,8 @@ function IssueMemberWrites({
             titleKey="plugins.github.mutations.issueLabelRemove.confirmation.confirmLabel"
             parseResult={parseIssueDeltaResult}
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="issueLabelRemove"
           />
         </Row>
       </Stack>
@@ -1360,6 +1429,7 @@ function IssueMemberWrites({
         proposalRead={publicationProposals.status}
         kind="issue-comment"
         onObserved={onObserved}
+        capabilities={capabilities}
       />
     </Stack>
   );
@@ -1377,11 +1447,14 @@ function IssueMemberWrites({
 function IssueCloseWrite({
   input,
   onObserved,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   onObserved: GithubObservedEntryHandlerV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const capabilityReason = githubOperationCapabilityReason(text, capabilities, 'issueClose');
   const [reason, setReason] = React.useState<GithubIssueCloseReasonV1 | null>(null);
   const write = useGithubWrite(
     GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueClose,
@@ -1392,6 +1465,16 @@ function IssueCloseWrite({
     () => (reason === null ? null : buildGithubIssueCloseInputV1(input, reason)),
     [input, reason],
   );
+
+  if (capabilityReason !== null) {
+    return (
+      <UnavailableOperationWrite
+        title="Close issue"
+        titleKey="plugins.github.ui.mutations.closeIssue"
+        reason={capabilityReason}
+      />
+    );
+  }
 
   return (
     <Stack gap="small">
@@ -1431,11 +1514,13 @@ function IssueWrites({
   offered,
   onObserved,
   publicationProposals,
+  capabilities,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
   offered: readonly string[];
   onObserved: GithubObservedEntryHandlerV1;
   publicationProposals: ReviewCommentProposalReadV1;
+  capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement {
   const reopen = React.useMemo(() => buildGithubIssueReopenInputV1(input), [input]);
   return (
@@ -1446,7 +1531,9 @@ function IssueWrites({
         valueKey="plugins.github.ui.mutations.issueDescription"
         fallback="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
       />
-      {offered.includes('close') ? <IssueCloseWrite input={input} onObserved={onObserved} /> : null}
+      {offered.includes('close')
+        ? <IssueCloseWrite input={input} onObserved={onObserved} capabilities={capabilities} />
+        : null}
       {offered.includes('reopen') && reopen !== null
         ? (
           <StateWrite
@@ -1455,10 +1542,17 @@ function IssueWrites({
             title="Reopen issue"
             titleKey="plugins.github.ui.mutations.reopenIssue"
             onObserved={onObserved}
+            capabilities={capabilities}
+            operation="issueReopen"
           />
         )
         : null}
-      <IssueMemberWrites input={input} onObserved={onObserved} publicationProposals={publicationProposals} />
+      <IssueMemberWrites
+        input={input}
+        onObserved={onObserved}
+        publicationProposals={publicationProposals}
+        capabilities={capabilities}
+      />
     </Stack>
   );
 }
@@ -1468,12 +1562,10 @@ function githubOperationCapabilityReason(
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>,
   operation: keyof GithubRepositoryCapabilitiesV1['operations'],
 ): string | null {
-  if (capabilities.kind === 'loading') {
-    return text('plugins.github.ui.capabilities.checking', 'Checking repository permissions…');
-  }
-  if (capabilities.kind === 'unavailable') {
-    return text('plugins.github.ui.capabilities.unavailable', 'GitHub repository permissions could not be read.');
-  }
+  // A missing preflight is not a prohibition. The confirmed Action remains the
+  // authority and already returns GitHub's typed permission failure. Only a
+  // decisive provider fact disables an operation before dispatch.
+  if (capabilities.kind !== 'ready') return null;
   const availability = capabilities.value.operations[operation];
   if (availability.kind === 'available') return null;
   if (availability.code === 'repository_archived') {
@@ -1482,10 +1574,32 @@ function githubOperationCapabilityReason(
   if (availability.code === 'repository_unsupported') {
     return text('plugins.github.ui.capabilities.unsupported', 'This repository does not support this change.');
   }
-  if (availability.code === 'forbidden_by_forge') {
-    return text('plugins.github.ui.capabilities.forbidden', 'Your GitHub repository role does not allow this change.');
-  }
-  return text('plugins.github.ui.capabilities.unknown', 'GitHub did not expose enough permission information to enable this change.');
+  return null;
+}
+
+function UnavailableOperationWrite({
+  title,
+  titleKey,
+  reason,
+  variant = 'secondary',
+}: Readonly<{
+  title: string;
+  titleKey: string;
+  reason: string;
+  variant?: 'primary' | 'secondary';
+}>): React.ReactElement {
+  return (
+    <Stack gap="small">
+      <Button
+        title={title}
+        titleKey={titleKey}
+        variant={variant}
+        disabled
+        onPress={() => {}}
+      />
+      <Text variant="caption" tone="neutral" value={reason} />
+    </Stack>
+  );
 }
 
 function WritesSection({
@@ -1503,7 +1617,6 @@ function WritesSection({
   publicationProposals: ReviewCommentProposalReadV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
 }>): React.ReactElement | null {
-  const text = usePluginTranslation();
   const offered = githubOfferedMutationsV1({
     kindId,
     state: input.observation.snapshot.state,
@@ -1513,27 +1626,11 @@ function WritesSection({
     [input],
   );
   if (offered.length === 0 && kindId !== 'pull-request') return null;
-  const representative = kindId === 'issue' ? 'issueComment' : 'pullRequestClose';
-  const readyCapabilities = capabilities.kind === 'ready' ? capabilities.value : null;
-  const reason = githubOperationCapabilityReason(text, capabilities, representative);
 
   return (
     <Stack gap="small">
       <Divider />
       {kindId === 'pull-request' ? <GithubMergeSignature state={mergeSignature} /> : null}
-      {reason === null ? null : (
-        <Stack gap="small">
-          <Button
-            title="Changes unavailable"
-            titleKey="plugins.github.ui.capabilities.changesUnavailable"
-            variant="secondary"
-            disabled
-            onPress={() => {}}
-          />
-          <Text variant="caption" tone="neutral" value={reason} />
-        </Stack>
-      )}
-      {reason !== null ? null : (
       <>{offered.length === 0 ? null : (
         <>
       <Text
@@ -1552,7 +1649,15 @@ function WritesSection({
           />
         )
         : kindId === 'issue'
-          ? <IssueWrites input={input} offered={offered} onObserved={onObserved} publicationProposals={publicationProposals} />
+          ? (
+            <IssueWrites
+              input={input}
+              offered={offered}
+              onObserved={onObserved}
+              publicationProposals={publicationProposals}
+              capabilities={capabilities}
+            />
+          )
           : (
           <Stack gap="medium">
             <Text
@@ -1567,16 +1672,21 @@ function WritesSection({
                   input={input}
                   terminal={mergeSignature.terminal}
                   onObserved={onObserved}
-                  capabilities={readyCapabilities as GithubRepositoryCapabilitiesV1}
+                  capabilities={capabilities}
                 />
               )
               : null}
             {input.observation.snapshot.state.presentation === 'active'
               ? (
                 <>
-                  <PullRequestHeadWrites input={input} onObserved={onObserved} />
-                  <PullRequestReviewerWrites input={input} onObserved={onObserved} />
-                  <PullRequestReviewPublicationWrite input={input} onObserved={onObserved} publicationProposals={publicationProposals} />
+                  <PullRequestHeadWrites input={input} onObserved={onObserved} capabilities={capabilities} />
+                  <PullRequestReviewerWrites input={input} onObserved={onObserved} capabilities={capabilities} />
+                  <PullRequestReviewPublicationWrite
+                    input={input}
+                    onObserved={onObserved}
+                    publicationProposals={publicationProposals}
+                    capabilities={capabilities}
+                  />
                 </>
               )
               : null}
@@ -1588,6 +1698,8 @@ function WritesSection({
                   title="Close pull request"
                   titleKey="plugins.github.ui.mutations.close"
                   onObserved={onObserved}
+                  capabilities={capabilities}
+                  operation="pullRequestClose"
                 />
               )
               : null}
@@ -1599,6 +1711,8 @@ function WritesSection({
                   title="Reopen pull request"
                   titleKey="plugins.github.ui.mutations.reopen"
                   onObserved={onObserved}
+                  capabilities={capabilities}
+                  operation="pullRequestReopen"
                 />
               )
               : null}
@@ -1606,7 +1720,6 @@ function WritesSection({
         )}
         </>
       )}</>
-      )}
     </Stack>
   );
 }
@@ -2682,13 +2795,6 @@ function ThreadFeedbackFinding({
   const action = nextResolved
     ? text('plugins.github.ui.mutations.thread.resolve', 'Resolve conversation')
     : text('plugins.github.ui.mutations.thread.reopen', 'Reopen conversation');
-  const resolutionReason = githubOperationCapabilityReason(
-    text,
-    capabilities,
-    'pullRequestThreadResolution',
-  );
-  const replyReason = githubOperationCapabilityReason(text, capabilities, 'pullRequestThreadReply');
-  const capabilityReason = resolutionReason ?? replyReason;
   return (
       <Stack gap="small">
         <Item
@@ -2715,7 +2821,7 @@ function ThreadFeedbackFinding({
         {loadMore === undefined
           ? null
           : <Button title="Load earlier replies" titleKey="plugins.github.ui.loadEarlierReplies" variant="secondary" busy={pending} onPress={loadMore} />}
-        {capabilityReason === null ? <><ExactWrite
+        <ExactWrite
           localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestThreadResolution}
           payload={payload}
           title={`${action} at ${location}`}
@@ -2724,6 +2830,8 @@ function ThreadFeedbackFinding({
             : 'plugins.github.ui.mutations.thread.reopen'}
           parseResult={parseThreadResolutionResult}
           onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestThreadResolution"
         />
         <SingleProposalPublicationWrite
           input={input}
@@ -2732,22 +2840,8 @@ function ThreadFeedbackFinding({
           kind="thread-reply"
           threadId={finding.id}
           onObserved={onObserved}
-        /></> : (
-          <Stack gap="small">
-            <Button
-              title="Changes unavailable"
-              titleKey="plugins.github.ui.capabilities.changesUnavailable"
-              variant="secondary"
-              disabled
-              onPress={() => {}}
-            />
-            <Text
-              variant="caption"
-              tone="neutral"
-              value={capabilityReason}
-            />
-          </Stack>
-        )}
+          capabilities={capabilities}
+        />
       </Stack>
   );
 }

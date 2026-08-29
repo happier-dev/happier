@@ -153,6 +153,22 @@ describe('Bitbucket listInstances', () => {
     });
   });
 
+  it('preserves an account-listing deadline instead of reporting caller cancellation', async () => {
+    const { connectedAccounts, bindingReads } = createConnectedAccountsStub({
+      accounts: [],
+      listError: new DOMException('deadline elapsed', 'TimeoutError'),
+    });
+    const { http } = createHttpStub(routeBitbucket());
+
+    const result = await listBitbucketSourceInstances(createRuntime(connectedAccounts, http));
+
+    expect(result).toEqual({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'invocation-deadline-exceeded' },
+    });
+    expect(bindingReads).toEqual([]);
+  });
+
   it('attributes one account failure to its exact binding without failing the enumeration', async () => {
     const { connectedAccounts } = createConnectedAccountsStub({
       accounts: [

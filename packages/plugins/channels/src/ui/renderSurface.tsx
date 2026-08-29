@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { pluginUiTargetedContributionOperationKey } from '@happier-dev/plugin-sdk/ui';
 import type { AgentPermissionIntentV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
+import type {
+  PluginActionInputById,
+  PluginActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginUiActionExecutionOptions,
   PluginUiTargetedContributionsV1,
@@ -91,6 +94,7 @@ import {
   type ConversationBindingV1,
   type ConversationConnectionCreateInputV1,
   type ConversationConnectionEndpointRequiredResultV1,
+  type ConversationConnectionWebhookEndpointSetupRequiredResultV1,
   type ConversationPairingResourceV1,
 } from '@happier-dev/channels-protocol/v1';
 
@@ -286,6 +290,7 @@ type ConnectionEndpointContinuation = Readonly<{
   webhookEndpointId?: string;
   endpointEnsureInput: PluginActionInputById['plugin.webhook.endpoint.ensure'];
 }>;
+type EndpointSetupPresentation = ConversationConnectionWebhookEndpointSetupRequiredResultV1;
 type ProviderSetupFeedback =
   | 'ready'
   | 'requiresRemediation'
@@ -299,7 +304,8 @@ type ProviderSetupFeedback =
   | 'creationFailed'
   | 'creationOutcomeUnknown'
   | 'endpointEnsureOutcomeUnknown'
-  | 'endpointEnsureFailed';
+  | 'endpointEnsureFailed'
+  | 'endpointSetupRequired';
 
 /**
  * The mounted host snapshot is the only provider-discovery owner. In
@@ -9432,6 +9438,12 @@ function ProviderSetupPicker(props: Readonly<{
   const [endpointContinuation, setEndpointContinuation] = React.useState<
     ConnectionEndpointContinuation | undefined
   >();
+  // Public endpoint facts are retained only for this mounted setup surface.
+  // The one-time secret never enters a persisted connection, resource, or
+  // history projection and disappears when this setup journey is discarded.
+  const [endpointSetupRequired, setEndpointSetupRequired] = React.useState<
+    EndpointSetupPresentation | undefined
+  >();
   const [endpointEnsurePending, setEndpointEnsurePending] = React.useState(false);
   const [remediationSetupOperation, setRemediationSetupOperation] = React.useState<
     ProviderSetupOperation | undefined
@@ -9483,6 +9495,7 @@ function ProviderSetupPicker(props: Readonly<{
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
     setEndpointContinuation(undefined);
+    setEndpointSetupRequired(undefined);
     setFeedback(undefined);
   }, [prepareAction.reset]);
   const requestPrepareOutcomeReread = useExplicitFreshRereadAfterUnknownOutcome({
@@ -9498,6 +9511,7 @@ function ProviderSetupPicker(props: Readonly<{
     setRemediationSetupOperation(undefined);
     setRemediationSelection(undefined);
     setEndpointContinuation(undefined);
+    setEndpointSetupRequired(undefined);
     setFeedback(undefined);
   }, [createAction.reset]);
   const requestCreateOutcomeReread = useExplicitFreshRereadAfterUnknownOutcome({
@@ -9536,6 +9550,7 @@ function ProviderSetupPicker(props: Readonly<{
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
       setEndpointContinuation(undefined);
+      setEndpointSetupRequired(undefined);
       setFeedback('selectionUnavailable');
       return;
     }
@@ -9546,6 +9561,7 @@ function ProviderSetupPicker(props: Readonly<{
       setRemediationSelection(undefined);
       setPreparedConnection(undefined);
       setEndpointContinuation(undefined);
+      setEndpointSetupRequired(undefined);
       setFeedback('selectionUnavailable');
     }
   }, [operations, remediationSetupOperation]);
@@ -9584,12 +9600,14 @@ function ProviderSetupPicker(props: Readonly<{
       if (!prepared.success) {
         setRemediationSetupOperation(undefined);
         setEndpointContinuation(undefined);
+        setEndpointSetupRequired(undefined);
         setFeedback('preparationUnavailable');
       } else if (prepared.data.kind === 'requiresRemediation') {
         setPreparedConnection(undefined);
         setRemediationSelection(undefined);
         setRemediationSetupOperation(operation);
         setEndpointContinuation(undefined);
+        setEndpointSetupRequired(undefined);
         setFeedback('requiresRemediation');
       } else {
         const {
@@ -9653,6 +9671,7 @@ function ProviderSetupPicker(props: Readonly<{
       setRemediationSetupOperation(undefined);
       setRemediationSelection(undefined);
       setEndpointContinuation(undefined);
+      setEndpointSetupRequired(undefined);
       createAction.reset();
     }
     try {
@@ -9793,10 +9812,19 @@ function ProviderSetupPicker(props: Readonly<{
   }, [operations, prepareAction.execution.status, prepareSelectedProviderSetup, props.signal, remediationSetupOperation]);
 
   const selectTransport = React.useCallback((next: string) => {
+    if (next !== 'durablePush') {
+      // An endpoint continuation belongs exclusively to durable-push. Keep
+      // the setup surface truthful if the person switches transport before
+      // completing that provider configuration.
+      setEndpointContinuation(undefined);
+      setEndpointSetupRequired(undefined);
+      setFeedback(undefined);
+    }
     setPreparedConnection((current) => {
       if (current === undefined) return current;
       const selectedTransport = current.supportedTransports.find((transport) => transport === next);
-      return selectedTransport === undefined ? current : { ...current, selectedTransport };
+      if (selectedTransport === undefined) return current;
+      return { ...current, selectedTransport };
     });
   }, []);
 
@@ -9850,10 +9878,51 @@ function ProviderSetupPicker(props: Readonly<{
     };
     const completeConnectionCreation = (outcome: Readonly<{ kind: 'created' | 'rejoined'; connectionId: string }>) => {
       setEndpointContinuation(undefined);
+      setEndpointSetupRequired(undefined);
       setPreparedConnection(undefined);
       setProviderSetupDraft(undefined);
       setFeedback(undefined);
       props.onConnectionCreated(outcome.connectionId);
+    };
+
+    // A newly ensured endpoint is not necessarily provider-ready yet. Keep
+    // the generic owner’s URL/readiness/one-time credential in this mounted
+    // setup surface so the person can configure the provider, then press
+    // Create again to recheck the same endpoint and continue the exact
+    // preallocated connection attempt. These facts never enter connection
+    // persistence, resources, terminal output, or Run history.
+    const retainEndpointSetupIfNeeded = (result: PluginActionResultById['plugin.webhook.endpoint.ensure']): boolean => {
+      if (result.readiness === 'ready') {
+        setEndpointSetupRequired(undefined);
+        return false;
+      }
+      if (result.readiness !== 'providerConfirmationRequired'
+        && result.readiness !== 'credentialDisclosureLost') {
+        setFeedback('endpointEnsureFailed');
+        return true;
+      }
+      const setupRequired = ConversationConnectionCreateResultV1Schema.safeParse({
+        kind: 'webhookEndpointSetupRequired',
+        webhookEndpointId: result.webhookEndpointId,
+        publicUrl: result.publicUrl,
+        readiness: result.readiness,
+        ...(result.oneTimeGeneratedSecret === undefined
+          ? {}
+          : { oneTimeGeneratedSecret: result.oneTimeGeneratedSecret }),
+      });
+      if (!setupRequired.success || setupRequired.data.kind !== 'webhookEndpointSetupRequired') {
+        setFeedback('endpointEnsureFailed');
+        return true;
+      }
+      setEndpointSetupRequired(setupRequired.data);
+      setFeedback('endpointSetupRequired');
+      // Provider confirmation and credential disclosure are setup attention,
+      // not correspondence failure. The generic endpoint owner has already
+      // established the durable endpoint identity; continue the bounded
+      // connection create/rejoin with that exact endpoint. Delivery readiness
+      // remains visible in the setup surface and is owned by the webhook
+      // lifecycle, rather than gating Channels persistence.
+      return false;
     };
 
     // A durable-push attempt that already ensured its endpoint continues that
@@ -9863,7 +9932,7 @@ function ProviderSetupPicker(props: Readonly<{
     // for one visible attempt.
     if (endpointContinuation !== undefined) {
       let continuedDraft = endpointContinuation;
-      if (continuedDraft.webhookEndpointId === undefined) {
+      if (continuedDraft.webhookEndpointId === undefined || endpointSetupRequired !== undefined) {
         setEndpointEnsurePending(true);
         try {
           if (ensureEndpointAction.execution.status === 'outcomeUnknown') {
@@ -9888,10 +9957,15 @@ function ProviderSetupPicker(props: Readonly<{
             setFeedback('endpointEnsureFailed');
             return;
           }
-          continuedDraft = {
+          const ensuredDraft: ConnectionEndpointContinuation = {
             ...continuedDraft,
             webhookEndpointId: ensured.result.webhookEndpointId,
           };
+          if (retainEndpointSetupIfNeeded(ensured.result)) {
+            setEndpointContinuation(ensuredDraft);
+            return;
+          }
+          continuedDraft = ensuredDraft;
           setEndpointContinuation(continuedDraft);
         } finally {
           if (mountedRef.current && !props.signal.aborted) setEndpointEnsurePending(false);
@@ -10010,11 +10084,21 @@ function ProviderSetupPicker(props: Readonly<{
           setFeedback('endpointEnsureFailed');
           return;
         }
-        const webhookEndpointId = ensured.result.webhookEndpointId;
-        const continuedDraft: ConnectionEndpointContinuation = {
+        const ensuredDraft: ConnectionEndpointContinuation = {
           ...draft,
-          webhookEndpointId,
+          webhookEndpointId: ensured.result.webhookEndpointId,
         };
+        if (retainEndpointSetupIfNeeded(ensured.result)) {
+          setEndpointContinuation(ensuredDraft);
+          return;
+        }
+        const continuedDraft = ensuredDraft;
+        const webhookEndpointId = continuedDraft.webhookEndpointId;
+        if (webhookEndpointId === undefined) {
+          setFeedback('endpointEnsureFailed');
+          setEndpointContinuation(continuedDraft);
+          return;
+        }
         setEndpointContinuation(continuedDraft);
         const continuationSettled = await createAction.execute({
           ...createInput,
@@ -10053,6 +10137,7 @@ function ProviderSetupPicker(props: Readonly<{
   }, [
     createAction,
     endpointContinuation,
+    endpointSetupRequired,
     endpointEnsurePending,
     ensureEndpointAction,
     prepareAction.execution.status,
@@ -10321,6 +10406,68 @@ function ProviderSetupPicker(props: Readonly<{
             busy={createAction.execution.status === 'pending'}
             disabled={actionUnavailable}
             onPress={createConnection}
+          />
+        </Stack>
+      ) : null}
+      {endpointSetupRequired !== undefined ? (
+        <Stack gap="small" testID="channels-provider-setup-webhook-required">
+          <Heading
+            level={4}
+            value={props.t(
+              'plugins.channels.surface.webhookEndpointSetupRequiredTitle',
+              'Finish webhook setup',
+            )}
+          />
+          <Text
+            value={props.t(
+              'plugins.channels.surface.webhookEndpointSetupRequiredDescription',
+              'Add this endpoint to your provider, then press Create connection again to verify it.',
+            )}
+          />
+          <Metadata
+            entries={[
+              {
+                label: props.t('plugins.channels.surface.webhookEndpointUrl', 'Webhook URL'),
+                value: endpointSetupRequired.publicUrl,
+              },
+              ...(endpointSetupRequired.oneTimeGeneratedSecret === undefined
+                ? [{
+                    label: props.t('plugins.channels.surface.webhookEndpointSecret', 'Webhook secret'),
+                    value: props.t(
+                      'plugins.channels.surface.webhookEndpointSecretLost',
+                      'This secret was already shown once. Rotate the endpoint credential to receive a new one.',
+                    ),
+                  }]
+                : [{
+                    label: props.t('plugins.channels.surface.webhookEndpointSecret', 'Webhook secret (shown once)'),
+                    value: endpointSetupRequired.oneTimeGeneratedSecret,
+                  }]),
+            ]}
+          />
+          <Action.Copy
+            testID="channels-provider-setup-webhook-url-copy"
+            title={props.t('plugins.channels.surface.webhookEndpointUrlCopy', 'Copy webhook URL')}
+            value={endpointSetupRequired.publicUrl}
+          />
+          {endpointSetupRequired.oneTimeGeneratedSecret === undefined ? null : (
+            <Action.Copy
+              testID="channels-provider-setup-webhook-secret-copy"
+              title={props.t('plugins.channels.surface.webhookEndpointSecretCopy', 'Copy webhook secret')}
+              value={endpointSetupRequired.oneTimeGeneratedSecret}
+            />
+          )}
+          <Text
+            testID="channels-provider-setup-webhook-readiness"
+            tone="info"
+            value={endpointSetupRequired.readiness === 'credentialDisclosureLost'
+              ? props.t(
+                'plugins.channels.surface.webhookEndpointCredentialDisclosureLost',
+                'The endpoint exists, but its one-time secret is no longer available here. Rotate its credential if needed.',
+              )
+              : props.t(
+                'plugins.channels.surface.webhookEndpointAwaitingConfirmation',
+                'Save this webhook with your provider, then create the connection again so Happier can confirm delivery.',
+              )}
           />
         </Stack>
       ) : null}

@@ -244,6 +244,18 @@ class MemoryCollection {
     return { rowId, revision: row.revision, deleted: true as const };
   }
 
+  async forget(rowId: string, input: Readonly<{ expectedRevision: number }>) {
+    const current = this.rows.get(rowId);
+    if (current === undefined) return { rowId, forgotten: true as const };
+    if (current.deleted !== true || current.revision !== input.expectedRevision) {
+      throw Object.assign(new Error('compare-and-swap conflict'), {
+        code: 'plugin_collection_conflict',
+      });
+    }
+    this.rows.delete(rowId);
+    return { rowId, forgotten: true as const };
+  }
+
   async batch(operations: readonly Readonly<Record<string, unknown>>[]) {
     if (this.options.enforceUniqueBatchRows === true) {
       const rowIds = operations.map((operation) => (
@@ -938,8 +950,11 @@ describe('Channels outward-delivery supervisor', () => {
       now: () => terminalAt + THIRTY_DAYS_MS,
     });
     expect(await deliveries.get(delivered.custodyId)).toBeNull();
+    expect(deliveries.rows.get(delivered.custodyId)).toBeUndefined();
     expect(await deliveries.get(transitioned.record.custodyId)).toBeNull();
+    expect(deliveries.rows.get(transitioned.record.custodyId)).toBeUndefined();
     expect(await deliveries.get(notDelivered.custodyId)).toBeNull();
+    expect(deliveries.rows.get(notDelivered.custodyId)).toBeUndefined();
     expect(await deliveries.get(resolved.record.custodyId)).not.toBeNull();
     expect([...deliveries.rows.values()].filter((row) => row.deleted !== true).map((row) => (
       (row.value.payload as Readonly<Record<string, unknown>>).state
@@ -950,6 +965,7 @@ describe('Channels outward-delivery supervisor', () => {
       now: () => resolvedAt + THIRTY_DAYS_MS,
     });
     expect(await deliveries.get(resolved.record.custodyId)).toBeNull();
+    expect(deliveries.rows.get(resolved.record.custodyId)).toBeUndefined();
     expect([...deliveries.rows.values()].filter((row) => row.deleted !== true).map((row) => (
       (row.value.payload as Readonly<Record<string, unknown>>).state
     ))).toEqual(expect.arrayContaining(['partial', 'outcomeUnknown']));

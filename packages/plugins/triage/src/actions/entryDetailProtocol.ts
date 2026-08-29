@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
@@ -48,8 +47,6 @@ export const TriageReadEntryDetailInputV1Schema = defineProtocolObject({
 export type TriageReadEntryDetailInputV1 = ReturnType<
     typeof TriageReadEntryDetailInputV1Schema.parse
 >;
-export const TriageReadEntryDetailInputV1JsonSchema: PluginJsonSchema =
-    TriageReadEntryDetailInputV1Schema.jsonSchema;
 
 /**
  * `unavailable` is the honest answer for a selection whose connection is no
@@ -91,8 +88,6 @@ export const TriageReadEntryDetailResultV1Schema = defineProtocolUnion([
 export type TriageReadEntryDetailResultV1 = ReturnType<
     typeof TriageReadEntryDetailResultV1Schema.parse
 >;
-export const TriageReadEntryDetailResultV1JsonSchema: PluginJsonSchema =
-    TriageReadEntryDetailResultV1Schema.jsonSchema;
 
 /** The detail read's plugin-local contribution id. */
 export const TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 = 'entries/read-detail-v1';

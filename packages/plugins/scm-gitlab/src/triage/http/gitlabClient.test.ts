@@ -4,12 +4,18 @@ import { normalizeGitlabConfiguredBaseUrl } from '../origin.js';
 import {
   authorizeGitlabInvocation,
   buildGitlabApiUrl,
+  buildGitlabGraphqlUrl,
   classifyGitlabFailure,
   requestGitlabJson,
   type GitlabAuthorizedInvocation,
   type GitlabHttpFetcher,
   type GitlabHttpResponse,
 } from './gitlabClient.js';
+import {
+  buildGitlabItemUrl,
+  buildGitlabMergeRequestMergeUrl,
+  buildGitlabNotesUrl,
+} from '../detail/routes.js';
 import { createGitlabResponseHeaders } from './gitlabHeaders.js';
 
 const NOW_MS = 1_609_844_100_000;
@@ -131,6 +137,19 @@ describe('buildGitlabApiUrl', () => {
       .toBe('https://gitlab.com/api/v4/merge_requests?scope=created_by_me');
     expect(buildGitlabApiUrl(originOf('https://forge.example/Corp/GitLab'), 'issues'))
       .toBe('https://forge.example/Corp/GitLab/api/v4/issues');
+  });
+
+  it('keeps exact get, detail and mutation routes under a configured base path', () => {
+    const origin = originOf('https://forge.example/Corp/GitLab');
+    const route = { origin, projectId: 3, iid: '7', kindId: 'merge-request' as const };
+    expect(buildGitlabItemUrl(route))
+      .toBe('https://forge.example/Corp/GitLab/api/v4/projects/3/merge_requests/7');
+    expect(buildGitlabNotesUrl(route, 20))
+      .toBe('https://forge.example/Corp/GitLab/api/v4/projects/3/merge_requests/7/notes?order_by=created_at&sort=desc&per_page=20');
+    expect(buildGitlabMergeRequestMergeUrl(route))
+      .toBe('https://forge.example/Corp/GitLab/api/v4/projects/3/merge_requests/7/merge');
+    expect(buildGitlabGraphqlUrl(origin))
+      .toBe('https://forge.example/Corp/GitLab/api/graphql');
   });
 });
 

@@ -35,9 +35,8 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Pi external-session takeover', () => {
-  it('resolves the existing Pi session for native resume in the selected workspace', async () => {
-    expect(resolvePiExternalSessionTakeoverPlan(request())).toEqual({
-      directory: '/workspace/original',
+  it('resolves the existing Pi session for native resume without requiring the optional linkedDirectory', async () => {
+    const expectedPlan = {
       runtimeDescriptorV1: {
         v: 1,
         agentId: 'pi',
@@ -50,28 +49,19 @@ describe('Pi external-session takeover', () => {
       environmentVariables: {
         PI_CODING_AGENT_DIR: '/home/lee/.pi/agent',
       },
-    });
+    };
+
+    expect(resolvePiExternalSessionTakeoverPlan(request())).toEqual(expectedPlan);
 
     await expect(piExternalSessionTakeoverContribution.resolveLaunch(
       request(),
-    )).resolves.toEqual({
-      ok: true,
-      value: {
-        directory: '/workspace/original',
-        runtimeDescriptorV1: {
-          v: 1,
-          agentId: 'pi',
-          agent: {
-            resumeStrategy: 'sessionFileAbsolutePreferred',
-            providerSessionId: 'pi-session-1',
-            sessionFile: '/home/lee/.pi/agent/sessions/pi-session-1.jsonl',
-          },
-        },
-        environmentVariables: {
-          PI_CODING_AGENT_DIR: '/home/lee/.pi/agent',
-        },
-      },
-    });
+    )).resolves.toEqual({ ok: true, value: expectedPlan });
+
+    // linkedDirectory is optional host context: its absence must not fail a
+    // takeover whose exact identity is the canonical sessionFile descriptor.
+    await expect(piExternalSessionTakeoverContribution.resolveLaunch(
+      request({ linkedDirectory: undefined }),
+    )).resolves.toEqual({ ok: true, value: expectedPlan });
   });
 
   it('carries the selected canonical file in the public descriptor when two Pi files share an id', async () => {

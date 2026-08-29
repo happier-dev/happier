@@ -70,6 +70,15 @@ describe('Codex external-session candidate helpers', () => {
     const cursor = encodeCodexExternalSessionIndexCursor({
       ...createInitialCodexExternalSessionIndexCursor(),
       rolloutOffset: 42,
+      rolloutScan: {
+        kind: 'chunkScan',
+        boundary: {
+          sourceGeneration: 'source-generation',
+          containerKey: '000000:2:2026/07/23',
+          fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
+          scanned: 1_250,
+        },
+      },
       suppressedRolloutIds: ['native-owned-rollout-twin'],
       active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
       archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
@@ -79,6 +88,15 @@ describe('Codex external-session candidate helpers', () => {
       v: 6,
       kind: 'codexMergedCandidatePage',
       rolloutOffset: 42,
+      rolloutScan: {
+        kind: 'chunkScan',
+        boundary: {
+          sourceGeneration: 'source-generation',
+          containerKey: '000000:2:2026/07/23',
+          fileName: 'rollout-2026-07-23T10-00-00-session.jsonl',
+          scanned: 1_250,
+        },
+      },
       suppressedRolloutIds: ['native-owned-rollout-twin'],
       active: { cursor: 'active-next', previousCursor: null, offset: 3, done: false },
       archived: { cursor: null, previousCursor: 'archived-prior', offset: 0, done: false },
@@ -90,6 +108,42 @@ describe('Codex external-session candidate helpers', () => {
         Buffer.from(JSON.stringify({ v: 1, kind: 'index', offset: -7 }), 'utf8').toString('base64url'),
       ),
     ).toBeNull();
+  });
+
+  it('rejects a v6 cursor whose rollout scan state is not a strict producer', () => {
+    const base = {
+      v: 6,
+      kind: 'codexMergedCandidatePage',
+      rolloutOffset: 0,
+      rolloutScan: { kind: 'auto', boundary: null },
+      suppressedRolloutIds: [],
+      active: { cursor: null, previousCursor: null, offset: 0, done: true },
+      archived: { cursor: null, previousCursor: null, offset: 0, done: true },
+    } as const;
+    const encode = (cursor: unknown): string =>
+      Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+
+    // A chunkScan producer must name a well-formed resume boundary...
+    expect(decodeCodexExternalSessionIndexCursor(encode({
+      ...base,
+      rolloutScan: {
+        kind: 'chunkScan',
+        boundary: { sourceGeneration: 'g', containerKey: 'c', fileName: 'f', scanned: '1' },
+      },
+    }))).toBeNull();
+    // ...and every other producer must not carry one.
+    expect(decodeCodexExternalSessionIndexCursor(encode({
+      ...base,
+      rolloutScan: { kind: 'done', boundary: null },
+    }))).not.toBeNull();
+    expect(decodeCodexExternalSessionIndexCursor(encode({
+      ...base,
+      rolloutScan: { kind: 'nonsense', boundary: null },
+    }))).toBeNull();
+    expect(decodeCodexExternalSessionIndexCursor(encode({
+      ...base,
+      rolloutScan: { kind: 'done', boundary: { sourceGeneration: 'g', containerKey: 'c', fileName: 'f', scanned: 1 } },
+    }))).toBeNull();
   });
 
   it('resolves app-server listing budget from Codex external-session env', () => {

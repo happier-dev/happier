@@ -70,8 +70,13 @@ import type { GitlabKindId } from './types.js';
 export const GITLAB_CONNECTED_ACCOUNT_ID = 'gitlab-account';
 /** The declared host-access purpose used to list and materialize that account. */
 export const GITLAB_CONNECTED_ACCOUNT_PURPOSE = 'gitlab-connected-account';
-/** The network host-access request that already owns this plugin's GitLab origin. */
-export const GITLAB_NETWORK_HOST_ACCESS_ID = 'gitlab-api';
+/** Public GitLab.com stays public-only; configured self-hosted origins may be private. */
+export const GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID = 'gitlab-cloud-api';
+export const GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'gitlab-account-api';
+export const GITLAB_NETWORK_HOST_ACCESS_IDS = Object.freeze([
+  GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+  GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+]);
 
 /** `pullRequest` is schema-illegal as a local id; `merge-request` is GitLab's word anyway. */
 export const GITLAB_TRIAGE_CONTRIBUTION_LOCAL_ID = 'gitlab-forge';
@@ -309,7 +314,7 @@ function declareOperationAction(input: Readonly<{
     dangerLevel: declaration.dangerLevel as 'safe' | 'writesLocal',
     inputSchema: declaration.input.schema.jsonSchema,
     resultSchema: declaration.resultSchema.jsonSchema,
-    hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+    hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     ...(input.connectedAccountPurposeBindings === undefined
       ? {}
       : { connectedAccountPurposeBindings: input.connectedAccountPurposeBindings }),
@@ -433,7 +438,7 @@ export const GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS: readonly TriageActionDecl
     surfaces: ['ui'] as const,
     execution: { target: 'daemon' as const },
     dangerLevel: 'safe' as const,
-    hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+    hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   })));
 
@@ -717,7 +722,7 @@ export const GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS:
     surfaces: ['ui'] as const,
     placementBindings: ['detailsPanel'] as const,
     execution: { target: 'daemon' as const },
-    hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+    hostAccess: [...GITLAB_NETWORK_HOST_ACCESS_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   })));
 

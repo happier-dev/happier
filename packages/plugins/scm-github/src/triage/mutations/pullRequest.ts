@@ -229,8 +229,8 @@ async function send(
 
 /**
  * The single confirming read every outcome that may have changed provider state
- * runs, under the same signal and the same source-owned private Action deadline
- * as the write.
+ * runs under the same caller-owned signal/lifetime as the write. The source
+ * adds no private timer when the caller/platform supplied none.
  */
 async function confirm(
   localRef: GithubTriageEntryLocalRefV1,

@@ -1,4 +1,5 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -12,13 +13,15 @@ import { GITLAB_ADDITIONAL_UI_TRANSLATIONS } from './ui/additionalTranslations.j
 import {
   GITLAB_ORIGIN_CONFIGURATION_FIELD,
   GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID,
+  GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID,
   GITLAB_TOKEN_CREDENTIAL_KEY,
   gitlabConnectedAccountRuntime,
 } from './auth/connectedAccountRuntime.js';
 import {
   GITLAB_CONNECTED_ACCOUNT_ID,
   GITLAB_CONNECTED_ACCOUNT_PURPOSE,
-  GITLAB_NETWORK_HOST_ACCESS_ID,
+  GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+  GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
   GITLAB_TRIAGE_ACTION_DECLARATIONS,
   GITLAB_TRIAGE_ACTION_IDS,
   GITLAB_TRIAGE_CONTRIBUTION_DECLARATION,
@@ -35,6 +38,7 @@ import {
   GITLAB_TRIAGE_SETTINGS_PAGE_ID,
   GITLAB_TRIAGE_SETTINGS_RENDERER_ID,
 } from './triage/contribution.js';
+import { GITLAB_PUBLIC_ORIGIN } from './triage/origin.js';
 import {
   listGitlabActivityEvents,
   listGitlabChanges,
@@ -91,14 +95,11 @@ export const GITLAB_PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
-      id: GITLAB_NETWORK_HOST_ACCESS_ID,
+      id: GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
       capability: 'network',
-      reason: 'Access the configured GitLab SCM provider origin.',
+      reason: 'Access the public GitLab.com API.',
       scope: {
-        targets: [
-          { kind: 'scmProviderOrigin', provider: 'gitlab' },
-          { kind: 'connectedAccountOrigin', service: GITLAB_CONNECTED_ACCOUNT_ID },
-        ],
+        targets: [{ kind: 'fixedOrigin', origin: GITLAB_PUBLIC_ORIGIN }],
         // Exactly the verbs the declared Actions consume, and no others. The
         // host revalidates the origin AND the method at dispatch and refuses an
         // ungranted verb before it reaches GitLab, so a write missing from this
@@ -107,6 +108,16 @@ export const GITLAB_PLUGIN = definePlugin({
         // GraphQL draft transition. A verb with no declaring Action is not
         // granted for symmetry.
         methods: ['GET', 'POST', 'PUT'],
+      },
+    }, {
+      id: GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+      capability: 'network',
+      reason: 'Access the exact self-managed GitLab deployment configured on the selected'
+        + ' Connected Account, including deployments on a private network.',
+      scope: {
+        targets: [{ kind: 'connectedAccountOrigin', service: GITLAB_CONNECTED_ACCOUNT_ID }],
+        methods: ['GET', 'POST', 'PUT'],
+        privateNetwork: true,
       },
     }, {
       id: 'gitlab-cli-process',
@@ -132,7 +143,7 @@ export const GITLAB_PLUGIN = definePlugin({
     [GITLAB_SCM_HOSTING_PROVIDER_LOCAL_ID]: {
       declaration: {
         title: 'GitLab',
-        description: 'GitLab.com repositories.',
+        description: 'GitLab.com and self-managed GitLab repositories.',
         kind: 'gitlab',
         authService: GITLAB_CONNECTED_ACCOUNT_ID,
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
@@ -162,7 +173,7 @@ export const GITLAB_PLUGIN = definePlugin({
           modes: [{
             id: GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID,
             kind: 'manual',
-            title: 'Personal access token',
+            title: 'GitLab.com personal access token',
             outcomeReconciliation: 'none',
             fields: [{
               id: GITLAB_TOKEN_CREDENTIAL_KEY,
@@ -178,11 +189,35 @@ export const GITLAB_PLUGIN = definePlugin({
               changeBehavior: 'reconnect',
               fields: [{
                 id: GITLAB_ORIGIN_CONFIGURATION_FIELD,
-                title: 'GitLab URL',
-                description: 'The base URL of your GitLab, for example https://gitlab.com.',
+                title: 'GitLab deployment',
+                description: 'Connect to GitLab.com.',
+                semantic: 'connectedAccountFixedOrigin',
+                schema: { type: 'string', enum: [GITLAB_PUBLIC_ORIGIN] },
+                originByValue: { [GITLAB_PUBLIC_ORIGIN]: GITLAB_PUBLIC_ORIGIN },
+                secret: false,
+                required: true,
+              }],
+            },
+          }, {
+            id: GITLAB_SELF_HOSTED_PERSONAL_ACCESS_TOKEN_MODE_ID,
+            kind: 'manual',
+            title: 'Self-managed GitLab personal access token',
+            outcomeReconciliation: 'none',
+            fields: [{
+              id: GITLAB_TOKEN_CREDENTIAL_KEY,
+              title: 'Personal access token',
+              description: 'A GitLab personal access token. Reading needs read_api; mutations need api.',
+              schema: { type: 'string', minLength: 1 },
+              secret: true,
+            }],
+            configuration: {
+              scope: 'account',
+              changeBehavior: 'reconnect',
+              fields: [{
+                id: GITLAB_ORIGIN_CONFIGURATION_FIELD,
+                title: 'Self-managed GitLab URL',
+                description: 'The exact HTTPS base URL of your GitLab deployment, including any path prefix.',
                 semantic: 'connectedAccountOrigin',
-                // Canonical origin parsing/admission is host-owned. Do not add
-                // a second URL length policy at the provider declaration.
                 schema: { type: 'string', minLength: 1 },
                 secret: false,
                 required: true,
@@ -314,7 +349,7 @@ export const GITLAB_PLUGIN = definePlugin({
         artifact: GITLAB_TRIAGE_SETTINGS_ARTIFACT_ID,
         // The page's whole purpose is two Action invocations — this source's own
         // discovery read and the target-owned administration write.
-        requiredHostMethods: ['executeAction'],
+        requiredHostMethods: ['executeAction', 'openConnectedAccounts'],
       }],
       settingsGroups: [{
         id: GITLAB_TRIAGE_SETTINGS_GROUP_ID,
@@ -335,7 +370,7 @@ export const GITLAB_PLUGIN = definePlugin({
         defaultRank: 10,
         renderer: GITLAB_TRIAGE_SETTINGS_RENDERER_ID,
       }],
-      translations: [
+      translations: withTriageSourceSettingsTranslationsV1([
         { locale: 'en', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["en"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["en"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PRs & Issues', 'plugins.gitlab.settings.sources.subtitle': 'Choose which GitLab accounts and projects appear in PRs & Issues.' } },
         { locale: 'ru', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["ru"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["ru"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR и задачи', 'plugins.gitlab.settings.sources.subtitle': 'Выберите учетные записи и проекты GitLab, которые будут отображаться в разделе PR и задач.' } },
         { locale: 'pl', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["pl"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["pl"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR-y i zgłoszenia', 'plugins.gitlab.settings.sources.subtitle': 'Wybierz konta i projekty GitLab wyświetlane w sekcji PR-ów i zgłoszeń.' } },
@@ -348,7 +383,7 @@ export const GITLAB_PLUGIN = definePlugin({
         { locale: 'zh-Hans', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["zh-Hans"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["zh-Hans"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR 和问题', 'plugins.gitlab.settings.sources.subtitle': '选择要在 PR 和问题中显示的 GitLab 帐户和项目。' } },
         { locale: 'zh-Hant', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["zh-Hant"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["zh-Hant"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR 與問題', 'plugins.gitlab.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 GitLab 帳戶和專案。' } },
         { locale: 'ja', messages: { ...GITLAB_RENDER_UI_TRANSLATIONS["ja"], ...GITLAB_ADDITIONAL_UI_TRANSLATIONS["ja"], 'plugins.gitlab.settings.group': 'GitLab', 'plugins.gitlab.settings.sources': 'PR と課題', 'plugins.gitlab.settings.sources.subtitle': 'PR と課題に表示する GitLab アカウントとプロジェクトを選択します。' } },
-      ],
+      ]),
   },
   contributesTo: {
     [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: {

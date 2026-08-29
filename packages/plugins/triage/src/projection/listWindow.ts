@@ -483,7 +483,7 @@ export function foldTriageListWindow(input: Readonly<{
             sortAtMs: content === null ? latestObservedAtMs(observations) : sortAtMsForContent(content),
             presence: rollUpPresence(observations),
             attention,
-            selected: selectObservationInstance(observations, activeSourceInstanceIds, attention, null),
+            selected: selectObservationInstance(observations, activeSourceInstanceIds, attention),
             observations,
         };
         unfilteredRows.push(row);

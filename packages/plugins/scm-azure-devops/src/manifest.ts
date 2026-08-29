@@ -13,6 +13,7 @@
  */
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -253,7 +254,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       artifact: AZURE_DEVOPS_TRIAGE_SETTINGS_ARTIFACT_ID,
       // The page's whole purpose is two Action invocations — this source's own
       // discovery read and the target-owned administration write.
-      requiredHostMethods: ['executeAction'],
+      requiredHostMethods: ['executeAction', 'openConnectedAccounts'],
     }],
     settingsGroups: [{
       id: AZURE_DEVOPS_TRIAGE_SETTINGS_GROUP_ID,
@@ -274,7 +275,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: AZURE_DEVOPS_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [
+    translations: withTriageSourceSettingsTranslationsV1([
       { locale: 'en', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.en, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PRs & Issues', 'plugins.azureDevops.settings.sources.subtitle': 'Choose which Azure DevOps accounts and projects appear in PRs & Issues.' } },
       { locale: 'ru', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ru, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR и задачи', 'plugins.azureDevops.settings.sources.subtitle': 'Выберите учетные записи и проекты Azure DevOps, которые будут отображаться в разделе PR и задач.' } },
       { locale: 'pl', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.pl, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR-y i zgłoszenia', 'plugins.azureDevops.settings.sources.subtitle': 'Wybierz konta i projekty Azure DevOps wyświetlane w sekcji PR-ów i zgłoszeń.' } },
@@ -287,7 +288,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
       { locale: 'zh-Hans', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hans'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 和问题', 'plugins.azureDevops.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Azure DevOps 帐户和项目。' } },
       { locale: 'zh-Hant', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS['zh-Hant'], 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR 與問題', 'plugins.azureDevops.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Azure DevOps 帳戶和專案。' } },
       { locale: 'ja', messages: { ...AZURE_DEVOPS_UI_TRANSLATIONS.ja, 'plugins.azureDevops.settings.group': 'Azure DevOps', 'plugins.azureDevops.settings.sources': 'PR と課題', 'plugins.azureDevops.settings.sources.subtitle': 'PR と課題に表示する Azure DevOps アカウントとプロジェクトを選択します。' } },
-    ],
+    ]),
   },
   actions: {
     [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances]: {

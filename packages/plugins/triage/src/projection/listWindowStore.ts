@@ -1,4 +1,4 @@
-import type { Disposable, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { createCoalescedScheduler } from '@happier-dev/plugin-sdk/async';
 
 import type { CorpusQualifiedObservationV1 } from '../corpus/fold/qualify.js';
@@ -197,12 +197,6 @@ export type TriageListWindowReaderV1 = (
     options?: PluginCancellationOptions,
 ) => Promise<TriageListEntriesResultV1>;
 
-/** The artifact-local currentness facade: an Account retirement cancels the mount. */
-export type TriageListWindowLifetimeV1 = Readonly<{
-    isCurrent(): boolean;
-    onRetire(cancel: () => void): Disposable;
-}>;
-
 type LaneState = {
     lane: TriageListLaneV1;
     /** Last-known-good: retained verbatim when the next pass for this lane fails. */
@@ -288,7 +282,6 @@ export function createTriageListWindowStore(deps: Readonly<{
     readEntries: TriageListWindowReaderV1;
     nowMs: () => number;
     lens?: TriageListLensV1;
-    lifetime?: TriageListWindowLifetimeV1;
     onUnexpectedError?: (error: unknown) => void;
 }>): TriageListWindowStoreV1 {
     const listeners = new Set<() => void>();
@@ -327,7 +320,6 @@ export function createTriageListWindowStore(deps: Readonly<{
     /** Whether the last append ended with a connection this mount could not read. */
     let appendFailed = false;
     let disposed = false;
-    let retirement: Disposable | null = null;
     let refreshDeadlineWake: ReturnType<typeof setTimeout> | null = null;
     let snapshot: TriageListWindowSnapshotV1 = Object.freeze({
         freshness: 'unknown',
@@ -366,7 +358,7 @@ export function createTriageListWindowStore(deps: Readonly<{
     }
 
     function isCurrent(): boolean {
-        return !disposed && (deps.lifetime?.isCurrent() ?? true);
+        return !disposed;
     }
 
     function freshness(): TriageListWindowSnapshotV1['freshness'] {
@@ -625,10 +617,9 @@ export function createTriageListWindowStore(deps: Readonly<{
      * observations — 111 at today's 56 — and `foldTriageListWindow` then cuts
      * them to `limit` rows *after* applying the lens it was given. Two costs
      * follow, both bounded by that over-delivery and both visible rather than
-     * silent: a cut window is `coverage: 'partial'`, and `retainedLane` is what
-     * carries that verdict into this mount's own rebuilt window rather than
-     * letting the rebuild re-derive a completeness the page it kept cannot
-     * support:
+     * silent. The scan-pass owner leaves the lane unexhausted whenever another
+     * native page could not fit, so rebuilding from that lane preserves
+     * `coverage: 'partial'` without a second correction owner here:
      *
      *  - the retained page is the *newest* rows of what came back, so a reader
      *    looking oldest-first sees the oldest of those, not the oldest the
@@ -893,7 +884,7 @@ export function createTriageListWindowStore(deps: Readonly<{
                     outcomes.set(sourceInstanceId, { kind: 'interrupted' });
                     continue;
                 }
-                settled.set(sourceInstanceId, retainedLane(lane, result));
+                settled.set(sourceInstanceId, lane);
                 outcomes.set(sourceInstanceId, { kind: 'completed' });
             }
         }
@@ -920,32 +911,6 @@ export function createTriageListWindowStore(deps: Readonly<{
             sourceInstanceId,
             outcome: outcomes.get(sourceInstanceId) ?? { kind: 'interrupted' },
         }));
-    }
-
-    /**
-     * The lane fact this mount retains, corrected for what the wire could carry.
-     *
-     * A lane may report a settled end of its walk and still have qualified more
-     * observations than one window carries: the Action folds the pass through
-     * the same projection owner and cuts it to the row bound *before* the wire,
-     * and this mount retains only what came back. The Action says so — a cut
-     * window is `coverage: 'partial'` — but that claim describes the Action's
-     * window, and this mount rebuilds its own from the lanes it has merged. Let
-     * `exhausted` through unchanged and a single connection that over-delivered
-     * tells the reader every configured source answered, over a list missing
-     * the rows that were cut, with nothing to error on.
-     *
-     * The correction is made on `exhausted` because that is the one member the
-     * coverage owner reads (`projection/listWindow.ts`), so the fold stays the
-     * single decision-maker instead of gaining a second coverage rule beside
-     * it. Reading `coverage` back is exact here rather than a guess: this pass
-     * asks one instance, so its window has exactly one lane, and with the
-     * configured set carried whole and that lane exhausted the only term left
-     * that can make it partial is the cut itself.
-     */
-    function retainedLane(lane: TriageListLaneV1, result: TriageListEntriesResultV1): TriageListLaneV1 {
-        void result;
-        return lane;
     }
 
     /**
@@ -1216,14 +1181,11 @@ export function createTriageListWindowStore(deps: Readonly<{
             clearTimeout(refreshDeadlineWake);
             refreshDeadlineWake = null;
         }
-        retirement?.dispose();
-        retirement = null;
         scheduler.dispose();
         coordinator.dispose();
         listeners.clear();
     }
 
-    retirement = deps.lifetime?.onRetire(dispose) ?? null;
     publish();
 
     return Object.freeze({
@@ -1250,6 +1212,11 @@ export function createTriageListWindowStore(deps: Readonly<{
             // One append at a time, and the published arm says so: the two read
             // the same flag, so a row can never offer a press this refuses.
             if (appending) return Promise.resolve();
+            // A lens replacement has invalidated every continuation from the
+            // previous generation.  The replacement refresh may be waiting on
+            // the coordinator's pacing window; do not let Load More race it
+            // and send an old cursor under the new lens.
+            if (pagingResetPending || generationReplacementPending) return Promise.resolve();
             if (appendFailed) {
                 // Retry the depth already asked for. Deepening here would step
                 // past a window this mount never received.

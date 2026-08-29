@@ -299,7 +299,7 @@
         "limits": {
           "synthesize": {
             "maxInputCharacters": 200000,
-            "maxOutputBytes": 33554432
+            "maxOutputBytes": 16777216
           }
         },
         "platforms": [

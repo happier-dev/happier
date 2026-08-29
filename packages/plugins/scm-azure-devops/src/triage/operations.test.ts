@@ -316,6 +316,26 @@ describe('Azure DevOps Triage listInstances', () => {
     expect(result.failure.code).toBe('azure-devops/account-listing-failed');
   });
 
+  it('preserves deadline and cancellation reasons from Connected Accounts listing', async () => {
+    const timedOut = await runAzureTriageListInstances({
+      connectedAccounts: lister(new DOMException('deadline elapsed', 'TimeoutError')),
+      signal: new AbortController().signal,
+    });
+    const cancelled = await runAzureTriageListInstances({
+      connectedAccounts: lister(new DOMException('cancelled', 'AbortError')),
+      signal: new AbortController().signal,
+    });
+
+    expect(timedOut).toMatchObject({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'azure-devops/timed-out' },
+    });
+    expect(cancelled).toMatchObject({
+      kind: 'failed',
+      failure: { class: 'transient', code: 'azure-devops/cancelled' },
+    });
+  });
+
   it('projects two purpose-scoped account rows into two candidates with their exact binding refs', async () => {
     const calls: string[] = [];
     const result = await runAzureTriageListInstances({

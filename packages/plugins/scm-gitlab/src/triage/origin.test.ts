@@ -40,31 +40,34 @@ describe('normalizeGitlabConfiguredBaseUrl', () => {
 });
 
 describe('admitGitlabV1Deployment', () => {
-  it('admits exactly gitlab.com and rejects every other origin as self-managed-floor-unset', () => {
-    const admitted = admitGitlabV1Deployment('https://gitlab.com');
-    expect(admitted.kind).toBe('admitted');
+  it('admits the exact configured HTTPS GitLab base, including a self-managed path prefix', () => {
+    expect(admitGitlabV1Deployment('https://gitlab.com')).toMatchObject({
+      kind: 'admitted',
+      origin: { normalized: 'https://gitlab.com' },
+    });
+    expect(admitGitlabV1Deployment('https://Forge.Example/Corp/GitLab/')).toMatchObject({
+      kind: 'admitted',
+      origin: {
+        origin: 'https://forge.example',
+        pathPrefix: '/Corp/GitLab',
+        normalized: 'https://forge.example/Corp/GitLab',
+      },
+    });
+  });
 
+  it('rejects non-HTTPS and non-base URL shapes instead of weakening configured authority', () => {
     for (const rejected of [
-      'https://gitlab.example.com',
-      'https://gitlab.com.evil.example',
-      'https://gitlab.com:8443',
-      'https://gitlab.com/gitlab',
       'http://gitlab.com',
       'https://user@gitlab.com',
+      'https://gitlab.example.com/path?token=secret',
+      'https://gitlab.example.com/path#fragment',
     ]) {
       const result = admitGitlabV1Deployment(rejected);
       expect(result, rejected).toMatchObject({
         kind: 'rejected',
-        failure: { class: 'unsupportedContract', code: 'self-managed-floor-unset' },
+        failure: { class: 'unsupportedContract', code: 'configured-base-unusable' },
       });
     }
-  });
-
-  it('carries no version, edition, or release-floor evidence in its rejection', () => {
-    const result = admitGitlabV1Deployment('https://gitlab.example.com');
-    if (result.kind !== 'rejected') throw new Error('expected a rejection');
-    expect(Object.keys(result.failure).sort()).toEqual(['class', 'code', 'detail']);
-    expect(result.failure.detail).not.toMatch(/version|release|floor|\d+\.\d+/iu);
   });
 });
 

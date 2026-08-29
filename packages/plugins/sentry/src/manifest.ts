@@ -1,4 +1,5 @@
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
+import { withTriageSourceSettingsTranslationsV1 } from '@happier-dev/triage-sources/translations';
 import {
   TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
   TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -278,7 +279,7 @@ export const SENTRY_PLUGIN = definePlugin({
       artifact: SENTRY_TRIAGE_SETTINGS_ARTIFACT_ID,
       // The page's whole purpose is two Action invocations — this source's own
       // discovery read and the target-owned administration write.
-      requiredHostMethods: ['executeAction'],
+      requiredHostMethods: ['executeAction', 'openConnectedAccounts'],
     }],
     settingsGroups: [{
       id: SENTRY_TRIAGE_SETTINGS_GROUP_ID,
@@ -299,7 +300,7 @@ export const SENTRY_PLUGIN = definePlugin({
       defaultRank: 10,
       renderer: SENTRY_TRIAGE_SETTINGS_RENDERER_ID,
     }],
-    translations: [
+    translations: withTriageSourceSettingsTranslationsV1([
       { locale: 'en', messages: { ...SENTRY_UI_TRANSLATIONS.en, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PRs & Issues', 'plugins.sentry.settings.sources.subtitle': 'Choose which Sentry organizations appear in PRs & Issues.' } },
       { locale: 'ru', messages: { ...SENTRY_UI_TRANSLATIONS.ru, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR и задачи', 'plugins.sentry.settings.sources.subtitle': 'Выберите организации Sentry, которые будут отображаться в разделе PR и задач.' } },
       { locale: 'pl', messages: { ...SENTRY_UI_TRANSLATIONS.pl, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR-y i zgłoszenia', 'plugins.sentry.settings.sources.subtitle': 'Wybierz organizacje Sentry wyświetlane w sekcji PR-ów i zgłoszeń.' } },
@@ -312,7 +313,7 @@ export const SENTRY_PLUGIN = definePlugin({
       { locale: 'zh-Hans', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hans'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 和问题', 'plugins.sentry.settings.sources.subtitle': '选择要在 PR 和问题中显示的 Sentry 组织。' } },
       { locale: 'zh-Hant', messages: { ...SENTRY_UI_TRANSLATIONS['zh-Hant'], 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR 與問題', 'plugins.sentry.settings.sources.subtitle': '選擇要在 PR 與問題中顯示的 Sentry 組織。' } },
       { locale: 'ja', messages: { ...SENTRY_UI_TRANSLATIONS.ja, 'plugins.sentry.settings.group': 'Sentry', 'plugins.sentry.settings.sources': 'PR と課題', 'plugins.sentry.settings.sources.subtitle': 'PR と課題に表示する Sentry 組織を選択します。' } },
-    ],
+    ]),
   },
   actions: {
     [SENTRY_ACTION_IDS.listInstances]: {

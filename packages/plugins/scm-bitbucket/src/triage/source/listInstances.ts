@@ -58,7 +58,11 @@ export async function listBitbucketSourceInstances(
   if (outcome.kind === 'failed') {
     return {
       kind: 'failed',
-      failure: toTriageSourceFailure(classifyBitbucketAuthorizationThrow(outcome.error)),
+      failure: toTriageSourceFailure(outcome.reason === 'deadline'
+        ? createBitbucketFailure('transient', 'invocation-deadline-exceeded')
+        : outcome.reason === 'cancelled'
+          ? createBitbucketFailure('cancelled', 'invocation-cancelled')
+          : classifyBitbucketAuthorizationThrow(outcome.error)),
     };
   }
   // A purpose with no selected account has an empty authorized set. Bitbucket was

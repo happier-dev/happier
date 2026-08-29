@@ -304,12 +304,17 @@ describe('GitLab scan', () => {
     expect(seam.requested.filter((url) => !url.endsWith('/api/v4/user'))).toEqual([]);
   });
 
-  it('stops a non-GitLab.com configured deployment before it authorizes anything', async () => {
-    const seam = harness({});
+  it('routes a self-managed configured base path through the normal scan owner', async () => {
+    const seam = harness({
+      '/Corp/GitLab/api/v4/user': { body: VIEWER },
+      '/Corp/GitLab/api/v4/merge_requests': { body: mergeRequestList },
+    });
     const result = await scanGitlabTriageSource({
       scan: {
         v: 1,
-        instance: configuredInstance({ localInstanceKey: 'https://gitlab.example.test' }),
+        instance: configuredInstance({
+          localInstanceKey: 'https://gitlab.example.test/Corp/GitLab',
+        }),
         page: { kind: 'initial', limit: 32 },
       },
       connectedAccounts: seam.connectedAccounts,
@@ -318,12 +323,21 @@ describe('GitLab scan', () => {
       nowMs: NOW_MS,
     });
 
-    expect(result).toMatchObject({
-      kind: 'failed',
-      failure: { class: 'unsupportedContract', code: 'self-managed-floor-unset' },
-    });
-    expect(seam.materializeListedAccount).not.toHaveBeenCalled();
-    expect(seam.fetcher).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ kind: 'page' });
+    expect(seam.materializeListedAccount).toHaveBeenCalledWith(expect.objectContaining({
+      materialization: {
+        kind: 'httpHeaders',
+        origin: 'https://gitlab.example.test',
+        headerNames: ['authorization'],
+      },
+    }), expect.anything());
+    expect(seam.requested).toEqual([
+      'https://gitlab.example.test/Corp/GitLab/api/v4/user',
+      expect.stringContaining('https://gitlab.example.test/Corp/GitLab/api/v4/merge_requests?'),
+    ]);
+    expect(seam.requested.every((url) => (
+      url.startsWith('https://gitlab.example.test/Corp/GitLab/api/v4/')
+    ))).toBe(true);
   });
 
   it('walks GitLab merge-request and issue lanes to exhaustion across continuation pages', async () => {

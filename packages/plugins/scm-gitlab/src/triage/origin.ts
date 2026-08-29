@@ -8,8 +8,8 @@
 
 import type { GitlabFailure } from './types.js';
 
-/** The one deployment V1 admits. */
-export const GITLAB_V1_ADMITTED_ORIGIN = 'https://gitlab.com';
+/** The public SaaS deployment, separately granted without private-network reach. */
+export const GITLAB_PUBLIC_ORIGIN = 'https://gitlab.com';
 
 export type GitlabConfiguredOrigin = Readonly<{
   /** Scheme + host + non-default port, lowercased. */
@@ -22,12 +22,6 @@ export type GitlabConfiguredOrigin = Readonly<{
   forgeHostId: string;
 }>;
 
-const DEFAULT_PORTS: Readonly<Record<string, string>> = {
-  'https:': '443',
-  'http:': '80',
-  'ssh:': '22',
-};
-
 /**
  * Returns `null` rather than throwing or guessing for an unusable base URL: an empty
  * host, embedded userinfo, or a port outside 1..65535.
@@ -39,8 +33,9 @@ export function normalizeGitlabConfiguredBaseUrl(baseUrl: string): GitlabConfigu
   } catch {
     return null;
   }
-  if (!parsed.hostname) return null;
+  if (!parsed.hostname || parsed.protocol.toLowerCase() !== 'https:') return null;
   if (parsed.username || parsed.password) return null;
+  if (parsed.search !== '' || parsed.hash !== '') return null;
   if (parsed.port) {
     const port = Number(parsed.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
@@ -48,9 +43,8 @@ export function normalizeGitlabConfiguredBaseUrl(baseUrl: string): GitlabConfigu
 
   const scheme = parsed.protocol.toLowerCase();
   const host = parsed.hostname.toLowerCase();
-  const defaultPort = DEFAULT_PORTS[scheme];
-  const keepPort = parsed.port !== '' && parsed.port !== defaultPort;
-  const forgeHostId = keepPort ? `${host}:${parsed.port}` : host;
+  // WHATWG URL parsing already erases HTTPS's default port.
+  const forgeHostId = parsed.port === '' ? host : `${host}:${parsed.port}`;
   const origin = `${scheme}//${forgeHostId}`;
 
   // The prefix is a real deployment configuration and is NOT lowercased: only the
@@ -66,9 +60,9 @@ export type GitlabDeploymentAdmission =
   | Readonly<{ kind: 'rejected'; failure: GitlabFailure }>;
 
 /**
- * V1 admits GitLab.com and nothing else. Every other normalized origin — including
- * every self-managed deployment — is rejected here, before any item call. No
- * `/version` read, edition inference, feature probe, or per-endpoint fallback runs.
+ * Admits the exact configured HTTPS base. Deployment version and edition are not
+ * guessed or probed: unsupported provider behavior remains a typed operation
+ * failure from the endpoint that actually owns it.
  */
 export function admitGitlabV1Deployment(baseUrl: string): GitlabDeploymentAdmission {
   const origin = normalizeGitlabConfiguredBaseUrl(baseUrl);
@@ -77,18 +71,8 @@ export function admitGitlabV1Deployment(baseUrl: string): GitlabDeploymentAdmiss
       kind: 'rejected',
       failure: {
         class: 'unsupportedContract',
-        code: 'self-managed-floor-unset',
-        detail: 'The configured GitLab base URL is not a usable origin.',
-      },
-    };
-  }
-  if (origin.normalized !== GITLAB_V1_ADMITTED_ORIGIN) {
-    return {
-      kind: 'rejected',
-      failure: {
-        class: 'unsupportedContract',
-        code: 'self-managed-floor-unset',
-        detail: 'Only the gitlab.com deployment is available.',
+        code: 'configured-base-unusable',
+        detail: 'The configured GitLab base URL must be an HTTPS base without credentials, query, or fragment.',
       },
     };
   }

@@ -5180,14 +5180,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5203,14 +5196,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5242,14 +5228,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5265,14 +5244,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5304,14 +5276,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5327,14 +5292,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5377,14 +5335,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5400,14 +5351,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5439,14 +5383,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5462,14 +5399,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5501,14 +5431,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5524,14 +5447,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5563,14 +5479,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5586,14 +5495,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5625,14 +5527,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5648,14 +5543,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5687,14 +5575,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5710,14 +5591,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5749,14 +5623,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5772,14 +5639,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5811,14 +5671,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5834,14 +5687,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5873,14 +5719,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5896,14 +5735,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5935,14 +5767,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -5958,14 +5783,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -5997,14 +5815,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6020,14 +5831,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6059,14 +5863,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6082,14 +5879,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6121,14 +5911,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6144,14 +5927,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6183,14 +5959,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6206,14 +5975,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6245,14 +6007,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6268,14 +6023,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6307,14 +6055,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6330,14 +6071,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6369,14 +6103,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6392,14 +6119,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -6431,14 +6151,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "api_not_exposed"
-                                },
-                                {
-                                  "const": "repository_unsupported"
-                                }
-                              ]
+                              "const": "repository_unsupported"
                             },
                             "kind": {
                               "const": "unavailable"
@@ -6454,14 +6167,7 @@
                           "additionalProperties": false,
                           "properties": {
                             "code": {
-                              "anyOf": [
-                                {
-                                  "const": "repository_archived"
-                                },
-                                {
-                                  "const": "forbidden_by_forge"
-                                }
-                              ]
+                              "const": "repository_archived"
                             },
                             "kind": {
                               "const": "denied"
@@ -54510,7 +54216,8 @@
           "id": "github-triage-sources",
           "kind": "reactNative",
           "requiredHostMethods": [
-            "executeAction"
+            "executeAction",
+            "openConnectedAccounts"
           ]
         }
       ],
@@ -54615,11 +54322,6 @@
             "plugins.github.settings.sources.subtitle": "Choose which GitHub accounts and repositories appear in PRs & Issues.",
             "plugins.github.ui.atHead": "At this head",
             "plugins.github.ui.capabilities.archived": "This repository is archived.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Changes unavailable",
-            "plugins.github.ui.capabilities.checking": "Checking repository permissions…",
-            "plugins.github.ui.capabilities.forbidden": "Your GitHub repository role does not allow this change.",
-            "plugins.github.ui.capabilities.unavailable": "GitHub repository permissions could not be read.",
-            "plugins.github.ui.capabilities.unknown": "GitHub did not expose enough permission information to enable this change.",
             "plugins.github.ui.capabilities.unsupported": "This repository does not support this change.",
             "plugins.github.ui.checkConclusion.failure": "Failed",
             "plugins.github.ui.checkConclusion.skipped": "Skipped",
@@ -54847,7 +54549,74 @@
             "plugins.github.ui.threadUnresolved": "Unresolved",
             "plugins.github.ui.timelineLabel": "Events GitHub recorded for this entry",
             "plugins.github.ui.timelineUnavailable": "The timeline is unavailable",
-            "plugins.github.ui.unknownAuthor": "Unknown author"
+            "plugins.github.ui.unknownAuthor": "Unknown author",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "The connected account is no longer authorized. Reconnect it in Connected Accounts.",
+            "plugins.triage.sourceSettings.failure.permission": "The connected account cannot see this scope. Grant it access at the provider.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "The provider is rate limiting this account. Try again shortly.",
+            "plugins.triage.sourceSettings.failure.transient": "The provider could not be reached. Try again.",
+            "plugins.triage.sourceSettings.failure.unknown": "The provider could not be read.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "The provider returned something this version cannot read.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} stops contributing {scope} to {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Remove {scope} from {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "This removal could not be confirmed, so nothing was removed. Try again.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -54913,11 +54682,6 @@
             "plugins.github.settings.sources.subtitle": "Выберите учетные записи и репозитории GitHub, которые будут отображаться в разделе PR и задач.",
             "plugins.github.ui.atHead": "В этом верхнем положении",
             "plugins.github.ui.capabilities.archived": "Этот репозиторий архивирован.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Изменения недоступны",
-            "plugins.github.ui.capabilities.checking": "Проверка разрешений репозитория…",
-            "plugins.github.ui.capabilities.forbidden": "Ваша роль в репозитории GitHub не разрешает это изменение.",
-            "plugins.github.ui.capabilities.unavailable": "Не удалось прочитать разрешения репозитория GitHub.",
-            "plugins.github.ui.capabilities.unknown": "GitHub не предоставил достаточно данных о разрешениях для этого изменения.",
             "plugins.github.ui.capabilities.unsupported": "Этот репозиторий не поддерживает данное изменение.",
             "plugins.github.ui.checkConclusion.failure": "Неуспешно",
             "plugins.github.ui.checkConclusion.skipped": "Пропущено",
@@ -55145,7 +54909,74 @@
             "plugins.github.ui.threadUnresolved": "Не решено",
             "plugins.github.ui.timelineLabel": "События, зарегистрированные GitHub для этой записи",
             "plugins.github.ui.timelineUnavailable": "Линейка времени недоступна",
-            "plugins.github.ui.unknownAuthor": "Неизвестный автор"
+            "plugins.github.ui.unknownAuthor": "Неизвестный автор",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "Подключенный аккаунт больше не авторизован. Переподключите его в разделе «Подключенные аккаунты».",
+            "plugins.triage.sourceSettings.failure.permission": "Подключенный аккаунт не видит эту область. Предоставьте ему доступ на стороне провайдера.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "Провайдер ограничивает частоту запросов этого аккаунта. Повторите попытку чуть позже.",
+            "plugins.triage.sourceSettings.failure.transient": "Не удалось связаться с провайдером. Повторите попытку.",
+            "plugins.triage.sourceSettings.failure.unknown": "Не удалось прочитать данные провайдера.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "Провайдер вернул ответ, который эта версия не может прочитать.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} перестанет передавать {scope} в «{product}». Его записи исчезнут из списка; закрепления и ссылки на сессии, которые вы создали, останутся.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Удалить {scope} из «{product}»?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Это удаление не удалось подтвердить, поэтому ничего не было удалено. Повторите попытку.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -55211,11 +55042,6 @@
             "plugins.github.settings.sources.subtitle": "Wybierz konta i repozytoria GitHub wyświetlane w sekcji PR-ów i zgłoszeń.",
             "plugins.github.ui.atHead": "W tej części",
             "plugins.github.ui.capabilities.archived": "To repozytorium jest zarchiwizowane.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Zmiany niedostępne",
-            "plugins.github.ui.capabilities.checking": "Sprawdzanie uprawnień repozytorium…",
-            "plugins.github.ui.capabilities.forbidden": "Twoja rola w repozytorium GitHub nie zezwala na tę zmianę.",
-            "plugins.github.ui.capabilities.unavailable": "Nie udało się odczytać uprawnień repozytorium GitHub.",
-            "plugins.github.ui.capabilities.unknown": "GitHub nie udostępnił wystarczających informacji o uprawnieniach.",
             "plugins.github.ui.capabilities.unsupported": "To repozytorium nie obsługuje tej zmiany.",
             "plugins.github.ui.checkConclusion.failure": "Niepowodzenie",
             "plugins.github.ui.checkConclusion.skipped": "Pominięto",
@@ -55443,7 +55269,74 @@
             "plugins.github.ui.threadUnresolved": "Nierozwiązana",
             "plugins.github.ui.timelineLabel": "Zdarzenia GitHub zarejestrowane dla tej pozycji",
             "plugins.github.ui.timelineUnavailable": "Historia nie jest dostępna",
-            "plugins.github.ui.unknownAuthor": "Nieznany autor"
+            "plugins.github.ui.unknownAuthor": "Nieznany autor",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "Połączone konto nie jest już autoryzowane. Połącz je ponownie w sekcji Połączone konta.",
+            "plugins.triage.sourceSettings.failure.permission": "Połączone konto nie widzi tego zakresu. Przyznaj mu dostęp u dostawcy.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "Dostawca ogranicza liczbę żądań tego konta. Spróbuj ponownie za chwilę.",
+            "plugins.triage.sourceSettings.failure.transient": "Nie udało się połączyć z dostawcą. Spróbuj ponownie.",
+            "plugins.triage.sourceSettings.failure.unknown": "Nie udało się odczytać danych dostawcy.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "Dostawca zwrócił odpowiedź, której ta wersja nie potrafi odczytać.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} przestanie dostarczać {scope} do {product}. Jego wpisy znikną z listy; przypięcia i linki do sesji, które utworzono, pozostaną.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Usunąć {scope} z {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Nie udało się potwierdzić tego usunięcia, więc nic nie zostało usunięte. Spróbuj ponownie.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -55509,11 +55402,6 @@
             "plugins.github.settings.sources.subtitle": "Elige qué cuentas y repositorios de GitHub aparecen en PR e incidencias.",
             "plugins.github.ui.atHead": "Al principio de esto",
             "plugins.github.ui.capabilities.archived": "Este repositorio está archivado.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Cambios no disponibles",
-            "plugins.github.ui.capabilities.checking": "Comprobando los permisos del repositorio…",
-            "plugins.github.ui.capabilities.forbidden": "Tu rol en el repositorio de GitHub no permite este cambio.",
-            "plugins.github.ui.capabilities.unavailable": "No se pudieron leer los permisos del repositorio de GitHub.",
-            "plugins.github.ui.capabilities.unknown": "GitHub no expuso suficiente información de permisos para habilitar este cambio.",
             "plugins.github.ui.capabilities.unsupported": "Este repositorio no admite este cambio.",
             "plugins.github.ui.checkConclusion.failure": "Fallida",
             "plugins.github.ui.checkConclusion.skipped": "Omitida",
@@ -55741,7 +55629,74 @@
             "plugins.github.ui.threadUnresolved": "Sin resolver",
             "plugins.github.ui.timelineLabel": "Eventos de GitHub registrados para esta entrada",
             "plugins.github.ui.timelineUnavailable": "El timeline no está disponible",
-            "plugins.github.ui.unknownAuthor": "Autor desconocido"
+            "plugins.github.ui.unknownAuthor": "Autor desconocido",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "La cuenta conectada ya no está autorizada. Vuelve a conectarla en Cuentas conectadas.",
+            "plugins.triage.sourceSettings.failure.permission": "La cuenta conectada no puede ver este ámbito. Concédele acceso en el proveedor.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "El proveedor está limitando las solicitudes de esta cuenta. Vuelve a intentarlo en breve.",
+            "plugins.triage.sourceSettings.failure.transient": "No se pudo contactar con el proveedor. Vuelve a intentarlo.",
+            "plugins.triage.sourceSettings.failure.unknown": "No se pudo leer el proveedor.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "El proveedor devolvió algo que esta versión no puede leer.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} dejará de aportar {scope} a {product}. Sus entradas salen de la lista; los elementos fijados y los enlaces de sesión que creaste se mantienen.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "¿Quitar {scope} de {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "No se pudo confirmar esta eliminación, así que no se quitó nada. Vuelve a intentarlo.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -55807,11 +55762,6 @@
             "plugins.github.settings.sources.subtitle": "Choisissez les comptes et dépôts GitHub affichés dans PR et tickets.",
             "plugins.github.ui.atHead": "À cette tête",
             "plugins.github.ui.capabilities.archived": "Ce dépôt est archivé.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Modifications indisponibles",
-            "plugins.github.ui.capabilities.checking": "Vérification des autorisations du dépôt…",
-            "plugins.github.ui.capabilities.forbidden": "Votre rôle dans le dépôt GitHub n’autorise pas cette modification.",
-            "plugins.github.ui.capabilities.unavailable": "Les autorisations du dépôt GitHub n’ont pas pu être lues.",
-            "plugins.github.ui.capabilities.unknown": "GitHub n’a pas exposé suffisamment d’informations d’autorisation.",
             "plugins.github.ui.capabilities.unsupported": "Ce dépôt ne prend pas en charge cette modification.",
             "plugins.github.ui.checkConclusion.failure": "Échec",
             "plugins.github.ui.checkConclusion.skipped": "Ignoré",
@@ -56039,7 +55989,74 @@
             "plugins.github.ui.threadUnresolved": "Non résolue",
             "plugins.github.ui.timelineLabel": "Événements GitHub enregistrés pour cette entrée",
             "plugins.github.ui.timelineUnavailable": "La chronologie n'est pas disponible",
-            "plugins.github.ui.unknownAuthor": "Auteur inconnu"
+            "plugins.github.ui.unknownAuthor": "Auteur inconnu",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "Le compte connecté n’est plus autorisé. Reconnectez-le dans Comptes connectés.",
+            "plugins.triage.sourceSettings.failure.permission": "Le compte connecté ne voit pas cette portée. Accordez-lui l’accès chez le fournisseur.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "Le fournisseur limite le débit de ce compte. Réessayez dans un instant.",
+            "plugins.triage.sourceSettings.failure.transient": "Le fournisseur n’a pas pu être joint. Réessayez.",
+            "plugins.triage.sourceSettings.failure.unknown": "Le fournisseur n’a pas pu être lu.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "Le fournisseur a renvoyé une réponse que cette version ne sait pas lire.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} cesse de fournir {scope} à {product}. Ses entrées quittent la liste ; les épinglages et les liens de session que vous avez créés restent.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Retirer {scope} de {product} ?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Cette suppression n’a pas pu être confirmée, donc rien n’a été retiré. Réessayez.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -56105,11 +56122,6 @@
             "plugins.github.settings.sources.subtitle": "Scegli gli account e i repository GitHub da mostrare in PR e segnalazioni.",
             "plugins.github.ui.atHead": "Allo stato di",
             "plugins.github.ui.capabilities.archived": "Questo repository è archiviato.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Modifiche non disponibili",
-            "plugins.github.ui.capabilities.checking": "Verifica delle autorizzazioni del repository…",
-            "plugins.github.ui.capabilities.forbidden": "Il tuo ruolo nel repository GitHub non consente questa modifica.",
-            "plugins.github.ui.capabilities.unavailable": "Non è stato possibile leggere le autorizzazioni del repository GitHub.",
-            "plugins.github.ui.capabilities.unknown": "GitHub non ha esposto informazioni sufficienti sulle autorizzazioni.",
             "plugins.github.ui.capabilities.unsupported": "Questo repository non supporta questa modifica.",
             "plugins.github.ui.checkConclusion.failure": "Non riuscito",
             "plugins.github.ui.checkConclusion.skipped": "Ignorato",
@@ -56337,7 +56349,74 @@
             "plugins.github.ui.threadUnresolved": "Non risolta",
             "plugins.github.ui.timelineLabel": "Eventi registrati da GitHub per questo elemento",
             "plugins.github.ui.timelineUnavailable": "Il timeline non è disponibile",
-            "plugins.github.ui.unknownAuthor": "Autore sconosciuto"
+            "plugins.github.ui.unknownAuthor": "Autore sconosciuto",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "L’account collegato non è più autorizzato. Ricollegalo in Account collegati.",
+            "plugins.triage.sourceSettings.failure.permission": "L’account collegato non vede questo ambito. Concedigli l’accesso presso il provider.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "Il provider sta limitando le richieste di questo account. Riprova tra poco.",
+            "plugins.triage.sourceSettings.failure.transient": "Non è stato possibile raggiungere il provider. Riprova.",
+            "plugins.triage.sourceSettings.failure.unknown": "Non è stato possibile leggere il provider.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "Il provider ha restituito qualcosa che questa versione non sa leggere.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} smette di fornire {scope} a {product}. Le sue voci escono dall’elenco; gli elementi fissati e i collegamenti alle sessioni che hai creato restano.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Rimuovere {scope} da {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Non è stato possibile confermare questa rimozione, quindi non è stato rimosso nulla. Riprova.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -56403,11 +56482,6 @@
             "plugins.github.settings.sources.subtitle": "Escolha as contas e os repositórios GitHub apresentados em PRs e problemas.",
             "plugins.github.ui.atHead": "Nesta cabeça",
             "plugins.github.ui.capabilities.archived": "Este repositório está arquivado.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Alterações indisponíveis",
-            "plugins.github.ui.capabilities.checking": "A verificar as permissões do repositório…",
-            "plugins.github.ui.capabilities.forbidden": "A sua função no repositório GitHub não permite esta alteração.",
-            "plugins.github.ui.capabilities.unavailable": "Não foi possível ler as permissões do repositório GitHub.",
-            "plugins.github.ui.capabilities.unknown": "O GitHub não expôs informações de permissão suficientes.",
             "plugins.github.ui.capabilities.unsupported": "Este repositório não suporta esta alteração.",
             "plugins.github.ui.checkConclusion.failure": "Falhou",
             "plugins.github.ui.checkConclusion.skipped": "Ignorado",
@@ -56635,7 +56709,74 @@
             "plugins.github.ui.threadUnresolved": "Não resolvida",
             "plugins.github.ui.timelineLabel": "Eventos registrados pelo GitHub para esta entrada",
             "plugins.github.ui.timelineUnavailable": "A linha do tempo não está disponível",
-            "plugins.github.ui.unknownAuthor": "Autor desconhecido"
+            "plugins.github.ui.unknownAuthor": "Autor desconhecido",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "A conta conectada já não está autorizada. Reconecte-a em Contas conectadas.",
+            "plugins.triage.sourceSettings.failure.permission": "A conta conectada não consegue ver este âmbito. Conceda-lhe acesso no fornecedor.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "O fornecedor está a limitar os pedidos desta conta. Tente novamente daqui a pouco.",
+            "plugins.triage.sourceSettings.failure.transient": "Não foi possível contactar o fornecedor. Tente novamente.",
+            "plugins.triage.sourceSettings.failure.unknown": "Não foi possível ler o fornecedor.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "O fornecedor devolveu algo que esta versão não consegue ler.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} deixa de contribuir com {scope} para {product}. As suas entradas saem da lista; as fixações e as ligações de sessão que criou permanecem.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Remover {scope} de {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Não foi possível confirmar esta remoção, por isso nada foi removido. Tente novamente.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -56701,11 +56842,6 @@
             "plugins.github.settings.sources.subtitle": "Tria els comptes i repositoris de GitHub que es mostren a PR i incidències.",
             "plugins.github.ui.atHead": "Aquest cap",
             "plugins.github.ui.capabilities.archived": "Aquest repositori està arxivat.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Canvis no disponibles",
-            "plugins.github.ui.capabilities.checking": "S’estan comprovant els permisos del repositori…",
-            "plugins.github.ui.capabilities.forbidden": "El teu rol al repositori de GitHub no permet aquest canvi.",
-            "plugins.github.ui.capabilities.unavailable": "No s’han pogut llegir els permisos del repositori de GitHub.",
-            "plugins.github.ui.capabilities.unknown": "GitHub no ha exposat prou informació de permisos.",
             "plugins.github.ui.capabilities.unsupported": "Aquest repositori no admet aquest canvi.",
             "plugins.github.ui.checkConclusion.failure": "Ha fallat",
             "plugins.github.ui.checkConclusion.skipped": "Omès",
@@ -56933,7 +57069,74 @@
             "plugins.github.ui.threadUnresolved": "Sense resoldre",
             "plugins.github.ui.timelineLabel": "Els esdeveniments que GitHub ha registrat per aquesta entrada",
             "plugins.github.ui.timelineUnavailable": "La línia de temps no està disponible",
-            "plugins.github.ui.unknownAuthor": "Autor desconegut"
+            "plugins.github.ui.unknownAuthor": "Autor desconegut",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "El compte connectat ja no està autoritzat. Torna’l a connectar a Comptes connectats.",
+            "plugins.triage.sourceSettings.failure.permission": "El compte connectat no pot veure aquest àmbit. Concedeix-li accés al proveïdor.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "El proveïdor està limitant les peticions d’aquest compte. Torna-ho a provar d’aquí a poc.",
+            "plugins.triage.sourceSettings.failure.transient": "No s’ha pogut contactar amb el proveïdor. Torna-ho a provar.",
+            "plugins.triage.sourceSettings.failure.unknown": "No s’ha pogut llegir el proveïdor.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "El proveïdor ha retornat una cosa que aquesta versió no pot llegir.",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} deixarà d’aportar {scope} a {product}. Les seves entrades surten de la llista; els elements fixats i els enllaços de sessió que has creat es mantenen.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "Vols treure {scope} de {product}?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "No s’ha pogut confirmar aquesta eliminació, així que no s’ha tret res. Torna-ho a provar.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -56999,11 +57202,6 @@
             "plugins.github.settings.sources.subtitle": "选择要在 PR 和问题中显示的 GitHub 帐户和仓库。",
             "plugins.github.ui.atHead": "在这个头部",
             "plugins.github.ui.capabilities.archived": "此仓库已归档。",
-            "plugins.github.ui.capabilities.changesUnavailable": "更改不可用",
-            "plugins.github.ui.capabilities.checking": "正在检查仓库权限…",
-            "plugins.github.ui.capabilities.forbidden": "你的 GitHub 仓库角色不允许此更改。",
-            "plugins.github.ui.capabilities.unavailable": "无法读取 GitHub 仓库权限。",
-            "plugins.github.ui.capabilities.unknown": "GitHub 未提供足够的权限信息来启用此更改。",
             "plugins.github.ui.capabilities.unsupported": "此仓库不支持此更改。",
             "plugins.github.ui.checkConclusion.failure": "失败",
             "plugins.github.ui.checkConclusion.skipped": "已跳过",
@@ -57231,7 +57429,74 @@
             "plugins.github.ui.threadUnresolved": "未解决",
             "plugins.github.ui.timelineLabel": "GitHub 记录的此条目事件",
             "plugins.github.ui.timelineUnavailable": "时间线不可用",
-            "plugins.github.ui.unknownAuthor": "未知作者"
+            "plugins.github.ui.unknownAuthor": "未知作者",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "该已连接账户不再获得授权。请在“已连接账户”中重新连接。",
+            "plugins.triage.sourceSettings.failure.permission": "该已连接账户无法访问此范围。请在提供方处为其授予访问权限。",
+            "plugins.triage.sourceSettings.failure.rateLimit": "提供方正在限制此账户的请求频率。请稍后重试。",
+            "plugins.triage.sourceSettings.failure.transient": "无法连接到提供方。请重试。",
+            "plugins.triage.sourceSettings.failure.unknown": "无法读取该提供方。",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "提供方返回了此版本无法读取的内容。",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} 将不再向「{product}」提供 {scope}。其条目会从列表中消失；你创建的置顶和会话链接会保留。",
+            "plugins.triage.sourceSettings.removeConfirm.title": "要从「{product}」中移除 {scope} 吗？",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "无法确认此次移除，因此未移除任何内容。请重试。",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -57297,11 +57562,6 @@
             "plugins.github.settings.sources.subtitle": "選擇要在 PR 與問題中顯示的 GitHub 帳戶和儲存庫。",
             "plugins.github.ui.atHead": "在這個頭",
             "plugins.github.ui.capabilities.archived": "此儲存庫已封存。",
-            "plugins.github.ui.capabilities.changesUnavailable": "變更無法使用",
-            "plugins.github.ui.capabilities.checking": "正在檢查儲存庫權限…",
-            "plugins.github.ui.capabilities.forbidden": "你的 GitHub 儲存庫角色不允許此變更。",
-            "plugins.github.ui.capabilities.unavailable": "無法讀取 GitHub 儲存庫權限。",
-            "plugins.github.ui.capabilities.unknown": "GitHub 未提供足夠的權限資訊來啟用此變更。",
             "plugins.github.ui.capabilities.unsupported": "此儲存庫不支援此變更。",
             "plugins.github.ui.checkConclusion.failure": "失敗",
             "plugins.github.ui.checkConclusion.skipped": "已略過",
@@ -57529,7 +57789,74 @@
             "plugins.github.ui.threadUnresolved": "未解決",
             "plugins.github.ui.timelineLabel": "GitHub 鈕記的這個項目事件",
             "plugins.github.ui.timelineUnavailable": "時間軸無法取得",
-            "plugins.github.ui.unknownAuthor": "未知作者"
+            "plugins.github.ui.unknownAuthor": "未知作者",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "此已連結帳戶不再獲得授權。請在「已連結帳戶」中重新連結。",
+            "plugins.triage.sourceSettings.failure.permission": "此已連結帳戶無法存取此範圍。請在提供方為其授予存取權。",
+            "plugins.triage.sourceSettings.failure.rateLimit": "提供方正在限制此帳戶的請求頻率。請稍後再試。",
+            "plugins.triage.sourceSettings.failure.transient": "無法連線至提供方。請再試一次。",
+            "plugins.triage.sourceSettings.failure.unknown": "無法讀取該提供方。",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "提供方回傳了此版本無法讀取的內容。",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} 將不再向「{product}」提供 {scope}。其項目會從清單中消失；你建立的釘選和工作階段連結會保留。",
+            "plugins.triage.sourceSettings.removeConfirm.title": "要從「{product}」中移除 {scope} 嗎？",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "無法確認這次移除，因此未移除任何內容。請再試一次。",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -57595,11 +57922,6 @@
             "plugins.github.settings.sources.subtitle": "PR と課題に表示する GitHub アカウントとリポジトリを選択します。",
             "plugins.github.ui.atHead": "この先頭",
             "plugins.github.ui.capabilities.archived": "このリポジトリはアーカイブされています。",
-            "plugins.github.ui.capabilities.changesUnavailable": "変更を利用できません",
-            "plugins.github.ui.capabilities.checking": "リポジトリの権限を確認しています…",
-            "plugins.github.ui.capabilities.forbidden": "GitHub リポジトリでのあなたの役割ではこの変更を行えません。",
-            "plugins.github.ui.capabilities.unavailable": "GitHub リポジトリの権限を読み取れませんでした。",
-            "plugins.github.ui.capabilities.unknown": "GitHub がこの変更を有効にするための十分な権限情報を公開していません。",
             "plugins.github.ui.capabilities.unsupported": "このリポジトリはこの変更をサポートしていません。",
             "plugins.github.ui.checkConclusion.failure": "失敗",
             "plugins.github.ui.checkConclusion.skipped": "スキップ済み",
@@ -57827,7 +58149,74 @@
             "plugins.github.ui.threadUnresolved": "未解決",
             "plugins.github.ui.timelineLabel": "このエントリで GitHub が記録したイベント",
             "plugins.github.ui.timelineUnavailable": "タイムラインが利用できません",
-            "plugins.github.ui.unknownAuthor": "不明な作成者"
+            "plugins.github.ui.unknownAuthor": "不明な作成者",
+            "plugins.triage.sourceSettings.configuration.added": "Added to {product}.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Already in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "You have configured as many sources as {product} holds. Remove one you no longer use.",
+            "plugins.triage.sourceSettings.configuration.conflict": "You removed this earlier. This page cannot bring it back yet.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} It may already have been applied; refresh before trying again.",
+            "plugins.triage.sourceSettings.configuration.raced": "Something changed while this was saving. Try again.",
+            "plugins.triage.sourceSettings.configuration.removed": "Removed from {product}. Its entries leave the list; the pins and Session links you made stay.",
+            "plugins.triage.sourceSettings.configuration.restored": "Restored to {product}.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "The response could not be read by this version.",
+            "plugins.triage.sourceSettings.configuration.updated": "Configuration updated.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} holds more {source} configurations than this page can list, so one you already added may still offer Add.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Not everything you configured is listed here",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "That read did not finish. Refresh to ask again before adding anything.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "This page does not know what is already configured",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Refresh to see what is configured now.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "This page read while something was changing",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Nothing here can be added to {product} until it is admitted again.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} is no longer an admitted {product} source on this account.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} A row may offer Add for something you already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "What is already configured could not be read",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} answered outside the published contract, so this page cannot say which of these are already added.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "This version cannot read what is configured",
+            "plugins.triage.sourceSettings.connectAccount": "Connect account",
+            "plugins.triage.sourceSettings.control.add": "Add",
+            "plugins.triage.sourceSettings.control.addLabel": "Add {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.remove": "Remove",
+            "plugins.triage.sourceSettings.control.removeLabel": "Remove {title} from PRs & Issues",
+            "plugins.triage.sourceSettings.control.restore": "Restore",
+            "plugins.triage.sourceSettings.control.restoreLabel": "Restore {title} to PRs & Issues",
+            "plugins.triage.sourceSettings.control.update": "Update",
+            "plugins.triage.sourceSettings.control.updateLabel": "Update {title} from the provider",
+            "plugins.triage.sourceSettings.empty.description": "Connect a {source} account, then refresh.",
+            "plugins.triage.sourceSettings.empty.title": "No {source} scopes to add",
+            "plugins.triage.sourceSettings.failure.authentication": "この接続済みアカウントは認可されていません。「接続済みアカウント」で再接続してください。",
+            "plugins.triage.sourceSettings.failure.permission": "この接続済みアカウントはこのスコープを参照できません。プロバイダー側でアクセスを許可してください。",
+            "plugins.triage.sourceSettings.failure.rateLimit": "プロバイダーがこのアカウントのレートを制限しています。しばらくしてからもう一度お試しください。",
+            "plugins.triage.sourceSettings.failure.transient": "プロバイダーに接続できませんでした。もう一度お試しください。",
+            "plugins.triage.sourceSettings.failure.unknown": "プロバイダーを読み取れませんでした。",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "プロバイダーが、このバージョンでは読み取れない応答を返しました。",
+            "plugins.triage.sourceSettings.failures.title": "Accounts that could not be read",
+            "plugins.triage.sourceSettings.followsProviderName": "Follows the provider name",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Some accounts or scopes could not be enumerated, so one you expect may be missing.",
+            "plugins.triage.sourceSettings.incomplete.title": "This list may be incomplete",
+            "plugins.triage.sourceSettings.intro": "Choose which {source} accounts and scopes appear in PRs & Issues.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, but {source} can no longer reach it. Its entries stop arriving until the account or scope comes back.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Removed from {product}.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. This page could not list it just now, so it may still be working.",
+            "plugins.triage.sourceSettings.loading.description": "Checking what this authorized connection can reach.",
+            "plugins.triage.sourceSettings.loading.title": "Reading {source} accounts",
+            "plugins.triage.sourceSettings.manageAccounts": "Manage connected accounts",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Connected Accounts could not be opened.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "It may still be running. Refresh to ask again.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "This read did not finish",
+            "plugins.triage.sourceSettings.reconnectAccount": "Reconnect",
+            "plugins.triage.sourceSettings.refresh": "Refresh",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} は {scope} を「{product}」に提供しなくなります。その項目は一覧から消えますが、作成したピン留めとセッションリンクは残ります。",
+            "plugins.triage.sourceSettings.removeConfirm.title": "{scope} を「{product}」から削除しますか？",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "この削除を確認できなかったため、何も削除されていません。もう一度お試しください。",
+            "plugins.triage.sourceSettings.scopesLabel": "{source} scopes",
+            "plugins.triage.sourceSettings.tryAgain": "Try again",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "No machine answered this read.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} could not be read",
+            "plugins.triage.sourceSettings.unreadable.description": "The {source} source returned a result outside the published contract.",
+            "plugins.triage.sourceSettings.unreadable.title": "This version cannot read the response"
           }
         },
         {
@@ -57893,11 +58282,6 @@
             "plugins.github.settings.sources.subtitle": "Wählen Sie aus, welche GitHub-Konten und -Repositorys unter PRs und Issues angezeigt werden.",
             "plugins.github.ui.atHead": "Bei diesem Head",
             "plugins.github.ui.capabilities.archived": "Dieses Repository ist archiviert.",
-            "plugins.github.ui.capabilities.changesUnavailable": "Änderungen nicht verfügbar",
-            "plugins.github.ui.capabilities.checking": "Repository-Berechtigungen werden geprüft…",
-            "plugins.github.ui.capabilities.forbidden": "Ihre Rolle im GitHub-Repository erlaubt diese Änderung nicht.",
-            "plugins.github.ui.capabilities.unavailable": "Die Berechtigungen des GitHub-Repositorys konnten nicht gelesen werden.",
-            "plugins.github.ui.capabilities.unknown": "GitHub hat nicht genügend Berechtigungsinformationen bereitgestellt, um diese Änderung zu ermöglichen.",
             "plugins.github.ui.capabilities.unsupported": "Dieses Repository unterstützt diese Änderung nicht.",
             "plugins.github.ui.checkConclusion.failure": "Fehlgeschlagen",
             "plugins.github.ui.checkConclusion.skipped": "Übersprungen",
@@ -58125,7 +58509,74 @@
             "plugins.github.ui.threadUnresolved": "Offen",
             "plugins.github.ui.timelineLabel": "Von GitHub für diesen Eintrag aufgezeichnete Ereignisse",
             "plugins.github.ui.timelineUnavailable": "Die Chronik ist nicht verfügbar",
-            "plugins.github.ui.unknownAuthor": "Unbekannter Autor"
+            "plugins.github.ui.unknownAuthor": "Unbekannter Autor",
+            "plugins.triage.sourceSettings.configuration.added": "Zu {product} hinzugefügt.",
+            "plugins.triage.sourceSettings.configuration.alreadyConfigured": "Bereits in {product}.",
+            "plugins.triage.sourceSettings.configuration.atMaximum": "Du hast so viele Quellen konfiguriert, wie {product} aufnehmen kann. Entferne eine nicht mehr benötigte Quelle.",
+            "plugins.triage.sourceSettings.configuration.conflict": "Du hast dies bereits entfernt. Diese Seite kann es noch nicht wiederherstellen.",
+            "plugins.triage.sourceSettings.configuration.outcomeUnknown": "{message} Die Änderung wurde möglicherweise bereits übernommen. Aktualisiere vor einem neuen Versuch.",
+            "plugins.triage.sourceSettings.configuration.raced": "Während des Speicherns hat sich etwas geändert. Versuche es erneut.",
+            "plugins.triage.sourceSettings.configuration.removed": "Aus {product} entfernt. Die Einträge verschwinden; Pins und Sitzungsverknüpfungen bleiben erhalten.",
+            "plugins.triage.sourceSettings.configuration.restored": "In {product} wiederhergestellt.",
+            "plugins.triage.sourceSettings.configuration.sourceNotAdmitted": "{source} ist für dieses Konto keine zugelassene {product}-Quelle mehr.",
+            "plugins.triage.sourceSettings.configuration.unreadable": "Diese Version konnte die Antwort nicht lesen.",
+            "plugins.triage.sourceSettings.configuration.updated": "Konfiguration aktualisiert.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.description": "{product} enthält mehr {source}-Konfigurationen, als diese Seite anzeigen kann. Eine bereits hinzugefügte Konfiguration kann daher trotzdem „Hinzufügen“ anbieten.",
+            "plugins.triage.sourceSettings.configuredRead.incomplete.title": "Nicht alle Konfigurationen werden hier angezeigt",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.description": "Der Lesevorgang wurde nicht abgeschlossen. Aktualisiere vor dem Hinzufügen.",
+            "plugins.triage.sourceSettings.configuredRead.outcomeUnknown.title": "Diese Seite kennt die bestehenden Konfigurationen nicht",
+            "plugins.triage.sourceSettings.configuredRead.raced.description": "Aktualisiere, um die aktuelle Konfiguration zu sehen.",
+            "plugins.triage.sourceSettings.configuredRead.raced.title": "Beim Lesen wurde die Konfiguration geändert",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.description": "Hier kann nichts zu {product} hinzugefügt werden, bis die Quelle wieder zugelassen ist.",
+            "plugins.triage.sourceSettings.configuredRead.sourceNotAdmitted.title": "{source} ist für dieses Konto keine zugelassene {product}-Quelle mehr.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.description": "{message} Eine Zeile kann „Hinzufügen“ für etwas anbieten, das bereits hinzugefügt wurde.",
+            "plugins.triage.sourceSettings.configuredRead.unreachable.title": "Die bestehenden Konfigurationen konnten nicht gelesen werden",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.description": "{product} hat außerhalb des veröffentlichten Vertrags geantwortet. Diese Seite kann daher nicht feststellen, was bereits hinzugefügt wurde.",
+            "plugins.triage.sourceSettings.configuredRead.unreadable.title": "Diese Version kann die Konfigurationen nicht lesen",
+            "plugins.triage.sourceSettings.connectAccount": "Konto verbinden",
+            "plugins.triage.sourceSettings.control.add": "Hinzufügen",
+            "plugins.triage.sourceSettings.control.addLabel": "{title} zu PRs & Issues hinzufügen",
+            "plugins.triage.sourceSettings.control.remove": "Entfernen",
+            "plugins.triage.sourceSettings.control.removeLabel": "{title} aus PRs & Issues entfernen",
+            "plugins.triage.sourceSettings.control.restore": "Wiederherstellen",
+            "plugins.triage.sourceSettings.control.restoreLabel": "{title} in PRs & Issues wiederherstellen",
+            "plugins.triage.sourceSettings.control.update": "Aktualisieren",
+            "plugins.triage.sourceSettings.control.updateLabel": "{title} vom Anbieter aktualisieren",
+            "plugins.triage.sourceSettings.empty.description": "Verbinde ein {source}-Konto und aktualisiere anschließend.",
+            "plugins.triage.sourceSettings.empty.title": "Keine {source}-Bereiche zum Hinzufügen",
+            "plugins.triage.sourceSettings.failure.authentication": "Das verbundene Konto ist nicht mehr autorisiert. Verbinde es unter „Verbundene Konten“ erneut.",
+            "plugins.triage.sourceSettings.failure.permission": "Das verbundene Konto kann diesen Bereich nicht sehen. Gewähre ihm beim Anbieter Zugriff.",
+            "plugins.triage.sourceSettings.failure.rateLimit": "Der Anbieter begrenzt Anfragen dieses Kontos. Versuche es gleich noch einmal.",
+            "plugins.triage.sourceSettings.failure.transient": "Der Anbieter konnte nicht erreicht werden. Versuche es erneut.",
+            "plugins.triage.sourceSettings.failure.unknown": "Der Anbieter konnte nicht gelesen werden.",
+            "plugins.triage.sourceSettings.failure.unsupportedContract": "Der Anbieter hat eine Antwort zurückgegeben, die diese Version nicht lesen kann.",
+            "plugins.triage.sourceSettings.failures.title": "Konten, die nicht gelesen werden konnten",
+            "plugins.triage.sourceSettings.followsProviderName": "Folgt dem Namen beim Anbieter",
+            "plugins.triage.sourceSettings.heading": "{source} in PRs & Issues",
+            "plugins.triage.sourceSettings.incomplete.description": "Einige Konten oder Bereiche konnten nicht aufgelistet werden.",
+            "plugins.triage.sourceSettings.incomplete.title": "Diese Liste ist möglicherweise unvollständig",
+            "plugins.triage.sourceSettings.intro": "Wähle aus, welche {source}-Konten und Bereiche in PRs & Issues erscheinen.",
+            "plugins.triage.sourceSettings.lifecycle.configured": "In {product}.",
+            "plugins.triage.sourceSettings.lifecycle.missing": "In {product}, aber {source} kann nicht mehr darauf zugreifen. Bis das Konto oder der Bereich wieder verfügbar ist, kommen keine Einträge an.",
+            "plugins.triage.sourceSettings.lifecycle.retired": "Aus {product} entfernt.",
+            "plugins.triage.sourceSettings.lifecycle.unlisted": "In {product}. Diese Seite konnte die Quelle gerade nicht auflisten; sie funktioniert möglicherweise weiterhin.",
+            "plugins.triage.sourceSettings.loading.description": "Es wird geprüft, worauf diese autorisierte Verbindung zugreifen kann.",
+            "plugins.triage.sourceSettings.loading.title": "{source}-Konten werden gelesen",
+            "plugins.triage.sourceSettings.manageAccounts": "Verbundene Konten verwalten",
+            "plugins.triage.sourceSettings.navigationUnavailable": "Verbundene Konten konnten nicht geöffnet werden.",
+            "plugins.triage.sourceSettings.outcomeUnknown.description": "Er läuft möglicherweise noch. Aktualisiere, um es erneut zu versuchen.",
+            "plugins.triage.sourceSettings.outcomeUnknown.title": "Dieser Lesevorgang wurde nicht abgeschlossen",
+            "plugins.triage.sourceSettings.reconnectAccount": "Erneut verbinden",
+            "plugins.triage.sourceSettings.refresh": "Aktualisieren",
+            "plugins.triage.sourceSettings.removeConfirm.message": "{source} liefert {scope} nicht mehr an {product}. Die Einträge verschwinden; Pins und Sitzungsverknüpfungen bleiben erhalten.",
+            "plugins.triage.sourceSettings.removeConfirm.title": "{scope} aus {product} entfernen?",
+            "plugins.triage.sourceSettings.removeConfirm.unavailable": "Das Entfernen konnte nicht bestätigt werden. Es wurde nichts entfernt.",
+            "plugins.triage.sourceSettings.scopesLabel": "{source}-Bereiche",
+            "plugins.triage.sourceSettings.tryAgain": "Erneut versuchen",
+            "plugins.triage.sourceSettings.unreachable.noMachine": "Kein Gerät hat auf diesen Lesevorgang geantwortet.",
+            "plugins.triage.sourceSettings.unreachable.title": "{source} konnte nicht gelesen werden",
+            "plugins.triage.sourceSettings.unreadable.description": "Die {source}-Quelle hat ein Ergebnis außerhalb des veröffentlichten Vertrags zurückgegeben.",
+            "plugins.triage.sourceSettings.unreadable.title": "Diese Version kann die Antwort nicht lesen"
           }
         }
       ],

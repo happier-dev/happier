@@ -1026,6 +1026,108 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
   });
 
+  it('returns a bounded appended suffix as an advanced page with hasMore instead of a gap', async () => {
+    const agentDir = await createAgentDir();
+    const remoteSessionId = 'bounded-suffix-omp';
+    const transcriptPath = await writeTranscript({
+      agentDir,
+      remoteSessionId,
+      records: [{
+        type: 'session',
+        id: remoteSessionId,
+        timestamp: '2026-07-23T10:00:00.000Z',
+        cwd: '/repo',
+        title: remoteSessionId,
+      }, {
+        type: 'message',
+        id: 'initial',
+        parentId: remoteSessionId,
+        timestamp: '2026-07-23T10:00:01.000Z',
+        message: { role: 'assistant', content: 'initial' },
+      }],
+    });
+    const contribution = createOhMyPiExternalSessionsContribution({
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    const source = { kind: 'ohMyPiAgentDir' as const, agentDir };
+
+    const initial = await contribution.pageTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      direction: 'older',
+      maxItems: 10,
+    });
+    if (!initial.ok || !initial.value.tailCursor) throw new Error('Expected an OMP tail cursor');
+
+    await appendFile(transcriptPath, [
+      jsonlLine({
+        type: 'message',
+        id: 'first-appended',
+        parentId: 'initial',
+        timestamp: '2026-07-23T10:00:02.000Z',
+        message: { role: 'assistant', content: 'first appended item' },
+      }),
+      jsonlLine({
+        type: 'message',
+        id: 'second-appended',
+        parentId: 'first-appended',
+        timestamp: '2026-07-23T10:00:03.000Z',
+        message: { role: 'assistant', content: 'second appended item' },
+      }),
+    ].join(''), 'utf8');
+
+    // One item fits the budget; the stop is ordinary pagination and must keep
+    // the exact continuation cursor the source built instead of reporting a
+    // gap that would make the host follow owner drop the suffix.
+    const firstBounded = await contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: initial.value.tailCursor,
+      maxItems: 1,
+    });
+    expect(firstBounded).toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [expect.objectContaining({ id: expect.stringContaining('first-appended') })],
+        nextCursor: expect.any(String),
+        hasMore: true,
+      },
+    });
+    if (!firstBounded.ok || firstBounded.value.outcome !== 'advanced') return;
+
+    const secondBounded = await contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: firstBounded.value.nextCursor,
+      maxItems: 1,
+    });
+    expect(secondBounded).toMatchObject({
+      ok: true,
+      value: {
+        outcome: 'advanced',
+        items: [expect.objectContaining({ id: expect.stringContaining('second-appended') })],
+        nextCursor: expect.any(String),
+        hasMore: false,
+      },
+    });
+    if (!secondBounded.ok || secondBounded.value.outcome !== 'advanced') return;
+
+    await expect(contribution.readAfterTranscript({
+      ...invocation(),
+      source,
+      remoteSessionId,
+      cursor: secondBounded.value.nextCursor,
+      maxItems: 1,
+    })).resolves.toEqual({
+      ok: true,
+      value: { outcome: 'already_current' },
+    });
+  });
+
   it('rejects a page when one native message mixes representable and unsupported blocks', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'mixed-page-record';
@@ -1381,7 +1483,7 @@ describe('Oh My Pi public External Sessions contribution', () => {
     });
   });
 
-  it('reports a bounded nonempty appended record as a gap instead of accepting a partial cursor', async () => {
+  it('advances a bounded nonempty appended record across item budgets instead of reporting a gap', async () => {
     const agentDir = await createAgentDir();
     const remoteSessionId = 'read-after-item-continuation';
     const transcriptPath = await writeTranscript({
@@ -1435,7 +1537,13 @@ describe('Oh My Pi public External Sessions contribution', () => {
       maxItems: 1,
     })).resolves.toEqual({
       ok: true,
-      value: { outcome: 'gap_or_cursor_expired' },
+      value: {
+        outcome: 'advanced',
+        items: [expect.objectContaining({ id: expect.stringContaining(':assistant-multi:text:0') })],
+        nextCursor: expect.any(String),
+        boundary: expect.any(String),
+        hasMore: true,
+      },
     });
   });
 

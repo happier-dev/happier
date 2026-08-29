@@ -12,9 +12,9 @@
  * display-only data and are never projected here, so they cannot reach retained state,
  * a Composer reference, a log, or a model input through this seam.
  *
- * It deliberately does not invent nested field or count ceilings. The source's final
- * Action result is fitted once at the canonical serialized-envelope boundary, where a
- * row omitted for that real transport limit can be reported honestly.
+ * It deliberately does not invent nested field or count ceilings. A selected event's
+ * Composer resolver separately fits whole semantic items against the canonical
+ * reference-resolution schema and reports omissions caused by that real boundary.
  */
 
 import { normalizeTriageSingleLineV1 } from '@happier-dev/triage-protocol/v1';

@@ -13,6 +13,7 @@
  */
 
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { parseRetryAfterNotBeforeMsV1 } from '@happier-dev/triage-sources/runtime';
 
 export type BitbucketRateLimitTelemetry = Readonly<{
   limit: number | null;
@@ -53,22 +54,10 @@ export function readBitbucketRetryNotBeforeMs(
   headers: Readonly<Record<string, string>>,
   nowMs: number,
 ): number | null {
-  const raw = readTriageResponseHeaderV1(headers, 'retry-after');
-  if (raw === null) return null;
-
-  if (/^\d+$/.test(raw)) {
-    const seconds = Number(raw);
-    if (!Number.isSafeInteger(seconds)) return null;
-    return nowMs + seconds * 1_000;
-  }
-
-  // Every HTTP-date form begins with a day name, so anything else is not a deadline. Handing an
-  // arbitrary string to Date.parse would turn `-5` into a plausible-looking future timestamp.
-  if (!/^[A-Za-z]/.test(raw)) return null;
-
-  const parsed = Date.parse(raw);
-  if (!Number.isFinite(parsed) || parsed <= nowMs) return null;
-  return parsed;
+  return parseRetryAfterNotBeforeMsV1(
+    readTriageResponseHeaderV1(headers, 'retry-after'),
+    nowMs,
+  );
 }
 
 export function isBitbucketRateLimitedStatus(status: number): boolean {

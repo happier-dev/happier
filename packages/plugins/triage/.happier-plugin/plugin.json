@@ -9008,6 +9008,9 @@
         "execution": {
           "target": "daemon"
         },
+        "hostAccess": [
+          "account-storage"
+        ],
         "id": "views/read-v1",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -9041,7 +9044,7 @@
               ]
             },
             "revision": {
-              "maxLength": 512,
+              "maxLength": 16,
               "minLength": 1,
               "type": "string"
             },
@@ -9322,6 +9325,9 @@
         "execution": {
           "target": "daemon"
         },
+        "hostAccess": [
+          "account-storage"
+        ],
         "id": "views/administer-v1",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -9330,7 +9336,7 @@
               "additionalProperties": false,
               "properties": {
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -9576,7 +9582,7 @@
               "additionalProperties": false,
               "properties": {
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -9819,7 +9825,7 @@
               "additionalProperties": false,
               "properties": {
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -9848,7 +9854,7 @@
               "additionalProperties": false,
               "properties": {
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -9910,7 +9916,7 @@
               ]
             },
             "revision": {
-              "maxLength": 512,
+              "maxLength": 16,
               "minLength": 1,
               "type": "string"
             },
@@ -10202,6 +10208,9 @@
         "execution": {
           "target": "daemon"
         },
+        "hostAccess": [
+          "account-storage"
+        ],
         "id": "actions/read-v1",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -10387,7 +10396,7 @@
               ]
             },
             "revision": {
-              "maxLength": 512,
+              "maxLength": 16,
               "minLength": 1,
               "type": "string"
             },
@@ -10422,6 +10431,9 @@
         "execution": {
           "target": "daemon"
         },
+        "hostAccess": [
+          "account-storage"
+        ],
         "id": "actions/administer-v1",
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
@@ -10460,7 +10472,7 @@
                   ]
                 },
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -10622,7 +10634,7 @@
                   ]
                 },
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -10755,7 +10767,7 @@
                   "type": "string"
                 },
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -10787,7 +10799,7 @@
                   "type": "array"
                 },
                 "expectedRevision": {
-                  "maxLength": 512,
+                  "maxLength": 16,
                   "minLength": 1,
                   "type": "string"
                 },
@@ -11006,7 +11018,7 @@
               ]
             },
             "revision": {
-              "maxLength": 512,
+              "maxLength": 16,
               "minLength": 1,
               "type": "string"
             },
@@ -16754,450 +16766,7 @@
     "scmHostingProviders": [],
     "sessionHeaderActions": [],
     "sessionInfoSections": [],
-    "settings": [
-      {
-        "actions": [],
-        "description": "The saved filter and order views for PRs & Issues, and which one is selected.",
-        "fields": [
-          {
-            "default": {
-              "selectedViewId": null,
-              "v": 1,
-              "views": []
-            },
-            "id": "triage.savedViews",
-            "presentation": {
-              "hidden": true
-            },
-            "schema": {
-              "additionalProperties": false,
-              "properties": {
-                "selectedViewId": {
-                  "anyOf": [
-                    {
-                      "minLength": 1,
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "v": {
-                  "const": 1,
-                  "type": "integer"
-                },
-                "views": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "filters": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "attention": {
-                            "items": {
-                              "enum": [
-                                "required",
-                                "suggested",
-                                "none"
-                              ],
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "scopes": {
-                            "items": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "collisionScope": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "source": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "localId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "pluginId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "pluginId",
-                                    "localId"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "required": [
-                                "source",
-                                "collisionScope"
-                              ],
-                              "type": "object"
-                            },
-                            "type": "array"
-                          },
-                          "sources": {
-                            "items": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "source": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "localId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "pluginId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "pluginId",
-                                    "localId"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "required": [
-                                "source"
-                              ],
-                              "type": "object"
-                            },
-                            "type": "array"
-                          },
-                          "states": {
-                            "items": {
-                              "enum": [
-                                "open",
-                                "done",
-                                "absent",
-                                "unresolved"
-                              ],
-                              "type": "string"
-                            },
-                            "type": "array"
-                          },
-                          "types": {
-                            "items": {
-                              "additionalProperties": false,
-                              "properties": {
-                                "kindId": {
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                "source": {
-                                  "additionalProperties": false,
-                                  "properties": {
-                                    "localId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    },
-                                    "pluginId": {
-                                      "minLength": 1,
-                                      "type": "string"
-                                    }
-                                  },
-                                  "required": [
-                                    "pluginId",
-                                    "localId"
-                                  ],
-                                  "type": "object"
-                                }
-                              },
-                              "required": [
-                                "source",
-                                "kindId"
-                              ],
-                              "type": "object"
-                            },
-                            "type": "array"
-                          }
-                        },
-                        "required": [
-                          "sources",
-                          "types",
-                          "scopes",
-                          "states",
-                          "attention"
-                        ],
-                        "type": "object"
-                      },
-                      "label": {
-                        "minLength": 1,
-                        "type": "string"
-                      },
-                      "order": {
-                        "enum": [
-                          "newest",
-                          "oldest",
-                          "smart"
-                        ],
-                        "type": "string"
-                      },
-                      "smartPolicy": {
-                        "additionalProperties": false,
-                        "properties": {
-                          "precedence": {
-                            "items": {
-                              "enum": [
-                                "attention",
-                                "activity"
-                              ],
-                              "type": "string"
-                            },
-                            "maxItems": 2,
-                            "minItems": 2,
-                            "type": "array"
-                          },
-                          "v": {
-                            "const": 1,
-                            "type": "integer"
-                          }
-                        },
-                        "required": [
-                          "v",
-                          "precedence"
-                        ],
-                        "type": "object"
-                      },
-                      "viewId": {
-                        "minLength": 1,
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "viewId",
-                      "label",
-                      "filters",
-                      "order",
-                      "smartPolicy"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
-                }
-              },
-              "required": [
-                "v",
-                "views",
-                "selectedViewId"
-              ],
-              "type": "object"
-            },
-            "title": "Saved views"
-          }
-        ],
-        "id": "saved-views",
-        "presentation": {
-          "sections": [],
-          "subagentSections": []
-        },
-        "scope": "account",
-        "target": {
-          "kind": "plugin"
-        },
-        "title": "Saved views",
-        "version": 1
-      },
-      {
-        "actions": [],
-        "description": "The things you can start from a pull request, issue or error group.",
-        "fields": [
-          {
-            "default": {
-              "actions": [],
-              "v": 1
-            },
-            "id": "triage.actions",
-            "presentation": {
-              "hidden": true
-            },
-            "schema": {
-              "additionalProperties": false,
-              "properties": {
-                "actions": {
-                  "items": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "actionId": {
-                        "maxLength": 128,
-                        "minLength": 1,
-                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                        "type": "string"
-                      },
-                      "appliesTo": {
-                        "items": {
-                          "anyOf": [
-                            {
-                              "const": "pullRequest"
-                            },
-                            {
-                              "const": "issue"
-                            },
-                            {
-                              "const": "errorIssue"
-                            },
-                            {
-                              "const": "other"
-                            }
-                          ]
-                        },
-                        "maxItems": 4,
-                        "type": "array"
-                      },
-                      "enabled": {
-                        "anyOf": [
-                          {
-                            "const": true
-                          },
-                          {
-                            "const": false
-                          }
-                        ]
-                      },
-                      "label": {
-                        "minLength": 1,
-                        "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                        "type": "string"
-                      },
-                      "profileId": {
-                        "anyOf": [
-                          {
-                            "maxLength": 256,
-                            "minLength": 1,
-                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                            "type": "string"
-                          },
-                          {
-                            "const": null
-                          }
-                        ]
-                      },
-                      "target": {
-                        "anyOf": [
-                          {
-                            "additionalProperties": false,
-                            "properties": {
-                              "delivery": {
-                                "anyOf": [
-                                  {
-                                    "const": "compose"
-                                  },
-                                  {
-                                    "const": "send"
-                                  }
-                                ]
-                              },
-                              "kind": {
-                                "const": "agent"
-                              },
-                              "promptInvocationId": {
-                                "anyOf": [
-                                  {
-                                    "maxLength": 128,
-                                    "minLength": 1,
-                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "type": "string"
-                                  },
-                                  {
-                                    "const": null
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "promptInvocationId",
-                              "delivery"
-                            ],
-                            "type": "object"
-                          },
-                          {
-                            "additionalProperties": false,
-                            "properties": {
-                              "kind": {
-                                "const": "reviewStart"
-                              },
-                              "promptInvocationId": {
-                                "anyOf": [
-                                  {
-                                    "maxLength": 128,
-                                    "minLength": 1,
-                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
-                                    "type": "string"
-                                  },
-                                  {
-                                    "const": null
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "kind",
-                              "promptInvocationId"
-                            ],
-                            "type": "object"
-                          }
-                        ]
-                      },
-                      "workspaceMode": {
-                        "anyOf": [
-                          {
-                            "const": "reference_only"
-                          },
-                          {
-                            "const": "repository"
-                          },
-                          {
-                            "const": "pull_request"
-                          }
-                        ]
-                      }
-                    },
-                    "required": [
-                      "actionId",
-                      "label",
-                      "enabled",
-                      "appliesTo",
-                      "profileId",
-                      "workspaceMode",
-                      "target"
-                    ],
-                    "type": "object"
-                  },
-                  "type": "array"
-                },
-                "v": {
-                  "const": 1
-                }
-              },
-              "required": [
-                "v",
-                "actions"
-              ],
-              "type": "object"
-            },
-            "title": "Actions"
-          }
-        ],
-        "id": "actions",
-        "presentation": {
-          "sections": [],
-          "subagentSections": []
-        },
-        "scope": "account",
-        "target": {
-          "kind": "plugin"
-        },
-        "title": "Actions",
-        "version": 1
-      }
-    ],
+    "settings": [],
     "systemTools": [],
     "targetedPluginContributions": [],
     "tools": [],
@@ -17237,7 +16806,10 @@
         {
           "artifact": "triage-session-entries-native",
           "id": "session-entries-panel",
-          "kind": "reactNative"
+          "kind": "reactNative",
+          "requiredHostMethods": [
+            "openSurface"
+          ]
         }
       ],
       "settingsGroups": [],
@@ -21082,7 +20654,7 @@
       {
         "capability": "storage.account",
         "id": "account-storage",
-        "reason": "Read and write the source instances the user configured, read the list window assembled from them, and read and write the pins the user placed on entries.",
+        "reason": "Read and write configured sources, saved views, entry actions, Session links, and pins in this Happier Account.",
         "scope": {
           "enabled": true
         }

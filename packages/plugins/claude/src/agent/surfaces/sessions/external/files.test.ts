@@ -177,6 +177,44 @@ describe('Claude JSONL session file resolution', () => {
             matches: [expect.objectContaining({ projectId: 'project-a' })],
         });
     });
+    it('refuses an in-root symlink retarget of the projects root while preserving a symlinked config root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-claude-projects-retarget-'));
+        roots.push(root);
+        const configDir = join(root, '.claude');
+        const retargetedDir = join(configDir, 'projects-retargeted');
+        await mkdir(join(retargetedDir, 'project-a'), { recursive: true });
+        await writeFile(join(retargetedDir, 'project-a', 'retargeted.jsonl'), '{"type":"user"}\n', 'utf8');
+        await symlink(retargetedDir, join(configDir, 'projects'), 'dir');
+        const aliasConfigDir = join(root, 'alias-claude');
+        await symlink(configDir, aliasConfigDir);
+
+        // The retarget stays physically inside the config root, so containment
+        // alone would admit it; the symlinked child itself is the defect.
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'retargeted',
+        })).resolves.toBeNull();
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            remoteSessionId: 'retargeted',
+        })).resolves.toBeNull();
+        await expect(findClaudeJsonlSessionsById({
+            source: { kind: 'claudeConfig', configDir },
+            env: {},
+            remoteSessionId: 'retargeted',
+        })).resolves.toMatchObject({ matches: [] });
+
+        // The same request through a symlinked top-level config root is the
+        // same retarget, so it is refused the same way.
+        await expect(resolveClaudeJsonlSessionFile({
+            source: { kind: 'claudeConfig', configDir: aliasConfigDir, projectId: 'project-a' },
+            env: {},
+            remoteSessionId: 'retargeted',
+        })).resolves.toBeNull();
+    });
+
     it('refuses a qualified lookup whose project directory symlinks a real file tree outside the admitted root', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-claude-symlink-project-dir-'));
         roots.push(root);

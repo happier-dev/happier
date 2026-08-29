@@ -149,17 +149,11 @@ const GithubCapabilityAvailabilitySchema = defineProtocolUnion([
   defineProtocolObject({ kind: defineProtocolLiteral('available') }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('unavailable'),
-    code: defineProtocolUnion([
-      defineProtocolLiteral('api_not_exposed'),
-      defineProtocolLiteral('repository_unsupported'),
-    ]),
+    code: defineProtocolLiteral('repository_unsupported'),
   }, { policy: 'closed' }),
   defineProtocolObject({
     kind: defineProtocolLiteral('denied'),
-    code: defineProtocolUnion([
-      defineProtocolLiteral('repository_archived'),
-      defineProtocolLiteral('forbidden_by_forge'),
-    ]),
+    code: defineProtocolLiteral('repository_archived'),
   }, { policy: 'closed' }),
 ]);
 

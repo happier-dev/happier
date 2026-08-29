@@ -124,13 +124,13 @@ function jsonResponse(body: unknown, headers: Readonly<Record<string, string>> =
 describe('GitHub capability plane', () => {
   it('projects repository facts from the admission read without a duplicate fetch', async () => {
     const repositoryBody = {
-        id: 4210,
-        archived: false,
-        has_issues: true,
-        allow_merge_commit: true,
-        allow_squash_merge: false,
-        allow_rebase_merge: true,
-        permissions: { admin: false, maintain: false, push: true, triage: true, pull: true },
+      id: 4210,
+      archived: false,
+      has_issues: true,
+      allow_merge_commit: true,
+      allow_squash_merge: false,
+      allow_rebase_merge: true,
+      permissions: { admin: false, maintain: false, push: false, triage: false, pull: true },
     };
     const stub = createStubGithubTransport({
       respond: (request) => new URL(request.url).pathname
@@ -147,6 +147,9 @@ describe('GitHub capability plane', () => {
     expect(result.kind).toBe('capabilities');
     if (result.kind !== 'capabilities') return;
     expect(result.mergeMethods.squash).toEqual({ kind: 'unavailable', code: 'repository_unsupported' });
+    expect(result.operations.pullRequestSubmitReview).toEqual({ kind: 'available' });
+    expect(result.operations.pullRequestReviewCommentCreate).toEqual({ kind: 'available' });
+    expect(result.operations.pullRequestMerge).toEqual({ kind: 'available' });
     expect(stub.requests.filter((request) =>
       new URL(request.url).pathname === `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}`))
       .toHaveLength(1);

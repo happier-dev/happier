@@ -2234,6 +2234,7 @@ export function createCodexAppServerRuntime(
       try {
         return await requestWithPermissionFallback('thread/resume', {
           threadId: nextThreadId,
+          cwd: params.directory,
           ...commonFields,
           persistExtendedHistory: true,
           excludeTurns: options?.importHistory !== true,
@@ -3055,7 +3056,10 @@ export function createCodexAppServerRuntime(
       await submitted;
       return acceptedSendResult();
     },
-    async cancel() {
+    async cancel(expectedTurnId?: string) {
+      if (expectedTurnId !== undefined && pendingTurn?.sessionTurnId !== expectedTurnId) {
+        return cancelledResult('not_running');
+      }
       const hadActiveTurn = pendingTurn !== null;
       await cancelTurn();
       return cancelledResult(hadActiveTurn ? 'cancelled' : 'not_running');

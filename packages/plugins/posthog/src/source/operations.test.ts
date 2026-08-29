@@ -1073,7 +1073,7 @@ describe('PostHog invocation boundaries', () => {
         });
     });
 
-    it('arms the interactive get deadline only for a mounted same-plugin ui read', async () => {
+    it('inherits the caller signal for mounted and aggregate reads when no real deadline is supplied', async () => {
         const instance = configuredInstance();
         const input = { v: 1, instance, localRef: LOCAL_REF };
         const observedSignals: AbortSignal[] = [];
@@ -1101,7 +1101,8 @@ describe('PostHog invocation boundaries', () => {
         };
 
         // The host stamps a mounted detail-body read `ui` and attributes it to
-        // this plugin: exactly the shape the interactive deadline exists for.
+        // this plugin. With no external duration, that read inherits the host's
+        // cancellation signal without arming a source-owned timer.
         const mounted = context([], [], {
             materialize,
             surface: 'ui',
@@ -1110,15 +1111,13 @@ describe('PostHog invocation boundaries', () => {
         const mountedResult = await getPosthogSourceEntry(input, mounted.value);
         expect(mountedResult.kind).toBe('unresolved');
         expect(observedSignals).toHaveLength(1);
-        // A fresh composite signal means one bounded invocation was armed over
-        // the caller's own signal, so the whole mounted read owns a deadline.
-        expect(observedSignals[0]).not.toBe(mounted.value.signal);
+        expect(observedSignals[0]).toBe(mounted.value.signal);
 
         observedSignals.length = 0;
         // A plugin-surface dispatch is the aggregate's own call even when its
         // diagnostic provenance names `ui`: originSurface is caller data, never
         // inherited authority, so the aggregate's deadline passes through
-        // unchanged and no second timer is armed over it.
+        // unchanged in the same way and no second timer is armed over it.
         const aggregate = context([], [], {
             materialize,
             surface: 'plugin',

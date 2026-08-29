@@ -44,7 +44,6 @@ async function resolveLaunch(
   return {
     ok: true,
     value: {
-      directory: request.targetDirectory,
       runtimeDescriptorV1: buildOpenCodeAgentRuntimeDescriptorV1({
         backendMode: 'server',
         providerSessionId: request.remoteSessionId,

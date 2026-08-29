@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import type {
   AgentExternalSessionLinkData,
   AgentExternalSessionLinkDataValue,
@@ -50,29 +48,20 @@ type CandidateCursorV2 = Readonly<{
   directoryEntryOffset: number;
 }>;
 
-type FullCandidateSearchCursorV1 = Readonly<{
-  v: 1;
+type FullCandidateSearchCursorV2 = Readonly<{
+  v: 2;
   kind: 'antigravityFullCandidateSearch';
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
+  /** Directory-scan position the next bounded chunk resumes at. */
+  directoryEntryOffset: number;
   /**
-   * Order-independent digest of the conversation ids the browse has already
-   * served, up to and including the anchor. The anchor alone cannot detect an
-   * unserved match OVERTAKING it: `updatedAtMs` is a live mtime, so a
-   * conversation the user keeps driving moves under the cursor and the
-   * continuation reads it as already served. A COUNT of those matches aliases —
-   * an overtaking match plus a vanished served one leave the size intact, and
-   * neither touches a brain-dir entry, so the source generation cannot see them
-   * either. Digesting the identities makes any membership change in the served
-   * prefix a stale-cursor refresh instead of a silent omission.
-   *
-   * Identity only: a served conversation being appended to keeps it in the same
-   * prefix, so folding its mutable revision in would refresh the browse for a
-   * change that did not move anything.
+   * Last candidate this search served. Matches ordering at or before it were
+   * already delivered by earlier chunks; a new one means the ordering moved
+   * under the cursor. Absent until a first chunk serves a match.
    */
-  servedDigest: string;
-  after: Readonly<{
+  after?: Readonly<{
     remoteSessionId: string;
     updatedAtMs: number;
     sourceRevision: string;
@@ -172,7 +161,9 @@ function readString(value: AgentExternalSessionLinkDataValue | undefined): strin
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function encodeCandidateCursor(cursor: CandidateCursorV2 | FullCandidateSearchCursorV1): string {
+function encodeCandidateCursor(
+  cursor: CandidateCursorV2 | FullCandidateSearchCursorV2,
+): string {
   return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
 }
 
@@ -277,45 +268,51 @@ function decodeAntigravityExternalPageCursor(
   }
 }
 
-function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidateSearchCursorV1 | null {
+function decodeFullCandidateSearchCursor(raw: string | undefined): FullCandidateSearchCursorV2 | null {
   if (!raw?.trim()) return null;
   try {
     const value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as unknown;
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    const after = record.after;
-    if (!after || typeof after !== 'object' || Array.isArray(after)) return null;
-    const anchor = after as Record<string, unknown>;
-    return record.v === 1
-      && record.kind === 'antigravityFullCandidateSearch'
-      && typeof record.brainDir === 'string'
-      && record.brainDir.length > 0
-      && typeof record.sourceGeneration === 'string'
-      && record.sourceGeneration.length > 0
-      && typeof record.searchTerm === 'string'
-      && record.searchTerm.trim().length > 0
-      && typeof record.servedDigest === 'string'
-      && SERVED_DIGEST_PATTERN.test(record.servedDigest)
-      && typeof anchor.remoteSessionId === 'string'
-      && anchor.remoteSessionId.trim().length > 0
-      && typeof anchor.updatedAtMs === 'number'
-      && Number.isFinite(anchor.updatedAtMs)
-      && typeof anchor.sourceRevision === 'string'
-      && anchor.sourceRevision.trim().length > 0
-      ? {
-          v: 1,
-          kind: 'antigravityFullCandidateSearch',
-          brainDir: record.brainDir,
-          sourceGeneration: record.sourceGeneration,
-          searchTerm: record.searchTerm,
-          servedDigest: record.servedDigest,
-          after: {
-            remoteSessionId: anchor.remoteSessionId,
-            updatedAtMs: anchor.updatedAtMs,
-            sourceRevision: anchor.sourceRevision,
-          },
-        }
-      : null;
+    if (
+      record.v !== 2
+      || record.kind !== 'antigravityFullCandidateSearch'
+      || typeof record.brainDir !== 'string'
+      || record.brainDir.length === 0
+      || typeof record.sourceGeneration !== 'string'
+      || record.sourceGeneration.length === 0
+      || typeof record.searchTerm !== 'string'
+      || record.searchTerm.trim().length === 0
+      || !Number.isSafeInteger(record.directoryEntryOffset)
+      || (record.directoryEntryOffset as number) < 1
+    ) return null;
+    let after: FullCandidateSearchCursorV2['after'];
+    if (record.after !== undefined) {
+      if (!record.after || typeof record.after !== 'object' || Array.isArray(record.after)) return null;
+      const anchor = record.after as Record<string, unknown>;
+      if (
+        typeof anchor.remoteSessionId !== 'string'
+        || anchor.remoteSessionId.trim().length === 0
+        || typeof anchor.updatedAtMs !== 'number'
+        || !Number.isFinite(anchor.updatedAtMs)
+        || typeof anchor.sourceRevision !== 'string'
+        || anchor.sourceRevision.trim().length === 0
+      ) return null;
+      after = {
+        remoteSessionId: anchor.remoteSessionId,
+        updatedAtMs: anchor.updatedAtMs,
+        sourceRevision: anchor.sourceRevision,
+      };
+    }
+    return {
+      v: 2,
+      kind: 'antigravityFullCandidateSearch',
+      brainDir: record.brainDir,
+      sourceGeneration: record.sourceGeneration,
+      searchTerm: record.searchTerm,
+      directoryEntryOffset: record.directoryEntryOffset as number,
+      ...(after ? { after } : {}),
+    };
   } catch {
     return null;
   }
@@ -419,37 +416,8 @@ function toCandidate(candidate: Readonly<{
   };
 }
 
-/**
- * The served-prefix digest folds one conversation id at a time and is XOR-based
- * so it depends on the SET of served identities, never on the order the
- * directory scan happens to reach them in. Each conversation id appears at most
- * once per scan — they are directory entry names — so no pair can cancel out.
- */
-const SERVED_DIGEST_BYTES = 16;
-const SERVED_DIGEST_PATTERN = /^[0-9a-f]{32}$/;
-
-function foldServedMatchDigest(digest: Uint8Array, remoteSessionId: string): void {
-  const hash = createHash('sha256').update(remoteSessionId, 'utf8').digest();
-  for (let index = 0; index < SERVED_DIGEST_BYTES; index += 1) {
-    digest[index] = (digest[index] ?? 0) ^ (hash[index] ?? 0);
-  }
-}
-
-function formatServedMatchDigest(digest: Uint8Array): string {
-  return Buffer.from(digest).toString('hex');
-}
-
-function isFullCandidateSearchAnchor(
-  candidate: AgentExternalSessionCandidate,
-  anchor: FullCandidateSearchCursorV1['after'],
-): boolean {
-  return candidate.remoteSessionId === anchor.remoteSessionId
-    && candidate.updatedAtMs === anchor.updatedAtMs
-    && readLinkSourceRevision(candidate.linkData) === anchor.sourceRevision;
-}
-
 function fullCandidateSearchAnchorCandidate(
-  anchor: FullCandidateSearchCursorV1['after'],
+  anchor: NonNullable<FullCandidateSearchCursorV2['after']>,
 ): AgentExternalSessionCandidate {
   return {
     remoteSessionId: anchor.remoteSessionId,
@@ -462,138 +430,111 @@ function encodeFullCandidateSearchCursor(params: Readonly<{
   brainDir: string;
   sourceGeneration: string;
   searchTerm: string;
-  servedDigest: string;
-  candidate: AgentExternalSessionCandidate;
+  directoryEntryOffset: number;
+  after?: AgentExternalSessionCandidate;
 }>): string | null {
-  const sourceRevision = readLinkSourceRevision(params.candidate.linkData);
-  if (!sourceRevision) return null;
+  let after: FullCandidateSearchCursorV2['after'];
+  if (params.after) {
+    const sourceRevision = readLinkSourceRevision(params.after.linkData);
+    if (!sourceRevision) return null;
+    after = {
+      remoteSessionId: params.after.remoteSessionId,
+      updatedAtMs: params.after.updatedAtMs,
+      sourceRevision,
+    };
+  }
   return encodeCandidateCursor({
-    v: 1,
+    v: 2,
     kind: 'antigravityFullCandidateSearch',
     brainDir: params.brainDir,
     sourceGeneration: params.sourceGeneration,
     searchTerm: params.searchTerm,
-    servedDigest: params.servedDigest,
-    after: {
-      remoteSessionId: params.candidate.remoteSessionId,
-      updatedAtMs: params.candidate.updatedAtMs,
-      sourceRevision,
-    },
+    directoryEntryOffset: params.directoryEntryOffset,
+    ...(after ? { after } : {}),
   });
 }
 
 /**
- * Search bypasses the host's complete candidate index. A full search therefore
- * exhausts the bounded native source and retains only the requested ordered
- * page plus one continuation row; it never becomes a second candidate index.
+ * Search bypasses the host's complete candidate index. Each invocation reads
+ * one bounded directory chunk and returns the matches it held: reaching the
+ * end of the source completes the search, and anything earlier returns a
+ * deterministic partial page marked `searchIncomplete` with a query-bound
+ * continuation that resumes at the chunk boundary on a later call. It never
+ * becomes a second candidate index.
  */
 async function listFullCandidateSearch(params: Readonly<{
   invocation: AgentExternalSessionsInvocation;
   brainDir: string;
   searchTerm: string;
-  cursor: FullCandidateSearchCursorV1 | null;
+  cursor: FullCandidateSearchCursorV2 | null;
   maxItems: number;
 }>): Promise<AgentExternalSessionsResult<AgentExternalSessionsListCandidatesResult>> {
   const limit = Math.trunc(params.maxItems);
-  const after = params.cursor
+  const after = params.cursor?.after
     ? fullCandidateSearchAnchorCandidate(params.cursor.after)
     : null;
-  let foundAfter = after === null;
-  let sourceGeneration = params.cursor?.sourceGeneration ?? null;
-  let afterDirectoryEntryOffset: number | null = null;
-  const precedingMatchDigest = new Uint8Array(SERVED_DIGEST_BYTES);
+  const page = await pageAntigravityConversationCandidates({
+    brainDir: params.brainDir,
+    afterDirectoryEntryOffset: params.cursor?.directoryEntryOffset,
+    expectedSourceGeneration: params.cursor?.sourceGeneration ?? null,
+    maxItems: limit,
+    signal: params.invocation.signal,
+  });
+
   const retained: AgentExternalSessionCandidate[] = [];
-
-  while (true) {
-    const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
-    if (stopped) return stopped;
-    const page = await pageAntigravityConversationCandidates({
-      brainDir: params.brainDir,
-      afterDirectoryEntryOffset,
-      expectedSourceGeneration: sourceGeneration,
-      maxItems: limit,
-      signal: params.invocation.signal,
-    });
-    sourceGeneration ??= page.sourceGeneration;
-
-    for (const nativeCandidate of page.candidates) {
-      const candidate = toCandidate(nativeCandidate);
-      if (
-        !candidate.remoteSessionId.toLowerCase().includes(params.searchTerm)
-        && candidate.title?.toLowerCase().includes(params.searchTerm) !== true
-      ) {
-        continue;
-      }
-      if (after) {
-        if (isFullCandidateSearchAnchor(candidate, params.cursor!.after)) {
-          foundAfter = true;
-          foldServedMatchDigest(precedingMatchDigest, candidate.remoteSessionId);
-          continue;
-        }
-        if (compareExternalSessionCandidatePrecedence(candidate, after) <= 0) {
-          foldServedMatchDigest(precedingMatchDigest, candidate.remoteSessionId);
-          continue;
-        }
-      }
-      retained.push(candidate);
-      retained.sort(compareExternalSessionCandidatePrecedence);
-      if (retained.length > limit + 1) retained.pop();
+  for (const nativeCandidate of page.candidates) {
+    const candidate = toCandidate(nativeCandidate);
+    if (
+      !candidate.remoteSessionId.toLowerCase().includes(params.searchTerm)
+      && candidate.title?.toLowerCase().includes(params.searchTerm) !== true
+    ) {
+      continue;
     }
+    // One bounded chunk per invocation: this chunk's scan position is past
+    // every match earlier chunks served, so a match ordering at or before the
+    // served anchor was never delivered — answering this chunk would drop it
+    // or repeat the prefix it moved into.
+    if (after && compareExternalSessionCandidatePrecedence(candidate, after) <= 0) {
+      return failed(
+        'source_invalid',
+        'Antigravity full-search candidate ordering changed under its cursor.',
+        true,
+      );
+    }
+    retained.push(candidate);
+  }
+  retained.sort(compareExternalSessionCandidatePrecedence);
 
-    if (page.nextDirectoryEntryOffset === null) break;
-    afterDirectoryEntryOffset = page.nextDirectoryEntryOffset;
-  }
-
-  if (!foundAfter) {
-    return failed('source_invalid', 'Antigravity full-search candidate cursor is stale or unavailable.', true);
-  }
-  // The anchor survived, but the matches ordered at or before it did not: an
-  // unserved conversation overtook it, a served one fell behind it, or a served
-  // one stopped resolving. Either way the served prefix is no longer a prefix of
-  // the current ordering, so answering this cursor would drop or repeat a match.
-  if (params.cursor && formatServedMatchDigest(precedingMatchDigest) !== params.cursor.servedDigest) {
-    return failed('source_invalid', 'Antigravity full-search candidate ordering changed under its cursor.', true);
-  }
   const stopped = getAgentExternalSessionsInvocationFailure(params.invocation);
   if (stopped) return stopped;
 
-  if (retained.length === 0) {
-    return boundedResult(params.invocation, ok({ candidates: [], nextCursor: null }));
-  }
-
-  let candidates = retained.slice(0, limit);
-  while (candidates.length > 0) {
-    const hasMore = retained.length > candidates.length;
-    const lastCandidate = candidates.at(-1);
-    if (!lastCandidate) return failed('agent_error', 'Antigravity candidate projection is incomplete.', false);
-    const servedDigest = new Uint8Array(precedingMatchDigest);
-    for (const served of candidates) foldServedMatchDigest(servedDigest, served.remoteSessionId);
-    const nextCursor = hasMore && sourceGeneration
-      ? encodeFullCandidateSearchCursor({
-        brainDir: params.brainDir,
-        sourceGeneration,
-        searchTerm: params.searchTerm,
-        servedDigest: formatServedMatchDigest(servedDigest),
-        candidate: lastCandidate,
-      })
-      : null;
-    if (hasMore && !nextCursor) {
+  const exhausted = page.nextDirectoryEntryOffset === null;
+  let nextCursor: string | null = null;
+  if (!exhausted && page.nextDirectoryEntryOffset !== null) {
+    const sourceGeneration = page.sourceGeneration;
+    if (!sourceGeneration) {
       return failed('agent_error', 'Antigravity candidate continuation cannot be represented.', false);
     }
-    const result = ok({
-      candidates,
-      nextCursor,
+    // The anchor moves to the newest match this chunk served; a chunk without
+    // a match carries the previous anchor, or none until a first match serves.
+    const servedAnchor = retained.at(-1) ?? after ?? undefined;
+    nextCursor = encodeFullCandidateSearchCursor({
+      brainDir: params.brainDir,
+      sourceGeneration,
+      searchTerm: params.searchTerm,
+      directoryEntryOffset: page.nextDirectoryEntryOffset,
+      ...(servedAnchor ? { after: servedAnchor } : {}),
     });
-    if (isAgentExternalSessionsResultWithinByteBudget(
-      result,
-      params.invocation.maxSerializedBytes,
-    )) return result;
-    candidates = candidates.slice(0, -1);
+    if (!nextCursor) {
+      return failed('agent_error', 'Antigravity candidate continuation cannot be represented.', false);
+    }
   }
 
-  return createAgentExternalSessionsProducerOverflowFailure(
-    'Antigravity candidate result cannot fit the valid serialized-byte bound.',
-  );
+  return boundedResult(params.invocation, ok({
+    candidates: retained,
+    nextCursor,
+    ...(exhausted ? {} : { searchIncomplete: true }),
+  }));
 }
 
 async function resolveIdentity(params: Readonly<{

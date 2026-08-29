@@ -2,7 +2,10 @@ import type { ReviewCommentV1 } from '@happier-dev/plugin-sdk/reviews';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
-import { GITLAB_PLUGIN_ID } from '../../triage/contribution.js';
+import {
+  GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+  GITLAB_PLUGIN_ID,
+} from '../../triage/contribution.js';
 import {
   buildGitlabIssueCommentPublicationInputV1,
   buildGitlabMergeRequestReviewCommentCreateInputV1,
@@ -22,7 +25,7 @@ const INPUT = {
       sourceInstanceId: '9d2a6b1e-6c1a-4b7d-9f31-1d4a6c8b2e70',
     },
     binding: {
-      purpose: 'gitlab-api',
+      purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE,
       account: {
         service: { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab-account' },
         accountId: 'account-1',

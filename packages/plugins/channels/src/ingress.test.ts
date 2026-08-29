@@ -38,6 +38,8 @@ import {
   ingestConversationProviderObservationForInvocation,
   hasConversationCheckpointedPullBaseline,
   partitionIngressPreparationValues,
+  prepareConversationIngressObligationForBindingDeletion,
+  prepareConversationIngressObligationForConnectionDeletion,
   runConversationCheckpointedPollForInvocation,
   runConversationIngressDueWorkForInvocation,
   runConversationIngressRetentionForInvocation,
@@ -446,6 +448,7 @@ type IngressHarnessOptions = Readonly<{
   getPollExecutionOrigin?: () => ReturnType<typeof channelConnection>['payload']['transportOrigin'];
   beforeCollectionGet?: (input: Readonly<{ rowId: string }>) => void;
   beforeCollectionPut?: (input: Readonly<{ value: Readonly<Record<string, unknown>> }>) => void;
+  beforeCollectionForget?: (input: Readonly<{ rowId: string; expectedRevision: number }>) => void;
   collectionLimits?: PluginCollectionLimits;
   readAdmittedProviderContributions?: () => readonly unknown[];
 }>;
@@ -1079,9 +1082,14 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
         )),
       };
     },
-    async forget(rowId: string, options: Readonly<{ expectedRevision: number }>) {
+    async forget(rowId: string, forgetOptions: Readonly<{ expectedRevision: number }>) {
+      options.beforeCollectionForget?.({ rowId, expectedRevision: forgetOptions.expectedRevision });
       const existing = rows.get(rowId);
-      if (existing === undefined || existing.deleted !== true || existing.revision !== options.expectedRevision) {
+      // The real Collection forget is response-loss-idempotent: an exact
+      // retention retry may observe that this identity was already physically
+      // reclaimed while it was between snapshots.
+      if (existing === undefined) return { rowId, forgotten: true as const };
+      if (existing.deleted !== true || existing.revision !== forgetOptions.expectedRevision) {
         throw new Error('Collection forget conflicted.');
       }
       rows.delete(rowId);
@@ -1220,6 +1228,60 @@ function measurementFor(
 }
 
 describe('Conversation provider observation ingress', () => {
+  it('terminalizes blocked custody during connection and binding deletion, while retaining attempting custody', async () => {
+    const harness = createIngressHarness({
+      sessionSendResult: {
+        status: 'outcomeUnknown',
+        localId: 'pending-delete-blocked',
+        code: 'session_admission_outcome_unknown',
+      },
+    });
+    await expect(ingestConversationProviderObservationForInvocation(
+      observation({ messageRevision: 'delete-blocked' }),
+      harness.context,
+    )).rejects.toMatchObject({ code: 'channels_ingress_admission_unsettled' });
+    const current = [...harness.rows.values()].find((row) => row.value['record-kind'] === 'ingress-obligation');
+    if (current === undefined) throw new Error('Expected a retained ingress obligation.');
+    const { ['due-at']: _dueAt, ...currentWithoutDueAt } = current.value;
+    const blockedValue = {
+      ...currentWithoutDueAt,
+      attention: true,
+      terminal: false,
+      payload: {
+        ...record(current.value.payload),
+        lifecycle: { phase: 'blocked', attemptCount: 3, dueAt: null },
+        disposition: null,
+        nonAdmission: null,
+      },
+    };
+    expect(prepareConversationIngressObligationForConnectionDeletion({
+      rowId: current.rowId,
+      revision: current.revision,
+      value: blockedValue,
+      now: 2_000,
+    })).toMatchObject({ kind: 'readyToSettle', connectionId: 'connection-1' });
+    expect(prepareConversationIngressObligationForBindingDeletion({
+      rowId: current.rowId,
+      revision: current.revision,
+      value: blockedValue,
+      now: 2_000,
+    })).toMatchObject({ kind: 'readyToSettle', connectionId: 'connection-1', bindingId: 'binding-1' });
+
+    const attemptingValue = {
+      ...blockedValue,
+      attention: false,
+      payload: {
+        ...record(blockedValue.payload),
+        lifecycle: { phase: 'attempting', attemptCount: 3, dueAt: null },
+      },
+    };
+    expect(prepareConversationIngressObligationForConnectionDeletion({
+      rowId: current.rowId,
+      revision: current.revision,
+      value: attemptingValue,
+      now: 2_000,
+    })).toMatchObject({ kind: 'blocked', connectionId: 'connection-1' });
+  });
   it('keeps the canonical parser fail closed before Account access when Action JSON Schema also rejects a UTF-8 overflow', async () => {
     const input = observation({
       messageRevision: 'utf8-overflow:1',
@@ -4331,7 +4393,46 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(census.rowId)).toBeUndefined();
-      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(obligation.rowId)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps horizon-expired ingress retryable when physical forgetting loses its exact CAS', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      let failForget = true;
+      const harness = createIngressHarness({
+        beforeCollectionForget: () => {
+          if (failForget) throw new Error('Simulated physical forget conflict.');
+        },
+      });
+      await ingestConversationProviderObservationForInvocation(
+        observation({ messageRevision: 'retention:forget-conflict', occurredAt: 1_000 }),
+        harness.context,
+      );
+      const census = markIngressCensusCheckpointCovered(harness.rows, 1_000);
+      const obligation = [...harness.rows.values()].find((row) => (
+        row.deleted !== true && row.value['record-kind'] === 'ingress-obligation'
+      ));
+      if (obligation === undefined) throw new Error('Expected the terminal ingress obligation.');
+      await expect(runConversationIngressRetentionForInvocation({ now: 2_000, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ compactedCensuses: 1, deletedCensuses: 0 });
+      expect(record(record(harness.rows.get(census.rowId)?.value ?? {}).payload).compacted)
+        .toMatchObject({
+          prunedObligationTombstones: [{ rowId: obligation.rowId, revision: obligation.revision + 1 }],
+        });
+
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 0 });
+      expect(harness.rows.get(census.rowId)?.deleted).not.toBe(true);
+
+      failForget = false;
+      await expect(runConversationIngressRetentionForInvocation({ now: 61_002, limit: 1 }, harness.context))
+        .resolves.toMatchObject({ deletedCensuses: 1 });
+      expect(harness.rows.get(census.rowId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -4762,7 +4863,7 @@ describe('Conversation provider observation ingress', () => {
       expect(Math.max(...deleteBatchSizes)).toBe(1);
       expect(harness.rows.get(census.rowId)).toBeUndefined();
       for (const obligation of obligations) {
-        expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+        expect(harness.rows.get(obligation.rowId)).toBeUndefined();
       }
     } finally {
       vi.useRealTimers();
@@ -4803,7 +4904,7 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(censusId)).toBeUndefined();
-      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(obligation.rowId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -4878,7 +4979,7 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(censusId)).toBeUndefined();
-      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(obligation.rowId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -5076,7 +5177,7 @@ describe('Conversation provider observation ingress', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, restartedContext))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(censusId)).toBeUndefined();
-      expect(harness.rows.get(blocked.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(blocked.rowId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -5230,7 +5331,7 @@ describe('Conversation provider observation ingress', () => {
       }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
 
       expect(harness.execute).toHaveBeenCalledTimes(1);
-      expect(harness.rows.get(censusId)?.deleted).toBe(true);
+      expect(harness.rows.get(censusId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }
@@ -5300,7 +5401,7 @@ describe('Conversation provider observation ingress', () => {
       });
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
-      expect(harness.rows.get(censusId)?.deleted).toBe(true);
+      expect(harness.rows.get(censusId)).toBeUndefined();
 
       vi.setSystemTime(70_000);
       const connection = harness.rows.get('connection-1');
@@ -5342,7 +5443,7 @@ describe('Conversation provider observation ingress', () => {
         generationId: restartedChallenge.generationId,
         challengeId: restartedChallenge.challengeId,
       })).toMatchObject({ kind: 'active' });
-      expect(harness.rows.get(censusId)?.deleted).toBe(true);
+      expect(harness.rows.get(censusId)).toBeUndefined();
       restartedManager.dispose();
     } finally {
       vi.useRealTimers();
@@ -6482,6 +6583,62 @@ describe('Conversation checkpointed-poll ingress', () => {
       expect(harness.send).toHaveBeenCalledTimes(sendsBeforeExpiry);
       expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
         payload: { opaqueToken: { cursor: 'expired-contradictory' } },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('covers an expired prepared census when the replay matches instead of bypassing coverage', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    try {
+      const occurrence = observation({
+        messageRevision: 'expired-prepared-coverage',
+        occurrenceId: 'telegram:update:expired-prepared-coverage',
+        occurredAt: 1_000,
+      });
+      let pollCount = 0;
+      const harness = createIngressHarness({
+        getPollResult: (): JsonValue => {
+          pollCount += 1;
+          return pollCount === 1
+            ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'baseline' } }
+            : {
+              kind: 'batch',
+              observations: [occurrence.entry],
+              checkpointAfterBatch: { cursor: 'expired-prepared' },
+            };
+        },
+      });
+
+      await expect(ingestConversationProviderObservationForInvocation(
+        occurrence,
+        harness.context,
+      )).resolves.toBeUndefined();
+      const censusId = await deriveIngressCensusRowId({
+        routingIdentityKey: telegramConnectionAuthority.routingIdentityKey,
+        connectionId: 'connection-1',
+        occurrenceId: 'telegram:update:expired-prepared-coverage',
+      });
+      const prepared = harness.rows.get(censusId);
+      if (prepared === undefined) throw new Error('Expected the prepared census.');
+      expect(record(record(prepared.value.payload)).checkpointCoveredAt).toBeNull();
+
+      await expect(runConversationCheckpointedPollForInvocation({
+        connectionId: 'connection-1',
+        waitMs: 0,
+      }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+
+      vi.setSystemTime(61_001);
+      await expect(runConversationCheckpointedPollForInvocation({
+        connectionId: 'connection-1',
+        waitMs: 0,
+      }, harness.context)).resolves.toMatchObject({ kind: 'committed' });
+      expect(record(record(harness.rows.get(censusId)?.value.payload)).checkpointCoveredAt)
+        .toEqual(expect.any(Number));
+      expect(currentCheckpoint(harness.rows)?.value).toMatchObject({
+        payload: { opaqueToken: { cursor: 'expired-prepared' } },
       });
     } finally {
       vi.useRealTimers();
@@ -8713,7 +8870,7 @@ describe('Conversation history baseline acceptance', () => {
       await expect(runConversationIngressRetentionForInvocation({ now: 61_001, limit: 1 }, harness.context))
         .resolves.toMatchObject({ deletedCensuses: 1 });
       expect(harness.rows.get(census.rowId)).toBeUndefined();
-      expect(harness.rows.get(obligation.rowId)?.deleted).toBe(true);
+      expect(harness.rows.get(obligation.rowId)).toBeUndefined();
     } finally {
       vi.useRealTimers();
     }

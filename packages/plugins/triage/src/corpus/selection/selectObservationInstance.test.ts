@@ -33,7 +33,7 @@ describe('selectObservationInstance', () => {
 
         for (const observations of [forward, reversed]) {
             const attention = deriveDisplayedAttention(observations);
-            expect(selectObservationInstance(observations, [INSTANCE_A, INSTANCE_B], attention, null)).toEqual({
+            expect(selectObservationInstance(observations, [INSTANCE_A, INSTANCE_B], attention)).toEqual({
                 kind: 'selected',
                 sourceInstanceId: INSTANCE_B,
                 reason: 'attention',
@@ -44,26 +44,15 @@ describe('selectObservationInstance', () => {
     it('uses the lexicographic active-present fallback when displayed attention is null', () => {
         const observations = [present(INSTANCE_B), present(INSTANCE_A)];
 
-        expect(selectObservationInstance(observations, [INSTANCE_A, INSTANCE_B], null, null)).toEqual({
+        expect(selectObservationInstance(observations, [INSTANCE_A, INSTANCE_B], null)).toEqual({
             kind: 'selected',
             sourceInstanceId: INSTANCE_A,
             reason: 'deterministicTieBreak',
         });
     });
 
-    it('honours an explicit user switch over the attention winner', () => {
-        const observations = [present(INSTANCE_A), present(INSTANCE_B, ['assignee'])];
-        const attention = deriveDisplayedAttention(observations);
-
-        expect(selectObservationInstance(observations, [INSTANCE_A, INSTANCE_B], attention, INSTANCE_A)).toEqual({
-            kind: 'selected',
-            sourceInstanceId: INSTANCE_A,
-            reason: 'override',
-        });
-    });
-
     it('returns none when no observation of this pass is present', () => {
-        expect(selectObservationInstance([unresolvedOnly(INSTANCE_A)], [INSTANCE_A], null, null)).toEqual({
+        expect(selectObservationInstance([unresolvedOnly(INSTANCE_A)], [INSTANCE_A], null)).toEqual({
             kind: 'none',
             reason: 'noPresentObservation',
         });
@@ -76,11 +65,7 @@ describe('selectObservationInstance', () => {
         const observations = [present(INSTANCE_A, ['assignee'])];
         const attention = deriveDisplayedAttention(observations);
 
-        expect(selectObservationInstance(observations, [], attention, null)).toEqual({
-            kind: 'none',
-            reason: 'allInstancesRetired',
-        });
-        expect(selectObservationInstance(observations, [], attention, INSTANCE_A)).toEqual({
+        expect(selectObservationInstance(observations, [], attention)).toEqual({
             kind: 'none',
             reason: 'allInstancesRetired',
         });

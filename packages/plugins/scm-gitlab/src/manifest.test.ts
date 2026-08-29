@@ -6,7 +6,8 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 import {
   GITLAB_CONNECTED_ACCOUNT_ID,
   GITLAB_CONNECTED_ACCOUNT_PURPOSE,
-  GITLAB_NETWORK_HOST_ACCESS_ID,
+  GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+  GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
   GITLAB_TRIAGE_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_ACTION_IDS,
   GITLAB_TRIAGE_DETAIL_RENDERER_ID,
@@ -57,7 +58,7 @@ describe('GitLab plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description)
       .toContain('GitLab.com');
     expect(PLUGIN_MANIFEST.contributes.scmHostingProviders[0]?.description.toLowerCase())
-      .not.toContain('self-managed');
+      .toContain('self-managed');
   });
 
   it('authorizes exact account materialization and never a caller-chosen selection', () => {
@@ -75,10 +76,32 @@ describe('GitLab plugin manifest', () => {
     const actions = new Map(PLUGIN_MANIFEST.contributes.actions.map((action) => [action.id, action]));
     for (const id of Object.values(GITLAB_TRIAGE_ACTION_IDS)) {
       expect(actions.get(id)?.hostAccess)
-        .toEqual(['gitlab-api', GITLAB_CONNECTED_ACCOUNT_PURPOSE]);
+        .toEqual([
+          GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+          GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+          GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+        ]);
     }
     expect(actions.get(GITLAB_TRIAGE_ACTION_IDS.get)?.connectedAccountPurposeBindings)
       .toEqual([INSTANCE_ACCOUNT_BINDING]);
+  });
+
+  it('uses separate public and self-managed account modes so their network grants cannot overlap', () => {
+    const descriptor = PLUGIN_MANIFEST.contributes.connectedAccountDescriptors[0];
+    const modes = descriptor?.authentication.modes ?? [];
+    expect(modes.map((mode) => mode.id)).toEqual([
+      'personal-access-token',
+      'self-hosted-personal-access-token',
+    ]);
+    expect(modes[0]?.configuration?.fields).toEqual([expect.objectContaining({
+      id: 'baseUrl',
+      semantic: 'connectedAccountFixedOrigin',
+      originByValue: { 'https://gitlab.com': 'https://gitlab.com' },
+    })]);
+    expect(modes[1]?.configuration?.fields).toEqual([expect.objectContaining({
+      id: 'baseUrl',
+      semantic: 'connectedAccountOrigin',
+    })]);
   });
 
   it('declares each source-native detail plane as a UI-surfaced account-bound read', () => {
@@ -94,7 +117,11 @@ describe('GitLab plugin manifest', () => {
       // authority; the aggregate and other plugin code are refused.
       expect(action?.surfaces).toEqual(['ui']);
       expect(action?.dangerLevel).toBe('safe');
-      expect(action?.hostAccess).toEqual(['gitlab-api', GITLAB_CONNECTED_ACCOUNT_PURPOSE]);
+      expect(action?.hostAccess).toEqual([
+        GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+        GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+        GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+      ]);
       // Every detail plane carries a configured instance, so every one binds the
       // exact account leaf the host revalidates.
       expect(action?.connectedAccountPurposeBindings).toEqual([INSTANCE_ACCOUNT_BINDING]);
@@ -119,7 +146,11 @@ describe('GitLab plugin manifest', () => {
     expect(action).toMatchObject({
       dangerLevel: 'writesLocal',
       surfaces: ['plugin'],
-      hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+      hostAccess: [
+        GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+        GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+        GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+      ],
       connectedAccountPurposeBindings: [INSTANCE_ACCOUNT_BINDING],
     });
   });
@@ -134,7 +165,11 @@ describe('GitLab plugin manifest', () => {
     expect(action).toMatchObject({
       dangerLevel: 'safe',
       surfaces: ['plugin'],
-      hostAccess: [GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE],
+      hostAccess: [
+        GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+        GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+        GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+      ],
       connectedAccountPurposeBindings: [INSTANCE_ACCOUNT_BINDING],
     });
   });
@@ -186,21 +221,35 @@ describe('GitLab plugin manifest', () => {
 });
 
 describe('GitLab network authority', () => {
-  it('grants exactly the verbs the declared Actions consume, in the one existing scope', () => {
+  it('keeps GitLab.com public-only while allowing only the exact account origin to be private', () => {
     const network = PLUGIN_MANIFEST.hostAccess.required
       .filter((entry) => entry.capability === 'network');
 
-    // One scope, widened in place. A second network grant, or an
-    // Action-specific bypass, would be a second authority over the same origin.
-    expect(network.map(({ id }) => id)).toEqual([GITLAB_NETWORK_HOST_ACCESS_ID]);
+    expect(network.map(({ id }) => id)).toEqual([
+      GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+      GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+    ]);
+    expect(network[0]?.scope).toMatchObject({
+      targets: [{ kind: 'fixedOrigin', origin: 'https://gitlab.com' }],
+    });
+    expect(network[0]?.scope).not.toHaveProperty('privateNetwork');
+    expect(network[1]?.scope).toMatchObject({
+      targets: [{ kind: 'connectedAccountOrigin', service: GITLAB_CONNECTED_ACCOUNT_ID }],
+      privateNetwork: true,
+    });
+    for (const grant of network) {
+      if (grant.scope.privateNetwork !== true) continue;
+      expect(grant.scope.targets.filter((target) => target.kind === 'fixedOrigin')).toEqual([]);
+    }
     // `PUT` is the merge and the close transition, `POST` the GraphQL draft
     // transition, `GET` every read. The host revalidates the origin AND the
     // method at dispatch, so a write missing here is refused before it reaches
     // GitLab — and no unit test would see it.
-    expect(network[0]?.scope).toMatchObject({ methods: ['GET', 'POST', 'PUT'] });
+    expect(network.map((grant) => grant.scope.methods))
+      .toEqual([['GET', 'POST', 'PUT'], ['GET', 'POST', 'PUT']]);
     // A verb with no declaring Action is not granted for symmetry: nothing in
     // this plugin deletes or patches over the host network.
-    const methods = (network[0]?.scope as { methods?: readonly string[] }).methods ?? [];
+    const methods = network.flatMap((grant) => grant.scope.methods ?? []);
     expect(methods).not.toContain('DELETE');
     expect(methods).not.toContain('PATCH');
   });
@@ -227,7 +276,11 @@ describe('GitLab merge-request mutation Actions', () => {
       // it, and the copy is per Action because the fact worth confirming is.
       expect(action?.confirmation?.title).toBeDefined();
       expect(action?.hostAccess)
-        .toEqual([GITLAB_NETWORK_HOST_ACCESS_ID, GITLAB_CONNECTED_ACCOUNT_PURPOSE]);
+        .toEqual([
+          GITLAB_CLOUD_NETWORK_HOST_ACCESS_ID,
+          GITLAB_ACCOUNT_NETWORK_HOST_ACCESS_ID,
+          GITLAB_CONNECTED_ACCOUNT_PURPOSE,
+        ]);
       expect(action?.connectedAccountPurposeBindings).toEqual([INSTANCE_ACCOUNT_BINDING]);
     }
   });

@@ -77,7 +77,7 @@ import {
  * precedence to `sessions/actionLaunch.ts`, the two reference reads to
  * `sessions/actionResolution.ts`, the workspace-mode gate, creation, link and
  * open to `sessions/entrySessionOrchestrator.ts`, and whether a settled start
- * may be reviewed in at all to `sessions/pullRequestReview.ts`.
+ * may be reviewed in at all to the canonical `review.start` Action path.
  *
  * **This is where a configured action stops being a stored record.** Before
  * this, four of the five members A1 defines reached nothing: `profileId`,

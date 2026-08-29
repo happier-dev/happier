@@ -16,6 +16,11 @@ import {
 } from '@happier-dev/plugin-sdk/fs';
 
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
+import {
+    buildCodexAppServerBaseArgs,
+    CODEX_REALTIME_CONVERSATION_FEATURE,
+    initializeCodexAppServerClient,
+} from './connection.js';
 
 type CodexAppServerEnv = Readonly<Record<string, string | undefined>>;
 
@@ -53,16 +58,9 @@ export function isCodexAppServerOversizedJsonFrameError(error: unknown): boolean
         && record.message.includes('JSON-RPC frame exceeded the configured size limit');
 }
 
-const CODEX_APP_SERVER_ARGS = ['app-server', '--listen', 'stdio://'] as const;
-const CODEX_REALTIME_CONVERSATION_FEATURE = 'realtime_conversation';
 const CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE =
     'CODEX_REALTIME_ENABLED_LAUNCH_UNAVAILABLE';
 const DEFAULT_JSON_LINE_MAX_CHARS = 32 * 1024 * 1024;
-const CODEX_APP_SERVER_CLIENT_INFO = Object.freeze({
-    name: 'happier_cli',
-    title: 'Happier',
-    version: '0.1.0',
-});
 
 export function isCodexRealtimeEnabledAppServerLaunchUnavailableError(
     error: unknown,
@@ -200,12 +198,9 @@ function buildCodexAppServerArgs(params: Readonly<{
     const userMcpOverrides = params.disableUserMcpServers === true
         ? readCodexMcpServerKeysFromConfigToml(params.env).map((key) => `mcp_servers.${key}.enabled=false`)
         : [];
-    return appendConfigOverrides([
-        ...CODEX_APP_SERVER_ARGS,
-        ...(params.enableRealtimeConversation
-            ? ['--enable', CODEX_REALTIME_CONVERSATION_FEATURE]
-            : []),
-    ], [
+    return appendConfigOverrides(buildCodexAppServerBaseArgs(
+        params.enableRealtimeConversation === true,
+    ), [
         ...userMcpOverrides,
         ...(params.configOverrides ?? []),
     ]);
@@ -427,13 +422,17 @@ export async function createCodexNativeAppServerClient(params: Readonly<{
         realtimeConversationAdvertised,
     });
     try {
-        await client.request('initialize', {
-            clientInfo: CODEX_APP_SERVER_CLIENT_INFO,
-            capabilities: { experimentalApi: true },
-        }, params.initializeRequestOptions ?? (params.signal
+        const initializeRequestOptions = params.initializeRequestOptions ?? (params.signal
             ? { signal: params.signal }
-            : undefined));
-        await client.notify('initialized');
+            : undefined);
+        await initializeCodexAppServerClient({
+            request: async (method, requestParams) => await client.request(
+                method,
+                requestParams,
+                initializeRequestOptions,
+            ),
+            notify: async (method) => await client.notify(method),
+        });
         return client;
     } catch (error) {
         await client.dispose().catch(() => undefined);

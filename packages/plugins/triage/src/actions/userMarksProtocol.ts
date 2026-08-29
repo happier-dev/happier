@@ -1,4 +1,3 @@
-import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import {
     ProtocolCollectionOpaqueCursorV1Schema,
     defineProtocolArray,
@@ -70,8 +69,6 @@ export const TriageSetEntryPinnedInputV1Schema = defineProtocolUnion([
     }, { policy: 'closed' }),
 ]);
 export type TriageSetEntryPinnedInputV1 = ReturnType<typeof TriageSetEntryPinnedInputV1Schema.parse>;
-export const TriageSetEntryPinnedInputV1JsonSchema: PluginJsonSchema =
-    TriageSetEntryPinnedInputV1Schema.jsonSchema;
 
 export const TriageSetEntryPinnedResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -86,8 +83,6 @@ export const TriageSetEntryPinnedResultV1Schema = defineProtocolObject({
     ]),
 }, { policy: 'closed' });
 export type TriageSetEntryPinnedResultV1 = ReturnType<typeof TriageSetEntryPinnedResultV1Schema.parse>;
-export const TriageSetEntryPinnedResultV1JsonSchema: PluginJsonSchema =
-    TriageSetEntryPinnedResultV1Schema.jsonSchema;
 
 /**
  * Where the previous bounded page of pins stopped.
@@ -110,8 +105,6 @@ export const TriageListPinnedEntriesInputV1Schema = defineProtocolObject({
     cursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesInputV1 = ReturnType<typeof TriageListPinnedEntriesInputV1Schema.parse>;
-export const TriageListPinnedEntriesInputV1JsonSchema: PluginJsonSchema =
-    TriageListPinnedEntriesInputV1Schema.jsonSchema;
 
 export const TriageListPinnedEntriesResultV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
@@ -142,8 +135,6 @@ export const TriageListPinnedEntriesResultV1Schema = defineProtocolObject({
     nextCursor: ProtocolCollectionOpaqueCursorV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageListPinnedEntriesResultV1 = ReturnType<typeof TriageListPinnedEntriesResultV1Schema.parse>;
-export const TriageListPinnedEntriesResultV1JsonSchema: PluginJsonSchema =
-    TriageListPinnedEntriesResultV1Schema.jsonSchema;
 
 /** The Pin/Unpin write. One Action, both directions, one writer beneath it. */
 export const TRIAGE_SET_ENTRY_PINNED_ACTION_LOCAL_ID_V1 = 'marks/set-pinned-v1';

@@ -18,6 +18,7 @@ import { createTriageSourceSettingsSurface } from '@happier-dev/triage-sources';
 
 import {
   SENTRY_ACTION_IDS,
+  SENTRY_CONNECTED_ACCOUNT_ID,
   SENTRY_PLUGIN_ID,
   SENTRY_SOURCE_DISPLAY_NAME,
 } from '../../sentryContracts.js';
@@ -25,5 +26,6 @@ import {
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: SENTRY_PLUGIN_ID,
   listInstancesLocalActionId: SENTRY_ACTION_IDS.listInstances,
+  connectedAccountServiceLocalId: SENTRY_CONNECTED_ACCOUNT_ID,
   sourceDisplayName: SENTRY_SOURCE_DISPLAY_NAME,
 });

@@ -34,6 +34,7 @@ import {
 
 import {
   POSTHOG_ACTION_IDS,
+  POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
   POSTHOG_PLUGIN_ID,
   POSTHOG_SOURCE_DISPLAY_NAME,
 } from '../../posthogContracts.js';
@@ -467,6 +468,7 @@ function PosthogDraftEditor({
 export const renderSurface = createTriageSourceSettingsSurface({
   pluginId: POSTHOG_PLUGIN_ID,
   listInstancesLocalActionId: POSTHOG_ACTION_IDS.listInstances,
+  connectedAccountServiceLocalId: POSTHOG_CONNECTED_ACCOUNT_PURPOSE,
   sourceDisplayName: POSTHOG_SOURCE_DISPLAY_NAME,
   DraftEditor: PosthogDraftEditor,
 });
