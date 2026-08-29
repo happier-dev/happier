@@ -17,6 +17,7 @@ export const CLAUDE_1M_SUFFIX = '[1m]';
 const CLAUDE_1M_CONTEXT_MODEL_IDS: ReadonlySet<string> = new Set([
   'claude-opus-5',
   'claude-fable-5',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -26,6 +27,7 @@ const CLAUDE_1M_CONTEXT_MODEL_IDS: ReadonlySet<string> = new Set([
 const CLAUDE_1M_ALWAYS_ON_MODEL_IDS: ReadonlySet<string> = new Set([
   'claude-opus-5',
   'claude-fable-5',
+  'claude-sonnet-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
 ]);

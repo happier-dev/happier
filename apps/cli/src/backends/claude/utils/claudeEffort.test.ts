@@ -23,6 +23,13 @@ describe('buildClaudeEffortCliArgs', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'claude-opus-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
   });
 
+  it('uses Sonnet 5 effort tiers rather than the older Sonnet 4.6 substring match', () => {
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'high' })).toEqual([]);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);
+    expect(buildClaudeEffortCliArgs({ modelId: 'claude-sonnet-5', effort: 'max' })).toEqual(['--effort', 'max']);
+    expect(resolveClaudeDefaultEffortForModel('claude-sonnet-5')).toBe('high');
+  });
+
   it('treats the generic opus alias as the current flagship Claude model for default effort resolution', () => {
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'high' })).toEqual([]);
     expect(buildClaudeEffortCliArgs({ modelId: 'opus', effort: 'xhigh' })).toEqual(['--effort', 'xhigh']);

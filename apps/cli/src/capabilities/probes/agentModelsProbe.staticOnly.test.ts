@@ -171,6 +171,12 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
         contextWindowTokens: 1_000_000,
       }),
       expect.objectContaining({
+        id: 'claude-sonnet-5',
+        name: 'Sonnet 5',
+        description: expect.any(String),
+        contextWindowTokens: 1_000_000,
+      }),
+      expect.objectContaining({
         id: 'claude-opus-4-8',
         name: 'Opus 4.8',
         description: expect.any(String),
@@ -200,6 +206,10 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
     expect(fable?.modelOptions?.[0]?.currentValue).toBe('high');
     expect(fable?.modelOptions?.[0]?.options?.some((opt) => opt.value === 'xhigh')).toBe(true);
     expect(fable?.modelOptions?.[0]?.options?.some((opt) => opt.value === 'max')).toBe(true);
+    const sonnet = res.availableModels.find((model) => model.id === 'claude-sonnet-5') ?? null;
+    expect(sonnet?.modelOptions?.[0]?.currentValue).toBe('high');
+    expect(sonnet?.modelOptions?.[0]?.options?.some((opt) => opt.value === 'xhigh')).toBe(true);
+    expect(sonnet?.modelOptions?.[0]?.options?.some((opt) => opt.value === 'max')).toBe(true);
     expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
   });
 
