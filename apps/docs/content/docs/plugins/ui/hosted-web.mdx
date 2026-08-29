@@ -8,20 +8,20 @@ description: Author the isolated hosted-web artifact without claiming an unverif
 Create a hosted-web source package with the ordinary beginner command:
 
 ```bash
-happier plugins create ./my-hosted-plugin \
+hdev plugins create ./my-hosted-plugin \
   --id com.example.my-hosted-plugin \
   --name "My hosted plugin" \
   --ui hostedWeb
 
 cd my-hosted-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 The scaffold creates a code-defined plugin declaration, an isolated Vite
 application, one `src/ui/surfaces.ts` surface declaration with the
 `pluginUiBuild.ts` config that derives its target from it, relative assets, and
-the managed author scripts. `plugins dev`, `happier plugins dev build .`, and
-`happier plugins pack .` use the same UI-build owner. During `plugins dev`,
+the managed author scripts. `plugins dev`, `hdev plugins dev build .`, and
+`hdev plugins pack .` use the same UI-build owner. During `plugins dev`,
 the CLI first submits the captured source batch; the daemon runs the build
 before candidate adoption. A failed build prevents adoption and leaves the
 last accepted generation current.
@@ -82,22 +82,20 @@ claim.
 | Host | Frame adapter | Reported runtime status |
 | --- | --- | --- |
 | Browser | DOM iframe | `{ platform: 'web', adapter: 'domIframe' }` |
-| Packaged desktop — macOS | Direct Wry child (`WKWebView` subview), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
-| Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
-| Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window), implemented but not yet proved | `desktop_hosted_artifact_platform_frame_unproved` |
+| Packaged desktop — macOS | Direct Wry child (`WKWebView` subview) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Windows | Direct Wry child (child `HWND` + WebView2) | `{ platform: 'desktop', adapter: 'wry' }` |
+| Packaged desktop — Linux/X11 | Direct Wry child (native X11 container window) | `{ platform: 'desktop', adapter: 'wry' }` |
 | Packaged desktop — Linux/Wayland | None | `desktop_hosted_artifact_wayland_gtk_container_unimplemented` |
 | Packaged desktop — Linux, no display server | None | `desktop_hosted_artifact_linux_display_unavailable` |
 | iOS | `WKWebView` | `{ platform: 'ios', adapter: 'WKWebView' }` |
 | Android | `WebViewAssetLoader` | `{ platform: 'android', adapter: 'WebViewAssetLoader' }` |
 
-No packaged-desktop cell is proved yet. The macOS, Windows and Linux/X11
-direct-Wry children are implemented, selectable and unit-tested in the shell,
-but no hosted-Artifact loaded run has been recorded on any of them, so all three
-report `desktop_hosted_artifact_platform_frame_unproved` instead of advertising
-an adapter. That reason names the missing proof rather than claiming the adapter
-does not exist, and it is withdrawn per platform when that platform's own
-hosted-Artifact loaded run is recorded — a compiling implementation, a passing
-unit test, a CI build matrix, or desktop-browser QA does not stand in for it.
+The macOS, Windows and Linux/X11 direct-Wry children are implemented and
+selectable at runtime. This capability fact does not itself prove a loaded
+hosted-Artifact product row: a current packaged loaded run is still required
+for Preview publication/support claims, and a compiling implementation, a
+passing unit test, a CI build matrix, or desktop-browser QA does not stand in
+for it.
 
 Linux/Wayland is the one desktop cell with no adapter at all. Wry's
 `build_as_child` constructor requires an X11 parent window handle and returns

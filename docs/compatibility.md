@@ -152,11 +152,13 @@ default.
 npm package versions and exported wire epochs evolve independently: a later npm
 major may still export V1, and a later npm minor may make only V1-compatible
 additions. A public cross-plugin business protocol is a separately publishable
-`@happier-dev/<feature>-protocol` package with explicit `/v1` and
-`/testing/v1` exports. It contains schemas, types, helpers, and conformance
-fixtures only—not host runtime, persistence, provider implementation,
-credential materialization, polling, or a private `@happier-dev/protocol`
-dependency—and it has no `latest`, `current`, or `default` aliases. Compatible
+package with any valid scoped or unscoped npm name ending in `-protocol` and
+explicit `/v1` and `/testing/v1` exports. Its npm scope identifies its author
+and grants no additional protocol authority. It contains schemas, types,
+helpers, and conformance fixtures only—not host runtime, persistence, provider
+implementation, credential materialization, polling, or a private
+`@happier-dev/protocol` dependency—and it has no `latest`, `current`, or
+`default` aliases. Compatible
 package copies interoperate through serialized protocol identity/version and
 runtime validation, never JavaScript object identity.
 

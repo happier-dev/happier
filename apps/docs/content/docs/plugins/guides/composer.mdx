@@ -45,19 +45,29 @@ import {
 } from '@happier-dev/plugin-sdk';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 
-// A region names one of your own declared renderers. `defineUiSurfaceDefinition`
-// derives that renderer id as `<surfaceId>-renderer`.
-const ticketPanel = defineUiSurfaceDefinition({
-  id: 'ticket-panel',
-  placement: 'appPage',
-  title: 'Tickets',
-  renderer: { kind: 'reactNative', requiredHostMethods: ['context'] },
+// Composer slots use a renderer-only surface: it has no destination or view.
+// `defineUiSurfaceDefinition` derives the renderer id as `<surfaceId>-renderer`.
+const ticketComposer = defineUiSurfaceDefinition({
+  id: 'ticket-composer',
+  placement: 'rendererOnly',
+  renderer: {
+    kind: 'reactNative',
+    requiredHostMethods: [
+      'context',
+      'readComposer',
+      'watchComposer',
+      'applyComposer',
+      'pickComposerMedia',
+      'inspectComposerContent',
+      'releaseComposerContent',
+    ],
+  },
   build: {
-    entry: 'src/ui/TicketContext.tsx',
+    entry: 'src/ui/TicketComposer.tsx',
     platforms: ['web', 'ios', 'android'],
     module: {
-      containerName: 'happier_plugin_com_example_tickets_ticket_panel_renderer',
-      modulePath: './TicketContext',
+      containerName: 'happier_plugin_com_example_tickets_ticket_composer_renderer',
+      modulePath: './TicketComposer',
       exportName: 'renderSurface',
     },
   },
@@ -92,6 +102,17 @@ export const { manifest, activate } = definePlugin({
         title: 'Ticket',
         icon: 'file',
         cardinality: 'many',
+        picker: 'ticket-composer-renderer',
+        display: {
+          kind: 'surface',
+          renderer: 'ticket-composer-renderer',
+          sizing: 'compact',
+        },
+        preview: {
+          kind: 'surface',
+          renderer: 'ticket-composer-renderer',
+          presentation: 'popover',
+        },
         // The draft carries identity only. Publish the schema once so the
         // attachment and whatever reads it cannot disagree about its shape.
         value: defineProtocolObject({
@@ -117,11 +138,11 @@ export const { manifest, activate } = definePlugin({
     regions: {
       'ticket-context': defineComposerRegion({
         placement: 'afterComposer',
-        renderer: 'ticket-panel-renderer',
+        renderer: 'ticket-composer-renderer',
       }),
     },
   },
-  ui: { surfaces: [ticketPanel] },
+  ui: { surfaces: [ticketComposer] },
 });
 
 async function findTickets(
@@ -197,7 +218,7 @@ import type { ComposerHandle } from '@happier-dev/plugin-ui';
 
 export async function attachTicketEvidence(composer: ComposerHandle, ticketId: string) {
   const handle = await composer.content.pickMedia({
-    attachmentLocalId: 'ticket-evidence',
+    attachmentLocalId: 'ticket',
     kinds: ['image'],
   });
   let attached = false;
@@ -208,7 +229,7 @@ export async function attachTicketEvidence(composer: ComposerHandle, ticketId: s
       expectedRevision: read.snapshot.revision,
       operations: [{
         kind: 'attachment.add',
-        attachmentLocalId: 'ticket-evidence',
+        attachmentLocalId: 'ticket',
         value: {
           key: `evidence:${ticketId}`,
           value: { ticketId },

@@ -9,6 +9,9 @@ separately from your signed-in sessions.
 <Callout>
   **Developer Preview:** this guide describes the API Tokens flow in Happier's
   development source. It is not a released or publicly available feature yet.
+  Run the CLI examples with `hdev`, unless you have explicitly pointed the
+  `happier` shim at the development lane with
+  `happier self release-channel use dev`.
 </Callout>
 
 ## What you need first
@@ -25,8 +28,9 @@ separately from your signed-in sessions.
 3. Copy the token when it is shown and store it in your secret manager or the
    environment of the tool that needs it.
 
-Happier shows the full secret once. The list keeps only a prefix and metadata,
-so it cannot reveal the same secret later. A token is broad account automation
+Happier shows the full secret once. The list keeps only a shortened, non-secret
+prefix such as `hap_v1_2c67deea…` plus metadata, so it cannot reveal the same
+secret later. A token is broad account automation
 in this first version; it does not have scopes.
 
 ## Use a token from the CLI
@@ -34,13 +38,13 @@ in this first version; it does not have scopes.
 Pass a token for one command with the global, prefix-only `--api-token` flag:
 
 ```bash
-happier --api-token 'hap_v1_…' list
+hdev --api-token 'hap_v1_…' list
 ```
 
 For automation, set `HAPPIER_TOKEN` instead:
 
 ```bash
-HAPPIER_TOKEN='hap_v1_…' happier list
+HAPPIER_TOKEN='hap_v1_…' hdev list
 ```
 
 The flag takes precedence over `HAPPIER_TOKEN`. Neither form saves the token in

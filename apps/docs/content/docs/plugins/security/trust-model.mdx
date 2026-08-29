@@ -10,7 +10,7 @@ Plugins are trusted code packages, not sandboxed extensions. A plugin can contai
 Happier validates and projects the cold manifest before importing executable code. Installing executable code requires an explicit **Install & Trust** decision for the whole package:
 
 ```bash
-happier plugins install <archive-path> --kind archive
+hdev plugins install <archive-path> --kind archive
 ```
 
 The interactive flow presents the exact package facts and records the approving
@@ -22,7 +22,7 @@ Trust the package only after reviewing its source, build inputs, dependencies, d
 
 ## Development sources
 
-`happier plugins dev` starts the supported local development loop from the
+`hdev plugins dev` starts the supported local development loop from the
 plugin directory. The CLI inspects the project, observes source changes, and
 submits each captured batch to the running daemon. The daemon-owned candidate
 lifecycle prepares author dependencies before it validates and adopts a

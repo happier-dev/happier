@@ -4,9 +4,9 @@ description: Use the managed TypeScript development loop and daemon-owned activa
 ---
 
 ```bash
-happier plugins create my-plugin
+hdev plugins create my-plugin
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 The scaffold's code-defined module declares both entries:
@@ -38,8 +38,8 @@ activation, registration validation, and replacement of the serving plugin.
 ## Plugin UI in the development loop
 
 When the package declares a plugin UI build config (`pluginUiBuild.ts`, written
-by `happier plugins create --ui …`), the daemon runs the same
-`happier-plugin-build-ui` builder that `happier plugins dev build .` runs
+by `hdev plugins create --ui …`), the daemon runs the same
+`happier-plugin-build-ui` builder that `hdev plugins dev build .` runs
 after the CLI submits the captured batch and before candidate adoption. The
 development generation carries the resulting `dist/happier-plugin-ui` tree, so
 each accepted edit produces a generation whose UI artifacts match the source
@@ -64,12 +64,12 @@ For an intentional watcher-free update, install the same package root as a
 development source and reload from that package root:
 
 ```bash
-happier plugins install . --dev
-happier plugins reload
+hdev plugins install . --dev
+hdev plugins reload
 ```
 
 If the current directory maps to more than one development plugin, or if you
-run the command elsewhere, select one explicitly: `happier plugins reload
+run the command elsewhere, select one explicitly: `hdev plugins reload
 com.example.my-plugin`. Both paths preserve the last accepted generation when
 evaluation or validation fails.
 

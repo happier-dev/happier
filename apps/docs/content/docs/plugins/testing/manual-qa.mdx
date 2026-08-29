@@ -7,11 +7,11 @@ Manual QA should exercise real user flows:
 
 - review and **Install & Trust** a local or packed plugin
 - configure it, invoke an action, and inspect current Diagnostics
-- run `happier plugins dev` and verify an edit replaces the current surface
-- run `happier plugins install . --dev` followed by `happier plugins reload`
+- run `hdev plugins dev` and verify an edit replaces the current surface
+- run `hdev plugins install . --dev` followed by `hdev plugins reload`
   from the package root and verify the same valid replacement path works
   without a watcher; when resolution is ambiguous or runs elsewhere, use
-  `happier plugins reload <developmentPluginId>` to select one
+  `hdev plugins reload <developmentPluginId>` to select one
 - update, roll back, disable/enable, and uninstall; verify stale generations
   cannot act and focus returns safely after each transition
 - disconnect the daemon while an executable surface is mounted; verify the

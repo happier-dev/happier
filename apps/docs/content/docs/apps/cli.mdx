@@ -116,14 +116,18 @@ Preview source; it is not a released CLI feature yet. Create a token from
 **Settings → Account → API Tokens**. Supply it for one invocation without
 changing your saved CLI credential:
 
+Run the commands in this Developer Preview section with `hdev`, unless you have
+explicitly pointed the `happier` shim at the development lane with
+`happier self release-channel use dev`.
+
 ```bash
-happier --api-token 'hap_v1_…' list
+hdev --api-token 'hap_v1_…' list
 ```
 
 For unattended automation, provide `HAPPIER_TOKEN` instead:
 
 ```bash
-HAPPIER_TOKEN='hap_v1_…' happier list
+HAPPIER_TOKEN='hap_v1_…' hdev list
 ```
 
 `--api-token` is a global prefix flag and takes precedence over
@@ -146,20 +150,24 @@ The root `machines` and `actions` commands are available in the current
 Developer Preview source. They use the same Action catalog, schemas, settings,
 approval rules, and execution paths as the app, SDK, HTTP API, plugins, and MCP.
 
+Run the commands in this Developer Preview section with `hdev`, unless you have
+explicitly pointed the `happier` shim at the development lane with
+`happier self release-channel use dev`.
+
 ### List Account machines
 
 List the machines registered to the current Account before targeting work:
 
 ```bash
-happier machines list
-happier machines list --json
+hdev machines list
+hdev machines list --json
 ```
 
-Human output shows each machine's ID, label, and current state: active,
+Human output shows each machine's ID and current state: active,
 inactive, revoked, or replaced. JSON output uses the standard CLI envelope and
 places the array at `data.machines`.
 
-The plural `happier machines` command lists Account machines. The singular
+The plural `hdev machines` command lists Account machines. The singular
 `happier machine` command manages remote-machine setup over SSH; it is a
 different workflow.
 
@@ -168,8 +176,8 @@ different workflow.
 Search the catalog by words from an Action's ID, title, or description:
 
 ```bash
-happier actions search session --limit 10
-happier actions search review comments --machine-id <machine-id>
+hdev actions search session --limit 10
+hdev actions search review comments --machine-id <machine-id>
 ```
 
 An empty query lists the catalog. `--limit` accepts a value from 1 through 100.
@@ -179,8 +187,8 @@ currently installed plugins.
 Inspect one Action before invoking it:
 
 ```bash
-happier actions get session.status.get
-happier actions get acme.notes/actions/save-note --machine-id <machine-id>
+hdev actions get session.status.get
+hdev actions get acme.notes/actions/save-note --machine-id <machine-id>
 ```
 
 The human view shows the Action's title, description, safety classification,
@@ -192,7 +200,7 @@ machine-readable specification.
 Pass the Action input as JSON. Omitting `--input-json` sends an empty object.
 
 ```bash
-happier actions invoke session.status.get \
+hdev actions invoke session.status.get \
   --machine-id <machine-id> \
   --input-json '{"sessionId":"<session-id>"}'
 ```
@@ -200,7 +208,7 @@ happier actions invoke session.status.get \
 Plugin-contributed Actions use the qualified ID shown by `actions search`:
 
 ```bash
-happier actions invoke acme.notes/actions/save-note \
+hdev actions invoke acme.notes/actions/save-note \
   --machine-id <machine-id> \
   --input-json '{"note":"Remember this"}'
 ```
@@ -220,14 +228,14 @@ These commands can use either authentication mode:
 
 ```bash
 # Saved interactive sign-in
-happier auth login
-happier actions search session
+hdev auth login
+hdev actions search session
 
 # API Token for this process
-HAPPIER_TOKEN='hap_v1_…' happier actions search session
+HAPPIER_TOKEN='hap_v1_…' hdev actions search session
 
 # API Token for one invocation
-happier --api-token 'hap_v1_…' actions search session
+hdev --api-token 'hap_v1_…' actions search session
 ```
 
 A saved interactive sign-in carries present-user authority. An API Token
@@ -239,7 +247,7 @@ the configurable **External API & SDK** surface.
 endpoint cannot reach that machine, the command returns a typed target error
 instead of silently using another machine. If an Account-server connection has
 multiple eligible machines and an Action cannot determine its machine from its
-input, use `happier machines list` and pass the intended ID.
+input, use `hdev machines list` and pass the intended ID.
 
 When a command talks directly to a daemon, omitting `--machine-id` means that
 daemon's current machine. Through the Account server, Happier can relay the
@@ -287,7 +295,7 @@ one record cannot represent a multi-line stream; use `--follow --jsonl`.
 records — no progress lines, tables, or banners. Never parse the CLI's
 human-readable output; pass an explicit `--json` or `--jsonl` instead.
 
-**Spawn envelope, then stream rows.** `happier spawn … --follow --jsonl` emits
+**Spawn envelope, then stream rows.** `hdev spawn … --follow --jsonl` emits
 the normal `session_create` envelope as its first line, including
 `data.session.id`, followed by one compact history row per transcript update. A
 session that produces no rows still emits the creation envelope and exits
@@ -317,7 +325,7 @@ exiting `0`:
 
 ```bash
 set -o pipefail
-SESSION_ID="$(happier spawn "Fix the failing tests" --json | jq -er '.data.session.id')"
+SESSION_ID="$(hdev spawn "Fix the failing tests" --json | jq -er '.data.session.id')"
 DAEMON_PORT="$(happier daemon status --json | jq -er '.daemon.httpPort')"
 ```
 
@@ -618,7 +626,7 @@ For the full user guide and the meaning of “resumable”, see [Features → Re
 Use:
 
 ```bash
-happier list
+hdev list
 ```
 
 The default output is a table that includes session id, agent, recent activity, active state, resume state, title, and path.
@@ -626,9 +634,9 @@ The default output is a table that includes session id, agent, recent activity, 
 Useful variants:
 
 ```bash
-happier list --resumable
-happier list --plain
-happier list --json
+hdev list --resumable
+hdev list --plain
+hdev list --json
 ```
 
 - `--resumable` filters to sessions that can currently be resumed
@@ -647,6 +655,10 @@ CLI command registry. They are not released yet; existing released CLI
 capabilities such as `attach`, `resume`, session status, archive, metadata
 updates, and Action discovery remain under their established commands.
 
+Run these development-only commands with `hdev`, unless you have explicitly
+pointed the `happier` shim at the development lane with
+`happier self release-channel use dev`.
+
 Use `--machine-id <machine-id>` when an automated command must target a known
 machine. It is available on these first-class session commands and is especially
 useful with an API Token when more than one current machine is available.
@@ -657,44 +669,44 @@ prefix, or tag selector.
 ### Create a session (scriptable)
 
 ```bash
-happier spawn --title "My session" --message "Hello"
+hdev spawn --title "My session" --message "Hello"
 ```
 
 Optional targeting:
 
 ```bash
-happier spawn --path /path/to/repo --agent <agent-id> --title "My session"
+hdev spawn --path /path/to/repo --agent <agent-id> --title "My session"
 ```
 
 `--agent` accepts a friendly Agent id from the installed Agent catalog:
 
 ```bash
-happier spawn --agent <agent-id>
+hdev spawn --agent <agent-id>
 ```
 
-Use `happier spawn` to create a session from the top-level CLI. With
+Use `hdev spawn` to create a session from the top-level CLI. With
 `--follow --jsonl`, its first line is the normal `session_create` envelope
 containing `data.session.id`; later lines are compact transcript rows.
 
 ### Send messages
 
 ```bash
-happier send <session-id-or-prefix-or-tag> "ping"
+hdev send <session-id-or-prefix-or-tag> "ping"
 ```
 
 Wait for an agent response (useful for scripts; can time out if the agent is busy/offline):
 
 ```bash
-happier send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
+hdev send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
 ```
 
 ### Status, stop, archive
 
 ```bash
 happier session status <session-id-or-prefix-or-tag>
-happier history <session-id-or-prefix-or-tag>
-happier wait <session-id-or-prefix-or-tag> --timeout 60
-happier stop <session-id-or-prefix-or-tag>
+hdev history <session-id-or-prefix-or-tag>
+hdev wait <session-id-or-prefix-or-tag> --timeout 60
+hdev stop <session-id-or-prefix-or-tag>
 happier session archive <session-id-or-prefix-or-tag>
 happier session unarchive <session-id-or-prefix-or-tag>
 ```
@@ -733,9 +745,9 @@ Use the Account-aware root commands to discover and invoke built-in and
 plugin-contributed Actions:
 
 ```bash
-happier actions search [query...] [--limit <n>] [--machine-id <id>]
-happier actions get <action-id> [--machine-id <id>]
-happier actions invoke <action-id> --input-json '<json>' [--machine-id <id>]
+hdev actions search [query...] [--limit <n>] [--machine-id <id>]
+hdev actions get <action-id> [--machine-id <id>]
+hdev actions invoke <action-id> --input-json '<json>' [--machine-id <id>]
 ```
 
 See [Discover machines and Actions](#discover-machines-and-actions-developer-preview)

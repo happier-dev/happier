@@ -8,13 +8,13 @@ React Native is the default executable UI model when a plugin needs a native-fee
 ## Scaffold
 
 ```bash
-happier plugins create ./my-plugin \
+hdev plugins create ./my-plugin \
   --id com.example.my-plugin \
   --name "My plugin" \
   --ui reactNative
 
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 The generated project includes the manifest contribution, semantic Plugin UI
@@ -134,7 +134,7 @@ export default defineBuildConfig({
 });
 ```
 
-`happier plugins create --ui …` generates exactly this shape: one
+`hdev plugins create --ui …` generates exactly this shape: one
 `src/ui/surfaces.ts` declaration, a `pluginUiBuild.ts` that derives from it, and
 a `src/index.ts` that projects the same surface into `ui.surfaces`. Moving the
 source entry is therefore a single edit. Use explicit `ui.views`, `ui.renderers`
@@ -247,7 +247,7 @@ context before interaction resumes.
 
 ## Build output
 
-For a production artifact, `happier plugins dev build .` writes the portable
+For a production artifact, `hdev plugins dev build .` writes the portable
 UI artifact tree under `dist/happier-plugin-ui`. React Native targets use
 public presets from `@happier-dev/plugin-sdk/ui/build`. The generated
 `--ui reactNative` project declares one package graph with web, iOS, and Android

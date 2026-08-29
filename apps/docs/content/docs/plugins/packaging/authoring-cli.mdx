@@ -13,12 +13,12 @@ development install, documented in
 ## Create and develop
 
 ```bash
-happier plugins create my-plugin --id com.example.my-plugin
+hdev plugins create my-plugin --id com.example.my-plugin
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
-`happier plugins create <name> [--id <plugin.id>] [--name <display name>]
+`hdev plugins create <name> [--id <plugin.id>] [--name <display name>]
 [--ui hostedWeb|reactNative]` creates the normal code-defined TypeScript
 package. React Native is the executable UI option with supported client
 realms. A hosted-web scaffold emits a real packaged artifact whose runtime
@@ -27,7 +27,7 @@ either names the one frame adapter it constructed or reports a typed
 unavailable reason. See
 [Hosted web UI](/plugins/ui/hosted-web#build-and-runtime-availability).
 
-`happier plugins dev [path] [--sdk-registry <origin>]` is the normal edit
+`hdev plugins dev [path] [--sdk-registry <origin>]` is the normal edit
 loop. The CLI observes the source closure and submits each captured batch to the
 daemon. After submission, the daemon-owned candidate lifecycle materializes
 declared dependencies, builds declared UI artifacts, evaluates the candidate,
@@ -36,7 +36,7 @@ author root itself when nothing has materialized it yet, so the directory you
 edit resolves its declared dependencies; a root whose declared SDK already
 resolves is left alone rather than reinstalled, and an interrupted first run is
 repaired on the next start. Do not run
-`happier plugins dev install .` before this loop: it is the explicit repair
+`hdev plugins dev install .` before this loop: it is the explicit repair
 command, not a prerequisite. Pass
 `--sdk-registry <origin>` only when the selected SDK must resolve from an
 approved registry origin.
@@ -44,31 +44,31 @@ approved registry origin.
 ## Check the author package
 
 ```bash
-happier plugins dev typecheck .
-happier plugins dev build .
-happier plugins test .
-happier plugins test . --packed
+hdev plugins dev typecheck .
+hdev plugins dev build .
+hdev plugins test .
+hdev plugins test . --packed
 ```
 
-- `happier plugins dev install <path> [--sdk-registry <origin>]` prepares an
+- `hdev plugins dev install <path> [--sdk-registry <origin>]` prepares an
   external-author fixture, and repairs or refreshes an author root whose package
   tree is stale or wiped. It is not a prerequisite for `plugins dev`.
-- `happier plugins dev typecheck <path>`,
-  `happier plugins dev build <path>`, and
-  `happier plugins dev test <path>` run the managed focused check named by
+- `hdev plugins dev typecheck <path>`,
+  `hdev plugins dev build <path>`, and
+  `hdev plugins dev test <path>` run the managed focused check named by
   the subcommand. They prepare a missing author package tree once and otherwise
   reuse it; run `plugins dev install` when declared dependencies change or the
   tree needs an explicit refresh.
-- `happier plugins test [path]` runs the plugin's daemon-independent suite.
+- `hdev plugins test [path]` runs the plugin's daemon-independent suite.
   Its `--packed` mode packs, trusts, installs, restarts, and invokes the
   package through a disposable daemon; it never reads or mutates the author's
   installed-plugin state. `--with-plugin <root-or-archive>` supplies an
   explicitly composed companion for that packed proof.
-- `happier plugins doctor [path]` evaluates the code-defined author module once
+- `hdev plugins doctor [path]` evaluates the code-defined author module once
   and reports import or top-level evaluation diagnostics. It does not prove
   repeated evaluation is pure. Like the focused checks, it prepares a missing
   package tree but does not reinstall an already materialized one.
-- `happier plugins doctor --installed [<pluginId>]` inspects installed plugins
+- `hdev plugins doctor --installed [<pluginId>]` inspects installed plugins
   instead of author source. It reads the immutable generation this machine
   currently commits and reports declared files that are missing, escaped
   through a symbolic link, no longer a regular file, no longer their recorded
@@ -82,18 +82,18 @@ these owner-level checks from an admitted candidate or a loaded client surface.
 ## Pack and install
 
 ```bash
-happier plugins pack . --out ../my-plugin.tgz
-happier plugins install ../my-plugin.tgz --kind archive
+hdev plugins pack . --out ../my-plugin.tgz
+hdev plugins install ../my-plugin.tgz --kind archive
 ```
 
-`happier plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>]`
+`hdev plugins pack <path> [--out <archive.tgz>] [--sdk-registry <origin>]`
 validates the package and writes its selected-file npm-compatible archive.
 Packing derives the cold manifest from `definePlugin(...)`; authors do not keep
 a second checked-in manifest. See [Pack plugins](/plugins/packaging/pack) for
 archive contents. The output must be outside the plugin package root and must
 not already exist (including its `.sha256` sidecar).
 
-`happier plugins install <path|archive|package> [--kind path|archive|npm]
+`hdev plugins install <path|archive|package> [--kind path|archive|npm]
 [--selector <version>] [--integrity <sha256-SRI>] [--dev [--trust]] [--dry-run]`
 submits one reviewed install to the active daemon. The daemon, rather than the
 CLI, owns package activation, currentness, and retained last-known-good
@@ -106,11 +106,11 @@ update, rollback, enable/disable, inspection, and uninstall contracts.
 ## Reload a development source
 
 ```bash
-happier plugins install . --dev
-happier plugins reload
+hdev plugins install . --dev
+hdev plugins reload
 ```
 
-`happier plugins reload [developmentPluginId]` reruns the daemon-owned cycle
+`hdev plugins reload [developmentPluginId]` reruns the daemon-owned cycle
 for the development source registered for the current directory. When more
 than one registered source contains that directory, pass the explicit plugin
 id. A failed replacement leaves the last accepted generation serving; do not
@@ -119,8 +119,8 @@ start a second watcher or invent a source-only reload path.
 ## Install a development source without a prompt
 
 ```bash
-happier plugins install . --dev --trust --json
-happier plugins reload --json
+hdev plugins install . --dev --trust --json
+hdev plugins reload --json
 ```
 
 `--trust` carries one explicit non-interactive authorization for that exact
@@ -140,8 +140,8 @@ The flag is deliberately narrow:
 - It does not extend to consequential updates or secrets, which stay with a
   present user.
 
-`happier plugins dev` has no `--trust` equivalent, so this install route plus
-`happier plugins reload` is the headless edit loop. Once the source root is
+`hdev plugins dev` has no `--trust` equivalent, so this install route plus
+`hdev plugins reload` is the headless edit loop. Once the source root is
 trusted, later requests for that root skip source-root review, so no further
 decision is required until the reviewed source identity changes.
 
@@ -151,9 +151,9 @@ An install or development request can return a daemon-issued pending change
 ID. Review and decide that exact request:
 
 ```bash
-happier plugins change status <pendingChangeId> --json
-happier plugins change approve <pendingChangeId> --json
-happier plugins change reject <pendingChangeId> --json
+hdev plugins change status <pendingChangeId> --json
+hdev plugins change approve <pendingChangeId> --json
+hdev plugins change reject <pendingChangeId> --json
 ```
 
 `status` is read-only. `approve` and `reject` are explicit present-user
@@ -179,16 +179,16 @@ result whenever you can query that exact request.
 
 ## Other plugin administration
 
-The `happier plugins` command also owns these product and operator surfaces;
+The `hdev plugins` command also owns these product and operator surfaces;
 they are not alternate authoring lifecycles. Use their specific help output for
 flags and the linked install, Settings, registry, or marketplace documentation
 rather than repurposing them to prepare a source candidate.
 
 | Surface | Commands |
 | --- | --- |
-| Installed inspection | `happier plugins list`, `happier plugins show <pluginId>`, `happier plugins actions <pluginId>`, `happier plugins logs <pluginId>` |
-| Installed lifecycle | `happier plugins enable <pluginId>`, `happier plugins disable <pluginId>`, `happier plugins rollback <pluginId>`, `happier plugins uninstall <pluginId>` |
-| Settings and secrets | `happier plugins settings list <pluginId>`, `happier plugins settings secret status`, `bind`, `unbind`, and `delete` |
-| Private registries | `happier plugins registry add`, `login`, `test`, `logout`, `remove`, and `list` |
-| Marketplace sources | `happier plugins marketplace sources list`, `add`, `enable`, `disable`, and `remove` |
-| Marketplace listings | `happier plugins marketplace list`, `show`, and `install` |
+| Installed inspection | `hdev plugins list`, `hdev plugins show <pluginId>`, `hdev plugins actions <pluginId>`, `hdev plugins logs <pluginId>` |
+| Installed lifecycle | `hdev plugins enable <pluginId>`, `hdev plugins disable <pluginId>`, `hdev plugins rollback <pluginId>`, `hdev plugins uninstall <pluginId>` |
+| Settings and secrets | `hdev plugins settings list <pluginId>`, `hdev plugins settings secret status`, `bind`, `unbind`, and `delete` |
+| Private registries | `hdev plugins registry add`, `login`, `test`, `logout`, `remove`, and `list` |
+| Marketplace sources | `hdev plugins marketplace sources list`, `add`, `enable`, `disable`, and `remove` |
+| Marketplace listings | `hdev plugins marketplace list`, `show`, and `install` |

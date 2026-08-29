@@ -101,6 +101,10 @@ const usable = listed.accounts.filter((account) => account.state === 'connected'
 The listing exposes no credential, configuration value, capability list, group
 catalogue, or same-service account outside that target, and it never changes the
 selected binding. Re-read it after a `watch()` resync rather than caching it.
+This listing and its exact-account counterpart are ratified host-custodied
+external-authoring capabilities: any author may consume them for a purpose the
+host has authorized, while the host retains custody of the account inventory,
+authorization, currentness, and the selected binding.
 
 ## Credential materialization
 
@@ -156,6 +160,41 @@ The host owns credential storage, refresh, scoping, selection UX, and log redact
 The subscription does not deliver every intermediate change, expose a cursor, or make copied bytes revocable. Dispose it when no longer needed. The host also disposes it when the invoking plugin generation retires; a replacement generation must receive fresh authorization and materialize again.
 
 Fail closed when a required account is unavailable, expired, or denied. Agent session authentication refresh uses the session runtime's host services rather than Agent-global state.
+
+## Request-time authentication transport
+
+Plugins that speak to a provider on every model request cannot round-trip through
+the action-based service on each attempt. The host custodies a request-time
+authentication transport for them, published as host-custodied external
+authoring alongside the target-scoped listing above:
+
+- `buildConnectedAccountRequestAuthClientSource({ capabilityPathEnv, ... })`
+  emits a self-contained, transport-only ESM source fragment. The fragment owns
+  no selection, refresh, quota, retry, or caching decision — the host keeps all
+  of those. Each call rereads the private capability file the host atomically
+  rotates, posts to the host's loopback endpoint, and returns one bounded lease
+  (access token, optional required headers, credential context) or a typed
+  failure (`request_auth_unavailable`, a normalized authentication or quota
+  failure with evidence).
+- The capability file binds the transport to one materialization: a bounded
+  materialization id, a subject-scope digest the host computes, a single-use
+  capability value, and the current loopback port. A valid `401` means that one
+  capability tuple is retired; the fragment stays retry-safe and the next call
+  observes the rotated tuple. Responses are bounded (256 KiB) and validated
+  against the protocol-owned request-auth schema before any field is trusted.
+
+This is a generic authoring surface: it carries no first-party agent facts or
+policy of its own. Pinned provider-terminal evidence identities (for example,
+which producer versions and terminal signatures the host admits) are owned by
+the shared protocol vocabulary, and provider-specific retry classification
+stays in each Agent plugin's own provider-limit classifier.
+
+Import the generic listing contracts and request-auth source builder from
+`@happier-dev/plugin-sdk/connected-accounts`. Happier's built-in OAuth profiles,
+Claude materialization/setup-token policy, and provider-limit classifier live on
+the explicit `@happier-dev/plugin-sdk/first-party/connected-accounts` subpath.
+Third-party plugins should not infer provider policy or supported identities
+from those first-party facts.
 
 ## Produce a connected account service
 

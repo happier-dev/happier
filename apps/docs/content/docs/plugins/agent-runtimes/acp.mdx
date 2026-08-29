@@ -79,7 +79,10 @@ tool-name shaping, function-valued extensions, and other executable behavior
 belong in custom ACP composition. Happier still owns session and turn lifecycle,
 input custody, transcript persistence, activity, and terminal process facts.
 
-If the custom Agent also supports execution-runs, expose the native
-`executionRuns` factory on the same `AgentRuntime`. Do not create a second
+If the custom Agent also supports execution-runs, no second registration is
+needed: a session-capable Agent's finite Execution Runs are host-derived from
+its registered `sessions` factory, and `AgentRuntime` never carries both
+factories. Only a genuinely execution-only Agent registers a standalone
+`executionRuns` factory. Do not create a second
 public session or run state machine. [Add an Agent](/plugins/guides/agent-modes)
 maps the four valid Agent modes.

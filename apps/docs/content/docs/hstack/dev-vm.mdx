@@ -122,6 +122,21 @@ yarn dev-vm -- exec --guest-cwd=/absolute/path -- COMMAND ARG...
 the command. A failed health check stops the command and points to
 `hstack dev-vm doctor`.
 
+## Use bot-authenticated GitHub operations
+
+An active delegated Stack command starts a short-lived credential broker in
+the macOS execution-host process. Inside that managed Linux session,
+`yarn ghops` can request the `happier-bot` credential from macOS Keychain
+through the configured `mac-host` target. Git and GitHub commands still run in
+the authoritative guest checkout. The token is not written to disk or placed
+in the guest environment, and the broker stops with the delegated Stack
+command.
+
+Store or update the credential from macOS with `yarn ghops auth store`. If a
+guest command reports that the broker is unavailable, restart the Stack
+command from its Mac execution host; an already-running delegated command does
+not acquire a broker after its launch.
+
 ## Mount the guest home on macOS
 
 The mount is an SSHFS view of the authenticated Lima user's **entire guest

@@ -3,7 +3,7 @@ title: Execution-runs
 description: Implement bounded Agent execution through AgentExecutionRunRuntime.
 ---
 
-An `AgentRuntime` can expose an `executionRuns` factory for host-owned tasks that are not ordinary interactive sessions.
+An execution-run-only `AgentRuntime` registers an `executionRuns` factory for host-owned tasks that are not ordinary interactive sessions. `AgentRuntime` is an exclusive union — `sessions` or `executionRuns`, never both — so this factory is the whole registration for an execution-only Agent; a session-capable Agent instead registers a `sessions` factory and the host derives its finite Runs.
 
 ```ts
 import type { AgentRuntime } from '@happier-dev/plugin-sdk/agents/runtime';

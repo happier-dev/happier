@@ -8,7 +8,8 @@ manifest-declared Agent. A declarative ACP Agent has no plugin-owned runtime
 factory; start with [the Agent-mode guide](/plugins/guides/agent-modes) to
 choose the correct shape.
 
-An `AgentRuntime` owns at least one of `sessions` or `executionRuns`. Optional
+An `AgentRuntime` owns exactly one of `sessions` or `executionRuns`; the public
+type is an exclusive union, so a runtime never supplies both. Optional
 typed capabilities expose only behavior declared by that Agent. Separately owned
 auxiliary features do not move into the primary runtime. The `/agents/runtime`
 entrypoint is projected from one exact owner inventory; new useful capabilities
@@ -18,6 +19,17 @@ are added there without a fixed public-name quota or compatibility aliases.
 
 ```ts
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
+
+// Keep the declaration snippet executable. The complete implementation below
+// replaces this minimal leaf in a real plugin.
+const createExampleAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    async open() {
+      throw new Error('Implement the Session runtime in the import-safe runner leaf.');
+    },
+  },
+});
 
 export const { manifest, activate } = definePlugin({
   id: 'com.example.runtime',
@@ -60,12 +72,12 @@ excerpt, start with
 From its package root, its maintained author loop is:
 
 ```bash
-happier plugins dev typecheck .
-happier plugins dev build .
-happier plugins test .
-happier plugins pack . --out ../session-agent.tgz
-happier plugins install ../session-agent.tgz --kind archive --json
-happier plugins change approve <pendingChangeId> --json
+hdev plugins dev typecheck .
+hdev plugins dev build .
+hdev plugins test .
+hdev plugins pack . --out ../session-agent.tgz
+hdev plugins install ../session-agent.tgz --kind archive --json
+hdev plugins change approve <pendingChangeId> --json
 ```
 
 It demonstrates create and resume with exact provider identity, strict

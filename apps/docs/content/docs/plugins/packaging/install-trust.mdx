@@ -3,14 +3,14 @@ title: Install and trust
 description: Review plugin code before execution and let the daemon own installed state.
 ---
 
-`happier plugins install` validates package and manifest facts before executing
+`hdev plugins install` validates package and manifest facts before executing
 plugin code. When approval is required, an interactive terminal presents one
 **Install & Trust** decision for the whole package and its declared executable
 realms.
 
 ```bash
-happier plugins install <path-or-archive>
-happier plugins install @scope/package --kind npm --selector 0.1.0
+hdev plugins install <path-or-archive>
+hdev plugins install @scope/package --kind npm --selector 0.1.0
 ```
 
 The active daemon owns preparation, activation, validation, installed state,
@@ -19,18 +19,18 @@ pre-validate it. If the displayed package, manifest, artifact, or source facts
 change before approval is applied, the operation fails and must be reviewed
 again.
 
-For local authoring, use `happier plugins dev`. The daemon owns replacement and
+For local authoring, use `hdev plugins dev`. The daemon owns replacement and
 validation while the author command automatically observes the source. For an
 intentional watcher-free refresh of a package root, use the same development
 source and reload from that root:
 
 ```bash
-happier plugins install . --dev
-happier plugins reload
+hdev plugins install . --dev
+hdev plugins reload
 ```
 
 When the package root is ambiguous or the command runs elsewhere, select the
-plugin explicitly: `happier plugins reload com.example.my-plugin`. Both routes
+plugin explicitly: `hdev plugins reload com.example.my-plugin`. Both routes
 preserve the last accepted generation when validation rejects a change.
 
 ### Trust a development source on the command line
@@ -40,8 +40,8 @@ present user can answer it — a CI job, a script, or an Agent Session driving t
 authoring loop — carry the same decision on the command line:
 
 ```bash
-happier plugins install . --dev --trust --json
-happier plugins reload --json
+hdev plugins install . --dev --trust --json
+hdev plugins reload --json
 ```
 
 `--trust` is the only non-interactive approval Happier accepts. It is scoped to
@@ -67,23 +67,23 @@ not persist or select installed state.
 
 ## Install, update, rollback, and uninstall
 
-Install an archive emitted by `happier plugins pack`:
+Install an archive emitted by `hdev plugins pack`:
 
 ```bash
-happier plugins install ./my-plugin-0.1.0.tgz --kind archive
+hdev plugins install ./my-plugin-0.1.0.tgz --kind archive
 ```
 
 Install an exact npm version:
 
 ```bash
-happier plugins install @scope/my-plugin --kind npm --selector 0.1.0
+hdev plugins install @scope/my-plugin --kind npm --selector 0.1.0
 ```
 
 To update an installed plugin through the daemon's existing trusted channel,
 run:
 
 ```bash
-happier install plugin update com.example.my-plugin
+hdev plugins update com.example.my-plugin
 ```
 
 For an approved curated npm channel with the `automatic` policy, this explicit
@@ -98,8 +98,8 @@ the source's update policy, and preserves the last applied generation if the
 candidate fails validation:
 
 ```bash
-happier plugins pack . --out ../my-plugin-0.2.0.tgz
-happier plugins install ../my-plugin-0.2.0.tgz --kind archive
+hdev plugins pack . --out ../my-plugin-0.2.0.tgz
+hdev plugins install ../my-plugin-0.2.0.tgz --kind archive
 ```
 
 A new archive is a one-off source and requires review. An eligible trusted npm
@@ -111,7 +111,7 @@ requires review again.
 Restore the retained prior generation through the same daemon owner:
 
 ```bash
-happier plugins rollback com.example.my-plugin
+hdev plugins rollback com.example.my-plugin
 ```
 
 Rollback is available only while the prior immutable bytes are retained and
@@ -121,26 +121,26 @@ Ordinary uninstall removes the installed plugin and preserves its storage,
 settings, and valid secret/account references:
 
 ```bash
-happier plugins uninstall com.example.my-plugin
+hdev plugins uninstall com.example.my-plugin
 ```
 
 Irreversible data deletion is a separate explicit action:
 
 ```bash
-happier plugins uninstall com.example.my-plugin --delete-data --yes
+hdev plugins uninstall com.example.my-plugin --delete-data --yes
 ```
 
 Inspect installed state after an `outcome_unknown` result instead of blindly
 replaying a mutation:
 
 ```bash
-happier plugins show com.example.my-plugin
+hdev plugins show com.example.my-plugin
 ```
 
 ## Review rejoin after a daemon restart
 
 A pending review ID is rejoinable only during the same daemon lifetime. If
-`happier plugins change status <pendingChangeId> --json` reports `expired`
+`hdev plugins change status <pendingChangeId> --json` reports `expired`
 after a daemon restart, rerun the original development or install request and
 review the newly prepared facts; do not reuse the old pending ID. This is not
 the same as `outcome_unknown`: inspect installed state before deciding whether

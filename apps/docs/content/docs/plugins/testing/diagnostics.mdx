@@ -4,8 +4,8 @@ description: Use one public error contract and distinguish author checks from da
 ---
 
 Use the command or runtime result that owns the failed boundary. A typecheck or
-test failure is author-source evidence; `happier plugins dev` and
-`happier plugins reload` report candidate preparation and admission; a packed
+test failure is author-source evidence; `hdev plugins dev` and
+`hdev plugins reload` report candidate preparation and admission; a packed
 test proves the disposable-daemon path described by that command. None of
 those results proves that a client mounted a UI or completed an unrelated user
 flow.
@@ -37,9 +37,10 @@ try {
 
 The public error result has a stable `code` and `retryable` signal. It can also
 carry JSON-safe `details`, host-directed `remediation`, bounded `diagnostics`,
-and `actionHandlerInvocation`. Treat absent `actionHandlerInvocation` as an
-unknown invocation outcome; only the canonical Actions host sets
-`notStarted` when it can prove the handler never began. A false `retryable`
+and the host-reported `actionHandlerInvocation` marker. Treat an absent marker
+as an unknown invocation outcome. The marker is advisory when reconstructed
+from the structural error carrier: only the canonical host-mediated Action
+transport owns whether the handler started. A false `retryable`
 value is the default, and a true value is not a general retry policy: preserve
 the operation's own idempotency and user-approval requirements.
 
@@ -67,24 +68,24 @@ by the same guard; do not depend on an internal transport-error class.
 
 ## Diagnose the owning boundary
 
-1. Run `happier plugins dev typecheck .` for source/type failures and
-   `happier plugins dev build .` for a declared build.
-2. Run `happier plugins test .` for the package's daemon-independent suite, or
-   `happier plugins test . --packed` for the explicit disposable-daemon smoke.
-3. Run `happier plugins doctor .` for an import or top-level evaluation issue.
+1. Run `hdev plugins dev typecheck .` for source/type failures and
+   `hdev plugins dev build .` for a declared build.
+2. Run `hdev plugins test .` for the package's daemon-independent suite, or
+   `hdev plugins test . --packed` for the explicit disposable-daemon smoke.
+3. Run `hdev plugins doctor .` for an import or top-level evaluation issue.
    It evaluates once; it does not prove repeated evaluation is pure. For an
    already-installed plugin whose files may have been moved, replaced, or
-   removed on disk, run `happier plugins doctor --installed [<pluginId>]`
+   removed on disk, run `hdev plugins doctor --installed [<pluginId>]`
    instead: it inspects the committed immutable generation and reports
    structural and loadability facts with repair guidance.
-4. Use `happier plugins dev` or `happier plugins reload` for the
+4. Use `hdev plugins dev` or `hdev plugins reload` for the
    daemon-owned candidate result. A rejected candidate leaves the last accepted
    generation serving.
 5. Inspect daemon/plugin logs and exercise the real surface only when the
    claim depends on that loaded runtime.
 
 For a review or mutation that returns a pending change ID, use
-`happier plugins change status <pendingChangeId> --json` to inspect that same
+`hdev plugins change status <pendingChangeId> --json` to inspect that same
 daemon-lifetime operation. Do not create a second request merely to learn its
 state.
 

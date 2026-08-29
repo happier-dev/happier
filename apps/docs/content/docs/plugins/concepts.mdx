@@ -72,11 +72,15 @@ own runtime context.
 
 `AgentRuntime` is the executable integration point for a custom AI Agent. It
 is supplied as `agents.<id>.factory` to `definePlugin(...)`, whose generated
-activation performs the registration, and can expose:
+activation performs the registration. It registers exactly one runtime
+factory — either:
 
-- `sessions` for session creation and control
+- `sessions` for session creation and control, or
 - `executionRuns` for execution-run creation and control
-- optional typed Agent capabilities and message adapters
+
+plus optional typed Agent capabilities and message adapters. A session-capable
+Agent's finite Execution Runs are host-derived from its `sessions` factory; the
+runtime never supplies both factories.
 
 A declarative ACP Agent does not have a plugin-owned `AgentRuntime`; the host
 opens its declared transport.

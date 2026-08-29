@@ -163,10 +163,17 @@ moving between realtime providers between conversations keeps adding to the same
 history.
 
 Read it at **Settings → Voice → Privacy & data → Voice History**. Search runs over the
-messages already decrypted on this device, and you can load older pages, export the
-loaded history as JSON, or clear it. Clearing deletes that one carrier session for the
-account and cannot be undone; it leaves transcripts that were written into real sessions
-untouched, and it will not run while a voice conversation is live.
+messages already decrypted on this device. Loading older pages is a read-only fetch and
+decrypt operation: it does not change the carrier or lock History on another device. You
+can export the loaded history as JSON or clear it.
+
+Clearing permanently deletes that one carrier session for the account, including the
+messages already synchronized at the deletion boundary, and leaves transcripts written
+into real sessions untouched. It is blocked only when this client has an active targetless
+Voice attempt bound to that exact carrier. There is no cross-device Voice lock: clearing
+does not end an attempt on another device, and deletion wins over stale carrier snapshots.
+A later authoritative final from an attempt that continues elsewhere may create a fresh
+carrier under the same History identity.
 
 ### An agent-backed conversation
 

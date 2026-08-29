@@ -112,7 +112,8 @@ The Developer Preview Action API is a separate transport boundary. A configured
 server can read a request and response when it mediates that traffic, even when
 the daemon remains the Action executor. Current development source implements
 that server relay through the daemon's existing server connection, so the daemon
-does not need an inbound public address. Neither origin is published or shipped.
+does not need an inbound public address. The routes are available whenever this
+preview server and daemon source is deployed; npm SDK publication is separate.
 Use daemon-local transport when direct local delivery is required.
 
 See [API Tokens](/security/api-tokens) for creation, revocation, and the

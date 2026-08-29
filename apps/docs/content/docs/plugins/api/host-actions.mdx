@@ -3570,21 +3570,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `decision` (select, required): Decision
 - `scope` (select, required): Scope
 
-## `session.permission.respond`
-
-**Respond to permission request** — Approve or deny an active permission request in a session.
-
-- Safety: `safe`; side effect: `write`.
-- Approval: `optional` result; `deferred` flow.
-- Caller authority: `present_user` — only a host-stamped present-user caller is admitted; plugin and API-token callers receive `present_user_required`.
-- Also surfaced on: `ui`, `cli`, `rpc`, `api`.
-
-### Input guidance
-
-- `sessionId` (text): Session id
-- `decision` (select, required): Decision
-- `requestId` (text): Request id
-
 ## `session.permission_mode.set`
 
 **Set session permission mode** — Update the permission intent (read_only/workspace_write/etc) for the specified session.
@@ -4077,7 +4062,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `sessions.spawn.profiles.list`
 
-**List spawn profiles** — List backend profile references available for new sessions without exposing secret bindings.
+**List spawn profiles** — List Agent launch profile references available for new sessions without exposing secret bindings.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.

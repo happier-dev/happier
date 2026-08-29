@@ -18,9 +18,9 @@ For every authoring command and the exact review-decision lifecycle, see the
 ## Create and develop
 
 ```bash
-happier plugins create my-plugin
+hdev plugins create my-plugin
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 `plugins create` derives the display name and a local plugin id from the
@@ -30,8 +30,8 @@ publisher-owned id.
 For an executable UI, keep the same journey and choose one mode:
 
 ```bash
-happier plugins create my-native-plugin --ui reactNative
-happier plugins create my-hosted-plugin --ui hostedWeb
+hdev plugins create my-native-plugin --ui reactNative
+hdev plugins create my-hosted-plugin --ui hostedWeb
 ```
 
 The React Native scaffold declares web, iOS, and Android artifacts through the
@@ -52,9 +52,9 @@ the development module only as the activation entry and calls its generated
 `activate(api)` export.
 
 This normal create-to-dev loop prepares dependencies automatically; do not run
-`happier plugins dev install .` first. That command prepares an
+`hdev plugins dev install .` first. That command prepares an
 external-author fixture. If the SDK must resolve through an approved registry
-origin, use `happier plugins dev --sdk-registry <origin>`. Installed SDK
+origin, use `hdev plugins dev --sdk-registry <origin>`. Installed SDK
 packages include copyable public patterns under
 `node_modules/@happier-dev/plugin-sdk/examples/`; choose the smallest matching
 example and verify imports against the maintained
@@ -102,7 +102,7 @@ evaluates that module once, validates the canonical projection, and writes
 `.happier-plugin/plugin.json` into the archive. Installed and marketplace
 discovery read that generated JSON without executing author code.
 
-`happier plugins create my-plugin --id com.example.my-plugin` generates exactly
+`hdev plugins create my-plugin --id com.example.my-plugin` generates exactly
 this `src/index.ts`. It uses the code-defined authoring helper and exports the
 ordinary named `manifest` and `activate` ABI:
 
@@ -156,10 +156,10 @@ The normal test command runs the generated daemon-independent suite. The
 lower-level author commands remain available for focused checks:
 
 ```bash
-happier plugins dev typecheck .
-happier plugins dev build .
-happier plugins test .
-happier plugins pack .
+hdev plugins dev typecheck .
+hdev plugins dev build .
+hdev plugins test .
+hdev plugins pack .
 ```
 
 You can also use `npm run typecheck`, `npm test`, `npm run build`, and
@@ -170,7 +170,7 @@ first behavior your plugin must preserve; the adjacent example loads
 `dist/index.js`, passes its exported `manifest` and `activate` through the public
 testkit, and invokes the declared `save-note` Action without starting a daemon
 or mutating installed plugin state. The reserved
-`happier plugins test . --packed` mode packs the project, installs and trusts
+`hdev plugins test . --packed` mode packs the project, installs and trusts
 it through an authenticated disposable daemon home, invokes a safe CLI action
 that accepts empty input when one is declared, restarts the daemon, and invokes
 the action again. It never reads or mutates the user's installed plugin state.
@@ -180,7 +180,7 @@ the archive path printed by `plugins pack` through the same reviewed daemon
 path used by other plugin sources:
 
 ```bash
-happier plugins install <printed-archive-path> --kind archive
+hdev plugins install <printed-archive-path> --kind archive
 ```
 
 In an interactive terminal, Happier shows the exact package, manifest,
@@ -195,14 +195,14 @@ watcher-free update, install the package-root development source and reload
 from that root:
 
 ```bash
-happier plugins install . --dev
-happier plugins reload
+hdev plugins install . --dev
+hdev plugins reload
 ```
 
 The `--dev` installation and reload use the same daemon-owned trust,
 validation, generation replacement, and cleanup path as the watcher. When the
 current directory has more than one development plugin, or when you reload from
-another directory, select one explicitly: `happier plugins reload
+another directory, select one explicitly: `hdev plugins reload
 com.example.my-plugin`. An invalid reload leaves the last accepted generation
 serving.
 

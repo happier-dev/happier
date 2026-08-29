@@ -1,11 +1,12 @@
 ---
 title: Server retention policies
-description: Configure automatic cleanup for self-hosted Happier servers without changing the default keep-forever behavior.
+description: Configure operator age-based cleanup for self-hosted Happier servers and understand intrinsic expiry.
 ---
 
-Happier server retention is optional and disabled by default.
-
-If you do not set any retention env vars, the server keeps sessions and other retained records forever.
+Operator-configured age-based retention is optional and disabled by default. Without retention env
+vars, the server keeps sessions and records that have no intrinsic expiry forever. Records such as
+RepeatKeys that carry their own `expiresAt` remain subject to that validity boundary and are reclaimed
+by the same bounded sweep worker.
 
 ## What retention currently covers
 
@@ -65,12 +66,14 @@ database for one unbounded scan.
 
 ## Default behavior
 
-Retention only becomes effective when both of these are true:
+Operator-configured age-based retention only becomes effective when both of these are true:
 
 - `HAPPIER_SERVER_RETENTION__ENABLED=1`
 - at least one retention domain is configured with a finite policy
 
-If retention is disabled, or if every domain is still set to `keep_forever`, the effective policy remains keep-forever for every domain.
+If retention is disabled, or if every domain is still set to `keep_forever`, the effective operator
+policy remains keep-forever for every domain. Intrinsic lifecycle rules such as RepeatKey expiry still
+run; they preserve rows whose intrinsic expiry is in the future.
 
 ## Global retention env vars
 
@@ -87,8 +90,8 @@ HAPPIER_SERVER_RETENTION__DRY_RUN=0
 ```
 
 - `HAPPIER_SERVER_RETENTION__ENABLED`
-  - `0` or unset: retention is effectively off
-  - `1`: retention worker can run if at least one domain has a finite policy
+  - `0` or unset: operator-configured age retention is off; intrinsic lifecycle rules still run
+  - `1`: configured finite domain policies can run in the same worker
 - `HAPPIER_SERVER_RETENTION__INTERVAL_MS`
   - sweep interval in milliseconds
   - default: `3600000` (1 hour)
@@ -167,6 +170,15 @@ Supported domain names:
 - `GLOBAL_LOCKS`
 - `AUTOMATION_RUNS`
 - `AUTOMATION_RUN_EVENTS`
+
+Connected-account OAuth and device attempts use expiring RepeatKey rows. A live CLI daemon reclaims
+its exact durable transaction when the attempt expires, and an exact server read or mutation also
+removes that row after expiry. If the daemon exits first and the exact attempt is never accessed
+again, the server's existing bounded RepeatKey sweep still reclaims the row after its intrinsic
+`expiresAt`, including when global retention is disabled or `REPEAT_KEYS` is `keep_forever`.
+Keep-forever continues to preserve RepeatKeys whose intrinsic expiry is still in the future; it does
+not extend an expired authentication transaction's validity or physical lifetime. The API bounds each
+attempt row's payload size and lifetime but does not impose an arbitrary per-account count quota.
 
 Example:
 

@@ -5,12 +5,13 @@ description: Compatibility entry point for Happier plugin development docs.
 
 The canonical author documentation lives under [Plugins](/plugins).
 
-The candidate CLI flow is:
+These authoring commands are available from the development lane through
+`hdev`. The authoring flow is:
 
 ```bash
-happier plugins create my-plugin
+hdev plugins create my-plugin
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 The workspace SDK remains private at `0.0.0`; use this flow with an approved
@@ -26,11 +27,11 @@ and process lifecycle.
 Current author checks and packaging are:
 
 ```bash
-happier plugins dev typecheck .
-happier plugins dev build .
-happier plugins test .
-happier plugins pack .
-happier plugins install <archive-path> --kind archive
+hdev plugins dev typecheck .
+hdev plugins dev build .
+hdev plugins test .
+hdev plugins pack .
+hdev plugins install <archive-path> --kind archive
 ```
 
 `plugins test .` runs the daemon-independent built-entrypoint smoke through the

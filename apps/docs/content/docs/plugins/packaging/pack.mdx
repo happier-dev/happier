@@ -6,7 +6,7 @@ description: Create a selected-file npm-compatible Plugin Platform archive.
 Packing creates an installable archive from a local plugin directory.
 
 ```bash
-happier plugins pack /absolute/path/to/plugin --out /absolute/path/to/plugin-output.happier-plugin.tgz
+hdev plugins pack /absolute/path/to/plugin --out /absolute/path/to/plugin-output.happier-plugin.tgz
 ```
 
 The package metadata identifies the generated cold manifest in `package.json`:
@@ -53,7 +53,7 @@ manifest digest.
 
 ## Validate the artifact
 
-The default `happier plugins test .` command is daemon-independent. Its
+The default `hdev plugins test .` command is daemon-independent. Its
 `--packed` mode packs the selected files, installs and trusts the archive in an
 authenticated disposable daemon home, verifies activation and currentness
 across daemon restart, and invokes a safe empty-input CLI action when the

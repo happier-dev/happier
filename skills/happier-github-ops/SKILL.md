@@ -5,7 +5,7 @@ description: Read and mutate GitHub as the isolated Happier bot through `yarn gh
 
 # Happier GitHub Ops (bot `gh` wrapper)
 
-This repo provides `yarn ghops` as the canonical isolated transport for GitHub CLI operations and explicit PR-branch pushes as the bot. It **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace with an active `mac-host` target resolves that same Keychain credential through the target while keeping Git and GitHub operations on the authoritative Linux checkout.
+This repo provides `yarn ghops` as the canonical isolated transport for GitHub CLI operations and explicit PR-branch pushes as the bot. It **forces** authentication via the bot Personal Access Token. `HAPPIER_GITHUB_BOT_TOKEN` has highest priority. Without that override, macOS reads the validated token from Keychain service `happier/ghops`, account `happier-bot`; a managed Linux workspace receives that same credential from the short-lived execution-host broker through its active `mac-host` target while keeping Git and GitHub operations on the authoritative Linux checkout. The broker exposes only this fixed credential over a user-only Unix socket and never places the token in the guest environment or on disk.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ This repo provides `yarn ghops` as the canonical isolated transport for GitHub C
 
 ## Contract / Safety
 
-- `yarn ghops ...` refuses to run if neither the environment override nor the macOS Keychain credential is available locally or through the active `mac-host` target.
+- `yarn ghops ...` refuses to run if neither the environment override nor the macOS Keychain credential is available locally or through the active execution-host broker and `mac-host` target.
 - Runs non-interactively (`GH_PROMPT_DISABLED=1`).
 - Uses an isolated repo-local `GH_CONFIG_DIR` by default.
 - Never falls back to personal `gh`, `GH_TOKEN`, or `GITHUB_TOKEN` credentials.
@@ -128,7 +128,7 @@ Remove only the stored Keychain credential:
 yarn ghops auth clear
 ```
 
-On non-macOS platforms without an active `mac-host` target, continue providing `HAPPIER_GITHUB_BOT_TOKEN`. Keychain lifecycle commands remain macOS-only; the managed target path resolves credentials for ordinary operations but does not remotely mutate Keychain state.
+On non-macOS platforms outside an active managed execution-host session, continue providing `HAPPIER_GITHUB_BOT_TOKEN`. Keychain lifecycle commands remain macOS-only; the broker resolves credentials for ordinary operations but does not remotely mutate Keychain state. If `ghops` reports that the broker is unavailable, restart the Stack command from its Mac execution host so the new delegated session owns a fresh broker.
 
 ## Commit, GitHub, and push identities
 

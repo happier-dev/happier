@@ -79,6 +79,10 @@ content-key and expected-account fields; the raw challenge bytes are the
 signing input, and the server verifies the signature using the provided public
 key, upserts the account by public key, and returns `{ success, token }`.
 
+Unlike v2, this historical shape does not carry a server-issued, one-time,
+audience-bound challenge record. It remains only for the supported transition
+frontier below; replay-resistance claims apply to v2.
+
 Retain v1 only while a published stable or preview artifact, or the
 current `../remote-dev` predecessor, can still send v1 to a v2-capable server.
 Retire v1 only after immutable stable/preview artifact evidence and the current
@@ -99,9 +103,11 @@ publisher proof whose machine matches the requested `machineId`.
 API Tokens are opaque `hap_v1_…` credentials stored server-side as
 digest-backed records and shown in plaintext only in the mint response. The
 canonical verifier accepts them as `account_automation`; it does not make the
-caller a present user. Token creation, revocation, revocation of all tokens,
-sign-out-everywhere, approval decisions, and security/API-policy controls
-require `present_user`.
+caller a present user. List responses retain only a shortened non-secret
+prefix in the same `hap_v1_` form (for example `hap_v1_2c67deea…`), never the
+complete bearer or secret. Token creation, revocation, revocation of all
+tokens, sign-out-everywhere, approval decisions, and security/API-policy
+controls require `present_user`.
 
 There are no v1 token scopes. `account.sessions.signOutEverywhere` invalidates
 signed sessions but intentionally leaves API Tokens active; revoke API Tokens

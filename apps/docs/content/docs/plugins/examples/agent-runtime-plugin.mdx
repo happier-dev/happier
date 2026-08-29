@@ -20,8 +20,82 @@ Declare:
 
 ## Code-defined declaration
 
+The runner leaf defines and exports the factory. It imports only public SDK
+types and owns no process-global state, because the daemon activation entry and
+the runner can load in separate realms:
+
 ```ts
+// src/agentRuntime.ts — the import-safe Session runner leaf
+import type {
+  AgentRuntimeFactory,
+  AgentSessionRuntime,
+  AgentSessionRuntimeEvent,
+} from '@happier-dev/plugin-sdk/agents/runtime';
+
+/** The events this leaf publishes, before the host stamps identity and ordering. */
+type RuntimeEventInput = AgentSessionRuntimeEvent extends infer Event
+  ? Event extends AgentSessionRuntimeEvent
+    ? Omit<Event, 'sequence' | 'sessionId' | 'emittedAtMs'>
+    : never
+  : never;
+
+export const createExampleAgentRuntime: AgentRuntimeFactory = () => ({
+  sessions: {
+    open(_request, context) {
+      const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
+      let sequence = 0;
+      const emit = (event: RuntimeEventInput): void => {
+        const published = Object.freeze({
+          ...event,
+          sequence: ++sequence,
+          sessionId: context.session.id,
+          emittedAtMs: Date.now(),
+        }) as AgentSessionRuntimeEvent;
+        for (const listener of listeners) listener(published);
+      };
+
+      return {
+        async send(request) {
+          if (request.delivery.kind !== 'newTurn') {
+            const diagnostic = {
+              code: 'example_delivery_unsupported',
+              severity: 'error' as const,
+              message: 'This example accepts only new-turn delivery.',
+            };
+            emit({ kind: 'input-rejected', inputIds: request.inputIds, diagnostic, retryable: false });
+            return { status: 'unsupported', diagnostic, retryable: false };
+          }
+          emit({ kind: 'input-accepted', inputIds: request.inputIds, delivery: request.delivery });
+          emit({
+            kind: 'message-delta',
+            turnId: request.delivery.turnId,
+            channel: 'assistant',
+            text: `Echo: ${request.input.text}`,
+          });
+          emit({ kind: 'turn-complete', turnId: request.delivery.turnId });
+          return { status: 'admitted' };
+        },
+        watch(listener) {
+          listeners.add(listener);
+          return { dispose: () => { listeners.delete(listener); } };
+        },
+        async dispose() {
+          listeners.clear();
+        },
+      } satisfies AgentSessionRuntime;
+    },
+  },
+});
+```
+
+The daemon entry declares the Agent, binds that factory through generated
+activation, and names the same factory through the runner locator:
+
+```ts
+// src/index.ts — the daemon activation entry
 import { definePlugin } from '@happier-dev/plugin-sdk';
+
+import { createExampleAgentRuntime } from './agentRuntime.js';
 
 export const { manifest, activate } = definePlugin({
   id: 'com.example.runtime',
@@ -37,7 +111,7 @@ export const { manifest, activate } = definePlugin({
           sessions: {
             open: ['create'],
             delivery: ['newTurn'],
-            cancel: true,
+            cancel: false,
           },
         },
       },
@@ -52,14 +126,14 @@ export const { manifest, activate } = definePlugin({
 });
 ```
 
-A Session-capable custom Agent also requires a `sessionRunnerFactory` locator
+A Session-capable custom Agent requires the `sessionRunnerFactory` locator
 that names a distinct import-safe leaf exporting this exact factory. An
-execution-run-only Agent does not have that locator. `definePlugin` generates
-the matching registration-only `activate` ABI. The runner imports its leaf and
-never calls `activate`, so neither relies on a process-global singleton shared
-with activation.
+execution-run-only Agent registers an `executionRuns` factory instead and has
+no locator. `definePlugin` generates the matching registration-only `activate`
+ABI. The runner imports its leaf and never calls `activate`, so neither relies
+on a process-global singleton shared with activation.
 
-After `happier plugins create`, use the minimal executable
+After `hdev plugins create`, use the minimal executable
 [`session-agent`](https://github.com/happier-dev/happier/tree/v0.3/packages/plugin-sdk/examples/session-agent)
 reference for a custom persistent Session Agent. It proves public registration,
 create and exact-provider-id resume, strict reasoning/assistant/tool events, a

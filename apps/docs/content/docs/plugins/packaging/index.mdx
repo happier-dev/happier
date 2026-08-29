@@ -6,9 +6,9 @@ description: Use the current author commands to develop, validate, pack, and ins
 ## Normal development flow
 
 ```bash
-happier plugins create my-plugin
+hdev plugins create my-plugin
 cd my-plugin
-happier plugins dev
+hdev plugins dev
 ```
 
 `plugins dev` observes the source closure and submits each captured batch to
@@ -20,22 +20,22 @@ For a watcher-free development refresh, install the package root in
 development mode and reload from that root:
 
 ```bash
-happier plugins install . --dev
-happier plugins reload
+hdev plugins install . --dev
+hdev plugins reload
 ```
 
 When the package root maps to multiple development plugins, or you reload from
-another directory, use `happier plugins reload com.example.my-plugin` to select
+another directory, use `hdev plugins reload com.example.my-plugin` to select
 one. Invalid candidate source preserves the last accepted generation.
 
 ## Validation and artifact flow
 
 ```bash
-happier plugins dev typecheck .
-happier plugins dev build .
-happier plugins test .
-happier plugins pack .
-happier plugins install <printed-archive-path> --kind archive
+hdev plugins dev typecheck .
+hdev plugins dev build .
+hdev plugins test .
+hdev plugins pack .
+hdev plugins install <printed-archive-path> --kind archive
 ```
 
 The author commands use Happier's managed toolchain. `plugins test` runs the

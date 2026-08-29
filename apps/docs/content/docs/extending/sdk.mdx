@@ -270,9 +270,9 @@ The SDK offers three capabilities over the same Action API:
   allowlist.
 - **Typed Action methods:** use the matching path under `actions` when the
   Action is known in your code.
-- **Session helpers:** use `sessions` for daemon-local work, or
-  `machine(machineId).sessions` when an exact remote/server machine must stay
-  bound to the workflow.
+- **Session helpers:** use `sessions` for daemon-local creation and for handles
+  to existing Sessions at either origin, or `machine(machineId).sessions` when
+  an exact remote/server machine must stay bound to the workflow.
 
 At a daemon-local endpoint, `happier.sessions.spawn(...)` omits the routing
 target and the daemon uses its current machine. It does not perform machine
@@ -283,6 +283,10 @@ unbound `happier.sessions.spawn(...)` rejects with `HappierActionError` whose
 
 `machine(id)` returns a target-bound view that shares the root client's
 lifecycle. Calling `await close()` on either view aborts outstanding work for both.
+An existing `happier.sessions.get(sessionId)` handle automatically uses that
+Session as its transport target, so send, wait, history, follow, and stop work
+through either origin without repeating the target. An explicit target can still
+override this when deliberate machine pinning is required.
 
 This is an admitted Action failure, not a transport failure.
 
@@ -338,7 +342,9 @@ for await (const item of session.followTranscript({
 
 Execution runs use the same pattern. A machine-bound client keeps start, read,
 and cancel on that machine. Normal completion and early loop exit both cancel
-the canonical stream handle.
+the canonical stream handle. On a root client, an input with `sessionId`
+automatically binds start, read, and cancel to that Session. A detached run still
+needs an explicit machine target at a server endpoint.
 
 ```ts
 const stream = await happier.machine('machine-id').runs.startStream({
@@ -402,23 +408,36 @@ is target-bound: it reports the contributed Actions currently available from
 that selected machine and enabled for the API surface.
 
 ```ts
+import { isHappierActionApprovalRequestCreated } from '@happier-dev/sdk';
+
 const machine = happier.machine('machine-id');
 const matches = await machine.actions.search({
   query: 'save note',
   limit: 10,
 });
+if (isHappierActionApprovalRequestCreated(matches)) {
+  throw new Error(`Approval required: ${matches.artifactId}`);
+}
 const match = matches.actionSpecs.find(
   (action) => action.id === 'acme.notes/actions/save-note',
 );
 if (!match) throw new Error('The contributed Action is not available.');
 
-const { actionSpec } = await machine.actions.get({ id: match.id });
+const definition = await machine.actions.get({ id: match.id });
+if (isHappierActionApprovalRequestCreated(definition)) {
+  throw new Error(`Approval required: ${definition.artifactId}`);
+}
+const { actionSpec } = definition;
 console.log(actionSpec.inputSchema);
 
 const result = await machine.actions.invoke(
   { pluginId: 'acme.notes', localId: 'save-note' },
   { note: 'Remember this' },
 );
+if (isHappierActionApprovalRequestCreated(result)) {
+  throw new Error(`Approval required: ${result.artifactId}`);
+}
+console.log(result);
 ```
 
 Validate against the complete `inputSchema`, including `oneOf` and `anyOf`

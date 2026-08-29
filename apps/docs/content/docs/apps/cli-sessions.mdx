@@ -17,6 +17,9 @@ or a detailed session workflow.
   current development source but are not released yet. They are first-class CLI
   commands registered alongside the established `happier session ...` family,
   which remains supported for detailed and existing scripted workflows.
+  Run the examples below with `hdev` before release, unless you have explicitly
+  pointed the `happier` shim at the development lane with
+  `happier self release-channel use dev`.
 </Callout>
 
 These are complete commands. For the same operation, a first-class command and
@@ -25,13 +28,13 @@ envelope; choose the form that keeps your command or existing script clearest.
 
 | Top-level command | Session command |
 | --- | --- |
-| `happier spawn` | `happier session create` |
-| `happier list` or `happier ls` | `happier session list` |
-| `happier send` | `happier session send` |
-| `happier history` | `happier session history` |
-| `happier wait` | `happier session wait` |
-| `happier stop` | `happier session stop` |
-| `happier delegate` | `happier session delegate start` |
+| `hdev spawn` | `happier session create` |
+| `hdev list` or `hdev ls` | `happier session list` |
+| `hdev send` | `happier session send` |
+| `hdev history` | `happier session history` |
+| `hdev wait` | `happier session wait` |
+| `hdev stop` | `happier session stop` |
+| `hdev delegate` | `happier session delegate start` |
 
 ## Session identifiers
 
@@ -47,8 +50,8 @@ when automation must target a known machine rather than rely on the CLI's
 current-machine selection:
 
 ```bash
-happier spawn "Fix the failing tests" --agent <agent-id> --machine-id <machine-id>
-happier history <session-id-or-prefix-or-tag> --machine-id <machine-id> --follow --jsonl
+hdev spawn "Fix the failing tests" --agent <agent-id> --machine-id <machine-id>
+hdev history <session-id-or-prefix-or-tag> --machine-id <machine-id> --follow --jsonl
 ```
 
 With an API Token, the CLI can use its configured current machine or a sole
@@ -80,13 +83,13 @@ For the full workflows, see [Attach to a running session](/sessions/attach-to-se
 ## Create a session
 
 ```bash
-happier spawn --title "My session" --message "Hello"
+hdev spawn --title "My session" --message "Hello"
 ```
 
 Target a different directory:
 
 ```bash
-happier spawn --path /path/to/repo --title "Repo session"
+hdev spawn --path /path/to/repo --title "Repo session"
 ```
 
 ### Agent targeting (`--agent`)
@@ -94,7 +97,7 @@ happier spawn --path /path/to/repo --title "Repo session"
 `--agent` accepts a friendly Agent id from the installed Agent catalog:
 
 ```bash
-happier spawn --agent <agent-id>
+hdev spawn --agent <agent-id>
 ```
 
 When in doubt, inspect the current schema and available options via the action catalog:
@@ -106,7 +109,7 @@ happier session actions describe session.spawn_new --json
 Use `spawn` to create a Session from the top-level CLI:
 
 ```bash
-happier spawn "Fix the failing tests" --agent <agent-id>
+hdev spawn "Fix the failing tests" --agent <agent-id>
 ```
 
 ### Follow a new session from automation
@@ -115,7 +118,7 @@ In the current development source, use `--follow --jsonl` when a script needs
 the created Session id and the live transcript in one stream:
 
 ```bash
-happier spawn "Fix the failing tests" --agent <agent-id> --follow --jsonl
+hdev spawn "Fix the failing tests" --agent <agent-id> --follow --jsonl
 ```
 
 The first line is the normal `session_create` JSON envelope, including
@@ -137,21 +140,21 @@ cancellation, and jq pipelines that preserve failure status.
 ## List sessions
 
 ```bash
-happier list
+hdev list
 ```
 
 Scripting-friendly:
 
 ```bash
-happier list --json
+hdev list --json
 ```
 
 Useful filters:
 
 ```bash
-happier list --active
-happier list --archived
-happier list --resumable
+hdev list --active
+hdev list --archived
+hdev list --resumable
 ```
 
 ## Status
@@ -171,24 +174,24 @@ happier session status <session-id-or-prefix-or-tag> --live
 Send a user message:
 
 ```bash
-happier send <session-id-or-prefix-or-tag> "ping"
+hdev send <session-id-or-prefix-or-tag> "ping"
 ```
 
 Wait for the agent to become idle:
 
 ```bash
-happier send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
+hdev send <session-id-or-prefix-or-tag> "ping" --wait --timeout 60
 ```
 
 Or wait without sending:
 
 ```bash
-happier wait <session-id-or-prefix-or-tag> --timeout 60
+hdev wait <session-id-or-prefix-or-tag> --timeout 60
 ```
 
 Notes:
 
-- `send` targets active sessions. For inactive sessions, use `happier list --resumable` and `happier resume <session-id-or-prefix-or-tag>` first.
+- `send` targets active sessions. For inactive sessions, use `hdev list --resumable` and `happier resume <session-id-or-prefix-or-tag>` first.
 - `--wait` can time out if the Agent is offline/busy or its Agent runtime does not emit an “idle” signal.
 - `--permission-mode` lets you override the permission intent for a single send.
 - `--model` lets you target a specific model for that message when the selected Agent supports it.
@@ -199,7 +202,7 @@ Notes:
 Start delegated work from an existing Session with a chosen Agent:
 
 ```bash
-happier delegate <session-id-or-prefix-or-tag> "Review the failing tests" --agent <agent-id>
+hdev delegate <session-id-or-prefix-or-tag> "Review the failing tests" --agent <agent-id>
 ```
 
 Plan and voice-agent runs use their canonical nested commands:
@@ -221,7 +224,7 @@ See [Delegated work](/extending/subagents) for lifecycle and result details.
 Get recent transcript rows:
 
 ```bash
-happier history <session-id-or-prefix-or-tag> --tail 20
+hdev history <session-id-or-prefix-or-tag> --tail 20
 ```
 
 `--limit 20` remains accepted for existing scripts and has the same behavior.
@@ -229,9 +232,9 @@ happier history <session-id-or-prefix-or-tag> --tail 20
 Scripting / debugging variants:
 
 ```bash
-happier history <session-id-or-prefix-or-tag> --json
-happier history <session-id-or-prefix-or-tag> --format raw --include-meta --json
-happier history <session-id-or-prefix-or-tag> --format raw --include-meta --include-structured-payload --json
+hdev history <session-id-or-prefix-or-tag> --json
+hdev history <session-id-or-prefix-or-tag> --format raw --include-meta --json
+hdev history <session-id-or-prefix-or-tag> --format raw --include-meta --include-structured-payload --json
 ```
 
 For a human-readable live tail, use `--follow` without `--jsonl`; compact rows
@@ -249,7 +252,7 @@ Use `raw` when you need provider payloads, metadata, or structured tool/message 
 Stop a session:
 
 ```bash
-happier stop <session-id-or-prefix-or-tag>
+hdev stop <session-id-or-prefix-or-tag>
 ```
 
 Archive / unarchive:
@@ -313,7 +316,7 @@ Use it in either place:
 
 ```bash
 happier session set-permission-mode <session-id-or-prefix-or-tag> read_only
-happier send <session-id-or-prefix-or-tag> "ping" --permission-mode safe-yolo
+hdev send <session-id-or-prefix-or-tag> "ping" --permission-mode safe-yolo
 ```
 
 Notes:
@@ -383,13 +386,13 @@ Use the root Action commands for Account-aware discovery and invocation across
 built-in and plugin-contributed Actions:
 
 ```bash
-happier actions search [query...] --json
-happier actions get <action-id> --json
-happier actions invoke <action-id> --machine-id <machine-id> --input-json '<json>' --json
+hdev actions search [query...] --json
+hdev actions get <action-id> --json
+hdev actions invoke <action-id> --machine-id <machine-id> --input-json '<json>' --json
 ```
 
 Plugin-contributed Actions use qualified IDs such as
-`acme.notes/actions/save-note`. Use `happier machines list` when you need an
+`acme.notes/actions/save-note`. Use `hdev machines list` when you need an
 exact machine ID. The [CLI guide](/apps/cli#discover-machines-and-actions-developer-preview)
 covers authentication, targeting, Action settings, JSON envelopes, and errors.
 

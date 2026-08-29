@@ -9,7 +9,8 @@ Agent runtime tests should prove that the Agent-specific leaf maps its native be
 
 Cover the factory supplied as `agents.<id>.factory` to `definePlugin(...)` and
 the native `AgentRuntime` it returns. Generated activation performs the
-registration. A runtime supplies `sessions`, `executionRuns`, or both.
+registration. A runtime registers exactly one factory — `sessions` or
+`executionRuns`, never both: the public type is an exclusive union.
 
 For session-backed Agents, exercise `AgentSessionRuntimeFactory.open(...)` and the resulting `AgentSessionRuntime`:
 
@@ -19,7 +20,7 @@ For session-backed Agents, exercise `AgentSessionRuntimeFactory.open(...)` and t
 - continuation, rollback, goals, catalog, and other controls only when the Agent declares them
 - runtime and session disposal during startup, active work, failure, and host shutdown
 
-For execution-run Agents, test the `executionRuns` factory through the same public boundary. Reuse a shared session-backed adapter when that is the canonical implementation rather than duplicating an Agent-specific run loop.
+For execution-run Agents, test the `executionRuns` factory through the same public boundary. Reuse a shared session-backed adapter when that is the canonical implementation rather than duplicating an Agent-specific run loop. A session-capable Agent has no separate `executionRuns` factory to test: its finite Execution Runs are host-derived from the registered Session factory.
 
 ## Ownership assertions
 
