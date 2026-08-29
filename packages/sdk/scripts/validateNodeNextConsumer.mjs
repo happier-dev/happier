@@ -76,11 +76,17 @@ export async function validateNodeNextConsumer({ tarballPath = null } = {}) {
         }, null, 2));
         run(process.execPath, [join(repoRoot, 'scripts/workspaces/runTypeScriptCli.mjs'), '--noEmit', '-p', exampleTsconfigPath], fixture);
       }
+      const runtimeTsconfigPath = join(fixture, 'runtime.tsconfig.json');
+      await writeFile(runtimeTsconfigPath, JSON.stringify({
+        compilerOptions: {
+          target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext',
+        },
+      }, null, 2));
       run(process.execPath, ['--import', join(repoRoot, 'node_modules/tsx/dist/loader.mjs'), '--input-type=module', '--eval', [
         `import { connect } from ${JSON.stringify(pathToFileURL(join(sdkDir, 'src/index.public.ts')).href)};`,
         `const client = connect({ endpoint: 'http://127.0.0.1:3210', token: ${JSON.stringify(consumerApiToken)} });`, 'await client.close();',
       ].join('\n')], repoRoot, {
-        env: { ...process.env, TSX_TSCONFIG_PATH: join(fixture, 'tsconfig.json') },
+        env: { ...process.env, TSX_TSCONFIG_PATH: runtimeTsconfigPath },
       });
       return;
     }

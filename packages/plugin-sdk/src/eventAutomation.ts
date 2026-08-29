@@ -20,7 +20,7 @@ type SourceStatusInput = Extract<
  * under. It selects the source-catalog listing transport and the durable
  * catalog-status scope; occurrence admission itself is transport-independent.
  */
-type PluginEventObservationScopeV1 = Readonly<{
+export type PluginEventObservationScopeV1 = Readonly<{
     kind: 'checkpointedPull';
 } | {
     kind: 'socket';

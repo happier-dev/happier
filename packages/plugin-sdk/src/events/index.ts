@@ -17,6 +17,7 @@ export { PluginEventAutomationHistoryGapResetActionResultV1Schema } from '../eve
 export type { PluginEventAutomationSetupResultV1 } from '../events.js';
 export { PluginEventAutomationSetupResultV1Schema } from '../events.js';
 export type { PluginEventDispositionV1 } from '../eventAutomation.js';
+export type { PluginEventObservationScopeV1 } from '../eventAutomation.js';
 export type {
     PluginEventSourceConnectionStatusProjectionV1,
     PluginEventSourceConnectionStatusV1,

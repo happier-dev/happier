@@ -23,6 +23,7 @@ export type { PluginEventHandler } from '../activation.js';
 export type { PluginEvents } from '../events.js';
 export type {
     PluginEventDispositionV1,
+    PluginEventObservationScopeV1,
     PluginEventObservationV1,
     PluginEventSourceConnectionStatusProjectionV1,
     PluginEventSourceConnectionStatusV1,
